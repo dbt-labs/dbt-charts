@@ -30,7 +30,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     _rail_off_for_layers,
     _rail_off_for_multiples,
     _reject_dual_axis_layered_endpoint_labels,
-    cartesian_color_domain_values,
+    cartesian_series_domain_values,
     cartesian_series_naming,
     cartesian_top_legend_entries,
     estimate_cartesian_plot_height,
@@ -44,7 +44,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     LayerDatasets,
 )
 from dbt_charts.core.compile.resolve.chart._conditional import (
-    validate_mark_conditional,
+    resolve_mark_conditional,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
     _bake_normalize_domain,
@@ -304,7 +304,7 @@ def _resolve_area(
         temporal_band_axes=frozenset(),
     )
     area = chart_local_style_context.area
-    validate_mark_conditional(area.conditional, data, y=normalized.y)
+    area_conditional = resolve_mark_conditional(area.conditional, data, y=normalized.y)
     primary = plan.primary
     channels = plan.channels
     tooltip_format_values = quantitative_channel_values(data, normalized.y)
@@ -356,7 +356,9 @@ def _resolve_area(
         layered_endpoint_rail_shape(normalized.x, normalized.y),
         [layer.color is None for layer in normalized.layers],
     )
-    color_domain_values = cartesian_color_domain_values(dataset, normalized.color)
+    color_domain_values = cartesian_series_domain_values(
+        dataset, normalized.y, normalized.color, normalized.field_labels
+    )
     legend_entries = cartesian_top_legend_entries(
         normalized.y if isinstance(normalized.y, str) else None,
         normalized.y_label,
@@ -759,7 +761,7 @@ def _resolve_area(
         layout_padding=area.padding,
         suppress_legend=naming.suppress_legend,
         top_legend=naming.top_legend,
-        wrap_legend=naming.wrap_legend,
+        wrap_columns=naming.wrap_columns,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
         legend_hidden_under_edge=naming.hidden_under_edge,
     )
@@ -824,7 +826,7 @@ def _resolve_area(
             area_mark=resolved_area_mark,
             line_mark=resolved_line_mark,
             point_mark=area_point_mark,
-            conditional=area.conditional,
+            conditional=area_conditional,
             endpoint_labels=endpoint_labels,
             single_series_fill=single_series_fill,
             label_usable_ratio=chart_style_context.label_usable_ratio,

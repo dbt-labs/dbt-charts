@@ -118,7 +118,7 @@ mod tests {
 
     fn keys(rows: &[Map<String, Value>], field: &str, declared: ColumnType) -> Vec<Key> {
         let schema = ColumnTypes(HashMap::from([(field.to_string(), declared)]));
-        decode(&Dataset { rows: rows.to_vec().into(), schema }).unwrap().keys(field).unwrap().to_vec()
+        decode(&Dataset { rows: rows.to_vec().into(), schema, cell_text: Vec::new() }).unwrap().keys(field).unwrap().to_vec()
     }
 
     fn facets<'a>(rows: Option<FacetAxis<'a>>, columns: Option<FacetAxis<'a>>) -> Facets<'a> {

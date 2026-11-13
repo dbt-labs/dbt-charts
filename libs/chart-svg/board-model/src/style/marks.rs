@@ -155,6 +155,11 @@ impl Leaf for LabelVisible {
 }
 model_core::build_leaf!(LabelVisible);
 
+/// Whether a `labels.visible` value labels marks: `auto` and `false` draw none.
+pub fn labels_drawn(visible: &Engine<LabelVisible, Auto>) -> bool {
+    !matches!(visible, Engine::Rule(_) | Engine::Value(LabelVisible::Off))
+}
+
 /// Text mark font and alignment.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct TextMarkStyle {
@@ -482,7 +487,7 @@ pub struct MarkLabelsBase {
     /// Show numeric value labels on every mark or on listed anchors (`first`,
     /// `last`, `min`, `max`, per series; a tie labels every tied mark).
     #[model(fill = false)]
-    pub visible: LabelVisible,
+    pub visible: Engine<LabelVisible, Auto>,
     /// Column whose text labels each mark; `''` where unlabeled, never NULL.
     #[model(absent = "the chart's y-field")]
     pub field: Option<String>,
@@ -543,6 +548,11 @@ pub struct BarLabelsStyle {
     /// Label each segment of a stacked bar; 'auto' labels them.
     #[model(fill = "auto")]
     pub stacked: Engine<bool, Auto>,
+    /// Jinja2 label template, like a pie's. Its names are the row's columns and `value`,
+    /// the bar's measure; on bars joined by ribbons `percent` is the value as a share of
+    /// the first stage's. `value` and `percent` replace a same-named column.
+    #[model(absent = "the value, formatted")]
+    pub template: Option<String>,
 }
 
 /// Point and line mark value-label config.
@@ -557,6 +567,31 @@ pub struct PointLabelsStyle {
     /// Label position relative to the point; 'auto' leaves the spot to the renderer.
     #[model(fill = "auto")]
     pub position: Engine<PointLabelPosition, Auto>,
+}
+
+/// Labels on a funnel's ribbons: what each stage lost since the one before.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct RibbonLabelsStyle {
+    /// Label each ribbon. Funnel only; any other chart refuses it.
+    #[model(fill = false)]
+    pub visible: bool,
+    /// Jinja2 label template, like a pie's. Its names are the columns of the row the
+    /// ribbon flows into, `value`, that stage's value less the previous stage's
+    /// (negative for a loss), and `percent`, that change as a share of the previous
+    /// stage's value. `value` and `percent` replace a same-named column. The label uses
+    /// the bar value labels' font.
+    #[model(absent = "no label text")]
+    pub template: Option<String>,
+}
+
+/// Ribbons joining each bar, or stacked segment, to the next category's.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct BarRibbonsStyle {
+    /// Join each bar or segment to its series in the next category.
+    #[model(fill = false)]
+    pub visible: bool,
+    /// Labels on the ribbons. Funnel only.
+    pub labels: RibbonLabelsStyle,
 }
 
 /// Bar mark geometry and stroke. Chart-level bar fields live on the bar chart style.
@@ -590,9 +625,12 @@ pub struct BarMarkStyle {
     #[model(fill = "auto")]
     pub opacity: Engine<f64, Auto>,
     /// Value label style for bar marks.
+    #[model(fill_at(to = "visible", value = "auto"))]
     pub labels: BarLabelsStyle,
     /// Stack total label style. Only takes effect on stacked bar charts.
     pub total_label: BarTotalLabelStyle,
+    /// Ribbons joining each bar, or stacked segment, to the next.
+    pub ribbons: BarRibbonsStyle,
 }
 
 /// Line mark stroke, interpolation, and halo. The point mark is `PointMarkStyle`.

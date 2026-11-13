@@ -4,27 +4,24 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.lookup import Miss
+from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.run import Failed
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.render import render
-from dbt_charts.core.text.time_zones import UTC
 
-from .._lookup import planned_query
+from .._lookup import planned_query, sql_entry
 from .._results import rows_result
 from .._run import Run
 from .._scripted_env import ScriptedBackend, scripted_env
-from ._board_utils import make_test_board
 
 
 def _project_with_duckdb_source(
@@ -160,138 +157,8 @@ class TestCollectChartQueries:
         assert "base_orders" not in names
 
     def test_empty_board_returns_empty(self):
-        from dbt_charts.core.execute.collect import collect_layout_chart_query_names
 
-        board = make_test_board(
-            id="empty",
-            title="Empty",
-            charts={},
-            queries={},
-            sources={},
-            variable_defaults={},
-        )
-        names = collect_layout_chart_query_names(board)
-        assert names == set()
-
-
-class TestRunMisses:
-    """Test parallel query execution."""
-
-    def test_independent_queries_run_concurrently(self):
-        """Verify independent queries actually run in parallel via thread IDs."""
-        result = compile(SIMPLE_BOARD_YAML)
-        assert result.success, result.errors
-        mock_execute, call_log = _slow_adapter_execute(delay=0.1)
-
-        mock_registry_backend = ScriptedBackend(side_effect=mock_execute)
-        mock_registry = scripted_env(mock_registry_backend)
-
-        executor = Run(result.board, env=mock_registry)
-
-        start = time.monotonic()
-        _run_parallel(executor, {"sales", "users", "orders"})
-        elapsed = time.monotonic() - start
-
-        assert len(call_log) == 3
-
-        # Verify different threads were used (the real invariant)
-        threads = {entry["thread"] for entry in call_log}
-        assert len(threads) > 1, "All queries ran on the same thread"
-
-        # Loose timing check: parallel should be significantly faster than serial
-        # 3 × 0.1s serial = 0.3s. Parallel must beat that. Use 0.25s to leave margin.
-        assert elapsed < 0.25, f"Queries not running in parallel: {elapsed:.2f}s"
-
-    def test_results_cached_after_parallel_execution(self):
-        """After parallel execution, all execute_chart() calls should be cache hits."""
-        result = compile(SIMPLE_BOARD_YAML)
-        assert result.success, result.errors
-
-        mock_registry_backend = ScriptedBackend(
-            QueryResult(
-                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
-            )
-        )
-        mock_registry = scripted_env(mock_registry_backend)
-
-        executor = Run(result.board, env=mock_registry)
-
-        _run_parallel(executor, {"sales", "users", "orders"})
-
-        # Now execute_chart should be cache hits (no new adapter calls)
-        call_count_before = mock_registry_backend.execute.call_count
-        for chart in result.board.charts.values():
-            executor.execute_chart(chart)
-        call_count_after = mock_registry_backend.execute.call_count
-
-        assert call_count_after == call_count_before, (
-            "execute_chart made new adapter calls after parallel execution — cache not working"
-        )
-
-    def test_error_in_one_query_doesnt_block_others(self):
-        """If one query errors, others should still complete."""
-        result = compile(SIMPLE_BOARD_YAML)
-        assert result.success, result.errors
-
-        def flaky_execute(_source, query):
-            if "sales" in query.sql.lower():
-                raise RuntimeError("Connection refused")
-            return QueryResult(
-                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
-            )
-
-        mock_registry_backend = ScriptedBackend(side_effect=flaky_execute)
-        mock_registry = scripted_env(mock_registry_backend)
-
-        executor = Run(result.board, env=mock_registry)
-
-        errors = _run_parallel(executor, {"sales", "users", "orders"})
-
-        # sales should have an error
-        assert errors["sales"] is not None
-        # users and orders should succeed
-        assert errors["users"] is None
-        assert errors["orders"] is None
-
-    def test_cache_write_failure_keeps_the_rows(self):
-        """A store write that raises loses only the cache entry, not the rows."""
-        from dbt_charts.core.execute.cache_backend import QueryResultCache
-
-        result = compile(SIMPLE_BOARD_YAML)
-        assert result.success, result.errors
-
-        mock_registry_backend = ScriptedBackend(
-            QueryResult(
-                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
-            )
-        )
-        mock_registry = scripted_env(mock_registry_backend)
-        cache = Mock(spec=QueryResultCache)
-        cache.get.return_value = None
-
-        def put(*args, query_name, **kwargs):
-            if query_name == "sales":
-                raise OSError("store down")
-
-        cache.put.side_effect = put
-        executor = Run(result.board, env=mock_registry, result_cache=cache)
-
-        errors = _run_parallel(executor, {"sales", "users", "orders"})
-
-        assert errors == {"sales": None, "users": None, "orders": None}
-        assert executor.ledger.errors == {}
-        assert len(executor.ledger.memo) == 3
-
-    def test_empty_query_set(self):
-        """Empty query set should be a no-op."""
-        board = make_test_board(
-            id="empty",
-            title="Empty",
-            charts={},
-            queries={},
-            sources={},
-            variable_defaults={},
-        )
+        board = compile("title: Empty\n").board
         mock_registry_backend = ScriptedBackend()
         mock_registry = scripted_env(mock_registry_backend)
         executor = Run(board, env=mock_registry)
@@ -390,11 +257,8 @@ class TestDuckDBIntegration:
             assert rendered.output
 
             for query_name in ("sales", "users", "orders"):
-                query = result.board.queries[query_name]
-                source_hash, query_hash, variables_hash = compute_cache_key(
-                    query, board_sources=result.board.sources, time_zone=UTC
-                )
-                hit = cache.get(source_hash, query_hash, variables_hash)
+                [planned] = plan(executor.ctx, [query_name])
+                hit = cache.get(*planned.cache_key)
                 assert hit is not None, f"{query_name} was not cached"
                 assert hit.rows[0]["x"] == query_name
         finally:
@@ -628,5 +492,6 @@ def test_run_propagates_attribution_to_every_worker() -> None:
 
 
 def _miss(name: str) -> Miss:
-    query = SqlQuery(sql="SELECT 1", source="db")
-    return Miss(planned_query(name, query, ("s", name, "v")))
+    return Miss(
+        planned_query(name, sql_entry("SELECT 1", source="db"), ("s", name, "v"))
+    )

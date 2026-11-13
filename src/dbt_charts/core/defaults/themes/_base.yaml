@@ -536,7 +536,9 @@ style:
       symbol_shape: auto
       symbol_fill: auto
       columns: 0
-      compact_columns: 2
+      # The most columns a wrapped legend takes; it takes fewer when its
+      # labels would not fit the card.
+      compact_columns: 6
       symbol_limit: 20
       row:
         swatch_width: 10.0
@@ -573,7 +575,7 @@ style:
       pagination:
         enabled: true
         page_rows: 20
-        mode: pages
+        mode: scroll
       transpose: false
       text_baseline_offset: 4.0
       # No title_baseline_offset: the title baseline derives from the
@@ -742,7 +744,7 @@ style:
         min_size: 4.0
         opacity: auto
         labels:
-          visible: false
+          visible: auto
           position: top
           dx: auto
           dy: auto
@@ -751,6 +753,11 @@ style:
           dx: auto
           dy: auto
           visible: auto
+        ribbons:
+          visible: false
+          labels:
+            visible: false
+            template: "{{ percent | format('.0%') }}"
       line:
         stroke:
           color: auto
@@ -916,6 +923,30 @@ style:
         ticks:
           visible: false
 
+    # `type: funnel` is a bar drawn by this recipe, layered over `bar` the way
+    # `donut` layers over `pie`: centered horizontal bars joined by ribbons, each
+    # bar labeled in its middle and each ribbon by the share lost. The bars stay
+    # thicker than the ribbons between them, and the value axis is hidden
+    # because the labels carry the numbers.
+    funnel:
+      orientation: horizontal
+      stack: center
+      marks:
+        bar:
+          band_width: 0.65
+          labels:
+            visible: true
+            position: middle
+          ribbons:
+            visible: true
+            labels:
+              visible: true
+      axis_quantitative:
+        labels:
+          visible: false
+        grid:
+          visible: false
+
     # Direct-label multi-series lines/areas at their endpoints rather than
     # leaning on a side legend.
     line:
@@ -1068,6 +1099,7 @@ style:
     # bar/line/area as support_table: {...}.
     support_table:
       position: auto
+      ribbon_color: chrome[7]
       font:
         extends: numeral
         size: 11
@@ -1455,6 +1487,13 @@ style:
         # Gray on every theme, like the empty spark track.
         color: dbt-grays.8
 
+  # Comment highlights are host chrome drawn over the board, not render
+  # bytes; the host applies its own translucency, so both are opaque tones.
+  # One tint for a thread the viewer has seen, a stronger one for new activity.
+  comments:
+    highlight: warning.subtle
+    highlight_new: warning.border
+
   footer:
     visible: true
     text: auto
@@ -1463,7 +1502,7 @@ style:
     y_offset: 14
     brand_weight: 600
     divider:
-      visible: true
+      visible: false
       color: chrome[4]
       width: 0.5
       gap: 2

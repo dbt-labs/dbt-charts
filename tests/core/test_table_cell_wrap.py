@@ -187,7 +187,11 @@ class TestPaginatedAndHeightConstrained:
         # Wrap forces each row to take 3+ lines; 10 wrapped rows would need
         # far more than 200px. Per-row heights must cap the slice.
         data = [{"description": _LONG_TEXT} for _ in range(10)]
-        chart = resolve(_make_table(make_chart), data, chart_style_context=_BOARD_STYLE)
+        chart = resolve(
+            _make_table(make_chart, style={"pagination": {"mode": "pages"}}),
+            data,
+            chart_style_context=_BOARD_STYLE,
+        )
         from ._engine_render import render_table_svg
 
         svg = render_table_svg(
@@ -234,7 +238,7 @@ class TestPaginatedAndHeightConstrained:
         ]
         _raw_chart = _make_table(
             make_chart,
-            style={"pagination": {"enabled": True, "page_rows": 10}},
+            style={"pagination": {"enabled": True, "mode": "pages", "page_rows": 10}},
         )
         chart = resolve(_raw_chart, data, chart_style_context=_BOARD_STYLE)
 
@@ -308,7 +312,10 @@ class TestPaginatedAndHeightConstrained:
         ]
         chart = resolve(
             _make_table(
-                make_chart, style={"pagination": {"enabled": True, "page_rows": 10}}
+                make_chart,
+                style={
+                    "pagination": {"enabled": True, "mode": "pages", "page_rows": 10}
+                },
             ),
             data,
             chart_style_context=_BOARD_STYLE,
@@ -360,7 +367,8 @@ class TestPaginatedAndHeightConstrained:
         data_plain = [{"description": _SHORT_TEXT} for _ in range(20)]
 
         _raw = _make_table(
-            make_chart, style={"pagination": {"enabled": True, "page_rows": 5}}
+            make_chart,
+            style={"pagination": {"enabled": True, "mode": "pages", "page_rows": 5}},
         )
 
         from ._engine_render import render_table_svg

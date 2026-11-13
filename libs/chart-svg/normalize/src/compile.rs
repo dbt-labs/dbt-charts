@@ -9,8 +9,8 @@
 //! maps.
 //!
 //! [`compile`] finishes with the root style: the effective theme's (the host's `default_theme`
-//! when none is named) under the board's own, which `pie_reaches_donut` first lays its pie over
-//! its donut, with its color tokens bound to the theme under the board's `palettes:` and
+//! when none is named) under the board's own, which `family_reaches_recipe` first lays its pie over
+//! its donut and its bar over its funnel, with its color tokens bound to the theme under the board's `palettes:` and
 //! `roles:` (`Resolved::base_in`; `CompiledBoard.style`).
 //!
 //! `tests/test_engine_compile_live.py` is the live gate: `_engine.compile` (the host's sqlglot
@@ -47,7 +47,7 @@ use board_model::cascade;
 use board_model::chart::ChartAuthored;
 use board_model::ids::{ChartId, ItemId, QueryId};
 use board_model::names::ThemeName;
-use board_model::nested::pie_reaches_donut;
+use board_model::nested::family_reaches_recipe;
 use board_model::sql_analysis::SqlAnalysis;
 use board_model::style::style::Style;
 use diagnostic::{diag, Diagnostic};
@@ -82,6 +82,9 @@ impl ProjectFiles for Recording<'_> {
     }
     fn located(&self) -> bool {
         self.inner.located()
+    }
+    fn anchor(&self) -> Option<&str> {
+        self.inner.anchor()
     }
 }
 
@@ -205,6 +208,16 @@ pub fn wire_located(
         .iter()
         .map(|d| crate::locate::wire(d, &source))
         .collect()
+}
+
+impl Structure {
+    /// [`Self::validate_only`] in Python's wire shape, as [`Self::wire_diagnostics`] does.
+    pub fn wire_validate_only(&self) -> Vec<serde_json::Value> {
+        self.validate_only
+            .iter()
+            .map(|d| crate::locate::wire(d, &self.source))
+            .collect()
+    }
 }
 
 impl CompileError {
@@ -1153,7 +1166,7 @@ fn root_style(structure: &Structure, default_theme: &str) -> Result<Resolved<Sty
     let mut context = folded.clone();
     if let Tri::Value(own) = &structure.patch.body.style {
         let mut own = (**own).clone();
-        pie_reaches_donut(&mut own);
+        family_reaches_recipe(&mut own);
         context.palettes.extend(own.palettes.clone());
         context.roles.extend(own.roles.clone());
         board_model::palette::adopt_board_palette(&mut context, &own);

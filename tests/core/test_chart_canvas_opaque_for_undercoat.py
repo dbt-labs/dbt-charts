@@ -55,7 +55,6 @@ def _resolve(tmp_path: Path):
     executor = Run(
         result.board,
         build_exec_env(FilesystemProject(tmp_path)),
-        query_registry=result.query_registry,
     )
     return executor, build_resolved_board(result.board, executor, {})
 
@@ -144,7 +143,6 @@ def test_inside_bar_labels_paint_the_opaque_canvas_in_a_multi_chart_board(
     executor = Run(
         result.board,
         build_exec_env(FilesystemProject(tmp_path)),
-        query_registry=result.query_registry,
     )
     resolved, render_cache = build_resolved_board(result.board, executor, {})
     for name in ("value_labels", "stacked"):

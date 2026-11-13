@@ -59,7 +59,7 @@ from dbt_charts.core.compile.sql_guard import (
     sqlglot_dialect,
 )
 from dbt_charts.core.dbt_manifest import LoadedManifest, load_manifest
-from dbt_charts.core.dbt_ref_check import SourceYaml, query_target_paths
+from dbt_charts.core.dbt_ref_check import query_target_paths
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_DBT_MODEL_COLUMN_MISSING,
@@ -433,9 +433,7 @@ def _resolve_star_source(
 
 
 def check_model_columns(
-    queries: Mapping[str, HostQuery],
-    project: Project,
-    board_sources: SourceYaml,
+    queries: Mapping[str, HostQuery], project: Project
 ) -> list[Diagnostic]:
     """Check board column references against statically derived model columns.
 
@@ -458,7 +456,7 @@ def check_model_columns(
         if has_dbt_jinja(query["sql"])
         or (query["setup_sql"] is not None and has_dbt_jinja(query["setup_sql"]))
     }
-    target_paths = query_target_paths(queries, project, dbt_queries, board_sources)
+    target_paths = query_target_paths(queries, project, dbt_queries)
     manifests: dict[str | None, LoadedManifest] = {}
     # The default manifest is read even when no query calls ref(): an unreadable
     # one is a fault the author should hear about.
@@ -476,7 +474,7 @@ def check_model_columns(
     if not manifests or not dbt_queries:
         return found
 
-    sources = {**project.declared_sources.sources, **board_sources}
+    sources = project.declared_sources.sources
     column_refs = {
         name: query_column_refs(
             query["sql"],

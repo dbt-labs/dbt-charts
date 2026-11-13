@@ -62,6 +62,7 @@
   "controls.selection_summary": "({n}) {first}",
   "controls.show_all": "Показать все",
   "controls.show_only_selected": "Показать только выбранные ({n})",
+  "controls.options_truncated": "Показано {shown} из {total}. Используйте поиск, чтобы найти остальные.",
   "controls.sort": "Сортировка",
   "controls.sort_count_ascending": "Сортировать по количеству, по возрастанию",
   "controls.sort_count_descending": "Сортировать по количеству, по убыванию",

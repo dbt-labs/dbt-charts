@@ -86,7 +86,6 @@ def test_each_query_resolves_its_source_once(
     executor = Run(
         compiled.board,
         env=registry,
-        query_registry=compiled.query_registry,
         result_cache=TrivialDuckDBCache(db_path=tmp_path / "c.duckdb"),
     )
 
@@ -107,7 +106,6 @@ def test_incremental_tail_reuses_the_resolved_source(
         Run(
             compiled.board,
             env=registry,
-            query_registry=compiled.query_registry,
             result_cache=cache,
         ).execute_query("plain")
         return resolver
@@ -128,7 +126,6 @@ def test_unresolvable_source_keeps_the_resolver_error_fields(
     executor = Run(
         compiled.board,
         env=registry,
-        query_registry=compiled.query_registry,
         result_cache=TrivialDuckDBCache(db_path=tmp_path / "c.duckdb"),
     )
 
@@ -153,7 +150,6 @@ def test_a_resolver_failure_is_that_querys_error_and_is_recorded(
     executor = Run(
         compiled.board,
         env=registry,
-        query_registry=compiled.query_registry,
         result_cache=cache,
     )
 
@@ -174,7 +170,6 @@ def test_a_cached_query_is_served_without_resolving(
         return Run(
             compiled.board,
             env=registry,
-            query_registry=compiled.query_registry,
             result_cache=cache,
         )
 
@@ -206,7 +201,6 @@ def test_a_dbt_jinja_query_with_an_unresolvable_source_fails_as_that_query(
     executor = Run(
         compiled.board,
         env=registry,
-        query_registry=compiled.query_registry,
         result_cache=cache,
     )
 
@@ -230,7 +224,6 @@ def test_an_unreadable_manifest_does_not_escape_the_cache_key(
     executor = Run(
         compiled.board,
         env=registry,
-        query_registry=compiled.query_registry,
         result_cache=TrivialDuckDBCache(db_path=tmp_path / "c.duckdb"),
     )
 

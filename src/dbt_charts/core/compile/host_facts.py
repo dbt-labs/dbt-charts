@@ -17,7 +17,6 @@ class _QueryFacts(TypedDict):
     label: str
     authored: bool
     source: str | None
-    ignore: list[str]
 
 
 class SqlHostQuery(_QueryFacts):
@@ -73,12 +72,6 @@ def parse_host_facts(text: str) -> HostFacts:
     return facts
 
 
-def ignored(query: AnyQuery) -> list[str]:
-    if query.ignore is None:
-        return []
-    return list(query.ignore)
-
-
 def sql_host_queries(registry: Mapping[str, AnyQuery]) -> dict[str, HostQuery]:
     """The SQL queries of a Python-compiled registry, as the facts list them.
 
@@ -91,7 +84,6 @@ def sql_host_queries(registry: Mapping[str, AnyQuery]) -> dict[str, HostQuery]:
             "authored": True,
             "type": "sql",
             "source": query.source,
-            "ignore": ignored(query),
             "sql": query.sql,
             "setup_sql": query.setup_sql,
             "dialect": query.dialect,

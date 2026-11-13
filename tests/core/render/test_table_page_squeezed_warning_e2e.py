@@ -24,7 +24,7 @@ def _make_executor(
     board: object, query_registry: object, rows: list[dict[str, object]]
 ):
     mock_registry = scripted_env(ScriptedBackend(rows))
-    return Run(board, env=mock_registry, query_registry=query_registry)
+    return Run(board, env=mock_registry)
 
 
 def _board(slot_height: str) -> str:
@@ -37,6 +37,7 @@ charts:
     style:
       pagination:
         enabled: true
+        mode: pages
         page_rows: 20
 queries:
   q:

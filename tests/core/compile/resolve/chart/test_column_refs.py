@@ -252,7 +252,6 @@ def test_an_own_query_layer_matches_its_columns_in_every_export(fmt: str) -> Non
     run = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     rendered = render(result.board, run.ctx, run.ledger, format=fmt)
     assert not rendered.chart_errors

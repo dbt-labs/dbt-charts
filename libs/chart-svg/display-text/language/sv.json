@@ -62,6 +62,7 @@
   "controls.selection_summary": "({n}) {first}",
   "controls.show_all": "Visa alla",
   "controls.show_only_selected": "Visa endast valda ({n})",
+  "controls.options_truncated": "Visar {shown} av {total}. Sök för att hitta fler.",
   "controls.sort": "Sortera",
   "controls.sort_count_ascending": "Sortera efter antal, låg → hög",
   "controls.sort_count_descending": "Sortera efter antal, hög → låg",

@@ -50,7 +50,6 @@ def _render(
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     return render(result.board, executor.ctx, executor.ledger, format="svg")
 
@@ -190,7 +189,6 @@ def test_collision_error_keeps_other_charts_warnings() -> None:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     output = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert [e.code for e in output.chart_errors] == ["ERR-FIELD-LABELS-WIDE-COLLISION"]

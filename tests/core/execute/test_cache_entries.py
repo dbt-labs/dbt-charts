@@ -224,7 +224,6 @@ def _board_executor(
     return Run(
         board,
         env=scripted_env(backend, source=_SOURCE),
-        query_registry={query: board.queries[query]},
         result_cache=cache,
         board_slug=name,
     )

@@ -7,9 +7,10 @@ layer (the dependency direction stays compile → shared, render → shared).
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from jinja2 import StrictUndefined
+from jinja2 import StrictUndefined, nodes
 
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 from dbt_charts.core.text.format_d3 import format_d3
@@ -85,3 +86,27 @@ def strip_jinja_braces(expr: str) -> str:
             "``{{ value > 5 }} and {{ other }}``)."
         )
     return inner.strip()
+
+
+# d3 format spec: `[[fill]align][sign]...`; `(` as the sign wraps a negative in parens.
+_ACCOUNTING_SIGN = re.compile(r"^(?:.?[<>=^])?\(")
+
+
+def accounting_spec_beside_secondary(template: str) -> str | None:
+    """The first ``format()`` spec using the ``(`` sign flag in a template that prints
+    more than one value, or None. A secondary value is written in parens, so an
+    accounting-format value beside it would read ``((8,774))``."""
+    tree = label_jinja_env().parse(template)
+    printed = [
+        part
+        for output in tree.find_all(nodes.Output)
+        for part in output.nodes
+        if not isinstance(part, nodes.TemplateData)
+    ]
+    if len(printed) < 2:
+        return None
+    for call in tree.find_all(nodes.Filter):
+        spec = call.args[0] if call.name == "format" and call.args else None
+        if isinstance(spec, nodes.Const) and _ACCOUNTING_SIGN.match(spec.value):
+            return spec.value
+    return None

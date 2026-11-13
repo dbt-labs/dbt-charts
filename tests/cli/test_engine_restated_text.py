@@ -15,6 +15,7 @@ _HOST = {
     "cache_root": (True, "24h", False),
     "source_caches": {"db": (None, None, None)},
     "implicit_source": None,
+    "zones": {},
 }
 
 _TABLE = """source: db

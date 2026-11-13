@@ -69,7 +69,6 @@ def _board_svg(yaml_content: str, project: FilesystemProject) -> str:
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
     return render_board_svg(
         resolve_board(result.board),
@@ -283,7 +282,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         svg = render_board_svg(
             resolved,
@@ -440,7 +438,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         svg = render_board_svg(
             resolved,
@@ -505,7 +502,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         svg = render_board_svg(
             resolved,
@@ -663,7 +659,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         return render_board_svg(
             resolved,
@@ -735,7 +730,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         svg = render_board_svg(
             resolved,
@@ -804,7 +798,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         svg = render_board_svg(
             resolved,
@@ -1034,7 +1027,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         board, cache = calculate_data_aware_layout(
             result.board, executor, values, render_first=True

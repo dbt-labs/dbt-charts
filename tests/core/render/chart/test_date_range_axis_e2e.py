@@ -78,6 +78,10 @@ def _setup(yaml: str, tmp_path: Path) -> tuple[Any, Run]:
             "(TIMESTAMP '2026-03-05 10:00:00', 1), "
             "(TIMESTAMP '2026-03-31 18:00:00', 2)) AS t(ts, n)"
         )
+    # The plan compiles against the project's sources: declare the warehouse there.
+    (tmp_path / "dbt_charts.yml").write_text(
+        f'sources:\n  mem:\n    type: duckdb\n    path: "{warehouse}"\n'
+    )
     result = compile_yaml(
         yaml,
         project_sources=ProjectSourcesConfig(
@@ -88,7 +92,6 @@ def _setup(yaml: str, tmp_path: Path) -> tuple[Any, Run]:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(tmp_path)),
-        query_registry=result.query_registry,
     )
     return result.board, executor
 

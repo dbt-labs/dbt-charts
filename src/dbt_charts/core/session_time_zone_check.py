@@ -6,8 +6,7 @@ from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.models.query.normalized import is_sql_query
 from dbt_charts.core.compile.models.source import (
-    DuckDBSourceConfig,
-    TrinoSourceConfig,
+    authored_time_zone,
     parse_source_config,
 )
 from dbt_charts.core.diagnostics.codes_execute import (
@@ -20,7 +19,6 @@ from dbt_charts.core.text.time_zones import UTC
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.compiler import CompileResult
-    from dbt_charts.core.compile.models.source import ResolvedSourceConfig
     from dbt_charts.core.project import Project
 
 
@@ -70,7 +68,7 @@ def check_session_time_zones(compile_result: CompileResult, project: Project) ->
                     fix=WARN_SESSION_TIME_ZONE_UNSUPPORTED.fix_template,
                 )
             )
-        source_zone = _authored_zone(config)
+        source_zone = authored_time_zone(config)
         if source_zone is not None and source_zone != zone:
             compile_result.warnings.append(
                 Diagnostic.from_code(
@@ -81,13 +79,3 @@ def check_session_time_zones(compile_result: CompileResult, project: Project) ->
                     fix=WARN_SOURCE_TIME_ZONE_OVERRIDDEN.fix_template,
                 )
             )
-
-
-def _authored_zone(config: ResolvedSourceConfig) -> str | None:
-    if isinstance(config, TrinoSourceConfig):
-        return config.timezone
-    if isinstance(config, DuckDBSourceConfig) and config.settings:
-        for key, value in config.settings.items():
-            if key.lower() == "timezone":
-                return str(value)
-    return None

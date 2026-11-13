@@ -22,16 +22,19 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.board import plan_for_board
 from dbt_charts.core.compile import (
     CompileResult,
     compile,
 )
 from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.lookup import Ledger
-from dbt_charts.core.execute.plan import make_context
+from dbt_charts.core.execute.plan import make_context, utc_now
+from dbt_charts.core.execute.plan_reader import env_sources
 from dbt_charts.core.execute.plan_sources import list_sql_sources
 from dbt_charts.core.inspect.cache_factory import make_cache_source_for_project
 from dbt_charts.core.inspect.resolver import LayeredSchemaResolver
+from dbt_charts.core.project import InMemoryBoard
 from dbt_charts.core.render import render
 
 if TYPE_CHECKING:
@@ -301,7 +304,17 @@ def render_inspect_dashboard(
     if result.errors or not result.board:
         raise InspectProfileCompileError(result=result)
 
-    ctx = make_context(result.board, env, query_registry=result.query_registry)
+    plan = plan_for_board(
+        InMemoryBoard(substituted_yaml, path=None),
+        project,
+        safe_vars,
+        None,
+        utc_now(),
+        strict=False,
+        active_tab_only=True,
+        sources=env_sources(env),
+    )
+    ctx = make_context(result.board, plan, env)
 
     html_output = render(
         result.board,

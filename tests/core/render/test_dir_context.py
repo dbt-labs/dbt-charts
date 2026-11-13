@@ -809,7 +809,6 @@ class TestBuiltinVariables:
         executor = Run(
             result.board,
             env=make_exec_env(project=local_project(Path())),
-            query_registry=result.query_registry,
             result_cache=None,
         )
         render_result = render(
@@ -839,7 +838,6 @@ class TestBuiltinVariables:
         executor = Run(
             result.board,
             env=make_exec_env(project=local_project(Path())),
-            query_registry=result.query_registry,
             result_cache=None,
         )
         # builtin supplies "from_builtin"; user registry default "from_var" must win
@@ -872,7 +870,6 @@ class TestBuiltinVariables:
         executor = Run(
             result.board,
             env=make_exec_env(project=local_project(Path())),
-            query_registry=result.query_registry,
             result_cache=None,
         )
         # builtin supplies "from_builtin"; runtime caller passes "from_url" — must win
@@ -901,7 +898,6 @@ class TestBuiltinVariables:
         executor = Run(
             result.board,
             env=make_exec_env(project=local_project(Path())),
-            query_registry=result.query_registry,
             result_cache=None,
         )
         # builtin_key is undefined — Jinja renders '' for undefined

@@ -194,7 +194,7 @@ class TestTableChart:
         assert "1,234,567" in svg
         assert ">9.88</tspan>" in svg
 
-    def test_table_truncates_rows(self, make_chart):
+    def test_table_scrolls_rows_by_default(self, make_chart):
         from ._engine_render import render_table_svg
 
         chart = make_chart("table")
@@ -207,5 +207,7 @@ class TestTableChart:
             height=200,
             board_style=resolve_style(get_theme_style()),
         )
-        # With default pagination enabled, truncated tables show the paginator.
-        assert "dbt-paginator" in svg
+        # The default scrolls every row under a pinned header: a pager whose pages are viewports.
+        assert "dbt-table-scroll" in svg
+        assert 'data-dbt-scroll-range="50"' in svg
+        assert 'data-dbt-scroll-pager="1"' in svg

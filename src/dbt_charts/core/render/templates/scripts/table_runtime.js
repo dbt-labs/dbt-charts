@@ -151,9 +151,9 @@
         state.rows.forEach(function(row) {
             if (onPage.indexOf(row) === -1) row.el.remove();
         });
-        var anchor = _pagerAnchor(state.table);
+        var anchor = state.host === state.table ? _pagerAnchor(state.table) : null;
         onPage.forEach(function(row) {
-            if (!row.el.parentNode) state.table.insertBefore(row.el, anchor);
+            if (!row.el.parentNode) state.host.insertBefore(row.el, anchor);
         });
     }
 
@@ -167,12 +167,13 @@
             var state = _states.get(table);
             if (!state) return;
             var target = copies[i];
-            _children(target, 'data-dbt-row').forEach(function(el) { el.remove(); });
-            var anchor = _pagerAnchor(target);
+            var host = target.querySelector('[data-dbt-rows]') || target;
+            _children(host, 'data-dbt-row').forEach(function(el) { el.remove(); });
+            var anchor = host === target ? _pagerAnchor(target) : null;
             state.rows.forEach(function(row) {
                 var clone = row.el.cloneNode(true);
                 if (!row.el.parentNode) clone.setAttribute('display', 'none');
-                target.insertBefore(clone, anchor);
+                host.insertBefore(clone, anchor);
             });
         });
     }
@@ -533,9 +534,11 @@
     function _bindTable(table) {
         if (table.hasAttribute('data-dbt-bound')) return;
         table.setAttribute('data-dbt-bound', 'true');
+        var host = table.querySelector('[data-dbt-rows]') || table;
         var state = {
             table: table,
-            rows: _children(table.querySelector('[data-dbt-rows]') || table, 'data-dbt-row').map(_readRow),
+            host: host,
+            rows: _children(host, 'data-dbt-row').map(_readRow),
             pageRows: _numberHook(table, 'data-dbt-page-rows'),
             rowsY: _numberHook(table, 'data-dbt-rows-y'),
             gap: _numberHook(table, 'data-dbt-summary-gap'),
@@ -593,7 +596,8 @@
                 return;
             }
             var target = event.target.closest('[data-dbt-page-target]');
-            if (!target) return;
+            /*{# A scrolling body's pager scrolls it: table_scroll.js owns that click. #}*/
+            if (!target || target.closest('[data-dbt-scroll-range]')) return;
             var value = target.getAttribute('data-dbt-page-target');
             if (value !== 'prev' && value !== 'next' && !isFinite(Number(value))) {
                 throw new Error('table runtime: bad data-dbt-page-target ' + value);

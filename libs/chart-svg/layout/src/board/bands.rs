@@ -18,7 +18,6 @@ use scene::{Attrs, Chars, Child, Element, Escape, Node};
 use std::sync::LazyLock;
 
 use crate::board::assemble::Own;
-use crate::board::tree::Title;
 use crate::board::width::IntrinsicWidth;
 
 /// `FOOTER_BRAND_WORD_RE` (`compile/sizing.py`): ASCII neighbors only, since a translated footer may
@@ -44,7 +43,7 @@ pub fn own(root: bool, style: &Style, book: &FontBook) -> Result<Own, Diagnostic
     } else {
         IntrinsicWidth::NONE
     };
-    Ok(Own { width, band: 0.0, title: Title::None })
+    Ok(Own { width })
 }
 
 /// `_footer_row_width`: the attribution, plus the timestamp and its gap when it shares the row. The

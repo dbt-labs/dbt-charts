@@ -10,15 +10,17 @@
 //! - `{"svg", "charts", "diagnostics", "boxes", "extent"}`: the board's SVG, each chart's own `<svg>`
 //!   (`charts`, keyed as `boxes` is: a chart the board draws inline has none), and the report as the comparator reads its meta: diagnostics (`code`, `params`,
 //!   `chart`), each placement's sized box keyed `id`, `id#2`, ... and the board's extent.
-//! - `{"refused"}`: why the engine does not draw the board: a refusal it makes by name, or the
-//!   recording lacking what the engine asked for. A refusal covers every chart of the board.
+//! - `{"refused"}`: why the engine does not draw the board: a board-level refusal it makes by name,
+//!   or the recording lacking what the engine asked for. It covers every chart of the board. A
+//!   chart the engine refuses alone is drawn as its error card, and its `ERR-ENGINE-REFUSED`
+//!   diagnostic carries the chart.
 //! - `{"uncompiled"}`: the board did not compile in the project it was given: a gap of this
 //!   harness (or a board production refuses too), never a refusal of the engine.
 //!
 //! Anything else (a panic, an engine error that is not a refusal) is a bug: the tool exits
 //! non-zero with the reason on stderr.
 //!
-//! The engine renders a board under its default variables, so the sweep runs only those cases here.
+//! The project's `overrides` are the variable values the case sets over the defaults.
 //! The stylesheet is left empty: chart mode takes the card chrome from production and splices in
 //! only the chart's own `<svg>`.
 //!
@@ -140,9 +142,18 @@ mod tests {
     }
 
     #[test]
-    fn a_board_the_engine_does_not_draw_is_refused_by_name() {
+    fn a_chart_the_engine_does_not_draw_is_refused_by_name() {
         let answer = answer(&sidecar(rows()), &Project::single(SCATTER)).unwrap();
-        assert!(answer["refused"].as_str().unwrap().starts_with("refused: "), "{answer}");
+        let refused = answer["diagnostics"].as_array().unwrap().iter().find(|d| d["code"] == "ERR-ENGINE-REFUSED").unwrap();
+        assert_eq!(refused["chart"], "s", "{answer}");
+        assert!(refused["params"]["message"].as_str().is_some_and(|m| !m.is_empty()), "{answer}");
+    }
+
+    #[test]
+    fn an_engine_error_that_is_not_a_refusal_carries_its_message() {
+        let (outcome, detail) = recorded::outcome_of(Err(diagnostic::diag::err_internal("chart a has no family")), None);
+        assert_eq!(outcome, "error: ERR-INTERNAL");
+        assert!(detail.as_deref().is_some_and(|d| d.contains("chart a has no family")), "{detail:?}");
     }
 
     #[test]
@@ -170,6 +181,7 @@ mod tests {
             board: board.into(),
             files: files.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             sources: sources.iter().map(|s| s.to_string()).collect(),
+            overrides: Default::default(),
         }
     }
 
@@ -190,11 +202,37 @@ mod tests {
         assert!(answer["uncompiled"].is_string(), "{answer}");
     }
 
+    const NOTE: &str = "width: 400\nvariables:\n  note:\n    input: text\n    default: Widgets\ntitle: Notes\nqueries:\n  q:\n    type: values\n    columns: [v]\n    values:\n      - [1]\ncharts:\n  p:\n    query: q\n    type: kpi\n    value: v\nrows: [p]\n";
+
+    fn overridden(board: &str, overrides: Value) -> Project {
+        let mut project = Project::single(board);
+        project.overrides = overrides.as_object().unwrap().clone();
+        project
+    }
+
+    #[test]
+    fn a_variable_the_caller_set_is_rendered_over_its_default() {
+        let one = json!({"q": {"rows": [{"v": 1}], "schema": {"v": {"kind": "integer", "element": null, "fields": null}}}});
+        let defaults = answer(&sidecar(one.clone()), &Project::single(NOTE)).unwrap();
+        assert!(defaults["svg"].as_str().is_some_and(|s| s.contains("Widgets")), "{defaults}");
+        let set = answer(&sidecar(one), &overridden(NOTE, json!({"note": "Gadgets"}))).unwrap();
+        let svg = set["svg"].as_str().unwrap();
+        assert!(svg.contains("Gadgets") && !svg.contains("Widgets"), "{set}");
+    }
+
+    #[test]
+    fn an_override_of_an_undeclared_variable_is_uncompiled_by_name() {
+        let answer = answer(&sidecar(rows()), &overridden(NOTE, json!({"nope": "x"}))).unwrap();
+        assert!(answer["uncompiled"].as_str().unwrap().contains("nope"), "{answer}");
+    }
+
     #[test]
     fn a_project_is_read_from_the_sweeps_json() {
         let raw = json!({"board": "charts/b.yml", "files": {"charts/b.yml": "x"}, "sources": ["w"]}).to_string();
         let parsed = Project::parse(&raw).unwrap();
         assert_eq!((parsed.board.as_str(), parsed.sources.as_slice()), ("charts/b.yml", ["w".to_string()].as_slice()));
         assert!(Project::parse("{}").is_err());
+        let raw = json!({"board": "b", "files": {"b": "x"}, "sources": [], "overrides": {"a": "b"}}).to_string();
+        assert_eq!(Project::parse(&raw).unwrap().overrides["a"], "b");
     }
 }

@@ -13,8 +13,8 @@
 //! through `Facts::root_band`, which carries the title alone, as production's root sizing does. A
 //! variables band that fits beside the title shares its row, and the title's content is unwrapped
 //! from its `<svg>` so its markdown rules dedupe with the text's. A board that does not author its
-//! `width:` takes the width its title and text ask for (`Facts::own`). A nested board's title, text
-//! or variables are refused by name. A `cols` row draws a pie no taller than it sizes.
+//! `width:` takes the width its title and text ask for (`Facts::own`). A nested board's variables are refused
+//! by name; its own title and text draw under one `header` block, inside its border. A `cols` row draws a pie no taller than it sizes.
 
 use std::cell::RefCell;
 use bind::bound::{self, Family};
@@ -41,6 +41,7 @@ use layout::families::spark_bar::{self, SparkBarCard};
 use layout::families::pie::{self, PieCard};
 use layout::families::table::{self, TableCard, TableFaces};
 use layout::geom::{Rect, Size};
+use layout::board::band::TitleShift;
 use layout::board::bands::{self, Page};
 use measure::shaped::FontBook;
 use scene::{Attrs, Chars, Escape, Extent, Node, Role, Shape};
@@ -134,6 +135,36 @@ fn padded(extent: Extent, content: Vec<Node>, (left, right, top, bottom): (f64, 
     [boxes.to_vec(), translated(content, px(left), px(top))].concat()
 }
 
+/// A KPI card drawn in `inner` (width, height): the cell inside `pad`, the padding the host shrank it by.
+/// Its `<svg>` extent, its content with the card's background reaching back out over the padding, and the
+/// warnings production raises, in its order. The board's slot and a host's cell both draw a KPI through this.
+pub(crate) fn kpi_card(placed: &Style, body: &BoardBody, kpi: &bind::bound::Kpi, id: &str, pad: (f64, f64, f64, f64), inner: (f64, f64), book: &FontBook) -> Result<(Extent, Vec<Node>, Vec<Diagnostic>), Diagnostic> {
+    let chart_style = &placed.charts.kpi;
+    let faces = KpiFaces::of(chart_style, &total_style(body)?.font.emoji).ruled_by(kpi);
+    let card = KpiCard { kpi, style: chart_style, faces: &faces };
+    let planned = layout::families::kpi::plan(&card, book, inner.0)?;
+    let mut warnings = Vec::new();
+    if let (true, Some(label)) = (planned.label_truncated, &kpi.label) {
+        warnings.push(diag::warn_kpi_label_truncated(id, label.as_str()));
+    }
+    if planned.inline_fell_back {
+        warnings.push(diag::warn_kpi_inline_variant_fallback_to_stacked(id, "inline"));
+    }
+    if let (true, Some(support)) = (planned.support_truncated(), &kpi.support) {
+        warnings.push(diag::warn_kpi_support_truncated(id, support.explainer.as_str()));
+    }
+    if planned.align_overflowed {
+        warnings.push(diag::warn_kpi_align_overflow(id));
+    }
+    let (extent, mut content) = card_svg(layout::families::kpi::draw(&card, &planned, inner.1))?;
+    // The card's own background reaches back out over the padding the card was shrunk by.
+    if let Some(fill) = &kpi.fill {
+        let (left, right, top, bottom) = pad;
+        content.insert(0, Node::rect(Role::Chrome, (-left, -top, extent.width + left + right, extent.height + top + bottom), Attrs::new().set("fill", fill.as_str())));
+    }
+    Ok((extent, content, warnings))
+}
+
 /// A card or title drawn as one `<svg>`: its extent and its children, which the wrapper takes in its place.
 fn card_svg(nodes: Vec<Node>) -> Result<(Extent, Vec<Node>), Diagnostic> {
     let [card] = <[Node; 1]>::try_from(nodes).map_err(|_| diag::err_internal("a card or title is one node".to_string()))?;
@@ -150,17 +181,17 @@ pub(crate) fn title_text(body: &BoardBody) -> Option<&str> {
 
 /// The board's own title and text above its layout (`_build_board_content_items`): their nodes, in
 /// the page's frame, and the height they stack to.
-struct Header {
-    nodes: Vec<Node>,
-    non_layout_height: f64,
-    gap_before_layout: f64,
+pub(crate) struct Header {
+    pub nodes: Vec<Node>,
+    pub non_layout_height: f64,
+    pub gap_before_layout: f64,
 }
 
 /// `_tagged_authoring_block`: a block's selection boxes and content in a group that starts one
 /// padding before the content (`selection_boxes`, `padded_authoring_content`), so the ink lands
 /// where it would untagged and the tagged box is the padded outer one. `mark` is the
 /// `(top, height)` of the words inside a block that reserved more height than they fill.
-fn tagged(kind: &str, content: Vec<Node>, (x, y): (f64, f64), (width, height): (f64, f64), (pad_left, pad_right, pad_top): (f64, f64, f64), mark: Option<(f64, f64)>) -> Node {
+fn tagged(path: &str, kind: &str, content: Vec<Node>, (x, y): (f64, f64), (width, height): (f64, f64), (pad_left, pad_right, pad_top): (f64, f64, f64), mark: Option<(f64, f64)>) -> Node {
     let (outer_width, outer_height) = (width + pad_left + pad_right, height + pad_top);
     let (mark_y, mark_height) = mark.map_or((0.0, outer_height), |(top, h)| (top + pad_top, h));
     let rect = |class: &str, rect: (f64, f64, f64, f64)| Node::rect(Role::Chrome, rect, Attrs::new().set("class", class).set("fill", "transparent"));
@@ -168,14 +199,50 @@ fn tagged(kind: &str, content: Vec<Node>, (x, y): (f64, f64), (width, height): (
         rect("dbt-box-outer", (0.0, px(mark_y), px(outer_width), px(mark_height))),
         rect("dbt-box-inner", (px(pad_left), px(pad_top), px(width), px(height))),
     ];
-    let attrs = Attrs::new().set("data-authored-path", kind).set("data-authored-kind", kind);
+    let attrs = Attrs::new().set("data-authored-path", path).set("data-authored-kind", kind);
     let children = [boxes, translated(content, px(pad_left), px(pad_top))].concat();
     Node::group(Role::Chrome, attrs, children).translate(px(x - pad_left), px(y - pad_top))
 }
 
+/// Where a board's own title and text open and what separates their blocks: the top left of the
+/// frame they sit in, the gap between blocks, and whether a layout follows.
+pub(crate) struct HeaderFrame {
+    pub origin: (f64, f64),
+    /// What separates one block from the next.
+    pub pitch: f64,
+    /// The gap prose columns divide a board's width by (`card_row_gap`).
+    pub gap: f64,
+    pub has_items: bool,
+    /// Whether the first drawn item is a text block of its own (`opens_with_text`).
+    pub opens_with_text: bool,
+    /// Which board's title this is, and where its `cols` row moves it.
+    pub title_kind: prose::TitleKind,
+    pub shift: TitleShift,
+    /// The authored path of a nested board, whose title and text are one `header` block under it;
+    /// the root has none and tags each.
+    pub header_path: Option<String>,
+}
+
+impl HeaderFrame {
+    /// A nested board's frame: its blocks open at its padding and are separated by its own `style.gap`, and
+    /// the board and what it measures read the same one.
+    pub(crate) fn nested(geometry: &layout::board::assemble::BoardGeometry, has_items: bool, opens_with_text: bool, title_kind: prose::TitleKind, shift: TitleShift, header_path: Option<String>) -> Self {
+        let gap = geometry.gap.unwrap_or(0.0);
+        Self { origin: (geometry.padding.left + geometry.border_width, geometry.padding.top + geometry.border_width), pitch: gap, gap, has_items, opens_with_text, title_kind, shift, header_path }
+    }
+}
+
 impl Header {
-    fn of<F: EngineFacts>(body: &BoardBody, total: &Style, laid: &Laid, facts: &F, book: &FontBook, controls: &Controls, content_width: f64) -> Result<Self, Diagnostic> {
-        let (page_padding, card_padding) = (total.frame.margin, total.frame.card_padding);
+    /// What the title and text take above the layout, with the gap below them.
+    pub(crate) fn band(&self) -> f64 {
+        self.non_layout_height + self.gap_before_layout
+    }
+
+    pub(crate) fn of(body: &BoardBody, total: &Style, frame: &HeaderFrame, book: &FontBook, controls: &Controls, content_width: f64) -> Result<Self, Diagnostic> {
+        let (page_padding, card_padding) = (frame.origin.0, total.frame.card_padding);
+        let HeaderFrame { pitch, gap, has_items, .. } = frame;
+        let (pitch, gap, has_items) = (*pitch, *gap, *has_items);
+        let header_path = frame.header_path.as_deref();
         let prose_width = content_width - 2.0 * card_padding;
         // Production measures the inline title at `max(inner, 1)` and the stacked one at
         // `title_text_width or layout_content_width`; the engine draws neither at such a width.
@@ -183,14 +250,8 @@ impl Header {
             return Err(Diagnostic::refused(refuse!("a board's title narrower than its card padding is not supported")));
         }
         let prose_width = prose_width.max(0.0);
-        let title = title_text(body).map(|text| prose::title(total, text, book, prose_width)).transpose()?;
+        let title = title_text(body).map(|text| prose::title(total, text, book, prose_width, frame.title_kind)).transpose()?;
         let title_height = title.as_ref().map_or(0.0, |t| t.height.max(total.title.base.min_height));
-        let card_gap = if body.card_gap { total.frame.card_gap } else { 0.0 };
-        // `card_row_gap`: a root cols or grid pitches its cards by its own gap, any other by `style.gap`.
-        let gap = match laid.root.kind {
-            Kind::Cols | Kind::Grid { .. } => laid.root.pitch,
-            Kind::Rows | Kind::Tabs { .. } => total.gap.map_or(0.0, Gap::px) + card_gap,
-        };
         let text = body
             .text
             .as_ref()
@@ -211,9 +272,16 @@ impl Header {
         };
         let variables_height = strip.as_ref().map_or(0.0, |(_, height)| *height);
         let inline_height = inline.as_ref().map_or(0.0, |band| band.height);
-        let stacked_title_height = if inline.is_some() { 0.0 } else { title_height };
-        let band = prose::content_box(stacked_title_height, inline_height, text_height, variables_height, laid.root.pitch, !laid.root.items.is_empty(), card_padding);
-        let (x, mut y) = (page_padding + card_padding, page_padding + band.content_top);
+        let shift = frame.shift;
+        let stacked_title_height = if inline.is_some() { 0.0 } else if title.is_some() { title_height + shift.body_dy } else { title_height };
+        let band = prose::content_box(stacked_title_height, inline_height, text_height, variables_height, pitch, has_items, frame.opens_with_text, card_padding);
+        let (x, mut y) = (page_padding + card_padding, frame.origin.1 + band.content_top);
+        let header_start = y;
+        let line_box = title.as_ref().map(|t| t.line_box);
+        // A nested board's title and text are one `header` block: each piece sits at its offset from the
+        // block's own origin (`header_piece`).
+        let mut pieces: Vec<Node> = Vec::new();
+        let piece = |kind: &str, content: Vec<Node>, at: f64| Node::group(Role::Chrome, Attrs::new().set("data-authored-kind", kind), content).translate(0.0, px(at) - px(header_start));
         let mut nodes = Vec::new();
         match (title, inline) {
             (Some(title), Some(inline)) => {
@@ -223,16 +291,20 @@ impl Header {
                 // `extract_svg_inner_content`: the band holds the title's content, not its `<svg>`, so
                 // its markdown rules dedupe against the text's in one scope.
                 let (_, content) = card_svg(vec![title.svg])?;
-                let block = tagged("title", content, (card_padding, inline.title_dy), (inline.title_width, title_height), pad, Some(title.line_box));
+                let block = tagged("title", "title", content, (card_padding, inline.title_dy), (inline.title_width, title_height), pad, Some(title.line_box));
                 let strip = translated(vec![inline.strip], px(inline.strip_dx), px(inline.strip_dy));
                 nodes.extend(translated([vec![block], strip].concat(), px(page_padding), px(y)));
                 y += inline.height;
                 if body.text.is_some() {
-                    y += laid.root.pitch;
+                    y += pitch;
                 }
             }
+            (Some(title), None) if header_path.is_some() => {
+                pieces.push(piece("title", vec![title.svg], y + shift.title_dy));
+                y += title_height + shift.body_dy;
+            }
             (Some(title), None) => {
-                let block = tagged("title", vec![title.svg], (x, y), (prose_width, title_height), (card_padding, card_padding, band.content_top), Some(title.line_box));
+                let block = tagged("title", "title", vec![title.svg], (x, y), (prose_width, title_height), (card_padding, card_padding, band.content_top), Some(title.line_box));
                 nodes.push(block);
                 y += title_height;
             }
@@ -241,13 +313,24 @@ impl Header {
         if let Some(text) = text {
             // The band's top inset is claimed once, by whichever block opens it.
             let top = if title_text(body).is_some() { 0.0 } else { band.content_top };
-            nodes.push(tagged("text", text.nodes, (x, y), (prose_width, text_height), (card_padding, card_padding, top), None));
+            if header_path.is_some() {
+                pieces.push(piece("text", text.nodes, y));
+            } else {
+                nodes.push(tagged("text", "text", text.nodes, (x, y), (prose_width, text_height), (card_padding, card_padding, top), None));
+            }
             y += text_height;
+        }
+        if let Some(path) = header_path.filter(|_| !pieces.is_empty()) {
+            // A combined header opening with a title is seated the way the standalone title is, and ends
+            // where the header ends: the title's trailing margin is the rhythm to the text under it.
+            let height = y - header_start;
+            let mark = line_box.map(|(top, line_height)| (top, if body.text.is_some() { height - top } else { line_height }));
+            nodes.push(tagged(path, "header", pieces, (x, header_start), (prose_width, height), (card_padding, card_padding, band.content_top), mark));
         }
         if let Some((strip, _)) = strip {
             // Title or text above it: one gap (`compute_board_content_box`).
             if title_text(body).is_some() || body.text.is_some() {
-                y += laid.root.pitch;
+                y += pitch;
             }
             nodes.extend(translated(vec![strip], px(x), px(y)));
         }
@@ -281,11 +364,18 @@ pub(crate) fn board<F: EngineFacts>(
     let page_padding = board_geometry(style)?.frame_margin;
     let background = leaf(style.background.as_ref(), "style.background")?.as_str();
     let content_width = laid.width - 2.0 * page_padding;
-    let controls = bind::variables::controls(body, run, total)?;
+    let controls = bind::variables::controls(body, run, total, &slots.styles.root_queries)?;
     if laid.root.items.is_empty() && title_text(body).is_none() && body.text.is_none() && controls.list.is_empty() {
         return Err(Diagnostic::refused(refuse!("drawing a board with no drawn items is not supported")));
     }
-    let header = Header::of(body, total, laid, facts, book, &controls, content_width)?;
+    let card_gap = if body.card_gap { total.frame.card_gap } else { 0.0 };
+    // `card_row_gap`: a root cols or grid pitches its cards by its own gap, any other by `style.gap`.
+    let gap = match laid.root.kind {
+        Kind::Cols | Kind::Grid { .. } => laid.root.pitch,
+        Kind::Rows | Kind::Tabs { .. } => total.gap.map_or(0.0, Gap::px) + card_gap,
+    };
+    let frame = HeaderFrame { origin: (page_padding, page_padding), pitch: laid.root.pitch, gap, has_items: !laid.root.items.is_empty(), opens_with_text: layout::board::assemble::opens_with_text(body, &ItemId::root(), bound.drawn()), title_kind: prose::TitleKind::ROOT, shift: TitleShift::default(), header_path: None };
+    let header = Header::of(body, total, &frame, book, &controls, content_width)?;
     let (items, layout_height) = composer.layout(&laid.root)?;
     let actual_height = header.non_layout_height + header.gap_before_layout + layout_height;
     let mut layout = header.nodes;
@@ -390,7 +480,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         let body = drawn.map(|c| &c.family);
         let (class, title, extent_height, children) = match body {
             Some(Err(failure)) => {
-                let card = crate::slot::error_card(self.facts, slot.body, failure)?;
+                let card = crate::slot::error_card(self.facts, slot, failure, placed.width, placed.shift)?;
                 let (extent, children) = card_svg(card.render(&Env { book: self.book }, placed.width, placed.height)?)?;
                 let children = unpadded(placed.width, extent.height, children);
                 ("dbt-chart dbt-chart-callout", id.to_string(), extent.height, children)
@@ -400,14 +490,15 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 if chart_style.border.width > 0.0 || chart_style.border.radius > 0.0 {
                     return Err(Diagnostic::refused(refuse!("drawing a chart card's border or shadow is not supported")));
                 }
-                let faces = KpiFaces::of(chart_style, &total_style(slot.body)?.font.emoji);
-                let card = KpiCard { kpi, style: chart_style, faces: &faces };
                 let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
                 let pad = crate::slot::additive_padding(card_padding, &chart_style.padding);
                 let (inner_width, inner_height) = ((placed.width - pad.0 - pad.1).max(0.0), (placed.height - px(pad.2) - px(pad.3)).max(0.0));
-                let (extent, content) = card_svg(card.render(&Env { book: self.book }, inner_width, inner_height)?)?;
+                let (extent, content, warnings) = kpi_card(slot.placed, slot.body, kpi, id, pad, (inner_width, inner_height), self.book)?;
+                self.warnings.borrow_mut().extend(warnings);
                 let children = padded(extent, content, pad);
-                let title = kpi.label.clone().unwrap_or_else(|| id.to_string());
+                // The wrapper names the chart by its authored label, not the one the slot's case transform drew.
+                let authored = kpi.title.clone();
+                let title = authored.unwrap_or_else(|| id.to_string());
                 ("dbt-chart", title, extent.height + px(pad.2) + px(pad.3), children)
             }
             Some(Ok(Family::Table(bound_table))) => {
@@ -493,9 +584,20 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
             ModelChart::Donut(_) => "pie",
             ModelChart::Scatter(_) => "scatter",
             ModelChart::Line(_) => "line",
-            ModelChart::Bar(_) => "bar",
+            ModelChart::Bar(_) | ModelChart::Funnel(_) => "bar",
             ModelChart::Histogram(_) => "histogram",
-            _ => return Err(diag::err_internal(format!("chart {id} has no family"))),
+            ModelChart::Area(_) => "area",
+            ModelChart::Heatmap(_) => "heatmap",
+            ModelChart::Geoshape(_) => "geoshape",
+            ModelChart::Map(_) => "map",
+            ModelChart::PointMap(_) => "point_map",
+            ModelChart::BubbleMap(_) => "bubble_map",
+            ModelChart::Custom(_) => "custom",
+        };
+        // Where the chart was authored: the `charts:` of the nested board that declares it, else the root's.
+        let chart_path = match &slot.authored_in {
+            Some(board) => format!("{}.charts.{id}", authored_path(board)),
+            None => format!("charts.{id}"),
         };
         let attrs = Attrs::new()
             .set("class", class)
@@ -508,7 +610,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
             .set("role", "group")
             .set("aria-roledescription", display_text::language::tr("aria.chart", None, &[])?)
             .set("aria-label", title.as_str())
-            .set("data-authored-path", format!("charts.{id}"))
+            .set("data-authored-path", chart_path)
             .set("data-authored-kind", "chart");
         let canvas = match (body, drawn.and_then(|chart| chart.frame.as_ref())) {
             (Some(Ok(Family::Pie(pie))), _) => Some(pie.canvas.clone()),
@@ -604,15 +706,31 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         Ok((nodes, pane_top + height))
     }
 
-    /// `render_nested_board` for a board with no title, text or variables, in `style`.
+    /// `render_nested_board` for a board without variables, in `style`: its border, its own title and text, then its layout.
     fn nested(&self, placed: &PlacedBoard, style: &layout::board::assemble::StylePatch) -> Result<(Vec<Node>, f64), Diagnostic> {
         let geometry = board_geometry(style)?;
-        if geometry.border_width > 0.0 {
-            return Err(Diagnostic::refused(refuse!("drawing a nested board's border is not supported")));
+        if matches!(style.border.dash_array, model_core::Tri::Value(_)) {
+            return Err(Diagnostic::refused(refuse!("a dashed nested board border is not supported")));
         }
+        // `_effective_padding`: the border's width on each side is padding too.
+        let stroke = geometry.border_width;
         let (padding, margin) = (geometry.padding, geometry.margin);
+        let (inset_left, inset_top, inset_bottom) = (padding.left + stroke, padding.top + stroke, padding.bottom + stroke);
+        // A tab's pane has no body of its own, and so no text.
+        let body = self.slots.boards.get(&placed.item).copied().filter(|body| body.text.is_some() || title_text(body).is_some());
         let (layout, layout_height) = self.layout(&placed.layout)?;
-        let natural = padding.top + layout_height + padding.bottom;
+        // The board's own title and text above its layout, in this board's frame (`render_nested_board`).
+        let header = if let Some(body) = body {
+            let kind = prose::TitleKind { level: *self.slots.levels.get(&placed.item).ok_or_else(|| diag::err_internal("a nested board carries its heading level"))?, root: false };
+            let opens = layout::board::assemble::opens_with_text(body, &placed.item, self.slots.drawn);
+            let frame = HeaderFrame::nested(&geometry, !placed.layout.items.is_empty(), opens, kind, placed.shift, Some(authored_path(&placed.item)));
+            let content_width = placed.width - geometry.chrome().0;
+            Some(Header::of(body, total_style(body)?, &frame, self.book, &Controls { list: Vec::new(), reset_enabled: false }, content_width)?)
+        } else {
+            None
+        };
+        let band = header.as_ref().map_or(0.0, Header::band);
+        let natural = inset_top + band + layout_height + inset_bottom;
         let margin_vertical = margin.top + margin.bottom;
         let board_height = natural.max((placed.height - margin_vertical).max(0.0));
         let board_width = placed.width - (margin.left + margin.right);
@@ -626,7 +744,22 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 Shape::Rect { x: 0.0, y: 0.0, w: board_width, h: board_height, rx: radius },
             ));
         }
-        group.extend(translated(layout, px(padding.left), px(padding.top)));
+        // `border_rect`: a stroke-only rectangle inset by half the stroke, so the border stays inside the box.
+        let color = if stroke > 0.0 { leaf(style.border.color.as_ref(), "style.border.color")?.as_str() } else { "" };
+        if stroke > 0.0 && !color.is_empty() {
+            let half = stroke / 2.0;
+            group.push(Node::new(
+                Role::Chrome,
+                Attrs::new().set("fill", "none").set("stroke", color).num("stroke-width", stroke),
+                Shape::Rect { x: half, y: half, w: (board_width - stroke).max(0.0), h: (board_height - stroke).max(0.0), rx: (radius - half).max(0.0) },
+            ));
+        }
+        if let Some(header) = header {
+            group.extend(header.nodes);
+        }
+        if !placed.layout.items.is_empty() {
+            group.extend(translated(layout, px(inset_left), px(inset_top + band)));
+        }
         let total_height = board_height + margin_vertical;
         let children = translated(group, px(margin.left), px(margin.top));
         let svg = Node::new(Role::Chrome, Attrs::new(), Shape::Svg { extent: Extent { width: placed.width, height: total_height }, children });

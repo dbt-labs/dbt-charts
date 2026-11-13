@@ -149,6 +149,18 @@ pub(super) struct LabelSpec {
     /// The layer's mean measure, which `middle_aligned` halves (a
     /// `joinaggregate` over every row of the layer).
     pub(super) mean: f64,
+    /// Set on the labels of a colorless bar with ribbons: its bars are stages.
+    pub(super) funnel: Option<FunnelLabels>,
+}
+
+/// The label law of bars joined by ribbons: `percent` reads against the first stage, and a
+/// `middle` label centers on its mark or, where it does not fit, sits just outside the mark's
+/// right edge.
+#[derive(Clone, Copy)]
+pub(super) struct FunnelLabels {
+    pub(super) first: f64,
+    pub(super) band_width: f64,
+    pub(super) max_size: Option<f64>,
 }
 
 impl LabelSpec {
@@ -162,7 +174,7 @@ impl LabelSpec {
         let field_is_text = ml.field_is_text(rows);
         let measures: Vec<f64> = rows.iter().filter_map(|row| row_num(row, y_field)).collect();
         let mean = if measures.is_empty() { 0.0 } else { measures.iter().sum::<f64>() / measures.len() as f64 };
-        LabelSpec { ml: ml.clone(), position: label_position(ml, stacked).to_string(), is_house, field_is_text, mean }
+        LabelSpec { ml: ml.clone(), position: label_position(ml, stacked).to_string(), is_house, field_is_text, mean, funnel: None }
     }
 
     /// The measure value a non-stacked label anchors at: the bar end for
@@ -182,6 +194,23 @@ impl LabelSpec {
         position(self.anchor(value)).clamp(0.0, plot_extent)
     }
 
+    /// The `labels.template` text of `row`: its columns, `value`, and on a funnel `percent`.
+    fn templated(&self, source: &str, row: Option<&serde_json::Map<String, Value>>, value: f64) -> Result<String, String> {
+        let row = row.ok_or("bar: a label template needs the row it labels")?;
+        let percent = match self.funnel {
+            Some(funnel) if funnel.first == 0.0 => return Err("bar: a funnel label's percent divides by the first stage, whose value is 0".into()),
+            Some(funnel) => Some(value / funnel.first),
+            None => None,
+        };
+        let names: Vec<(&str, f64)> = std::iter::once(("value", value)).chain(percent.map(|p| ("percent", p))).collect();
+        let own = |e| ::bind::label_template::owned_by("bar", e);
+        let lines = ::bind::label_template::Template::parse(source).map_err(own)?.render(&::bind::label_template::RowScope { row, names: &names }).map_err(own)?;
+        match lines.as_slice() {
+            [line] => Ok(line.clone()),
+            _ => Err(format!("bar: label template {source:?} prints {} lines; a bar label is one line", lines.len())),
+        }
+    }
+
     /// `(text, blank)` of `row`'s label. `labels.field` prints that column —
     /// formatted when every value is a number, verbatim when any is text,
     /// blank where it is null (`_house_register_text_encoding`'s `condition`);
@@ -192,6 +221,9 @@ impl LabelSpec {
         value: f64,
         span: Option<SpanLabel>,
     ) -> Result<(String, bool), String> {
+        if let Some(source) = &self.ml.template {
+            return Ok((self.templated(source, row, value)?, false));
+        }
         if self.ml.field.is_none() {
             return Ok((label_text(&self.ml, self.is_house, value, span)?, false));
         }
@@ -214,6 +246,11 @@ pub(super) struct LabelDecor {
 
 pub(super) type LabelDecors = HashMap<(String, String), LabelDecor>;
 
+/// The ink a label takes before the ground it sits on moves it, when nothing authored or inherited names one.
+pub(super) const NEUTRAL_INK: &str = "#313233";
+/// The least contrast that neutral ink keeps against the canvas.
+const OUTSIDE_INK_CONTRAST: f64 = 4.5;
+
 /// One value label before any geometry: where it anchors on the measure axis
 /// and what it prints.
 pub(super) struct LabelSite {
@@ -230,6 +267,9 @@ pub(super) struct LabelSite {
     pub(super) span: Option<SpanLabel>,
     /// A stacked segment's `(start, end)` in measure units, which its label must fit inside.
     pub(super) segment: Option<(f64, f64)>,
+    /// The measure value where the bar is drawn to in the value's direction, which a label too big
+    /// for its bar flips just past. A bar from zero ends at its value; a centered one at its span's end.
+    pub(super) tip: f64,
     pub(super) text: String,
     /// The mark exists but prints nothing: `labels.field` is null here, or a
     /// genuine-zero label on a nonzero row.
@@ -269,13 +309,16 @@ pub(super) fn plain_sites<'a>(
     link: Option<&crate::href::DatumLink>,
     spec: &LabelSpec,
     ranged: Option<&RangedBars>,
-    // A colorless centered bar's `middle` label sits mid-span, not mid-value.
+    // A colorless centered bar's label sits on its drawn span, not on a bar that starts at zero.
     centered: Option<&SegmentSpans>,
 ) -> Result<Vec<LabelSite>, String> {
     label_sites(rows, fields, link, |row, cat, val| {
+        let drawn = centered.and_then(|spans| spans.get(&(cat.to_string(), String::new())));
+        let drawn_end = drawn.map(|seg| if val < 0.0 { seg.start } else { seg.end });
         let (at, value, span) = match ranged {
-            None => match centered.and_then(|spans| spans.get(&(cat.to_string(), String::new()))) {
+            None => match drawn {
                 Some(seg) if spec.position == "middle" => ((seg.start + seg.end) / 2.0, val, None),
+                Some(_) if matches!(spec.position.as_str(), "above" | "top") => (drawn_end.expect("a drawn span has an end"), val, None),
                 _ => (spec.anchor(val), val, None),
             },
             Some(rb) => {
@@ -292,6 +335,10 @@ pub(super) fn plain_sites<'a>(
             let start = rb.starts[&(cat.to_string(), String::new())];
             text = rb.duration_text(start, val)?;
         }
+        let segment = centered
+            .filter(|_| spec.funnel.is_some())
+            .and_then(|spans| spans.get(&(cat.to_string(), String::new())))
+            .map(|seg| (seg.start, seg.end));
         Ok(Some(LabelSite {
             cat: cat.to_string(),
             at,
@@ -299,7 +346,8 @@ pub(super) fn plain_sites<'a>(
             value,
             raw: val,
             span,
-            segment: None,
+            segment,
+            tip: drawn_end.unwrap_or(val),
             text,
             blank,
             key: (cat.to_string(), String::new()),
@@ -352,6 +400,7 @@ pub(super) fn segment_sites(
             raw: row_value,
             span: label_span,
             segment: (!ranged).then_some((span.start, span.end)),
+            tip: span.end,
             text,
             blank,
             key,
@@ -389,7 +438,7 @@ pub(super) fn total_sites(
             .copied()
             .ok_or_else(|| format!("bar: internal error — no stacked total for category {cat:?}"))?;
         let (text, blank) = spec.text(Some(row), total, None)?;
-        Ok(Some(LabelSite { cat: cat.to_string(), at: total, slot: span.slot, value: total, raw: total, span: None, segment: None, text, blank, key, href: None }))
+        Ok(Some(LabelSite { cat: cat.to_string(), at: total, slot: span.slot, value: total, raw: total, span: None, segment: None, tip: total, text, blank, key, href: None }))
     })
 }
 
@@ -489,7 +538,7 @@ fn anchored_categories(sites: Vec<LabelSite>, values: impl Iterator<Item = (Stri
 /// A stacked bar's anchors: the totals of the stacks they pick, printed above
 /// each stack in the value labels' own format and font.
 fn anchored_total_layer(ml: &MarkLabels, b: &LabelBuild) -> Result<LabelLayer, String> {
-    let total = MarkLabels { position: Some("above".into()), anchors: Vec::new(), ..ml.clone() };
+    let total = MarkLabels { position: Some("above".into()), anchors: Vec::new(), template: None, ..ml.clone() };
     let spec = LabelSpec::new(&total, false, b.r.style.label_is_house, b.rows, b.val_field);
     let color = b.color_field.expect("is_stacked implies color");
     let sites = total_sites(b.spans, b.totals, b.rows, (b.cat_field, b.val_field), b.link, color, b.stack_order, &spec)?;
@@ -507,7 +556,14 @@ pub(super) fn value_label_layers(b: &LabelBuild) -> Result<Vec<LabelLayer>, Stri
         layers.push(anchored_total_layer(ml, b)?);
     } else if let Some(ml) = authored.or(b.zero_text) {
         let zero_only = authored.is_none();
-        let spec = LabelSpec::new(ml, b.is_stacked, r.style.label_is_house && !zero_only, b.rows, b.val_field);
+        let mut spec = LabelSpec::new(ml, b.is_stacked, r.style.label_is_house && !zero_only, b.rows, b.val_field);
+        if r.style.mark.ribbons.visible() && !zero_only && b.color_field.is_none() {
+            spec.funnel = Some(FunnelLabels {
+                first: first_stage_value(b)?,
+                band_width: r.style.mark.band_width,
+                max_size: r.style.mark.max_size,
+            });
+        }
         let sites = match b.color_field.filter(|_| b.is_grouped) {
             Some(color) => segment_sites(
                 b.label_spans.unwrap_or(b.spans),
@@ -567,6 +623,16 @@ pub(super) fn value_label_layers(b: &LabelBuild) -> Result<Vec<LabelLayer>, Stri
         layers.push(LabelLayer::new(spec, sites, b.horizontal, false, false, false, true, b.fonts, b.board_style)?);
     }
     Ok(layers)
+}
+
+/// The value of the first drawn stage, which a funnel label's `percent` divides by.
+fn first_stage_value(b: &LabelBuild) -> Result<f64, String> {
+    let first = b.cat_domain.first().ok_or("bar: a funnel has no stages")?;
+    b.rows
+        .iter()
+        .find(|row| row_str(row, b.cat_field) == *first)
+        .and_then(|row| row_num(row, b.val_field))
+        .ok_or_else(|| format!("bar: the funnel's first stage {first:?} has no value"))
 }
 
 /// One value-label layer: its sites, how they print, and where they sit.
@@ -690,7 +756,7 @@ pub(super) fn zero_label_blank(px: &dyn Fn(f64) -> f64, range: (f64, f64), value
 pub(super) fn zero_label_at(spec: &LabelSpec, value: f64, linear: &Continuous, plot_h: f64, font_size: f64) -> (f64, Option<LabelSide>, bool) {
     let px = |v: f64| linear.scale(v);
     let at = spec.extent(value, px, plot_h);
-    let (extent, side) = plain_label_place(&spec.position, value, at, &px, (plot_h, 0.0), label_need(false, 0.0, font_size));
+    let (extent, side) = plain_label_place(&spec.position, value, at, &px, (plot_h, 0.0), label_need(false, 0.0, font_size), value, false);
     (extent, side, zero_label_blank(&px, (plot_h, 0.0), value))
 }
 
@@ -709,14 +775,18 @@ pub(super) fn plain_label_place(
     px: &dyn Fn(f64) -> f64,
     range: (f64, f64),
     need: f64,
+    tip: f64,
+    horizontal: bool,
 ) -> (f64, Option<LabelSide>) {
     let upward = (px(1.0) - px(0.0)).signum();
     let bar_dir = if value < 0.0 { -upward } else { upward };
-    let negative = value < 0.0;
+    // A horizontal scale reads left to right; a reversed one runs a positive bar leftward, so
+    // that bar takes a negative bar's labels and a negative bar a positive one's.
+    let negative = (value < 0.0) != (horizontal && upward < 0.0);
     match position {
         "top" | "middle" | "bottom" if painted_extent(px, range, value) < need => {
             let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
-            (px(value).clamp(lo, hi), Some(LabelSide::Out(bar_dir)))
+            (px(tip).clamp(lo, hi), Some(LabelSide::Out(bar_dir)))
         }
         "top" if negative => (at, Some(LabelSide::In(bar_dir))),
         "bottom" if negative => (at, Some(LabelSide::In(-bar_dir))),
@@ -765,6 +835,9 @@ impl LabelLayer {
         if site.blank {
             return blank_at(true);
         }
+        if let (Some(funnel), Some((start, end)), "middle") = (&self.spec.funnel, site.segment, self.spec.position.as_str()) {
+            return Some(self.funnel_place(funnel, (start, end), width, center, geom));
+        }
         let inside = matches!(self.spec.position.as_str(), "top" | "middle");
         if let (true, Some((start, end))) = (self.stacked && !self.total && inside, site.segment) {
             let drawn = (geom.linear.scale(end) - geom.linear.scale(start)).abs();
@@ -782,8 +855,23 @@ impl LabelLayer {
             return blank_at(true);
         }
         let need = label_need(self.horizontal, width, self.font.size);
-        let (extent, side) = plain_label_place(&self.spec.position, site.value, at, &px, range, need);
+        let (extent, side) = plain_label_place(&self.spec.position, site.value, at, &px, range, need, site.tip, self.horizontal);
         Some(LabelPlace { center, extent, blank: false, side })
+    }
+
+    /// A funnel label centers on its bar; one that does not fit the bar's drawn width or thickness
+    /// sits just past the bar's right edge.
+    fn funnel_place(&self, funnel: &FunnelLabels, (start, end): (f64, f64), width: f64, center: f64, geom: &LabelGeometry) -> LabelPlace {
+        let (a, b) = (geom.linear.scale(start), geom.linear.scale(end));
+        let (left, right) = (a.min(b), a.max(b));
+        let band = geom.band.bandwidth();
+        let thickness = super::marks::capped_thickness((band * funnel.band_width).min(band), funnel.max_size);
+        let fits = right - left >= label_need(true, width, self.font.size) && thickness >= LABEL_FIT_LINE_HEIGHT_MULTIPLIER * self.font.size;
+        if fits {
+            LabelPlace { center, extent: (left + right) / 2.0, blank: false, side: None }
+        } else {
+            LabelPlace { center, extent: right, blank: false, side: Some(LabelSide::Out(1.0)) }
+        }
     }
 
     /// The points `mark_labels` paints, in site order. `decor` is each
@@ -1146,13 +1234,15 @@ pub(super) fn mark_labels(
     let style = LabelStyle::new(ml, horizontal, stacked, board_style)?;
     let stamped = points.iter().any(|p| p.aria.is_some());
     let mut labels = Vec::new();
+    // A label outside its bar with no series color to take reads as the neutral ink, kept readable on the canvas.
+    let neutral_outside = dbt_charts_color::ensure_readable_ink(NEUTRAL_INK, canvas, OUTSIDE_INK_CONTRAST)?;
     for point in points {
         let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, span, ref text, ref href, recede, ink, ref font_color, ref font_weight } = *point;
         let anchor = link_open.anchor(href.as_deref()).map(|anchor| crate::href::Anchor { recede, ..anchor });
         let color = font_color.as_deref().or(style.font.color.as_deref()).unwrap_or(if style.inside_bar && !matches!(side, Some(LabelSide::Out(_) | LabelSide::Bare)) {
             canvas
         } else {
-            series_fill.as_deref().unwrap_or("#313233")
+            series_fill.as_deref().unwrap_or(&neutral_outside)
         });
         let spot = label_spot(ml, &style.position, style.horizontal_offset, center, extent, span, side);
         let at = (plot_left + spot.x, plot_top + spot.y + measure::baseline_shift(spot.baseline, style.font.size));

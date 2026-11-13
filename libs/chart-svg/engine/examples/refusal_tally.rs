@@ -95,7 +95,11 @@ fn report(rows: &mut [Row]) -> String {
 fn tally(board: &str, text: &str, recordings: Option<&Path>) -> (String, Option<String>) {
     let sidecar = || recordings.map(|dir| Sidecar::read(dir, board, text)).transpose();
     match render(board, &Project::single(text), sidecar) {
-        Ok(_) => ("drawn".into(), None),
+        // A refused chart is that chart's error card; the board's outcome is its first refusal.
+        Ok(rendered) => match rendered.report.diagnostics.iter().find(|d| d.code == diagnostic::codes::ERR_ENGINE_REFUSED.id) {
+            Some(refusal) => (format!("refused: {refusal}"), None),
+            None => ("drawn".into(), None),
+        },
         Err(outcome) => outcome,
     }
 }

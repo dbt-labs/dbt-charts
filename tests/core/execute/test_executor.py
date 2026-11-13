@@ -71,7 +71,6 @@ def _run(
     executor = Run(
         board,
         env=registry or build_exec_env(project),
-        query_registry={"q": board.queries["q"]},
         result_cache=cache,
     )
     return executor.execute_query("q")[0]["v"]
@@ -97,24 +96,31 @@ def test_query_without_dbt_jinja_ignores_the_manifest(tmp_path: Path) -> None:
     executor = Run(
         board,
         env=build_exec_env(project),
-        query_registry={"q": board.queries["q"]},
         result_cache=cache,
     )
-    query = board.queries["q"]
+    entry = executor.ctx.plan["queries"]["q"]
+    assert entry["type"] == "sql"
 
     def never_resolved() -> None:
         raise AssertionError("a query without dbt Jinja must not resolve its source")
 
-    before = manifest_version(executor.ctx, query, never_resolved)
+    before = manifest_version(
+        executor.ctx, entry["sql"], entry["setup_sql"], never_resolved
+    )
     _write_manifest(tmp_path, "t_b")
     executor_after = Run(
         board,
         env=build_exec_env(project),
-        query_registry={"q": board.queries["q"]},
         result_cache=cache,
     )
 
-    assert before == "" == manifest_version(executor_after.ctx, query, never_resolved)
+    assert (
+        before
+        == ""
+        == manifest_version(
+            executor_after.ctx, entry["sql"], entry["setup_sql"], never_resolved
+        )
+    )
     assert _run(project, board, cache) == 1
 
 

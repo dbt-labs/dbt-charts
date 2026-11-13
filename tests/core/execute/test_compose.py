@@ -5,7 +5,10 @@ from dbt_charts.core.compile.models.source import CsvSourceConfig, DuckDBSourceC
 from dbt_charts.core.diagnostics.codes_execute import ERR_MUTATING_SQL
 from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.dbt_utils import DbtRefResolver
-from dbt_charts.core.execute.query_result import QueryResult, ResolvedRelation
+from dbt_charts.core.execute.query_result import (
+    QueryResult,
+    ResolvedRelation,
+)
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 from ..._compose import compose_query_fields

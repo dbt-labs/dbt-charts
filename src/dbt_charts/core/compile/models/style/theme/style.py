@@ -31,6 +31,7 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.models.schema_names import PaletteName
 from dbt_charts.core.compile.models.style.theme.annotations import AnnotationsStyle
 from dbt_charts.core.compile.models.style.theme.board import (
+    CommentsStyle,
     FrameStyle,
     PlaceholderStyle,
     RootFontStyle,
@@ -114,6 +115,11 @@ class Style(BaseModel):
     )
     charts: ChartsStyle = Field(
         description="Root of all chart-type styles and shared chart configuration."
+    )
+    # Root-only like footer/timestamp: highlights are painted over the whole
+    # board by the host, which reads the tints off the root board alone.
+    comments: Annotated[CommentsStyle, NotInherited()] = Field(
+        description="Tints of the comment highlights a hosting app paints over the board."
     )
     # One board-wide slot; resolve reads it off the cascaded tree per annotation.
     annotations: AnnotationsStyle = Field(

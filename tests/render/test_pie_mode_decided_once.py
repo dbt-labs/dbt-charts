@@ -8,6 +8,9 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.board import render_dashboard
+from dbt_charts.core.compile.models.source import (
+    DuckDBSourceConfig,
+)
 from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.project import InMemoryBoard
 
@@ -59,7 +62,12 @@ GRID_BOARD = BOARD.replace(
 
 
 def _registry(rows: list[dict[str, Any]]) -> ExecEnv:
-    return scripted_env(ScriptedBackend(rows))
+    return scripted_env(
+        ScriptedBackend(rows),
+        named_sources={
+            "examples_db": DuckDBSourceConfig(type="duckdb", path=":memory:")
+        },
+    )
 
 
 @pytest.mark.parametrize("source", [BOARD, ROWS_BOARD, NESTED_BOARD, GRID_BOARD])
@@ -264,7 +272,7 @@ rows:
     result = compile(yaml)
     assert result.success and result.board is not None, result.errors
     registry = _registry(ROWS)
-    executor = Run(result.board, env=registry, query_registry=result.query_registry)
+    executor = Run(result.board, env=registry)
     item = result.board.layout.items[0]
     item.pie_mode = "full_table"
     render(result.board, executor.ctx, executor.ledger, format="svg")
@@ -284,7 +292,6 @@ def _placed_pie_modes(yaml: str, rows: list[dict[str, Any]]) -> list[str | None]
     executor = Run(
         result.board,
         env=_registry(rows),
-        query_registry=result.query_registry,
     )
     render(result.board, executor.ctx, executor.ledger, format="svg")
 

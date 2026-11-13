@@ -16,7 +16,7 @@ use board_model::cascade;
 use board_model::facet::Color;
 use board_model::ids::{ItemId, Step};
 use board_model::names::ThemeName;
-use board_model::nested::{in_force, pie_reaches_donut, scope_patch, GapLayout};
+use board_model::nested::{in_force, family_reaches_recipe, scope_patch, GapLayout};
 use board_model::style::style::Style;
 use diagnostic::{diag, restated_text, Diagnostic, ModelPath};
 use model_core::{CascadeError, Leaf, Resolved, ToAuthored, ToPatch, Tri};
@@ -329,7 +329,7 @@ impl Walk {
         };
         let force = in_force(parent_patch, own.as_ref(), canvas, layout);
         let mut resolve = force.resolve;
-        pie_reaches_donut(&mut resolve);
+        family_reaches_recipe(&mut resolve);
         let mut folded = (**base).clone();
         let mut context = folded.clone();
         context.palettes.extend(resolve.palettes.clone());

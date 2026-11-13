@@ -1,11 +1,18 @@
-"""Checks on a mark family's ``style.conditional`` rules, shared by every family."""
+"""Checks on ``style.conditional`` rules and their aggregate operands, shared by every family."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from datetime import date
+from typing import Any, TypeVar
 
-from dbt_charts.core.compile.models.conditional_predicate import PREDICATE_KEYS
+from dbt_charts.core.compile.models.aggregate import AggregateAnchor
+from dbt_charts.core.compile.models.conditional_predicate import (
+    PREDICATE_KEYS,
+    ConditionalPredicate,
+)
+from dbt_charts.core.compile.resolve.chart._annotation_stats import aggregate
+from dbt_charts.core.utils import coerce_numeric_cell
 
 _PREDICATE_FIELDS = frozenset(PREDICATE_KEYS) | {"in_"}
 
@@ -25,19 +32,90 @@ def _patched_properties(
     return paths
 
 
-_Rules = Mapping[str, Sequence[Any]]  # type-state: explicit_any — rule models
+_Rows = Sequence[Mapping[str, Any]]  # type-state: explicit_any — query rows
+R = TypeVar("R", bound=ConditionalPredicate)
+_COMPARISONS = ("eq", "ne", "lt", "lte", "gt", "gte")
 
 
-def validate_mark_conditional(
-    conditional: _Rules | None,
-    data: Sequence[Mapping[str, Any]],  # type-state: explicit_any — query rows
+def _name(call: AggregateAnchor) -> str:
+    return (
+        f"percentile({call.percent:g})" if call.fn == "percentile" else f"{call.fn}()"
+    )
+
+
+def _computed(
+    call: AggregateAnchor,
+    cells: Sequence[Any],  # type-state: explicit_any — non-null cells
+    where: str,
+) -> Any:  # type-state: explicit_any — a cell, or a number
+    """``call`` over ``cells``. ``min()``/``max()`` give the extreme cell itself,
+    so an ``eq`` compares like with like; the rest need numbers."""
+    numbers = [coerce_numeric_cell(cell) for cell in cells]
+    if call.fn in ("min", "max"):
+        pick = min if call.fn == "min" else max
+        if all(n is not None for n in numbers):
+            return cells[numbers.index(pick(n for n in numbers if n is not None))]
+        if all(isinstance(cell, date) for cell in cells):
+            return pick(cells)
+        raise ValueError(
+            f"{where}: {_name(call)} needs a numeric or date column, got "
+            f"{next(c for c, n in zip(cells, numbers, strict=True) if n is None)!r}"
+        )
+    values = [n for n in numbers if n is not None]
+    if len(values) != len(cells):
+        raise ValueError(
+            f"{where}: {_name(call)} needs a numeric column, got "
+            f"{next(c for c, n in zip(cells, numbers, strict=True) if n is None)!r}"
+        )
+    return aggregate(call.fn, call.percent, values)
+
+
+def resolve_rule_aggregates(
+    rules: Sequence[R], column: str, data: _Rows, where: str
+) -> list[R]:
+    """``rules`` with each aggregate operand computed over every row's ``column``.
+
+    A rule whose column holds no value matches no row, so it is dropped.
+    """
+    cells = [row[column] for row in data if row.get(column) is not None]
+    out: list[R] = []
+    for rule in rules:
+        if not has_aggregate(rule):
+            out.append(rule)
+            continue
+        if not cells:
+            continue
+        update: dict[str, Any] = {  # type-state: explicit_any — computed operands
+            key: _computed(value, cells, where)
+            for key in _COMPARISONS
+            if isinstance(value := getattr(rule, key), AggregateAnchor)
+        }
+        if rule.between is not None:
+            update["between"] = [
+                _computed(b, cells, where) if isinstance(b, AggregateAnchor) else b
+                for b in rule.between
+            ]
+        out.append(rule.model_copy(update=update))
+    return out
+
+
+def has_aggregate(rule: ConditionalPredicate) -> bool:
+    operands = [getattr(rule, key) for key in _COMPARISONS]
+    if rule.between is not None:
+        operands += rule.between
+    return any(isinstance(o, AggregateAnchor) for o in operands)
+
+
+def resolve_mark_conditional(
+    conditional: Mapping[str, Sequence[R]] | None,
+    data: _Rows,
     unsupported: Sequence[str] = (),
     where: str = "style.conditional",
     y: str | list[str] | None = None,
-) -> None:
-    """Raise ValueError for a rule column the query lacks (``where`` names the block), a property under
-    ``unsupported`` (one the family accepts in the rule type but never draws), or
-    two columns that patch the same property.
+) -> dict[str, list[R]] | None:
+    """The rules with their aggregates computed, after refusing a rule column the
+    query lacks (``where`` names the block), a property under ``unsupported`` (one the family accepts in the
+    rule type but never draws), or two columns that patch the same property.
 
     Mark families paint one mark per row, so two columns' rules writing one
     property would make the winner depend on key order. A multi-y ``y`` list
@@ -45,7 +123,7 @@ def validate_mark_conditional(
     that measure's marks, so two measures may patch the same property.
     """
     if not conditional:
-        return
+        return None if conditional is None else {}
     measures = set(y) if isinstance(y, list) else set()
     available = set(data[0]) if data else set()
     owner: dict[str, str] = {}
@@ -56,7 +134,7 @@ def validate_mark_conditional(
                 f"query result. Available: {sorted(available)}"
             )
         for rule in rules:
-            body = rule.model_dump(exclude_none=True, exclude=_PREDICATE_FIELDS)
+            body = rule.model_dump(exclude_none=True, exclude=set(_PREDICATE_FIELDS))
             for path in _patched_properties(body):
                 if any(path.startswith(prefix) for prefix in unsupported):
                     raise ValueError(
@@ -70,3 +148,8 @@ def validate_mark_conditional(
                         f"patch {path}; rules on two columns may not set the same "
                         "property"
                     )
+    resolved = {
+        column: resolve_rule_aggregates(rules, column, data, f"{where}.{column}")
+        for column, rules in conditional.items()
+    }
+    return {column: rules for column, rules in resolved.items() if rules}

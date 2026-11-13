@@ -159,11 +159,11 @@ impl External<'_> {
     ) -> Result<QueryId, HoistError> {
         let (file_part, name) = spec.split_once('#').unwrap_or((spec, ""));
         if file_part.is_empty() {
-            return Err(HoistError::UnknownQuery(Box::new(diag::err_unknown_query(
+            return Err(HoistError::UnknownQuery(vec![diag::err_unknown_query(
                 chart,
                 spec,
                 known.iter().cloned().collect::<Vec<String>>(),
-            ))));
+            )]));
         }
         if name.is_empty() {
             return Err(HoistError::refused(diag::err_query_ref_invalid(spec)));

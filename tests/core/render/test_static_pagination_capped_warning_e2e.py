@@ -28,7 +28,7 @@ def _make_executor(
     rows: list[dict[str, object]],
 ) -> Run:
     mock_registry = scripted_env(ScriptedBackend(rows))
-    return Run(board, env=mock_registry, query_registry=query_registry)
+    return Run(board, env=mock_registry)
 
 
 _BOARD = """

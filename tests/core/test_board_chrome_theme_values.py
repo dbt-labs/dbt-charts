@@ -45,7 +45,7 @@ def test_authored_timestamp_gap_is_the_painted_gap() -> None:
 
 
 def test_authored_footer_divider_gap_is_reserved_and_painted() -> None:
-    divider = "  footer:\n    divider:\n      color: '#123456'\n"
+    divider = "  footer:\n    divider:\n      visible: true\n      color: '#123456'\n"
     default = _render(divider)
     wide = _render(divider + "      gap: 10\n")
 
@@ -78,3 +78,8 @@ def test_authored_recede_contrast_reaches_the_runtime() -> None:
     match = re.search(r'data-dbt-hover-emphasis="([^"]*)"', svg)
     assert match
     assert json.loads(html.unescape(match.group(1)))["recedeContrast"] == 2.5
+
+
+def test_authored_comment_tint_reaches_the_rendered_root() -> None:
+    svg = _render("  comments:\n    highlight_new: '#123456'\n")
+    assert 'data-dbt-comment-highlight-new="#123456"' in svg

@@ -225,13 +225,13 @@ rows:
 def test_a_refusal_names_the_successor_of_a_retired_key_and_keeps_the_migration_warning(
     tmp_path: Path,
 ) -> None:
-    from dbt_charts.agent_api.validate import _refusal_diagnostics
+    from dbt_charts.core.compile.engine import refusal_diagnostics
 
     proj = project(tmp_path, {"charts/a.yml": RETIRED_KEY_BOARD})
     with pytest.raises(_engine.CompileError) as raised:
         engine_compile(proj.path("charts/a.yml"))
 
-    errors = _refusal_diagnostics(raised.value)
+    errors = refusal_diagnostics(raised.value)
     zero = next(e for e in errors if e.code == "ERR-RETIRED-FIELD")
     assert (
         "'zero' at charts.revenue_trend.style.axis_y.grid was renamed" in zero.message

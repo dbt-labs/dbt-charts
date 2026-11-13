@@ -55,6 +55,12 @@ pub trait ProjectFiles {
     fn located(&self) -> bool {
         true
     }
+    /// The directory a board with no project location (`located` false) resolves its relative
+    /// references from, when the host names one: Python's `compile(yaml, base_dir=...)`. `None`
+    /// anchors nothing.
+    fn anchor(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// An in-memory project: what a host prefetches into, and what tests build.

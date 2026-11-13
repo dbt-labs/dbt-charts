@@ -62,7 +62,6 @@ def test_the_facts_carry_each_query_chart_link_and_suppression(
         "sql": "select a, b from {{ ref('orders') }}",
         "setup_sql": None,
         "dialect": None,
-        "ignore": ["WARN-FANOUT-RISK"],
     }
     assert got["column_refs"] == {"bars": [["q", "x", "a"], ["q", "y", "b"]]}
     assert got["unbound_charts"] == [

@@ -22,6 +22,10 @@ pub struct RunResult {
     /// (`current_overridden_variables`): the board's reset item is enabled by them. Run input,
     /// keyed like `variables`; the cutover's Python seam must supply it.
     pub overridden: BTreeSet<String>,
+    /// The daterange variables whose value is a preset, by name, to the preset id (`plan`'s
+    /// `variables.presets`): what a daterange control publishes and links by. A name with no
+    /// entry holds fixed dates. Run input, keyed like `variables`.
+    pub presets: IndexMap<String, String>,
     /// The charts whose query failed, each with its execute error: that chart's card.
     pub chart_errors: IndexMap<ChartId, Diagnostic>,
     pub env: RenderEnv,
@@ -37,9 +41,20 @@ impl RunResult {
     }
 }
 
+/// One query's `{rows, schema}` from the host's wire: the one place the wire's cell markers
+/// (`rows::decode_cells`) are decoded, so every family reads plain numbers and `cell_text` keeps
+/// the text the markers carried.
+pub fn dataset_of(wire: serde_json::Value) -> Result<Dataset, String> {
+    let mut dataset: Dataset = serde_json::from_value(wire).map_err(|e| e.to_string())?;
+    dataset.cell_text = crate::rows::decode_cells(&mut dataset.rows)?;
+    Ok(dataset)
+}
+
 /// The ambient inputs of a render, passed as data: the engine reads no clock or env. What the board states
 /// (its locales, language and time zone) is read from the board, never from here.
 #[derive(Debug, Clone)]
 pub struct RenderEnv {
     pub rendered_at: jiff::Timestamp,
+    /// Where the host serves boards. A board that links needs one: without it that link is an error.
+    pub link_context: Option<crate::links::LinkContext>,
 }

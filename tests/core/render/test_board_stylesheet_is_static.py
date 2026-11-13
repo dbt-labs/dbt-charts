@@ -104,6 +104,7 @@ charts:
     style:
       pagination:
         enabled: true
+        mode: pages
         page_rows: 5
       columns:
         status:

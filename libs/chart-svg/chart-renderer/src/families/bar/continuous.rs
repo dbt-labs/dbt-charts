@@ -28,6 +28,7 @@ use super::labels::{LabelPoint, LabelSpec, label_font, label_spot, mark_labels, 
 use super::layout::{Drawn, clipped_if};
 use super::legend::{grouped_legend_domain, numeric_legends_of, scatter_legend_entries};
 use super::marks::{Rounded, bar_passes, base_mark, baseline_rule_layers, baseline_rules, collapsed_bars, datum_by_key, hover_band_for, layer_bar, layer_bar_labels, link_hrefs, unity_rule};
+use super::ribbons::RibbonDraft;
 use super::tooltip::{NativeTitles, bar_datum_aria};
 use super::{BarResolved, ContinuousWidth, MarkStyle, continuous_pad_px, min_adjacent_step, min_gap, x_resolution};
 
@@ -1053,6 +1054,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         String::new()
     };
     let bars_from = plot.len();
+    let mut ribbons = RibbonDraft::new(&r.style.mark.ribbons, false, None)?;
     for ((((&(_, yv), x_text), cat), p), extra) in bars_data.iter().zip(&bar_x_text).zip(&bar_cat).zip(&placed).zip(&bar_extra) {
         let yt = y_pos(yv);
         let (top, h) = if yt <= y0 { (yt, y0 - yt) } else { (y0, yt - y0) };
@@ -1067,6 +1069,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         if ghosts_on {
             ghost_points.push((aria.clone(), p.left + p.width / 2.0, yt, ghost_ink.clone(), hrefs.get(&key).cloned()));
         }
+        ribbons.record(&key, (p.left, top, p.width, h), aria.as_deref(), None, || Ok(fill.to_string()))?;
         let patch = r.patch_of(rows, &datum_of, &key)?;
         plot.extend(bar_passes(base_mark(&datum_of, &key), false, p.left,
             top,
@@ -1084,6 +1087,12 @@ pub(super) fn render_vertical_continuous_x_panel(
             r.selection.mark(r.link_open.anchor(hrefs.get(&key).map(String::as_str))))?);
         bar_patches.push(patch);
     }
+    // Rows arrive in query order; the bars sit in x order, one stop per distinct x.
+    let mut drawn: Vec<(f64, &String)> = bars_data.iter().map(|&(x, _)| x).zip(&bar_cat).collect();
+    drawn.sort_by(|a, b| a.0.total_cmp(&b.0));
+    drawn.dedup_by(|a, b| a.1 == b.1);
+    let drawn: Vec<String> = drawn.into_iter().map(|(_, cat)| cat.clone()).collect();
+    ribbons.paint(&mut plot, bars_from, false, &drawn, &r.canvas)?;
     let knocked = crate::knockout::knock_out(
         plot.split_off(bars_from),
         &r.canvas,

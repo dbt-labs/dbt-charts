@@ -52,7 +52,6 @@ def test_tab_link_drops_injected_context_and_keeps_declared_variables() -> None:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
 
     rendered = render(

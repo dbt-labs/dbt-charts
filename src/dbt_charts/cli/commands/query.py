@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import json
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -20,8 +21,9 @@ if TYPE_CHECKING:
         QueryBoardResult,
     )
     from dbt_charts.agent_api.validate_query import QueryDiagnostic
+    from dbt_charts.cli.filesystem_project import FilesystemProject
 
-from dbt_charts.agent_api import DbtChartsError, Project
+from dbt_charts.agent_api import DbtChartsError
 from dbt_charts.agent_api._paths import BOARD_CANDIDATE_SUFFIXES
 from dbt_charts.agent_api.query_csv import BOARD_QUERY_HINT, SQL_QUERY_HINT, with_csv
 from dbt_charts.cli._console import dct_console
@@ -260,11 +262,17 @@ def query_command(
     vars: dict[str, Any] | None = None,
     show_suppressed: bool = False,
     json_output: bool = False,
+    cache_path: Path | None = None,
     *,
-    project: Project,
+    project: FilesystemProject,
 ) -> None:
-    """Run a named board query, raw SQL, or static SQL lint — selected from the input args."""
+    """Run a named board query, raw SQL, or static SQL lint — selected from the input args.
+
+    ``cache_path`` is opt-in: only with it does a board query's
+    ``{{ queries.X.cache }}`` read a persistent file instead of an in-memory cache.
+    """
     from dbt_charts.agent_api import ProjectSession
+    from dbt_charts.agent_api.cache import project_cache_ctx
     from dbt_charts.agent_api.query import MAX_QUERY_LIMIT
 
     if context is None and query_text is None and file is None and not validate:
@@ -325,7 +333,15 @@ def query_command(
     # All branches open a ProjectSession so relationship context is available for
     # validate paths (raw-SQL validate-only was previously a stateless short-
     # circuit; it now routes through project_session.validate_query for calibrated severity).
-    with ProjectSession.from_project(project) as project_session:
+    with ExitStack() as stack:
+        session_kwargs: dict[str, Any] = {}
+        if cache_path is not None:
+            session_kwargs["cache"] = stack.enter_context(
+                project_cache_ctx(project, cache_path=cache_path)
+            )
+        project_session = stack.enter_context(
+            ProjectSession.from_project(project, **session_kwargs)
+        )
         if not validate:
             # Execute path — keep the named-query branch as a direct query_board call so
             # that file-not-found and compile errors are returned as structured JSON

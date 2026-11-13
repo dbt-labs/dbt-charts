@@ -23,13 +23,16 @@ use std::cell::RefCell;
 
 const NO_LOCATION: &str = " \u{2014} a board with no project location";
 
-/// Where the board text sits for the compile; it is never a file of the project.
+/// The name the board text compiles under; it is never a file of the project.
 const BOARD: &str = ".pathless.yml";
 
 struct Pathless<'a> {
     inner: &'a dyn ProjectFiles,
     text: &'a str,
     board: ProjectPath,
+    /// The directory the board's relative references resolve from, when the host names one: the
+    /// project then answers every read but a `meta.yml`, since the board sits at no file.
+    anchor: Option<String>,
     /// Files the board reached for that a pathless board cannot have, in the order asked.
     unreachable: RefCell<Vec<String>>,
 }
@@ -59,6 +62,9 @@ impl Pathless<'_> {
     fn out_of_reach(&self, path: &ProjectPath) -> bool {
         if *path == self.board || Self::is_config(path) || Self::is_template(path) {
             return false;
+        }
+        if self.anchor.is_some() {
+            return Self::is_meta(path);
         }
         if !Self::is_meta(path) {
             self.unreachable
@@ -101,31 +107,41 @@ impl ProjectFiles for Pathless<'_> {
     fn located(&self) -> bool {
         false
     }
+
+    fn anchor(&self) -> Option<&str> {
+        self.anchor.as_deref()
+    }
 }
 
 fn view<'a>(
     inner: &'a dyn ProjectFiles,
     text: &'a str,
+    anchor: Option<&str>,
 ) -> Result<(Pathless<'a>, ProjectPath), CompileError> {
-    let board = ProjectPath::try_from(BOARD)
-        .map_err(|e| CompileError::Invalid(vec![diag::err_internal(format!("{BOARD}: {e}"))]))?;
+    let name = anchor.map_or_else(|| BOARD.to_string(), |dir| format!("{dir}/{BOARD}"));
+    let board = ProjectPath::try_from(name.as_str())
+        .map_err(|e| CompileError::Invalid(vec![diag::err_internal(format!("{name}: {e}"))]))?;
     let files = Pathless {
         inner,
         text,
         board: board.clone(),
+        anchor: anchor.map(String::from),
         unreachable: RefCell::default(),
     };
     Ok((files, board))
 }
 
 /// `text` compiled as a board with no project location, against `files` for the project's own
-/// configuration only; a refusal keeps the migration notices that preceded it.
+/// configuration only, or, with an `anchor` directory, for every file but a `meta.yml` (the board
+/// has no cascade, but its relative references resolve from `anchor`); a refusal keeps the
+/// migration notices that preceded it.
 pub fn compile_text_or_refuse(
     files: &dyn ProjectFiles,
     text: &str,
     host: &HostInputs,
+    anchor: Option<&str>,
 ) -> Result<CompiledBoard, Box<Refusal>> {
-    let (pathless, board) = view(files, text).map_err(|error| {
+    let (pathless, board) = view(files, text, anchor).map_err(|error| {
         Box::new(Refusal {
             error,
             warnings: Vec::new(),
@@ -161,7 +177,7 @@ pub fn wire_refusal(
     today: migrate::Date,
 ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), CompileError> {
     let only_the_board = MemoryFiles::default();
-    let (files, board) = view(&only_the_board, text)?;
+    let (files, board) = view(&only_the_board, text, None)?;
     Ok((
         refusal.error.wire_diagnostics(&files, &board, today),
         wire_located(refusal.warnings.clone(), &files, &board, today),

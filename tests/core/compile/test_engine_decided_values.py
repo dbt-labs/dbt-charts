@@ -129,7 +129,7 @@ def _baked_bar_table(
     ctx = resolve_chart_style_context(
         theme.model_copy(update={"charts": charts}), StylePatch.model_validate(patch)
     )
-    return bake_neutral_ink(resolve_effective_support_table_style(ctx, "bar"))[0]
+    return bake_neutral_ink(resolve_effective_support_table_style(ctx, "bar"), None)[0]
 
 
 def test_unset_label_color_follows_the_table_font_color() -> None:

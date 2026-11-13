@@ -1,8 +1,8 @@
 //! `chart/authored/_support_table.py`: the mini data-grid attached to a bar, line or area chart.
 //!
 //! A `support_table:` is the entries themselves or `{entries: [...]}`; an entry is a bare column
-//! name, `{source: ..}`, `{aggregate: .., source: ..}` or `{per_series: ..}`, told apart by which
-//! of `aggregate` / `per_series` it holds. Both shorthands are accepted here, once.
+//! name, `{source: ..}`, `{aggregate: .., source: ..}`, `{per_series: ..}` or `{percent: ..}`, told
+//! apart by which of `aggregate` / `per_series` / `percent` it holds. Both shorthands are accepted here, once.
 //!
 //! The cross-entry rules are the one hand-written part ([`shape`]): a duplicate row has no
 //! `constraint` kind, which tests a field's value or a list's items by pattern, never two items
@@ -57,6 +57,19 @@ pub struct SupportTableAggregate {
     pub label: Option<DisplayText>,
 }
 
+/// A row that reads a column as a share of the first stage. Funnel charts only.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct SupportTablePercent {
+    /// Query column whose value, at each stage, prints as a share of the first stage's value. Funnel charts only.
+    pub percent: String,
+    /// D3 format string or format config object. Prints as a percentage when omitted.
+    #[model(absent = "a percentage")]
+    pub format: Option<FormatSpec>,
+    /// Column header label override for this row.
+    #[model(absent = "the column name")]
+    pub label: Option<DisplayText>,
+}
+
 /// An entry that expands into one row per `color:` series.
 ///
 /// With `by_measure: true` it expands into a single row reading the named y field directly,
@@ -83,6 +96,7 @@ pub enum SupportTableEntry {
     Source(<SupportTableSource as Leaf>::Whole),
     Aggregate(<SupportTableAggregate as Leaf>::Whole),
     PerSeries(<SupportTablePerSeries as Leaf>::Whole),
+    Percent(<SupportTablePercent as Leaf>::Whole),
 }
 
 impl ReadScalar for SupportTableEntry {
@@ -93,6 +107,9 @@ impl ReadScalar for SupportTableEntry {
             }
             if m.contains_key("per_series") {
                 return <SupportTablePerSeries as FromNode>::whole(node, cx).map(Self::PerSeries);
+            }
+            if m.contains_key("percent") {
+                return <SupportTablePercent as FromNode>::whole(node, cx).map(Self::Percent);
             }
         }
         <SupportTableSource as FromNode>::whole(node, cx).map(Self::Source)
@@ -112,6 +129,7 @@ impl Spell for SupportTableEntry {
             }
             Self::Aggregate(a) => a.spell(),
             Self::PerSeries(p) => p.spell(),
+            Self::Percent(p) => p.spell(),
         }
     }
 }
@@ -128,9 +146,15 @@ union_leaf!(
                 "SupportTableAggregate",
                 <SupportTableAggregate as ::model_core::Model>::info
             ),
-            &::model_core::TypeExpr::Ref(
-                "SupportTablePerSeries",
-                <SupportTablePerSeries as ::model_core::Model>::info
+            &::model_core::TypeExpr::Either(
+                &::model_core::TypeExpr::Ref(
+                    "SupportTablePerSeries",
+                    <SupportTablePerSeries as ::model_core::Model>::info
+                ),
+                &::model_core::TypeExpr::Ref(
+                    "SupportTablePercent",
+                    <SupportTablePercent as ::model_core::Model>::info
+                ),
             ),
         ),
     )
@@ -140,7 +164,7 @@ union_leaf!(
 #[derive(Debug, Clone, PartialEq, Model)]
 #[model(constraint(requires(entries, nonempty(entries))))]
 pub struct SupportTable {
-    /// List of support-table entries (source, aggregate, or per-series rows). A source entry may be written as a bare column name (`revenue` in place of `{source: revenue}`), the same scalar-listable spelling `y:` uses.
+    /// List of support-table entries (source, aggregate, per-series, or percent rows). A source entry may be written as a bare column name (`revenue` in place of `{source: revenue}`), the same scalar-listable spelling `y:` uses.
     pub entries: Vec<SupportTableEntry>,
 }
 
@@ -200,7 +224,13 @@ union_leaf!(
                             "SupportTablePerSeries",
                             <SupportTablePerSeries as ::model_core::Model>::info
                         ),
-                        &::model_core::TypeExpr::Scalar(::model_core::Scalar::Str),
+                        &::model_core::TypeExpr::Either(
+                            &::model_core::TypeExpr::Ref(
+                                "SupportTablePercent",
+                                <SupportTablePercent as ::model_core::Model>::info
+                            ),
+                            &::model_core::TypeExpr::Scalar(::model_core::Scalar::Str),
+                        ),
                     ),
                 ),
             )),
@@ -230,6 +260,13 @@ impl SupportTableSpec {
                         diagnostic::py_repr(&serde_json::Value::String(name.clone()))
                     );
                     ((name, None, true), label)
+                }
+                SupportTableEntry::Percent(e) => {
+                    let Some(column) = e.percent.clone() else {
+                        continue;
+                    };
+                    let what = format!("{{percent: {column}}}");
+                    ((column, Some("percent".to_string()), false), duplicate(&what))
                 }
                 SupportTableEntry::Aggregate(e) => {
                     let (Some(agg), Some(source)) = (e.aggregate, e.source.clone()) else {

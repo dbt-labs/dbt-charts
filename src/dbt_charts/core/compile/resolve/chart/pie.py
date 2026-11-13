@@ -34,14 +34,14 @@ from dbt_charts.core.compile.models.style.theme import (
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
     color_legend_entries,
-    legend_row_fits,
+    legend_wrap_columns,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _channels_for,
     _column_numeric_values,
 )
 from dbt_charts.core.compile.resolve.chart._conditional import (
-    validate_mark_conditional,
+    resolve_mark_conditional,
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
@@ -151,7 +151,7 @@ def _resolve_pie(
     primary = _with_color_tokens(normalized.style, chart_style_context)
     board_pie = board_family_style(chart_style_context, normalized)
     pie = merge_unset(board_pie, primary)
-    validate_mark_conditional(pie.conditional, data)
+    pie_conditional = resolve_mark_conditional(pie.conditional, data)
     # The center total and every slice tooltip vote on one set (theta values
     # plus their sum) so they never disagree about the same sub-$1 value --
     # see resolve_format_parts_for_values's per-set contract.
@@ -456,7 +456,7 @@ def _resolve_pie(
             layout_padding=pie.padding,
             suppress_legend=True,
             radial_legend=True,
-            wrap_legend=not legend_row_fits(
+            wrap_columns=legend_wrap_columns(
                 color_legend_entries(channels, data, resolved_color_field),
                 width,
                 merge_legend(chart_style_context.legend, pie.legend),
@@ -480,7 +480,7 @@ def _resolve_pie(
             ),
             slice_mark=effective_slice_mark,
             tooltip_format=tooltip_format,
-            conditional=pie.conditional,
+            conditional=pie_conditional,
             total_style=total_style,
             title_font=_tf,
         ),

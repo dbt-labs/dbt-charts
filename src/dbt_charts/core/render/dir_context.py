@@ -36,6 +36,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from dbt_charts.core.compile.config import get_inspector_config
+from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
     Project,
@@ -321,6 +322,12 @@ def lazy_dir_context(
         "siblings": siblings,
         "tree": tree,
     }
+
+
+def eager_values(builtins: VariableValues) -> VariableValues:
+    """*builtins* without the lazy ones: a query binds only what costs nothing to read, since
+    forcing ``siblings`` or ``tree`` scans the project on every render."""
+    return {k: v for k, v in builtins.items() if not isinstance(v, _Lazy)}
 
 
 def directory_listing(

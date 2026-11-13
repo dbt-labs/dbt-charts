@@ -61,7 +61,6 @@ def _svg(source: str, base_dir: Path | None = None) -> str:
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
         clock=pinned_clock,
     )
     output = render(result.board, executor.ctx, executor.ledger, format="svg").output

@@ -45,7 +45,6 @@ def _warnings(chart_type: str) -> list[str]:
     executor = Run(
         result.board,
         env=mock_registry,
-        query_registry=result.query_registry,
     )
     rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert rendered.board_error is None and rendered.output

@@ -43,8 +43,7 @@ use crate::common::format_kpi_parts;
 use crate::common::KpiParts;
 use crate::common::py_rstrip;
 use ::bind::rows::tag_at;
-use ::bind::rows::CellRow;
-use ::bind::rows::CellTag;
+use ::column_types::{CellRow, CellTag};
 use crate::common::FormatParts;
 use crate::common::FormatSlot;
 use crate::common::PartsOptions;
@@ -183,11 +182,12 @@ pub(super) fn apply_rule_outputs(
 /// "no overrides", same as production's `if not when_rules: return {}`.
 pub(crate) fn resolve_conditional_styles(
     rules: &[WhenRule],
+    column: &str,
     value: Option<&Value>,
     tones: Option<&TonesStyle>,
-) -> Result<RuleOverrides, String> {
+) -> Result<RuleOverrides, Diagnostic> {
     let mut result = RuleOverrides::default();
-    for rule in conditional::matching(rules, |r| &r.predicate, value)? {
+    for rule in conditional::matching(rules, |r| &r.predicate, column, value)? {
         apply_rule_outputs(rule, &mut result, tones)?;
     }
     Ok(result)
@@ -202,12 +202,12 @@ pub(super) fn resolve_row_cell_style(
     column: &str,
     row: &serde_json::Map<String, Value>,
     tones: Option<&TonesStyle>,
-) -> Result<RuleOverrides, String> {
+) -> Result<RuleOverrides, Diagnostic> {
     let mut paint = RuleOverrides::default();
     let mut cell = RuleOverrides::default();
     for (tested, column_rules) in rules {
         let value = row.get(tested).filter(|v| !v.is_null());
-        for rule in conditional::matching(column_rules, |r| &r.row.predicate, value)? {
+        for rule in conditional::matching(column_rules, |r| &r.row.predicate, tested, value)? {
             apply_rule_outputs(&rule.row, &mut paint, tones)?;
             if let Some(patch) = rule.cell(column) {
                 apply_rule_outputs(patch, &mut cell, tones)?;
@@ -250,14 +250,14 @@ pub(super) fn resolve_cell_glyph(
     col: &ColMeta,
     row: &serde_json::Map<String, Value>,
     value: Option<&Value>,
-) -> Result<Option<String>, String> {
-    let overrides =
-        resolve_conditional_styles(&col.when_rules, value, None).map_err(|e| format!("table: {e}"))?;
+) -> Result<Option<String>, Diagnostic> {
+    let overrides = resolve_conditional_styles(&col.when_rules, &col.name, value, None)
+        .map_err(|e| e.in_context("table"))?;
     if overrides.glyph.is_some() {
         return Ok(overrides.glyph);
     }
     let row_style = resolve_row_cell_style(&col.row_rules, col.name.as_str(), row, None)
-        .map_err(|e| format!("table: {e}"))?;
+        .map_err(|e| e.in_context("table"))?;
     Ok(row_style.glyph.or_else(|| col.cfg.glyph.clone()))
 }
 
@@ -292,7 +292,7 @@ pub(super) fn cell_text_with_glyph(
     row: &serde_json::Map<String, Value>,
     raw_value: Option<&Value>,
     rendered: &str,
-) -> Result<String, String> {
+) -> Result<String, Diagnostic> {
     if !glyph_possible(col) {
         return Ok(rendered.to_string());
     }
@@ -539,7 +539,7 @@ pub(super) fn resolve_cell_style(
     scale_rows: &[&serde_json::Map<String, Value>],
     row_role: RowRole,
     tones: Option<&TonesStyle>,
-) -> Result<RuleOverrides, String> {
+) -> Result<RuleOverrides, Diagnostic> {
     // With a scale the column's static fill and ink are read unresolved
     // (`resolve_cell_conditional_styles`): a field reference is no color there.
     // Without one the fill resolves per row and the ink is `column_font_lanes`'.
@@ -554,7 +554,7 @@ pub(super) fn resolve_cell_style(
         .and_then(sanitized_color);
     // Row rules sit over the static paint and under the scale and the column's own rules.
     let row_style = resolve_row_cell_style(&col.row_rules, col.name.as_str(), row, tones)
-        .map_err(|e| format!("table: {e}"))?;
+        .map_err(|e| e.in_context("table"))?;
     if row_style.tone_needs_board_tones {
         return Err("table: conditional rule tone with no board tones".into());
     }
@@ -607,8 +607,8 @@ pub(super) fn resolve_cell_style(
         }
     }
 
-    let overrides = resolve_conditional_styles(&col.when_rules, value, tones)
-        .map_err(|e| format!("table: {e}"))?;
+    let overrides = resolve_conditional_styles(&col.when_rules, &col.name, value, tones)
+        .map_err(|e| e.in_context("table"))?;
     // The one caller that actually paints `glyph_color` — a matched tone
     // rule that needed board tones and had none is a genuinely malformed
     // payload here (production's own `tones` is a required board field,

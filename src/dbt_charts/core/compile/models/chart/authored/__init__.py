@@ -77,8 +77,10 @@ from ._support_table import (
     ChartSupportTableAggregateOp,
     ChartSupportTableEntry,
     ChartSupportTableOrList,
+    ChartSupportTablePercent,
     ChartSupportTablePerSeries,
     ChartSupportTableSource,
+    support_table_column,
     validate_support_table_shape,
 )
 from ._tooltip import ChartTooltip, TooltipField
@@ -122,6 +124,7 @@ def _discriminate_authored_chart(v: Any) -> str | None:
 AuthoredChart = Annotated[
     Annotated[BarChart, Tag("bar")]
     | Annotated[BarChart, Tag("histogram")]
+    | Annotated[BarChart, Tag("funnel")]
     | Annotated[LineChart, Tag("line")]
     | Annotated[AreaChart, Tag("area")]
     | Annotated[ScatterChart, Tag("scatter")]
@@ -214,7 +217,9 @@ __all__ = [
     "ChartSupportTableEntry",
     "ChartSupportTableOrList",
     "ChartSupportTablePerSeries",
+    "ChartSupportTablePercent",
     "ChartSupportTableSource",
+    "support_table_column",
     "validate_support_table_shape",
     # tooltip
     "ChartTooltip",

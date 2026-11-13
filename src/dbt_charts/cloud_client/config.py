@@ -89,7 +89,7 @@ class PendingLogin(BaseModel):
 
 
 class PendingConnect(BaseModel):
-    """A GitHub repo pick ``dct cloud project connect github --start`` began but has
+    """A GitHub connect ``dct cloud project connect github --start`` began but has
     not finished.
 
     Persisted next to the token so ``--wait`` can resume it from a separate
@@ -97,8 +97,9 @@ class PendingConnect(BaseModel):
     device-code equivalent here: Cloud's repo-pick endpoint is keyed by
     ``(caller, org)``, not a token this client mints, so ``org``/``host`` are
     the whole server-side handle -- resuming means polling that same org
-    again (``CloudClient.wait_for_pick``). The rest is exactly what
-    ``create_project_from_pick`` needs once the pick lands.
+    again (``CloudClient.wait_for_pick``), which answers at once when the pick
+    was already verified. The rest is exactly what ``create_project_from_pick``
+    needs once the pick lands.
     """
 
     model_config = ConfigDict(extra="forbid")

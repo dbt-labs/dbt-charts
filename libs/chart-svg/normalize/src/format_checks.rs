@@ -474,6 +474,12 @@ fn check_alias_cycle(name: &str, aliases: &Aliases) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// Whether *key* names one of *returned*, ignoring letter case as a result-column reference does.
+fn names_a_column(key: &str, returned: &BTreeSet<&str>) -> bool {
+    let folded = key.to_lowercase();
+    returned.iter().any(|column| column.to_lowercase() == folded)
+}
+
 /// One query's `formats:`, as `_validate_query_formats` reads it. `returned` is the column set of
 /// a values query whose columns are literal.
 fn check_query_formats(
@@ -508,7 +514,7 @@ fn check_query_formats(
     }
     if let Some((column, _)) = formats
         .iter()
-        .find(|(c, _)| !returned.is_empty() && !returned.contains(c))
+        .find(|(c, _)| !returned.is_empty() && !names_a_column(c, returned))
     {
         let columns = returned.iter().copied().collect::<Vec<_>>().join(", ");
         return Err(diag::err_query_format_column_missing(
@@ -601,7 +607,7 @@ fn chart_slots(chart: &ChartAuthored) -> Vec<Found> {
     }
     match chart {
         C::Scatter(c) => walk!(c),
-        C::Bar(c) | C::Histogram(c) => walk!(c),
+        C::Bar(c) | C::Histogram(c) | C::Funnel(c) => walk!(c),
         C::Line(c) => walk!(c),
         C::Area(c) => walk!(c),
         C::Callout(c) => walk!(c),

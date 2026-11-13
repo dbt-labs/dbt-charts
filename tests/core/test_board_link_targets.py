@@ -8,7 +8,9 @@ from unittest.mock import MagicMock, patch
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import BoardRenderResult, render_dashboard
+from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.source_registry import SourceRegistry
 from dbt_charts.core.project import InMemoryBoard
 from dbt_charts.core.render.render_result import RenderResult
 
@@ -53,6 +55,11 @@ def _compile_only(project: FilesystemProject, link: str) -> BoardRenderResult:
 
 def _full_render(project: FilesystemProject, link: str) -> BoardRenderResult:
     render_result = RenderResult(output='{"id": "test", "title": "Board", "items": []}')
+    # Only planning reads the env; `render` and `make_context` are patched out.
+    env = MagicMock(spec=ExecEnv)
+    env.sources = SourceRegistry(ProjectSourcesConfig())
+    env.release_thread = lambda: None
+    env.project = project
     with (
         patch("dbt_charts.core.board.render", return_value=render_result),
         patch("dbt_charts.core.board.make_context"),
@@ -61,7 +68,7 @@ def _full_render(project: FilesystemProject, link: str) -> BoardRenderResult:
             board=InMemoryBoard(
                 _BOARD.format(link=link), path=project.path("charts/people.yml")
             ),
-            env=MagicMock(spec=ExecEnv),
+            env=env,
             format="json",
             project=project,
             result_cache=None,

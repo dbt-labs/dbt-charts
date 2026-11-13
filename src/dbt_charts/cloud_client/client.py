@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any, TypeVar
 from urllib.parse import quote
 
@@ -39,6 +40,8 @@ from dbt_charts.cloud_client.contract import (
     AuditList,
     AuthorizationServerMetadata,
     BoardList,
+    CommentList,
+    CommentThread,
     ConnectionAccessList,
     ConnectionList,
     ConnectionTestResult,
@@ -59,6 +62,7 @@ from dbt_charts.cloud_client.contract import (
     OrgList,
     OrgStatus,
     OrgSummary,
+    ProjectConnectStarted,
     ProjectList,
     ProjectSettings,
     ProjectSummary,
@@ -75,6 +79,7 @@ from dbt_charts.cloud_client.contract import (
 from dbt_charts.cloud_client.errors import (
     ApiFailed,
     CloudError,
+    CloudTooOld,
     CredentialMissing,
     DeviceLoginFailed,
     InvalidCredential,
@@ -104,7 +109,7 @@ CLIENT_ID = "dct"
 # What `dct cloud login` requests. Every verb the CLI can reach needs some
 # atom of this, and the device grant asks once, up front, rather than
 # escalating scope per verb.
-DEVICE_LOGIN_SCOPE = "dashboards:read orgs:admin projects:admin connections:admin"
+DEVICE_LOGIN_SCOPE = "dashboards:read orgs:admin projects:admin connections:admin comments:read comments:write"
 DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 DISCOVERY_PATH = "/.well-known/oauth-authorization-server"
 # RFC 8628's own backoff: a `slow_down` response widens the poll interval by
@@ -115,6 +120,24 @@ SLOW_DOWN_BACKOFF_SECONDS = 5.0
 BATCH_ENDING = frozenset({401, 403, 429})
 
 
+@dataclass(frozen=True)
+class GitHubConnectBegun:
+    """Where a GitHub connect stands once begun: ``picked`` is the repository
+    already verified (no browser step needed), else ``url`` is where a person
+    authorizes GitHub. ``notes`` are lines for the user about how it got here."""
+
+    url: str
+    picked: str | None
+    notes: list[str]
+
+
+_BROWSER_INSTEAD_NOTE = "Continuing with a browser step instead."
+_TOO_OLD_NOTE = (
+    "This deployment predates naming the repository in the connect call, so"
+    " you will pick it in the browser."
+)
+
+
 def _seg(value: str) -> str:
     """One URL path segment from user input (a slug, an email). httpx resolves
     dot segments and splits on ``?``/``#`` before sending, so any of them would
@@ -122,6 +145,18 @@ def _seg(value: str) -> str:
     if value in {".", ".."}:
         raise InvalidPathSegment(value)
     return quote(value, safe="")
+
+
+def _comments_path(org: str, project: str, board: str, *rest: str) -> str:
+    """A board's comments route. A board path keeps its slashes (each part is
+    still one checked segment); the ids after it are single segments."""
+    board_path = "/".join(_seg(part) for part in board.split("/"))
+    return "/".join(
+        [
+            f"/orgs/{_seg(org)}/projects/{_seg(project)}/boards/{board_path}/comments",
+            *map(_seg, rest),
+        ]
+    )
 
 
 class CloudClient:
@@ -526,6 +561,100 @@ class CloudClient:
             "GET", f"/orgs/{_seg(org)}/projects/{_seg(project)}/boards", BoardList
         )
 
+    # --- comments ----------------------------------------------------------
+
+    def list_comments(
+        self,
+        org: str,
+        project: str,
+        board: str,
+        status: str,
+        owner: str | None,
+        review: str | None,
+    ) -> CommentList:
+        return self._request(
+            "GET",
+            _comments_path(org, project, board),
+            CommentList,
+            params={
+                "status": status,
+                **({"owner": owner} if owner else {}),
+                **({"review": review} if review else {}),
+            },
+        )
+
+    def add_comment(
+        self,
+        org: str,
+        project: str,
+        board: str,
+        owner: str,
+        body: str,
+        quote: str | None,
+        review: str | None,
+        mentions: list[str],
+    ) -> CommentThread:
+        return self._request(
+            "POST",
+            _comments_path(org, project, board),
+            CommentThread,
+            payload={
+                "owner": owner,
+                "body": body,
+                **({} if quote is None else {"quote": quote}),
+                **({} if review is None else {"review": review}),
+                **({"mentions": mentions} if mentions else {}),
+            },
+        )
+
+    def reply_comment(
+        self,
+        org: str,
+        project: str,
+        board: str,
+        thread: str,
+        body: str,
+        mentions: list[str],
+    ) -> CommentThread:
+        return self._request(
+            "POST",
+            _comments_path(org, project, board, thread, "replies"),
+            CommentThread,
+            payload={"body": body, **({"mentions": mentions} if mentions else {})},
+        )
+
+    def edit_comment(
+        self,
+        org: str,
+        project: str,
+        board: str,
+        comment: str,
+        body: str,
+        mentions: list[str],
+    ) -> CommentThread:
+        return self._request(
+            "PATCH",
+            _comments_path(org, project, board, comment),
+            CommentThread,
+            payload={"body": body, **({"mentions": mentions} if mentions else {})},
+        )
+
+    def resolve_comment(
+        self, org: str, project: str, board: str, thread: str
+    ) -> CommentThread:
+        return self._request(
+            "POST",
+            _comments_path(org, project, board, thread, "resolve"),
+            CommentThread,
+        )
+
+    def reopen_comment(
+        self, org: str, project: str, board: str, thread: str
+    ) -> CommentThread:
+        return self._request(
+            "POST", _comments_path(org, project, board, thread, "reopen"), CommentThread
+        )
+
     # --- the GitHub handoff ------------------------------------------------
 
     def latest_pick(self, org: str) -> RepoPick:
@@ -535,6 +664,61 @@ class CloudClient:
         design on the server's side.
         """
         return self._request("GET", f"/orgs/{_seg(org)}/github/pick", RepoPick)
+
+    def prove_pick(self, org: str, full_name: str, github_token: str) -> RepoPick:
+        """Record *full_name* as this caller's pick, proven by their GitHub token."""
+        return self._post_new_route(
+            f"/orgs/{_seg(org)}/github/pick",
+            RepoPick,
+            {"full_name": full_name, "github_token": github_token},
+        )
+
+    def start_connect(self, org: str, full_name: str) -> ProjectConnectStarted:
+        """A connect URL that carries the repository to record on return."""
+        return self._post_new_route(
+            f"/orgs/{_seg(org)}/github/connect",
+            ProjectConnectStarted,
+            {"full_name": full_name},
+        )
+
+    def begin_github_connect(
+        self, org: str, full_name: str | None, github_token: str | None
+    ) -> GitHubConnectBegun:
+        """Begin a GitHub connect in the least-browser way the inputs allow.
+
+        A token and a repo try the proof; a refused proof (validation_failed with no field
+        errors) is a note and the connect continues. A repo alone, or a
+        deployment without the proof, falls to the connect URL.
+        """
+        notes: list[str] = []
+        too_old = False
+        if full_name is not None and github_token is not None:
+            try:
+                self.prove_pick(org, full_name, github_token)
+            except ApiFailed as exc:
+                refused = (
+                    exc.api_error.code is ErrorCode.VALIDATION_FAILED
+                    and not exc.api_error.field_errors
+                )
+                if not refused:
+                    raise
+                notes.append(exc.api_error.message)
+                notes.append(_BROWSER_INSTEAD_NOTE)
+            except CloudTooOld:
+                too_old = True
+            else:
+                return GitHubConnectBegun(
+                    url=self.connect_url(org), picked=full_name, notes=notes
+                )
+        url = self.connect_url(org)
+        if full_name is not None:
+            try:
+                url = self.start_connect(org, full_name).url
+            except CloudTooOld:
+                too_old = True
+        if too_old:
+            notes.append(_TOO_OLD_NOTE)
+        return GitHubConnectBegun(url=url, picked=None, notes=notes)
 
     def wait_for_pick(
         self,
@@ -711,6 +895,16 @@ class CloudClient:
             raise UnexpectedResponse(
                 url, response.status_code, str(exc), skew=skew
             ) from exc
+
+    def _post_new_route(self, path: str, model: type[M], payload: dict[str, Any]) -> M:
+        """A POST to an endpoint older deployments lack: their answer is a bare
+        404/405, not the API's error body, and that is ``CloudTooOld``."""
+        try:
+            return self._request("POST", path, model, payload=payload)
+        except UnexpectedResponse as exc:
+            if exc.status_code in {404, 405}:
+                raise CloudTooOld(self.host, f"/api{path}") from exc
+            raise
 
     def _send(
         self,

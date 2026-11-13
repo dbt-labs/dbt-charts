@@ -93,7 +93,6 @@ def _render_as(board: str, fmt: str) -> str:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     output = render(result.board, executor.ctx, executor.ledger, format=fmt).output
     assert isinstance(output, str)

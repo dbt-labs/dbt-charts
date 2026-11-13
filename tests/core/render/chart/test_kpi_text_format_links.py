@@ -74,7 +74,6 @@ def test_yaml_output_emits_no_link_for_a_format_implied_one() -> None:
     executor = Run(
         board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     out = render(board, executor.ctx, executor.ledger, format="yaml").output
     assert "link:" not in out

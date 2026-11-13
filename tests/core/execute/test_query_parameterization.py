@@ -142,7 +142,6 @@ rows:
             executor = Run(
                 result.board,
                 env=registry,
-                query_registry=result.query_registry,
                 use_cache=False,
             )
             executor.execute_query("users", {"name": malicious})
@@ -220,7 +219,6 @@ class TestPlaceholderShapedLiteralsThroughExecutor:
                 executor = Run(
                     result.board,
                     env=registry,
-                    query_registry=result.query_registry,
                     use_cache=False,
                 )
                 exec_result = executor.execute_query(query_name, variables)

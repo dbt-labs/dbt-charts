@@ -45,6 +45,7 @@ from dbt_charts.core.compile.models.style.theme.kpi import (
     KpiGlyphSet,
 )
 from dbt_charts.core.compile.resolve.chart._channels import _channels_for
+from dbt_charts.core.compile.resolve.chart._conditional import has_aggregate
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
@@ -124,7 +125,7 @@ def _resolve_kpi(
         automatic_link_candidate=automatic_link_candidate,
         layout_padding=kpi.padding,
         legendless=True,
-        wrap_legend=False,
+        wrap_columns=None,
     )
     support = normalized.support
     support_rules = (
@@ -243,6 +244,11 @@ def _validate_kpi_conditional(kpi: KpiChartStyle, available: set[str]) -> None:
             raise ValueError(
                 f"style.conditional targets column '{column}' which is not in the "
                 f"query result. Available: {sorted(available)}"
+            )
+        if any(has_aggregate(rule) for rule in rules):
+            raise ValueError(
+                f"style.conditional.{column}: a KPI reads one row, so a rule "
+                "cannot take an aggregate function; name a literal"
             )
         for rule in rules:
             support_font = rule.support.font if rule.support is not None else None
@@ -366,7 +372,7 @@ def _resolve_spark_bar(
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=spark_bar.padding,
             legendless=True,
-            wrap_legend=False,
+            wrap_columns=None,
         ),
         **_shared_kwargs(normalized, display_text, chart_local_style_context),
         chart_type="spark_bar",

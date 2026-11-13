@@ -495,6 +495,15 @@ def _postgres_registry() -> ExecEnv:
     from dbt_charts.core.compile.models.source import parse_source_config
     from dbt_charts.core.execute.query_result import QueryResult
 
+    source = parse_source_config(
+        {
+            "type": "postgres",
+            "host": "h",
+            "dbname": "d",
+            "user": "u",
+            "password": "p",
+        }
+    )
     return scripted_env(
         ScriptedBackend(
             QueryResult(
@@ -502,15 +511,8 @@ def _postgres_registry() -> ExecEnv:
                 schema=literal_schema([{"QUERY PLAN": "Result"}]),
             )
         ),
-        source=parse_source_config(
-            {
-                "type": "postgres",
-                "host": "h",
-                "dbname": "d",
-                "user": "u",
-                "password": "p",
-            }
-        ),
+        source=source,
+        named_sources={"testdb": source},
     )
 
 
@@ -546,8 +548,9 @@ class TestWarehouseValidateUncheckedAdapter:
         """
         from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
 
+        source = DbtTargetSourceConfig(type="trino")
         return scripted_env(
-            ScriptedBackend(), source=DbtTargetSourceConfig(type="trino")
+            ScriptedBackend(), source=source, named_sources={"testdb": source}
         )
 
     def test_unchecked_adapter_warns_rather_than_passing_silently(self, tmp_path):

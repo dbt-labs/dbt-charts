@@ -1,0 +1,5 @@
+kind: Fixes
+body: A table spark bar or column with a value of 0 draws an empty cell instead of printing 0.
+time: 2026-11-11T15:39:35.47619-08:00
+custom:
+    DbtChartsIssue: "95"

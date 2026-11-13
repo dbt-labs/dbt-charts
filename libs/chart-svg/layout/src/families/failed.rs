@@ -30,7 +30,9 @@ use measure::shaped::FontBook;
 use measure::wrap::wrap_plain;
 use scene::{Attrs, Chars, Escape, Extent, Node, PathData, Role, Run, Shape, Transform};
 
+use crate::board::band::TitleShift;
 use crate::legacy;
+use crate::title::{chart_title_spec, refuse_authored_size, TitleMetrics, TITLE_ASCENT_RATIO};
 
 /// callout.rs:45-46. A card is never narrower or shorter.
 pub(super) const MIN_WIDTH: f64 = 120.0;
@@ -105,6 +107,10 @@ pub struct Face {
     pub size: f64,
     pub weight: Weight,
     pub color: String,
+    /// An italic slot, which paints `font-style: italic` and measures in the family's italic file.
+    pub italic: bool,
+    /// A slot's `text-decoration`, none when plain.
+    pub decoration: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -150,6 +156,8 @@ impl Face {
             size,
             weight: Weight::of(weight),
             color: color.to_string(),
+            italic: false,
+            decoration: None,
         }
     }
 }
@@ -213,6 +221,33 @@ pub struct ChartTitle {
     pub face: Face,
     pub baseline: f64,
     pub tile_top: f64,
+}
+
+/// Vega's gap between a title's block and its body (`spec_builders.VEGA_TITLE_OFFSET`).
+const VEGA_TITLE_OFFSET: f64 = 4.0;
+
+impl ChartTitle {
+    /// A failed chart's title band (`title_band.py::failed_title_metrics`): the first baseline under
+    /// the card's padding and the tile's top under the baseline, in the face a card of `width` gives
+    /// a title, with Vega's title offset.
+    pub fn metrics(style: &Style, width: f64, card_padding: f64) -> Result<TitleMetrics, Diagnostic> {
+        refuse_authored_size(style)?;
+        let (size, ..) = chart_title_spec(style, width)?;
+        let ascent = (size * TITLE_ASCENT_RATIO).round_ties_even();
+        Ok(TitleMetrics { ascent: card_padding + ascent, tail: size + VEGA_TITLE_OFFSET - ascent })
+    }
+
+    /// The title `text` on the band `metrics` gives it, moved by the row's `shift` (`_failed_title`).
+    pub fn of(text: &str, style: &Style, width: f64, metrics: TitleMetrics, shift: TitleShift) -> Result<Self, Diagnostic> {
+        let (size, weight, family) = chart_title_spec(style, width)?;
+        let font = &style.charts.title.font;
+        Ok(Self {
+            text: display_text::case::apply_case(text, font.case.as_str()).map_err(diag::err_internal)?,
+            face: Face::of(&family, size, &weight, font.color.as_str(), &style.font.emoji),
+            baseline: metrics.ascent + shift.title_dy,
+            tile_top: metrics.ascent + metrics.tail + shift.body_dy,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,7 +1,7 @@
 """Tests for SVG render footer functionality.
 
 The footer is a right-aligned muted text line at the bottom of every board,
-with an optional hairline rule above. Theme-controlled, always-on by default,
+with an opt-in hairline rule above. Theme-controlled, always-on by default,
 disabled by setting style.footer.visible: false. The brand phrase "dbt Charts"
 in the footer text links to style.footer.link (a subtle watermark) when set.
 """
@@ -36,16 +36,6 @@ class TestSVGFooter:
             rf'[^>]*fill="{re.escape(expected_color)}"[^>]*>made with<'
         )
         assert re.search(pattern, svg_output) is not None
-
-    def test_footer_hairline_rule_renders_above_text_by_default(self):
-        svg_output = render_board_to_svg()
-        footer_idx = svg_output.find("made with")
-        assert footer_idx > -1
-        rule = resolve_style(get_theme_style(get_default_theme_name())).footer.divider
-        assert rule is not None
-        rule_pattern = rf'<line[^>]*stroke="{re.escape(rule.color)}"[^>]*/>'
-        prefix = svg_output[:footer_idx]
-        assert re.search(rule_pattern, prefix) is not None
 
     def test_footer_not_rendered_when_visible_is_false(self):
         yaml = """\
@@ -91,15 +81,6 @@ style:
         svg = render_board_to_svg(yaml)
         assert "custom attribution" in svg
         assert "made with dbt Charts" not in svg
-
-    def test_footer_hairline_rule_color_matches_theme(self):
-        footer = resolve_style(get_theme_style(get_default_theme_name())).footer
-        assert footer.divider.visible
-        svg_output = render_board_to_svg()
-        footer_idx = svg_output.find("made with")
-        prefix = svg_output[:footer_idx]
-        rule_pattern = rf'<line[^>]*stroke="{re.escape(footer.divider.color)}"[^>]*/>'
-        assert re.search(rule_pattern, prefix) is not None
 
     # --- brand-word link -----------------------------------------------------
 

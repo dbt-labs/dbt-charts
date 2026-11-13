@@ -42,6 +42,7 @@ from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.diagnostics.registry import DiagnosticCode
 from dbt_charts.core.execute import run as run_stage
 from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.query_plan import QueryPlan
 from dbt_charts.core.execute.query_result import QueryParams, QueryResult
 from dbt_charts.core.execute.run import Route
 from dbt_charts.core.project import (
@@ -247,7 +248,8 @@ def unset_dbt_target_path(monkeypatch: pytest.MonkeyPatch) -> None:
 def routes(monkeypatch: pytest.MonkeyPatch) -> Mock:
     """Stands in for the run stage: a test that names this fixture scripts what every
     route returns. Configure ``return_value`` or ``side_effect`` with ``QueryResult``s
-    (or an exception to raise); the mock is called with the run's query."""
+    (or an exception to raise); the mock is called with the run's query: a plan entry for
+    a planned query, the query model for an ad hoc one."""
     answer = Mock()
 
     def run_route(
@@ -262,7 +264,13 @@ def routes(monkeypatch: pytest.MonkeyPatch) -> Mock:
     ) -> QueryResult:
         return answer(query)
 
+    def run_planned(
+        _env: ExecEnv, plan: QueryPlan, name: str, **_options: Any
+    ) -> QueryResult:
+        return answer(plan["queries"][name])
+
     monkeypatch.setattr(run_stage, "run_route", run_route)
+    monkeypatch.setattr(run_stage, "run_planned", run_planned)
     return answer
 
 
@@ -682,3 +690,30 @@ def no_glob_traversable() -> Callable[[Path], Any]:
     ``InMemoryProject``: the concrete double lives only in this conftest.
     """
     return NoGlobTraversable
+
+
+def _record_compiled_text() -> None:
+    """Let ``tests/_compile.py`` find the text of every board ``compile`` returns."""
+    import dbt_charts.core.compile as compile_package
+    import dbt_charts.core.compile.compiler as compiler_module
+
+    from ._compile import remember
+
+    compile_text = compile_package.compile
+
+    def compile_and_remember(text: str, *args: Any, **kwargs: Any) -> Any:
+        result = compile_text(text, *args, **kwargs)
+        if result.board is not None:
+            remember(
+                result.board,
+                text,
+                kwargs.get("base_dir", args[1] if len(args) > 1 else None),
+                kwargs.get("project_sources", args[2] if len(args) > 2 else None),
+            )
+        return result
+
+    compile_package.compile = compile_and_remember
+    compiler_module.compile = compile_and_remember
+
+
+_record_compiled_text()

@@ -20,6 +20,7 @@ from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.render_result import RenderResult
 
+from ...._compile import plan_of
 from ..._svg_render import render_board_svg_result
 
 _WIDE_COLUMNS = 16
@@ -179,13 +180,10 @@ def test_frozen_columns_wider_than_half_the_table_are_an_error() -> None:
     assert "freeze fewer columns" in str(result.chart_errors)
 
 
-def test_a_scrolling_table_too_long_to_scroll_pages_and_warns() -> None:
-    svg, result = _render(
-        _board(
-            "      pagination: {mode: scroll, page_rows: 10}\n", rows=1001, columns=2
-        )
-    )
-    assert "WARN-TABLE-SCROLL-ROWS-CAPPED" in _codes(result)
+def test_a_default_table_too_long_to_scroll_pages_and_warns_once() -> None:
+    svg, result = _render(_board(rows=1001, columns=2))
+    capped = [w for w in result.warnings if w.code == "WARN-TABLE-SCROLL-ROWS-CAPPED"]
+    assert len(capped) == 1
     assert "data-max-y" not in svg
     assert "dbt-paginator" in svg
 
@@ -206,9 +204,61 @@ def test_scroll_mode_shows_page_rows_under_a_pinned_header() -> None:
         _board("      pagination: {mode: scroll, page_rows: 10}\n", rows=40, columns=3)
     )
     assert _max(svg, "y") > 0
-    assert "dbt-paginator" not in svg
+    assert 'data-dbt-scroll-range="40"' in svg
+    pager = svg[svg.index('data-dbt-scroll-pager="1"') :]
+    label = re.search(r'class="dbt-paginator-label"[^>]*>([^<]*)</text>', pager)
+    assert label, "the paged table's pager sits under the scrolling rows"
+    assert re.fullmatch(r"1\u20131?\d / 40", label.group(1))
+    assert 'data-paginator-role="next"' in pager
     assert len(re.findall(r'<text[^>]*data-col="0"', svg)) == 40
     assert svg.index('font-weight="600"') < svg.index('data-col="0"'), "header first"
+
+
+def _range_attr(svg: str, name: str) -> str:
+    match = re.search(rf'data-dbt-scroll-range[^>]*{name}="([^"]+)"', svg)
+    assert match, f"expected a scroll range with {name}"
+    return match.group(1)
+
+
+def test_the_viewport_is_page_rows_and_a_half_row_and_the_last_row_lands_flush() -> (
+    None
+):
+    svg, _ = _render(
+        _board("      pagination: {mode: scroll, page_rows: 10}\n", rows=40, columns=3)
+    )
+    ends = [float(v) for v in _range_attr(svg, "data-row-ends").split(",")]
+    row_h = ends[0]
+    assert float(_range_attr(svg, "data-viewport")) == pytest.approx(10.5 * row_h)
+    assert _range_attr(svg, "data-page-rows") == "10"
+    assert _max(svg, "y") == pytest.approx(30 * row_h)
+
+
+def _total_board(rows: int) -> str:
+    body = "\n".join(
+        f"      - {{name: r{i}, v: {i}, kind: value}}" for i in range(rows)
+    )
+    body += "\n      - {name: Total, v: 999, kind: total}"
+    return (
+        "queries:\n  q:\n    type: values\n    rows:\n" + body + "\n"
+        "charts:\n  t:\n    query: q\n    type: table\n    row_role: kind\n"
+        "    style:\n      pagination: {mode: scroll, page_rows: 10}\n"
+        "rows:\n  - t\n"
+    )
+
+
+def test_the_total_is_pinned_under_the_viewport_never_scrolled_or_counted() -> None:
+    svg, _ = _render(_total_board(40))
+    assert 'data-dbt-scroll-range="40"' in svg
+    scrolled = svg[svg.index('data-dbt-rows="true"') : svg.index('data-dbt-pinned="t"')]
+    assert 'data-dbt-row-role="total"' not in scrolled
+    pinned = svg[svg.index('data-dbt-pinned="t"') :]
+    assert 'data-dbt-row-role="total"' in pinned
+    assert pinned.index('data-dbt-row-role="total"') < pinned.index("dbt-paginator")
+
+
+def test_a_pinned_total_is_not_counted_as_a_truncated_row() -> None:
+    svg, _ = _render(_total_board(40))
+    assert 'font-style="italic"' not in svg
 
 
 def test_freeze_without_scroll_is_an_error() -> None:
@@ -217,10 +267,9 @@ def test_freeze_without_scroll_is_an_error() -> None:
     assert "overflow: scroll" in str(result.chart_errors)
 
 
-def test_scroll_mode_with_pagination_off_is_rejected() -> None:
-    result = compile_board(_board("      pagination: {enabled: false, mode: scroll}\n"))
-    assert not result.success
-    assert "pagination.enabled: true" in str(result.errors)
+def test_pagination_off_compiles_under_the_scroll_default() -> None:
+    result = compile_board(_board("      pagination: {enabled: false}\n"))
+    assert result.success
 
 
 def test_freezing_more_columns_than_drawn_is_an_error() -> None:
@@ -235,7 +284,7 @@ def test_an_image_or_pdf_export_fits_the_table_instead_of_scrolling(
     local_project: Callable[..., FilesystemProject],
 ) -> None:
     from dbt_charts.core.execute.lookup import Ledger
-    from dbt_charts.core.execute.plan import make_context
+    from dbt_charts.core.execute.plan import make_context, utc_now
     from dbt_charts.core.render import renderer as renderer_module
 
     converted: list[str] = []
@@ -248,11 +297,9 @@ def test_an_image_or_pdf_export_fits_the_table_instead_of_scrolling(
     # A frozen column is part of scrolling; the export drops it with the scroll.
     result = compile_board(_board("      column_layout: {freeze: 1}\n"))
     assert result.board is not None
-    assert result.query_registry is not None
+    env = build_exec_env(local_project(Path.cwd()))
     ctx = make_context(
-        result.board,
-        build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
+        result.board, plan_of(result.board, env, utc_now(), all_queries=True), env
     )
     rendered = renderer_module.render(result.board, ctx, Ledger(), format=fmt)
     assert not rendered.chart_errors

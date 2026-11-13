@@ -471,28 +471,40 @@ def test_quick_guide_example_reports_the_real_backgrounds(
     public-board audit); this pins the fixed, warning-free state so a
     regression — any text painted under the floor against its real resolved
     background, not ``charts.background`` — is caught again."""
+    from dbt_charts.core.board import plan_for_board
     from dbt_charts.core.compile import compile_file
     from dbt_charts.core.diagnostics import WARN_LOW_TEXT_CONTRAST
     from dbt_charts.core.execute.env import build_exec_env
+    from dbt_charts.core.execute.lookup import Ledger
+    from dbt_charts.core.execute.plan import make_context, utc_now
+    from dbt_charts.core.execute.plan_reader import env_sources
     from dbt_charts.core.render import render
 
     from ..._paths import DBT_CHARTS_DIR
-    from ..._run import Run
 
     project = local_project(DBT_CHARTS_DIR)
-    result = compile_file(
-        project.path(
-            "examples/playground/charts/reference/quick-guide.yml"
-        ).read_board()
-    )
+    board_file = project.path(
+        "examples/playground/charts/reference/quick-guide.yml"
+    ).read_board()
+    result = compile_file(board_file)
     assert result.success, result.errors
     assert result.board is not None
-    executor = Run(
+    env = build_exec_env(project)
+    ctx = make_context(
         result.board,
-        env=build_exec_env(project),
-        query_registry=result.query_registry,
+        plan_for_board(
+            board_file,
+            project,
+            None,
+            None,
+            utc_now(),
+            False,
+            False,
+            sources=env_sources(env),
+        ),
+        env,
     )
-    rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
+    rendered = render(result.board, ctx, Ledger(), format="svg")
     matches = [w for w in rendered.warnings if w.code == WARN_LOW_TEXT_CONTRAST.code]
     assert matches == [], (
         f"the shipped quick-guide example should carry no low-contrast text: {matches}"

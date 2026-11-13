@@ -170,6 +170,24 @@ def test_an_inline_query_ref_runs_fresh_on_the_boards_source(
     assert result.cache_refs == []
 
 
+@pytest.mark.parametrize(
+    "sql",
+    ["SELECT * FROM {{ queries.typo }}", "SELECT * FROM {{ queries.typo.cache }}"],
+    ids=["inline", "cache"],
+)
+def test_a_reference_to_an_unknown_query_is_a_coded_not_found(
+    sql: str,
+    project: FilesystemProject,
+    registry: ExecEnv,
+    cache: TrivialDuckDBCache,
+) -> None:
+    result = _run(sql, project, registry, cache)
+
+    assert not result.success
+    assert result.error_code == "ERR-BOARD-QUERY-NOT-FOUND"
+    assert "typo" in result.errors[0] and "rev" in result.errors[0]
+
+
 def test_a_variables_override_is_applied_and_selects_its_own_cache_slice(
     project: FilesystemProject,
     registry: ExecEnv,

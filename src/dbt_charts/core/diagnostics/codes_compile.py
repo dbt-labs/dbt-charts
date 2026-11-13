@@ -715,6 +715,90 @@ ERR_BAR_LOG_SCALE_NOT_SUPPORTED = REGISTRY.register(
     )
 )
 
+ERR_FUNNEL_BAND_WIDTH_TOO_THIN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FUNNEL-BAND-WIDTH-TOO-THIN",
+        domain="compile",
+        title="Funnel bars are not thicker than their ribbons",
+        message_template="Chart {chart_id!r} (funnel): style.marks.bar.band_width is {band_width}. A funnel's bars must be thicker than its ribbons, so band_width must be above 0.5; raise it, or delete it to take the funnel's default.",
+        doc="Fired when a funnel's resolved `style.marks.bar.band_width` is 0.5 or less. A funnel's bars must be thicker than the ribbons joining them, so use a band_width above 0.5.",
+        summary="Fired when a funnel's band_width is 0.5 or less, so its bars are not thicker than its ribbons.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FUNNEL_LABEL_POSITION = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FUNNEL-LABEL-POSITION",
+        domain="compile",
+        title="A funnel places its labels on their marks",
+        message_template="Chart {chart_id!r} (funnel): style.marks.bar.labels.position is {position}, but a funnel places its labels on their marks: centered on a bar, or just outside one too thin to hold the label. Delete the key, or set it to `middle`.",
+        doc="Fired when a `type: funnel` chart authors `style.marks.bar.labels.position` other than `middle`. A funnel places each label on its own mark, so no other position can take effect.",
+        summary="Fired when a funnel authors a label position other than middle.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FUNNEL_MULTIPLE_MEASURES = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FUNNEL-MULTIPLE-MEASURES",
+        domain="compile",
+        title="A funnel draws one measure",
+        message_template="Chart {chart_id!r} (funnel): y is a list, but a funnel draws one measure's stages. Name a single column in `y:`, and use `color:` to compare cohorts.",
+        doc="Fired when a `type: funnel` chart authors `y:` as a list. A funnel draws the stages of one measure; use `color:` to draw one funnel per cohort.",
+        summary="Fired when a funnel authors a list of measures in y.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FUNNEL_VERTICAL = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FUNNEL-VERTICAL",
+        domain="compile",
+        title="A funnel is drawn horizontally",
+        message_template="Chart {chart_id!r} (funnel): style.orientation is vertical, but a funnel is drawn horizontally. For a vertical one, use `type: bar` with `style.stack: center`.",
+        doc="Fired when a `type: funnel` chart authors `style.orientation: vertical`.",
+        summary="Fired when a funnel authors a vertical orientation.",
+        docs_topic="charts",
+    )
+)
+
+ERR_PERCENT_ENTRY_NOT_FUNNEL = REGISTRY.register(
+    ErrorCode(
+        code="ERR-PERCENT-ENTRY-NOT-FUNNEL",
+        domain="compile",
+        title="A percent support-table column is for funnels only",
+        message_template="Chart {chart_id!r}: support_table `percent: {column}` shows a stage as a share of the first stage, so it belongs to a `type: funnel` chart. Use `source:` for a plain column.",
+        doc="Fired when a support_table entry authors `percent:` on a chart that is not a funnel. A percent column shows each stage as a share of the first, which only a funnel has.",
+        summary="Fired when a support-table percent column is authored off a funnel.",
+        docs_topic="charts",
+    )
+)
+
+ERR_RIBBON_LABELS_FUNNEL_ONLY = REGISTRY.register(
+    ErrorCode(
+        code="ERR-RIBBON-LABELS-FUNNEL-ONLY",
+        domain="compile",
+        title="Ribbon labels are for funnels only",
+        message_template="Chart {chart_id!r}: {field_path} is on, but ribbon labels are for funnels only. Turn it off, or draw the chart with `type: funnel`.",
+        doc="Fired when `style.marks.bar.ribbons.labels.visible` is on for a chart that is not a funnel. A funnel's ribbons show what each stage lost; ribbons on a stacked bar stay unlabeled.",
+        summary="Fired when ribbon labels are turned on for a chart that is not a funnel.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LABEL_TEMPLATE_ACCOUNTING_PARENS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LABEL-TEMPLATE-ACCOUNTING-PARENS",
+        domain="compile",
+        title="A label with a secondary value cannot use the accounting format",
+        message_template="Chart {chart_id!r}: the label template at {field_path} prints more than one value and formats one with {spec!r}, which wraps a negative in parens. The secondary value is written in parens, so that would read as ((8,774)). Drop the `(` sign flag from the format.",
+        doc="Fired when a bar or ribbon label template prints more than one value and any value's format uses the accounting-parens sign flag `(`.",
+        summary="Fired when a label template with a secondary value formats a number in accounting parens.",
+        docs_topic="charts",
+    )
+)
+
 ERR_TICKS_COUNT_REQUIRES_NON_LOG_SCALE = REGISTRY.register(
     ErrorCode(
         code="ERR-TICKS-COUNT-REQUIRES-NON-LOG-SCALE",

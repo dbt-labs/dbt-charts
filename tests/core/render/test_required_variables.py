@@ -41,7 +41,6 @@ def _make_executor(board, query_registry, local_project: Callable[..., Project])
     return Run(
         board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=query_registry,
     )
 
 

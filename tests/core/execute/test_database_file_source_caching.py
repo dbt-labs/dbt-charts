@@ -58,7 +58,6 @@ def _executor(
     return Run(
         board,
         env=build_exec_env(project, **(registry_kwargs or {})),
-        query_registry={"q": board.queries["q"]},
         result_cache=cache,
     )
 
@@ -149,11 +148,26 @@ def test_duckdb_source_with_attach_stays_unversioned(tmp_path: Path) -> None:
     )
 
 
-def test_cache_key_never_resolves_a_warehouse_source() -> None:
+def test_cache_key_never_resolves_a_warehouse_source(tmp_path: Path) -> None:
     # A host's resolver may refuse a warehouse source with its own exception
     # (an SSRF guard); that refusal belongs to execution, not the cache probe.
     from unittest.mock import Mock
 
+    (tmp_path / "dbt_charts.yml").write_text(
+        yaml.dump(
+            {
+                "sources": {
+                    "wh": {
+                        "type": "postgres",
+                        "host": "h",
+                        "database": "d",
+                        "user": "u",
+                        "password": "{{ env_var('PW', 'x') }}",
+                    }
+                }
+            }
+        )
+    )
     board = compile_board(
         yaml.dump(
             {
@@ -163,20 +177,16 @@ def test_cache_key_never_resolves_a_warehouse_source() -> None:
         )
     ).board
     assert board is not None
-    registry = Mock()
-    declared = {"type": "postgres", "host": "h"}
-    registry.sources.get.return_value = declared
-    registry.sources.runtime_config().sources = {"wh": declared}
-    registry.resolver.resolve.side_effect = RuntimeError("blocked host")
+    resolver = Mock()
+    resolver.resolve.side_effect = RuntimeError("blocked host")
     executor = Run(
         board,
-        env=registry,
-        query_registry={"q": board.queries["q"]},
+        env=build_exec_env(FilesystemProject(tmp_path), resolver=resolver),
         result_cache=TrivialDuckDBCache(),
     )
 
     assert "q" not in executor.lookup(["q"]).hits
-    registry.resolver.resolve.assert_not_called()
+    resolver.resolve.assert_not_called()
 
 
 def test_host_without_a_sqlite_adapter_never_stats_the_path(tmp_path: Path) -> None:

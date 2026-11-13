@@ -51,8 +51,14 @@ fn bench_board_level(c: &mut Criterion) {
     let path = ProjectPath::try_from("b.yaml").expect("a path");
     let host = host_inputs();
     for (name, style) in [
-        ("board_restates_theme", "style:\n  frame:\n    card_gap: 8.0\n"),
-        ("board_overrides_theme", "style:\n  frame:\n    card_gap: 9.0\n"),
+        (
+            "board_restates_theme",
+            "style:\n  frame:\n    card_gap: 8.0\n",
+        ),
+        (
+            "board_overrides_theme",
+            "style:\n  frame:\n    card_gap: 9.0\n",
+        ),
         ("board_authors_no_style", ""),
     ] {
         let mut files = MemoryFiles::default();
@@ -72,8 +78,14 @@ fn bench_query_formats(c: &mut Criterion) {
     let path = ProjectPath::try_from("b.yaml").expect("a path");
     let host = host_inputs();
     for (name, style) in [
-        ("every_axis_format_restates", "    style:\n      axis_y:\n        labels:\n          format: integer\n"),
-        ("every_axis_format_overrides", "    style:\n      axis_y:\n        labels:\n          format: percent\n"),
+        (
+            "every_axis_format_restates",
+            "    style:\n      axis_y:\n        labels:\n          format: integer\n",
+        ),
+        (
+            "every_axis_format_overrides",
+            "    style:\n      axis_y:\n        labels:\n          format: percent\n",
+        ),
         ("no_axis_format", ""),
     ] {
         for charts in [10, 100] {
@@ -82,7 +94,10 @@ fn bench_query_formats(c: &mut Criterion) {
             );
             let mut rows = String::from("rows:\n");
             for i in 0..charts {
-                let _ = write!(text, "  c{i}:\n    type: bar\n    query: q\n    x: a\n    y: b\n{style}");
+                let _ = write!(
+                    text,
+                    "  c{i}:\n    type: bar\n    query: q\n    x: a\n    y: b\n{style}"
+                );
                 let _ = writeln!(rows, "  - c{i}");
             }
             let mut files = MemoryFiles::default();

@@ -213,7 +213,6 @@ rows:
                 Run(
                     result.board,
                     env=registry,
-                    query_registry=result.query_registry,
                     result_cache=cache,
                 ),
                 registry,

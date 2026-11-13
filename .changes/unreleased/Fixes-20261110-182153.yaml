@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct validate reports the correct line numbers for warnings in markdown boards.
+time: 2026-11-10T18:21:53.537103864Z

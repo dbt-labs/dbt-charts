@@ -62,6 +62,7 @@
   "controls.selection_summary": "({n}) {first}",
   "controls.show_all": "모두 표시",
   "controls.show_only_selected": "선택 항목만 표시 ({n})",
+  "controls.options_truncated": "{total}개 중 {shown}개 표시. 더 찾으려면 검색하세요.",
   "controls.sort": "정렬",
   "controls.sort_count_ascending": "개수순 정렬, 낮은 → 높은",
   "controls.sort_count_descending": "개수순 정렬, 높은 → 낮은",

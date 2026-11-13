@@ -471,7 +471,6 @@ def test_a_changed_bundle_changes_the_cache_key(tmp_path: Path) -> None:
         executor = Run(
             result.board,
             env=build_exec_env(project),
-            query_registry=result.query_registry,
         )
         return plan(executor.ctx, ["q"], {})[0].cache_key
 
@@ -598,7 +597,6 @@ def test_a_changed_required_flag_changes_the_cache_key(tmp_path: Path) -> None:
         executor = Run(
             result.board,
             env=build_exec_env(project),
-            query_registry=result.query_registry,
         )
         return plan(executor.ctx, ["q"], {})[0].cache_key
 

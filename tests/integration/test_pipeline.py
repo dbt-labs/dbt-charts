@@ -47,7 +47,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         # Render
@@ -98,7 +97,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         # Render with default variables
@@ -149,7 +147,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg_output = render(

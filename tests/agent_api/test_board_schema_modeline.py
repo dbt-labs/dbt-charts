@@ -1,5 +1,7 @@
 """Every board we ship names its hosted schema exactly when that schema accepts it."""
 
+import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -41,7 +43,9 @@ def test_modeline_is_on_line_one_exactly_when_the_schema_accepts_the_board(
     path: Path, validator: Draft202012Validator
 ) -> None:
     text = path.read_text(encoding="utf-8")
-    accepted = validator.is_valid(yaml.safe_load(text))
+    # An unquoted YAML date loads as a `date`; an editor reads it as ISO text.
+    board = json.loads(json.dumps(yaml.safe_load(text), default=date.isoformat))
+    accepted = validator.is_valid(board)
     assert (text.splitlines()[0] == MODELINE) == accepted
     assert (MODELINE in text) == accepted
 

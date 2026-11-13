@@ -38,6 +38,7 @@ from dbt_charts.core.execute.backends.snowpark import (
 )
 from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
+    InMemoryBoard,
     ProjectDirectory,
     ProjectPath,
     board_relpath_candidates,
@@ -300,6 +301,7 @@ def st_project(project_dir: str | Path, session: SnowparkSession | None = None) 
             board_text, listing = directory_listing(page, url.strip("/"), project)
             compiled = compile(board_text)
             result = ps.render_board(
+                InMemoryBoard(board_text, path=None),
                 compile_result=compiled,
                 builtin_variables=listing,
                 format="html",

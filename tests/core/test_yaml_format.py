@@ -584,7 +584,6 @@ rows:
     executor = Run(
         compiled.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=compiled.query_registry,
     )
     round_tripped = render_via(executor, compiled.board, format="yaml").output
     assert "sign_placement" not in round_tripped, round_tripped

@@ -299,6 +299,8 @@ TableChartStyle.model_rebuild(_types_namespace=_authored_ns)
 # Rebuild the patch model too: it was built before TableChartStyle.model_rebuild(),
 # so its pagination/column_defaults annotations are still unresolved ForwardRefs.
 TableChartStylePatch.model_rebuild(_types_namespace=_authored_ns)
+# `charts.funnel` is a bar patch, buildable only once BarChartStyle is resolved.
+_authored_ns["BarChartStylePatch"] = build_patch_model(BarChartStyle)
 ChartsStyle.model_rebuild(_types_namespace=_authored_ns)
 
 # Generated and registered before _StylePatchBase so build_patch_model(Style)

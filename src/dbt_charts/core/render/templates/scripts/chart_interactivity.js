@@ -1004,6 +1004,12 @@
             const overlay = markerOverlay(chartEl, state);
             if (overlay) inked.forEach(function (el) { drawWholeOutline(overlay, el); });
         }
+        /*{# A ribbon names the two bars it joins: it stays lit while either one #}*/
+        /*{# is kept, so the eye can follow the hovered bar into and out of it. #}*/
+        panelScope(mark, chartEl).querySelectorAll('[data-dbt-ribbon-from]').forEach(function (el) {
+            const kept = !!(keptLabels[el.getAttribute('data-dbt-ribbon-from')] || keptLabels[el.getAttribute('data-dbt-ribbon-to')]);
+            emphasize(next, el, background, kept);
+        });
         /*{# Whatever else the selection receded -- a pie slice label, an area's #}*/
         /*{# endpoint label -- sits in the same flagged link as its mark, so #}*/
         /*{# hover restores it with the rest of the suspended selection. #}*/
@@ -1145,7 +1151,7 @@
     function raiseSeries(state, handle) {
         const named = function (tag) {
             return Array.prototype.filter.call(handle.chartEl.querySelectorAll(tag + '[data-dbt-series]'), function (el) {
-                return el.getAttribute('data-dbt-series') === handle.key && !el.closest('.role-legend');
+                return el.getAttribute('data-dbt-series') === handle.key && !!el.closest('.role-mark');
             });
         };
         const unit = function (el) {

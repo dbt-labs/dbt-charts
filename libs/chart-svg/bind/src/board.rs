@@ -9,10 +9,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use board_model::board::{items, Board, BoardBody, Layout, LayoutItem, Visible};
 use board_model::chart::Chart;
-use board_model::ids::{BoardId, ChartId, ItemId};
+use board_model::ids::{BoardId, ChartId, ItemId, QueryId};
 use board_model::variable_value::{Atom, VariableValue};
 use board_model::style::style::Style;
-use diagnostic::{diag, refuse, Diagnostic};
+use diagnostic::{codes, diag, refuse, Diagnostic};
 use model_core::Resolved;
 use indexmap::IndexMap;
 
@@ -44,6 +44,10 @@ pub struct ChartStyles {
     /// Each chart's `Chart.id` (`Structure.index.public_ids`): the name production writes in its
     /// errors, which for an inline chart is not its position.
     pub public_ids: BTreeMap<ChartId, String>,
+    /// The nested board that declares each chart declared below the root (`Structure.index.chart_boards`
+    /// of `declared_below`): the board a chart's authored path starts from. A chart of the root, or one
+    /// only placed in a nested board, has no entry.
+    pub chart_boards: BTreeMap<ChartId, ItemId>,
     /// Each single-ink placement's place in the rhythm of the single-series palette
     /// (`LayoutFacts.chart_facts[..].rhythm_slot`); a placement that paints no one ink has none.
     pub rhythm: BTreeMap<ItemId, u32>,
@@ -55,6 +59,9 @@ pub struct ChartStyles {
     pub tabs: BTreeMap<ItemId, TabsFacts>,
     /// Each details board, by its position (`LayoutFacts.details`).
     pub details: BTreeMap<ItemId, DetailsFacts>,
+    /// Each query of the root board's map (`Structure.policies`), by the name a board's text reads it
+    /// under, with the id its result is keyed by in the run.
+    pub root_queries: BTreeMap<String, QueryId>,
 }
 
 /// A tabs layout: the variable that selects a tab, each tab's slug and the one open on load.
@@ -105,20 +112,52 @@ pub fn bind(board: &Board, styles: &ChartStyles, run: &RunResult) -> Result<boun
     let mut charts = IndexMap::new();
     let mut diagnostics = Vec::new();
     for (at, id) in drawn.charts(board).map_err(internal)? {
-        let bound = bind_chart(board, styles, &at, id, run, &scales)?;
+        // A chart the engine refuses to draw is that chart's failure, as production's error card
+        // is: the rest of the board still binds.
+        let (mut bound, engine_refused) = match bind_chart(board, styles, &at, id, run, &scales) {
+            Err(refusal) if refusal.code == codes::ERR_ENGINE_REFUSED.id => (refused(styles, id, refusal)?, true),
+            bound => (bound?, false),
+        };
         if bound.family.is_ok() {
             let chart = chart_named(board, id)?;
             let dataset = crate::query_id(chart)?.map(|query| run.dataset(query, id)).transpose()?;
             diagnostics.extend(crate::checks::of(styles.public_id(id)?, chart, dataset));
+        } else if !engine_refused {
+            // Production draws a chart refused while rendering by another law
+            // (`_render_stage_title`), not ported: it keeps its refusal by name, untitled.
+            // A title it cannot draw is that chart's refusal as well.
+            match failed_title(board, styles, &at, id, run) {
+                Ok(title) => bound.title = title,
+                Err(refusal) if refusal.code == codes::ERR_ENGINE_REFUSED.id => bound = refused(styles, id, refusal)?,
+                Err(other) => return Err(other),
+            }
         }
         match &bound.family {
             Ok(Family::Cartesian(bound::Cartesian::Plane(plot))) => diagnostics.extend_from_slice(plot.diagnostics()),
             Ok(Family::Cartesian(bound::Cartesian::NoData(_))) => diagnostics.push(diag::warn_query_returned_zero_rows(styles.public_id(id)?)),
+            Err(failure) if failure.diagnostic.code == codes::ERR_KPI_NO_DATA.id => diagnostics.push(diag::warn_query_returned_zero_rows(styles.public_id(id)?)),
             _ => {}
         }
         charts.insert(at, bound);
     }
     bound::Board::new(board, drawn, charts, diagnostics).map_err(internal)
+}
+
+/// A chart the engine refuses to draw is that chart's failure, as production's error card is.
+fn refused(styles: &ChartStyles, id: &ChartId, refusal: Diagnostic) -> Result<bound::Chart, Diagnostic> {
+    let diagnostic = refusal.with_sink_param("chart_id", styles.public_id(id)?.into());
+    Ok(bound::Chart { title: None, subtitle: None, frame: None, family: Err(Failure { chart: id.clone(), diagnostic }) })
+}
+
+/// The authored title a failed chart draws above its card, and the refusal of one whose face is not walked.
+fn failed_title(board: &Board, styles: &ChartStyles, at: &ItemId, id: &ChartId, run: &RunResult) -> Result<Option<String>, Diagnostic> {
+    let chart = chart_named(board, id)?;
+    let title = crate::failed::title(chart, &run.variables)?;
+    if title.is_some() {
+        let placed = placement(board, styles, at, chart)?;
+        crate::failed::refuse_title_style(chart, placed.own, &placed.scope().charts)?;
+    }
+    Ok(title)
 }
 
 #[derive(Default)]
@@ -252,7 +291,7 @@ pub fn bind_chart(
             return Ok(bound::Chart { title: None, subtitle: None, frame: None, family });
         }
     }
-    match chart {
+    let bound = match chart {
         Chart::Bar(bar) => {
             let placed = placement(board, styles, at, chart)?;
             families::bar::bind(id, bar, board, run, &placed, scales)
@@ -282,6 +321,14 @@ pub fn bind_chart(
         Chart::SparkBar(spark) => Ok(bound::Chart { title: None, subtitle: None, frame: None, family: families::spark_bar::bind(id, spark, &styles.at(at)?.charts.spark_bar, board, run)? }),
         Chart::Callout(callout) => Ok(bound::Chart { title: None, subtitle: None, frame: None, family: bind_callout(callout)? }),
         other => Err(Diagnostic::refused(refuse!("binding a {} chart is not supported", family(other)))),
+    };
+    // A cell its column's declared type does not hold is that chart's error card, as in production.
+    match bound {
+        Err(error) if error.code == codes::ERR_CHART_CELL_TYPE_MISMATCH.id => {
+            let family = Err(Failure { chart: id.clone(), diagnostic: error.with_sink_param("chart_id", serde_json::json!(id.as_str())) });
+            Ok(bound::Chart { title: None, subtitle: None, frame: None, family })
+        }
+        other => other,
     }
 }
 
@@ -331,6 +378,7 @@ pub(crate) fn family(chart: &Chart) -> &'static str {
         Chart::Scatter(_) => "scatter",
         Chart::Bar(_) => "bar",
         Chart::Histogram(_) => "histogram",
+        Chart::Funnel(_) => "funnel",
         Chart::Line(_) => "line",
         Chart::Area(_) => "area",
         Chart::Callout(_) => "callout",

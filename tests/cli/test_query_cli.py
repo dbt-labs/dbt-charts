@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner, Result
@@ -707,6 +708,91 @@ class TestQueryIgnoresCacheEnv:
         )
         assert result.exit_code == 0, result.output
         assert json.loads(result.output)["data"] == [{"scaled": 20}]
+
+
+class TestQueryCacheFlag:
+    """`--cache PATH` is the opt-in: runs sharing a file share the upstream's rows."""
+
+    @staticmethod
+    def _summary_run(board_dir: Path, *extra: str) -> list[dict[str, Any]]:
+        (board_dir / "cached.yaml").write_text(
+            "source: db\n"
+            "queries:\n"
+            "  base:\n"
+            "    sql: select random() as r\n"
+            "  summary:\n"
+            "    sql: select r from {{ queries.base.cache }}\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: summary\n"
+            "    type: table\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                str(board_dir / "cached.yaml"),
+                "summary",
+                "--project-dir",
+                str(board_dir),
+                "--json",
+                *extra,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        return json.loads(result.output)["data"]
+
+    def test_runs_sharing_a_cache_file_execute_the_upstream_once(
+        self, board_dir: Path, tmp_path: Path
+    ) -> None:
+        cache = ["--cache", str(tmp_path / "shared.duckdb")]
+        assert self._summary_run(board_dir, *cache) == self._summary_run(
+            board_dir, *cache
+        )
+
+    def test_a_sample_limited_run_does_not_poison_the_shared_file(
+        self, board_dir: Path, tmp_path: Path
+    ) -> None:
+        """The file is read at full size by `dct render --cache`, so no entry
+        may hold fewer rows than its query returns."""
+        from dbt_charts.agent_api import ProjectSession
+        from dbt_charts.agent_api.cache import open_cache
+        from dbt_charts.cli.filesystem_project import FilesystemProject
+
+        (board_dir / "wide.yaml").write_text(
+            "source: db\n"
+            "queries:\n"
+            "  base:\n"
+            "    sql: select * from range(50) t(n)\n"
+            "  summary:\n"
+            "    sql: select n from {{ queries.base.cache }}\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: summary\n"
+            "    type: table\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        cache = open_cache(tmp_path / "shared.duckdb")
+        try:
+            with ProjectSession.from_project(
+                FilesystemProject(board_dir), cache=cache
+            ) as session:
+                sample = session.query_board(
+                    "summary", board_dir / "wide.yaml", limit=20
+                )
+            stored = [entry.row_count for entry in cache.entries()]
+        finally:
+            cache.close()
+        assert sample.row_count == 20
+        assert stored == [50] * len(stored)
+
+    def test_without_the_flag_each_run_executes_the_upstream_again(
+        self, board_dir: Path
+    ) -> None:
+        assert self._summary_run(board_dir) != self._summary_run(board_dir)
 
 
 REF_BOARD = """\

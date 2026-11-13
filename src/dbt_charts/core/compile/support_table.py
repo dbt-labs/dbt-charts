@@ -31,7 +31,10 @@ from dbt_charts.core.compile.format import (
 from dbt_charts.core.compile.models.chart.authored import (
     ChartSupportTable,
     ChartSupportTableAggregate,
+    ChartSupportTablePercent,
     ChartSupportTablePerSeries,
+    ChartSupportTableSource,
+    support_table_column,
 )
 from dbt_charts.core.compile.models.chart.authored._support_table import (
     ChartSupportTableEntry,
@@ -40,6 +43,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedSupportTable,
     ResolvedSupportTableAggregate,
     ResolvedSupportTableEntry,
+    ResolvedSupportTablePercent,
     ResolvedSupportTablePerSeries,
     ResolvedSupportTableSource,
 )
@@ -148,14 +152,19 @@ def resolve_effective_support_table_style(
     return merge_unset(chart_style_context.support_table, per_type.support_table)
 
 
-def bake_neutral_ink(style: SupportTableStyle) -> tuple[SupportTableStyle, bool]:
+def bake_neutral_ink(
+    style: SupportTableStyle, stage_ink: str | None
+) -> tuple[SupportTableStyle, bool]:
     """Replace ``auto`` ink with the table's ``neutral_color``.
+
+    ``stage_ink`` is a funnel's category-name ink: its stage rows sit beside
+    the stage names, so they print in the same ink. ``None`` on any other chart.
 
     Returns the style every cell can paint as-is, and whether a per-series
     cell paints its series' own dark ink instead (``font.color: auto``).
     """
     series_ink = style.font.color == AUTO
-    neutral = settled(style.neutral_color)
+    neutral = stage_ink or settled(style.neutral_color)
     font = style.font
     if series_ink:
         font = font.model_copy(update={"color": neutral})
@@ -271,12 +280,11 @@ def apply_measure_format_to_support_table(
     """
     resolved_entries = []
     for entry in support_table.entries:
-        source_field = (
-            entry.per_series
-            if isinstance(entry, ChartSupportTablePerSeries)
-            else entry.source
-        )
-        if entry.format is None and source_field == y_field:
+        if (
+            entry.format is None
+            and not isinstance(entry, ChartSupportTablePercent)
+            and support_table_column(entry) == y_field
+        ):
             entry = entry.model_copy(update={"format": measure_format})
         resolved_entries.append(entry)
     return support_table.model_copy(update={"entries": resolved_entries})
@@ -302,11 +310,18 @@ def resolve_support_table(
     """
     entries: list[ResolvedSupportTableEntry] = []
     for entry in support_table.entries:
-        column = (
-            entry.per_series
-            if isinstance(entry, ChartSupportTablePerSeries)
-            else entry.source
-        )
+        if isinstance(entry, ChartSupportTablePercent):
+            spec = (
+                entry.format
+                or ".0%"  # type-state: silent_fallback — documented default: whole percents
+            )
+            share = resolve_format_parts(spec, formats)
+            reject_native(share, f"support_table[{len(entries)}].format")
+            entries.append(
+                resolved_as(ResolvedSupportTablePercent, entry, format=share)
+            )
+            continue
+        column = support_table_column(entry)
         # A per_series entry votes over the chart's y column(s), not its own.
         voted_columns = y if isinstance(entry, ChartSupportTablePerSeries) else column
         fields = (
@@ -457,7 +472,9 @@ def _keeps_column_unit(entry: ChartSupportTableEntry) -> bool:
 
 
 def _with_resolved_format(
-    entry: ChartSupportTableEntry,
+    entry: ChartSupportTableSource
+    | ChartSupportTableAggregate
+    | ChartSupportTablePerSeries,
     fmt: ResolvedFormat | None,
     header_inks: Mapping[str, str],
 ) -> ResolvedSupportTableEntry:

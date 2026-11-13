@@ -109,7 +109,6 @@ def _live(tmp_path: Path, board: str = _YAML) -> tuple[bytes, BoardRecording, st
     executor = Run(
         result.board,
         build_exec_env(project),
-        query_registry=result.query_registry,
     )
     variables: dict[str, object] = {}
     resolved, render_cache = build_resolved_board(result.board, executor, variables)
@@ -136,7 +135,6 @@ def _pie_live(tmp_path: Path) -> tuple[bytes, BoardRecording, str]:
     executor = Run(
         result.board,
         build_exec_env(FilesystemProject(tmp_path)),
-        query_registry=result.query_registry,
     )
     variables: dict[str, object] = {}
     resolved, render_cache = build_resolved_board(result.board, executor, variables)
@@ -174,7 +172,6 @@ def test_pie_attachment_round_trips_in_board_artifact(tmp_path: Path) -> None:
     executor = Run(
         result.board,
         build_exec_env(FilesystemProject(tmp_path)),
-        query_registry=result.query_registry,
     )
     resolved, _render_cache = build_resolved_board(result.board, executor, {})
     original = resolved.charts["shares"]
@@ -419,6 +416,7 @@ charts:
     style:
       pagination:
         enabled: true
+        mode: pages
         page_rows: 5
 rows:
   - t
@@ -434,7 +432,6 @@ def _paginated_table_live(
     executor = Run(
         result.board,
         build_exec_env(FilesystemProject(tmp_path)),
-        query_registry=result.query_registry,
     )
     resolved, render_cache = build_resolved_board(result.board, executor, variables)
     background = resolved.style.background
@@ -557,7 +554,6 @@ def test_artifact_replay_does_not_double_paint_an_unstyled_nested_boards_tint(
     executor = Run(
         result.board,
         build_exec_env(FilesystemProject(tmp_path)),
-        query_registry=result.query_registry,
     )
     variables: dict[str, object] = {}
     resolved, render_cache = build_resolved_board(result.board, executor, variables)

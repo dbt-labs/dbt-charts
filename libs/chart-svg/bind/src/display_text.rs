@@ -753,7 +753,7 @@ fn is_temporal_text(text: &str) -> bool {
 /// Production also reads Unicode digits and spaces, which `str::parse` does not,
 /// so text holding one is refused by name; any other non-ASCII character makes
 /// text no number in both.
-fn python_float(text: &str) -> Result<Option<f64>, Diagnostic> {
+pub(crate) fn python_float(text: &str) -> Result<Option<f64>, Diagnostic> {
     if text.chars().any(|c| !c.is_ascii() && (c.is_numeric() || c.is_whitespace())) {
         return Err(Diagnostic::refused(refuse!("number text with a non-ASCII digit or space is not supported")));
     }

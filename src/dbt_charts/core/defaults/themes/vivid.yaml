@@ -151,6 +151,7 @@ style:
           background: chrome[5]
     support_table:
       neutral_color: *value
+      ribbon_color: chrome[8]
       label:
         font:
           color: *mid

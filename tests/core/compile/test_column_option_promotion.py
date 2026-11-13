@@ -22,6 +22,7 @@ from dbt_charts.core.compile.normalize.variables import OPTION_COUNT_COLUMN
 from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.collect import collect_all_query_names
+from dbt_charts.core.execute.plan_names import plan_key
 from dbt_charts.core.execute.query_result import QueryResult
 
 from ..._run import Run
@@ -356,9 +357,9 @@ class TestFailingColumnOptionQuery:
         registry_backend = ScriptedBackend()
         registry = scripted_env(registry_backend)
         executor = Run(board=result.board, env=registry)
-        executor.ledger.errors["_var_options_region"] = QueryError(
-            "no such table: regions"
-        )
+        key = plan_key(executor.ctx.plan, result.board, "_var_options_region")
+        assert key is not None
+        executor.ledger.errors[key] = QueryError("no such table: regions")
 
         with pytest.raises(QueryError) as exc_info:
             resolve_query_options("region", "_var_options_region", executor, {})

@@ -55,7 +55,7 @@ Also exist: `notes`, `tags`, `aliases`, `html_policy`, `cache`, `incremental`, `
 - `sql`: The SQL to run, as Jinja2. `{{ queries.base }}` inlines another query of the same source as a subquery already aliased to its name (add no `AS`), so base reruns inside every query that reads it; a bare `FROM base` fails. `{{ queries.base.cache }}` runs base once and composes over its cached rows in DuckDB (write DuckDB SQL or set `dialect:`): use it when several charts read one expensive base. Variables go in through `filter()`, `filter_date_range()` or `{{ name }}`
 - `source` (text|map of any): Source name reference, or an inline file path (e.g. `./data/sales.csv`)
 - `notes`: What this query returns; handed to tooling with its results, never drawn
-- `formats` (map of name|text): A column's format, set once on its query, only where the default would misread (currency, percent, a unit); counts and plain numbers need none. Every chart showing the column follows it; a chart sets its own only to differ. A d3 spec is rejected
+- `formats` (map of name|text): A column's format, set once on its query, only where the default would misread (currency, percent, a unit); counts and plain numbers need none. Every chart showing the column follows it; a chart sets its own only to differ. A d3 spec needs a `style.formats` name
 Also exist: `ignore`, `cache`, `incremental`, `type`, `setup_sql`, `dialect`.
 Other query types: `values` (inline data authored as a list of row mappings, or inline data authored as column names plus positional row values), `schema` (dbt source schema query).
 
@@ -85,7 +85,7 @@ Also exist: `tooltip`, `id`, `notes`, `link`, `visible`, `type`, `warnings_ignor
 
 Name the SQL column as the axis should read (`AS weight_lbs` titles "Weight (lb)"); set `x_label`, `y_label` or `field_labels` only when the title must say more.
 
-Name no channel on a chart whose query no other chart uses: the columns bind in order, dimensions first, measure last: `bar`, `line`, `area`: `x, y` or `x, color, y`; `scatter`: `x, y` or `color, x, y`; `heatmap`: `x, y, color`; `pie`, `donut`: `theta` or `color, theta`; `kpi`: `value`; `histogram`: `x`. A query other charts share stays top-level and its charts name `x`, `y` or `color`; never split a shared query so a chart can skip them.
+Name no channel on a chart whose query no other chart uses: the columns bind in order, dimensions first, measure last: `bar`, `funnel`, `line`, `area`: `x, y` or `x, color, y`; `scatter`: `x, y` or `color, x, y`; `heatmap`: `x, y, color`; `pie`, `donut`: `theta` or `color, theta`; `kpi`: `value`; `histogram`: `x`. A query other charts share stays top-level and its charts name `x`, `y` or `color`; never split a shared query so a chart can skip them.
 
 Bar orientation, table pagination and sort are chosen from the data (horizontal category bars, largest first unless `color` splits them, else in the query's row order; pages only past one page's rows): write `style.orientation`, `style.pagination` or `sort` only to change that.
 
@@ -111,7 +111,7 @@ Every chart needs `type:`, one of those below.
   - `values` (list of text): Measure fields that fill pivot cells
 - `callout`: requires `message`; takes `title`; rejects `query`, `subtitle`, `x`, `y`, `color`, `sort`, `x_label`, `y_label`, `field_labels`, `layers`, `multiples`, `width`, `height`
   - `message`: Body text the callout displays
-Also exist: `pie`, `donut`, `point_map`, `bubble_map`, `map`, `geoshape`, `spark_bar`, `custom`.
+Also exist: `funnel`, `pie`, `donut`, `point_map`, `bubble_map`, `map`, `geoshape`, `spark_bar`, `custom`.
 For a shape no built-in type draws, read the custom-chart-build skill.
 - A table is as tall as its rows and takes no `height`: `style.pagination.page_rows` caps the rows shown; a `height` on the layout row around it caps its slot.
 
@@ -187,7 +187,7 @@ Built-in names, on 1234567.891 and 0.2534: `currency` $1.23M, `currency_whole` $
 
 ## Style
 
-Keys of `style`: `frame`, `background`, `accent`, `font`, `border`, `box_shadow`, `opacity`, `title`, `text`, `placeholder`, `charts`, `annotations`, `layout`, `variables`, `footer`, `timestamp`, `formats`, `fonts`, `palettes`, `tones`, `roles`, `padding`, `margin`, `gap`.
+Keys of `style`: `frame`, `background`, `accent`, `font`, `border`, `box_shadow`, `opacity`, `title`, `text`, `placeholder`, `charts`, `comments`, `annotations`, `layout`, `variables`, `footer`, `timestamp`, `formats`, `fonts`, `palettes`, `tones`, `roles`, `padding`, `margin`, `gap`.
 
 ## Themes and dark variants
 

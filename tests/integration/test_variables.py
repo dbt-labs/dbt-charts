@@ -75,7 +75,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         svg_output = render(
             result.board, executor.ctx, executor.ledger, format="svg"
@@ -153,7 +152,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         svg_output = render(
             result.board, executor.ctx, executor.ledger, format="svg"
@@ -207,7 +205,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
@@ -240,7 +237,6 @@ text: Exported region
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         png = render(result.board, executor.ctx, executor.ledger, format="png").output
@@ -284,7 +280,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg_output = render(
@@ -332,7 +327,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         data = executor.execute_query("test_query", use_cache=False)
@@ -378,7 +372,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg_output = render(
@@ -436,7 +429,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg_output = render(
@@ -480,7 +472,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg_output = render(
@@ -527,7 +518,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         # Default render
@@ -581,7 +571,6 @@ rows:
         return Run(
             result.board,
             env=build_exec_env(FilesystemProject(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
     def test_default_date_filters_correctly(self) -> None:

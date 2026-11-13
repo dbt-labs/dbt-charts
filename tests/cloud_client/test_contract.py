@@ -80,3 +80,34 @@ def test_field_errors_default_to_empty_rather_than_absent() -> None:
         code=contract.ErrorCode.NOT_FOUND, message="No organization 'acme'."
     )
     assert error.field_errors == {}
+
+
+def test_a_comment_thread_parses_and_ignores_fields_it_does_not_know() -> None:
+    reply = {
+        "id": "r1",
+        "author": None,
+        "author_kind": "member",
+        "body": "Yes",
+        "created_at": "2026-11-08T10:00:00Z",
+        "edited_at": None,
+    }
+    thread = {
+        **reply,
+        "id": "t1",
+        "author": "a@example.com",
+        "board": "finance/revenue",
+        "anchor": {"owner": "rev", "owner_label": "Revenue", "quote": "Rev"},
+        "detached": False,
+        "variables": {"region": "EU"},
+        "branch": "main",
+        "review": None,
+        "resolved_at": None,
+        "resolved_by": None,
+        "replies": [reply],
+        "added_later": 1,
+    }
+
+    parsed = contract.CommentList.model_validate({"threads": [thread]})
+
+    assert parsed.threads[0].anchor.quote == "Rev"
+    assert parsed.threads[0].replies[0].author is None

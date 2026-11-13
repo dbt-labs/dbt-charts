@@ -596,6 +596,22 @@ class PlaceholderOverlay(BaseModel):
     )
 
 
+class CommentsStyle(BaseModel):
+    """Tints a hosting app paints over commented text.
+
+    Carried on the board root as data; the board itself never draws them.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    highlight: Annotated[str, Color()] = Field(
+        description="Tint of a comment highlight the viewer has already seen."
+    )
+    highlight_new: Annotated[str, Color()] = Field(
+        description="Tint of a comment highlight with activity the viewer has not seen."
+    )
+
+
 class PlaceholderStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

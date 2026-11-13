@@ -369,12 +369,11 @@ impl Walk<'_> {
                 let at = format!("charts.{public}.style.{slot}");
                 let model_path = ModelPath(at.split('.').map(str::to_string).collect());
                 let source = format!("the query's `formats:` entry for `{}`", columns.shown);
-                self.out
-                    .push(
-                        diag::warn_restated_format(at, format, source)
-                            .with_sink_param("why", "query format".into())
-                            .at_path(model_path),
-                    );
+                self.out.push(
+                    diag::warn_restated_format(at, format, source)
+                        .with_sink_param("why", "query format".into())
+                        .at_path(model_path),
+                );
             }
         }
         for (column, format) in formats {
@@ -385,12 +384,11 @@ impl Walk<'_> {
                 let at = format!("charts.{public}.style.columns.{column}.format");
                 let model_path = ModelPath(at.split('.').map(str::to_string).collect());
                 let source = format!("the query's `formats:` entry for `{column}`");
-                self.out
-                    .push(
-                        diag::warn_restated_format(at, format, source)
-                            .with_sink_param("why", "query format".into())
-                            .at_path(model_path),
-                    );
+                self.out.push(
+                    diag::warn_restated_format(at, format, source)
+                        .with_sink_param("why", "query format".into())
+                        .at_path(model_path),
+                );
             }
         }
         Ok(())

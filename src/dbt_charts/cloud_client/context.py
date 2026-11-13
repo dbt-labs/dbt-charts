@@ -85,6 +85,26 @@ def _git(args: list[str], start: Path) -> str | None:
     return value or None
 
 
+def gh_token() -> str | None:
+    """The GitHub CLI's github.com token; ``None`` when ``gh`` is not installed
+    or not signed in. Read-only and local, like ``_git``."""
+    try:
+        completed = subprocess.run(
+            ["gh", "auth", "token", "--hostname", "github.com"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
+
+
 def git_remotes(start: Path) -> list[str]:
     """Every remote URL of the repository ``start`` sits in; empty outside one.
 

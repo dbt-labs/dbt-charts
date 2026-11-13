@@ -95,7 +95,6 @@ def test_board_renders_from_an_artifact_with_no_warehouse(tmp_path: Path) -> Non
     executor = Run(
         result.board,
         build_exec_env(project),
-        query_registry=result.query_registry,
     )
     variables: dict[str, Any] = {}
     resolved, render_cache = build_resolved_board(result.board, executor, variables)
@@ -154,7 +153,6 @@ def test_replayed_board_stamps_the_recording_time(tmp_path: Path) -> None:
     executor = Run(
         result.board,
         build_exec_env(project),
-        query_registry=result.query_registry,
     )
     variables: dict[str, Any] = {}
     resolved, _ = build_resolved_board(result.board, executor, variables)
@@ -197,7 +195,6 @@ def test_replay_needs_no_env(tmp_path: Path) -> None:
     executor = Run(
         result.board,
         build_exec_env(project),
-        query_registry=result.query_registry,
     )
     variables: dict[str, Any] = {}
     resolved, _ = build_resolved_board(result.board, executor, variables)

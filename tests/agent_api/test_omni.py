@@ -266,19 +266,6 @@ def test_failed_request_names_the_endpoint_and_omnis_reason_never_the_key(
     assert KEY not in str(exc.value)
 
 
-def test_download_error_status_fails_with_the_job_message(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    routes = _routes(_fixture("export.json"))
-    routes[("GET", f"/v1/dashboards/{DOC}/download/j1/status")] = lambda r: (
-        b'{"status": "error", "error": "render crashed"}'
-    )
-    _install(monkeypatch, routes)
-
-    with pytest.raises(BundleError, match="render crashed"):
-        import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
-
-
 def test_plan_without_query_timezone_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -329,7 +316,7 @@ def test_dashboard_whose_every_tile_lacks_a_saved_query_fails_naming_them(
         import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
 
 
-def test_a_failed_job_with_no_error_type_aborts_the_import(
+def test_a_failed_job_with_no_error_type_leaves_the_tile_unplanned(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     routes = _routes(_fixture("export.json"))
@@ -340,8 +327,10 @@ def test_a_failed_job_with_no_error_type_aborts_the_import(
     )
     _install(monkeypatch, routes)
 
-    with pytest.raises(BundleError, match="did not plan"):
-        import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert "    - sql: none, Omni could not plan it (unknown): x" in outline
 
 
 def test_every_plan_error_type_leaves_the_tile_unplanned(
@@ -362,7 +351,8 @@ def test_every_plan_error_type_leaves_the_tile_unplanned(
 
     outline = (tmp_path / "b" / "outline.md").read_text()
     assert (
-        "    - sql: none, Omni could not plan it: No such field orders.gone" in outline
+        "    - sql: none, Omni could not plan it (PLAN_MISSING_MODEL_OBJECT): "
+        "No such field orders.gone" in outline
     )
     assert (tmp_path / "b" / "queries/2.sql").exists()
 
@@ -435,18 +425,85 @@ def test_a_render_already_in_progress_is_named_and_the_bundle_is_written(
     assert (tmp_path / "b" / "queries/1.sql").exists()
 
 
-def test_a_failed_job_that_is_not_a_plan_error_aborts_the_import(
+def test_a_failed_plan_job_of_any_error_type_leaves_the_tile_unplanned(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     routes = _routes(_fixture("export.json"))
+    plan = routes[("POST", "/v1/query/run")]
+    failed = (
+        b'{"job_id": "j", "status": "FAILED", "error_type": "CONTEXTUAL", '
+        b'"error_message": "Fields are outside the topic"}\n'
+    )
     routes[("POST", "/v1/query/run")] = lambda r: (
-        b'{"job_id": "j", "status": "FAILED", "error_type": "TIMEOUT", '
-        b'"error_message": "warehouse busy"}\n'
+        failed if _body(r)["query"]["fields"][0] == "orders.total_revenue" else plan(r)
     )
     _install(monkeypatch, routes)
 
-    with pytest.raises(BundleError, match="did not plan"):
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert (
+        "    - sql: none, Omni could not plan it (CONTEXTUAL): "
+        "Fields are outside the topic" in outline
+    )
+    assert (tmp_path / "b" / "queries/2.sql").exists()
+
+
+def test_a_dashboard_where_no_tile_plans_is_refused_with_counted_reasons(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    routes = _routes(_fixture("export.json"))
+    kinds = iter(["PLAN_MISSING_MODEL_OBJECT", "CONTEXTUAL"])
+    routes[("POST", "/v1/query/run")] = lambda r: (
+        b'{"job_id": "j", "status": "FAILED", "error_type": "%s", '
+        b'"error_message": "m"}\n' % next(kinds).encode()
+    )
+    _install(monkeypatch, routes)
+
+    with pytest.raises(
+        BundleError,
+        match="no tile could be planned: 1 PLAN_MISSING_MODEL_OBJECT, 1 CONTEXTUAL",
+    ):
         import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+
+def test_a_dashboard_filter_without_a_label_is_listed_by_its_field_name_or_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    export = json.loads(_fixture("export.json"))
+    config = export["dashboard"]["queryPresentationCollection"]["filterConfig"]
+    del config["f1"]["label"]
+    del config["f2"]["label"]
+    del config["f2"]["fieldName"]
+    routes = _routes(json.dumps(export).encode())
+    _install(monkeypatch, routes)
+
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert "- orders.created_at `f1` orders.created_at:" in outline
+    assert "- f2 `f2`:" in outline
+    assert "- Segment `f3`" in outline
+
+
+def test_a_failed_page_render_is_named_and_the_bundle_is_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    routes = _routes(_fixture("export.json"))
+    routes[("GET", f"/v1/dashboards/{DOC}/download/j1/status")] = lambda r: (
+        b'{"status": "error", "error": "All queries failed."}'
+    )
+    _install(monkeypatch, routes)
+
+    import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert "## Not fetched: Omni failed to export these" in outline
+    assert (
+        "- `png/dashboard.png`: Omni render j1 failed: All queries failed." in outline
+    )
+    assert not list((tmp_path / "b").glob("png/*"))
+    assert (tmp_path / "b" / "queries/1.sql").exists()
 
 
 def test_list_returns_only_dashboards_across_pages(
@@ -697,8 +754,8 @@ def test_a_tile_omni_cannot_plan_is_named_and_the_others_are_written(
 
     outline = (tmp_path / "b" / "outline.md").read_text()
     assert (
-        "    - sql: none, Omni could not plan it: Filter on field gone.field not found"
-        in outline
+        "    - sql: none, Omni could not plan it (PLAN): "
+        "Filter on field gone.field not found" in outline
     )
     assert (tmp_path / "b" / "queries/2.sql").exists()
     assert not (tmp_path / "b" / "queries/1.sql").exists()
@@ -941,14 +998,19 @@ def _kpi_routes(
     markdown_config: list[dict[str, Any]],
     csv_body: bytes,
     query_extra: dict[str, Any] | None = None,
+    chart_type: str = "kpi",
+    template: str | None = None,
 ) -> dict[tuple[str, str], Handler]:
     export = json.loads(_fixture("export.json"))
     memberships = export["dashboard"]["queryPresentationCollection"][
         "queryPresentationCollectionMemberships"
     ]
-    memberships[0]["queryPresentation"]["visConfig"]["spec"] = {
-        "markdownConfig": markdown_config
-    }
+    memberships[0]["queryPresentation"]["visConfig"]["chartType"] = chart_type
+    memberships[0]["queryPresentation"]["visConfig"]["spec"] = (
+        {"markdownConfig": markdown_config}
+        if template is None
+        else {"markdown": template}
+    )
     queries = json.loads(_fixture("queries.json"))
     queries["queries"][0]["query"]["fields"] = ["orders.total_revenue", "orders.count"]
     queries["queries"][0]["query"].update(query_extra or {})
@@ -1165,3 +1227,93 @@ def test_a_dashboard_filter_without_a_default_leaves_the_tiles_filter_alone(
     )
     assert sent["filters"]["orders.status"]["values"] == ["Closed Won"]
     assert "dashboard filter applied" not in (tmp_path / "outline.md").read_text()
+
+
+@pytest.mark.parametrize(
+    ("config", "has_values"),
+    [([{"type": "text"}, _number("orders.count")], True), ([{"type": "text"}], False)],
+)
+def test_a_markdown_tile_shows_values_only_when_it_displays_a_number(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    config: list[dict[str, Any]],
+    has_values: bool,
+) -> None:
+    _install(monkeypatch, _kpi_routes(config, _THREE_ROWS, chart_type="markdown"))
+
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+    outline = (tmp_path / "outline.md").read_text()
+    assert "- **markdown** `1`" in outline
+    assert ("    - values: kpi/closed-won-1.csv" in outline) is has_values
+    kpi = tmp_path / "kpi/closed-won-1.csv"
+    assert kpi.exists() is has_values
+    if has_values:
+        assert kpi.read_text().splitlines() == ["Orders,Revenue", '17,"$1,110"']
+
+
+def test_an_unmapped_tile_gets_the_defaults_of_the_filters_on_its_topic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    export = json.loads(_fixture("export.json"))
+    collection = export["dashboard"]["queryPresentationCollection"]
+    collection["filterConfig"]["f1"] = {
+        "kind": "TIME_FOR_UNIT_DURATION",
+        "type": "date",
+        "label": "Fiscal quarter",
+        "fieldName": "orders.created_at",
+        "ui_type": "IS_IN_THE_FISCAL_QUARTER",
+        "isFiscal": True,
+        "base_view": "orders",
+        "left_side": "FY2099 Q9",
+        "right_side": None,
+        "is_negative": False,
+    }
+    collection["filterConfig"]["f2"] |= {"base_view": "orders"}
+    collection["filterConfig"]["f3"] |= {
+        "fieldName": "other.region",
+        "base_view": "other",
+        "values": ["X"],
+    }
+    export["dashboard"]["metadata"]["tileFilterMap"] = {"1": {}, "2": {"f1": False}}
+    routes = _routes(json.dumps(export).encode())
+    bodies: list[dict[str, Any]] = []
+    inner = routes[("POST", "/v1/query/run")]
+
+    def run(request: urllib.request.Request) -> bytes:
+        bodies.append(_body(request))
+        return inner(request)
+
+    routes[("POST", "/v1/query/run")] = run
+    _install(monkeypatch, routes)
+
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+    sent = next(
+        b["query"] for b in bodies if b["query"]["fields"] == ["orders.total_revenue"]
+    )
+    assert sent["filters"]["orders.created_at"]["left_side"] == "FY2099 Q9"
+    assert sent["filters"]["orders.created_at"]["kind"] == "TIME_FOR_UNIT_DURATION"
+    assert sent["filters"]["orders.region"]["values"] == ["EMEA"]
+    assert "other.region" not in sent["filters"]
+    outline = (tmp_path / "outline.md").read_text()
+    assert "dashboard filter applied: Fiscal quarter = " in outline
+    assert "dashboard filter applied: Region = EQUALS values=['EMEA']" in outline
+
+
+def test_a_markdown_template_placeholder_is_the_tiles_number(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    template = "<b>{{ result._second.orders.count.value }}</b>"
+    _install(
+        monkeypatch,
+        _kpi_routes([], _THREE_ROWS, chart_type="markdown", template=template),
+    )
+
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+    assert "    - values: kpi/closed-won-1.csv" in (tmp_path / "outline.md").read_text()
+    assert (tmp_path / "kpi/closed-won-1.csv").read_text().splitlines() == [
+        "Orders,Revenue",
+        '"4,000",$20',
+    ]

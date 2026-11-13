@@ -2903,6 +2903,9 @@ where
 pub struct MarkLabels {
     /// On for `true`, `"last"` and an anchor list.
     pub visible: bool,
+    /// Compile resolved `"auto"`: no label is authored, but a bar too short to
+    /// see keeps its zero label. An authored `false` hides that label too.
+    pub visible_auto: bool,
     /// The marks of each series `labels.visible` names; empty labels every mark.
     /// Only point, line and bar labels author these; every other reader of these
     /// labels calls `refuse_anchors`.
@@ -2921,6 +2924,8 @@ pub struct MarkLabels {
     /// `false` leaves the segments of a stacked bar unlabeled (the total
     /// label is its own layer); see `families/bar/bind.rs`.
     pub stacked: Option<bool>,
+    /// A bar's label template, which prints instead of the formatted value.
+    pub template: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -2943,13 +2948,16 @@ struct MarkLabelsWire {
     auto: bool,
     #[serde(default)]
     stacked: Option<bool>,
+    #[serde(default)]
+    template: Option<String>,
 }
 
-/// `labels.visible` on the wire: `true`, `false`, `"last"`, or a list of anchors.
+/// `labels.visible` on the wire: `true`, `false`, `"auto"`, `"last"`, or a list of anchors.
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub(crate) enum LabelsVisible {
     Flag(bool),
+    Auto(AutoTag),
     Last(LastTag),
     Anchors(Vec<LabelAnchor>),
 }
@@ -3000,20 +3008,26 @@ pub fn anchored_points(anchors: &[LabelAnchor], points: &[(String, usize, f64)])
 }
 
 #[derive(Deserialize)]
+enum AutoTag {
+    #[serde(rename = "auto")]
+    Auto,
+}
+
+#[derive(Deserialize)]
 enum LastTag {
     #[serde(rename = "last")]
     Last,
 }
 
 impl LabelsVisible {
-    /// Any labels at all: everything but `false` draws some.
+    /// Any labels at all: everything but `false` and `"auto"` draws some.
     pub(crate) fn on(&self) -> bool {
-        !matches!(self, Self::Flag(false))
+        !matches!(self, Self::Flag(false) | Self::Auto(_))
     }
 
     fn anchors(self) -> Vec<LabelAnchor> {
         match self {
-            Self::Flag(_) => Vec::new(),
+            Self::Flag(_) | Self::Auto(_) => Vec::new(),
             Self::Last(_) => vec![LabelAnchor::Last],
             Self::Anchors(anchors) => anchors,
         }
@@ -3024,6 +3038,7 @@ impl From<MarkLabelsWire> for MarkLabels {
     fn from(w: MarkLabelsWire) -> Self {
         MarkLabels {
             visible: w.visible.on(),
+            visible_auto: matches!(w.visible, LabelsVisible::Auto(_)),
             anchors: w.visible.anchors(),
             field: w.field,
             format: w.format,
@@ -3033,6 +3048,7 @@ impl From<MarkLabelsWire> for MarkLabels {
             position: w.position,
             auto: w.auto,
             stacked: w.stacked,
+            template: w.template,
         }
     }
 }
@@ -3624,7 +3640,7 @@ pub fn plain_title_node(title: &str, style: Option<&TitleStyle>, x: f64, pad_t: 
     // back to the raw title.
     let cased_title = display_text::case::apply_case(title, font_case)
         .unwrap_or_else(|e| panic!("plain_title_node: {e}"));
-    Node::text(Role::Title, (x, y_baseline), Attrs::new().vega("font-family", family).num("font-size", size).quick_some("font-style", f.and_then(|f| f.style.as_deref())).set("font-weight", weight).set("fill", color).set("data-authored-kind", "title"), cased_title)
+    Node::text(Role::Title, (x, y_baseline), Attrs::new().set("class", "role-title-text").vega("font-family", family).num("font-size", size).quick_some("font-style", f.and_then(|f| f.style.as_deref())).set("font-weight", weight).set("fill", color).set("data-authored-kind", "title"), cased_title)
 }
 
 /// The wrapped subtitle lines as nodes.
@@ -3653,7 +3669,7 @@ pub fn subtitle_nodes(
         .map(|(i, sub)| {
             let ly = sy + i as f64 * (sub_fs + crate::vega_fit::TitleInk::LINE_ADVANCE_EXTRA);
             // Same one-group-not-one-per-line law as the title above.
-            Node::text(Role::Title, (x, ly), Attrs::new().vega("font-family", sub_family).num("font-size", sub_fs).quick_some("font-style", sf.and_then(|f| f.font.style.as_deref())).set("font-weight", sub_weight.clone()).set("fill", sub_color).set_if(i == 0, "data-authored-kind", "subtitle"), sub.as_str())
+            Node::text(Role::Title, (x, ly), Attrs::new().set("class", "role-title-subtitle").vega("font-family", sub_family).num("font-size", sub_fs).quick_some("font-style", sf.and_then(|f| f.font.style.as_deref())).set("font-weight", sub_weight.clone()).set("fill", sub_color).set_if(i == 0, "data-authored-kind", "subtitle"), sub.as_str())
         })
         .collect()
 }
@@ -3666,7 +3682,7 @@ pub fn title_node(text: &str, style: Option<&TitleStyle>, x: f64, y: f64, stamp_
     let color = f.and_then(|f| f.color.as_deref()).unwrap_or("#1a1a1a");
     let weight = f.map(|f| f.weight_str()).unwrap_or_else(|| "600".into());
     let baseline = y + measure::baseline_shift("top", size);
-    Node::text(Role::Title, (x, baseline), Attrs::new().vega("font-family", family).num("font-size", size).quick_some("font-style", f.and_then(|f| f.style.as_deref())).set("font-weight", weight).set("fill", color).set_if(stamp_kind, "data-authored-kind", "title"), text)
+    Node::text(Role::Title, (x, baseline), Attrs::new().set("class", "role-title-text").vega("font-family", family).num("font-size", size).quick_some("font-style", f.and_then(|f| f.style.as_deref())).set("font-weight", weight).set("fill", color).set_if(stamp_kind, "data-authored-kind", "title"), text)
 }
 
 /// A field name as display text: `display_text::slug_to_text`, then
@@ -6008,5 +6024,24 @@ mod y_edges_tests {
         assert_eq!((centered.baseline(100.0, 100.0), centered.baseline(0.0, 100.0), centered.baseline(50.0, 100.0)), ("bottom", "top", "middle"));
         let above_gridline = YEdges { base: "bottom", ..centered };
         assert_eq!((above_gridline.baseline(100.0, 100.0), above_gridline.baseline(0.0, 100.0)), ("bottom", "bottom"));
+    }
+}
+
+#[cfg(test)]
+mod role_token_tests {
+    use super::*;
+
+    /// A role token is how the equivalence comparator's quirk classes find a primitive
+    /// (`equivalence/src/drawn.rs`): the title and its subtitle must carry theirs.
+    #[test]
+    fn title_and_subtitle_text_carry_their_role_tokens() {
+        let printed = |nodes: &[Node]| print::print(nodes);
+        let plain = printed(&[plain_title_node("Sales", None, 0.0, 0.0)]);
+        let row = printed(&[title_node("Sales", None, 0.0, 0.0, true)]);
+        for title in [&plain, &row] {
+            assert!(title.contains(r#"class="role-title-text""#), "{title}");
+        }
+        let subs = printed(&subtitle_nodes(&["by region".to_string(), "and year".to_string()], None, 0.0, 0.0, 18.0));
+        assert_eq!(subs.matches(r#"class="role-title-subtitle""#).count(), 2, "{subs}");
     }
 }

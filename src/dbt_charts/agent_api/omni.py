@@ -18,6 +18,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -156,7 +157,15 @@ def _origin(base_url: str | None) -> str:
 
 
 class _Unplannable(BundleError):
-    """Omni refused to plan one saved query; the bundle can name it and go on."""
+    """Omni's plan job for one saved query failed; the bundle names it and goes on.
+
+    A failed plan job is a property of the saved query (stale fields, a missing
+    model object), whatever ``error_type`` Omni gives it, so none is fatal.
+    """
+
+    def __init__(self, error_type: str, message: str) -> None:
+        super().__init__(message)
+        self.error_type = error_type
 
 
 class _HttpFailure(BundleError):
@@ -223,10 +232,10 @@ class _Omni:
         )
         jobs = [json.loads(line) for line in reply.decode().splitlines() if line]
         for job in jobs:
-            if job.get("status") == "FAILED" and (
-                job.get("error_type") or ""
-            ).startswith("PLAN"):
-                raise _Unplannable(job["error_message"])
+            if job.get("status") == "FAILED":
+                raise _Unplannable(
+                    job.get("error_type") or "unknown", job["error_message"]
+                )
         planned = [j for j in jobs if "summary" in j]
         if len(planned) != 1 or planned[0]["status"] != "PLANNED":
             raise BundleError(f"Omni did not plan the query: {reply.decode()[:300]}")
@@ -256,7 +265,9 @@ class _Omni:
             if status["status"] == "complete":
                 return self.request("GET", f"{path}/{job}")
             if status["status"] == "error":
-                raise BundleError(f"Omni download {job} failed: {status.get('error')}")
+                raise _RenderUnavailable(
+                    f"Omni render {job} failed: {status.get('error')}"
+                )
             time.sleep(POLL_SECONDS)
         raise _RenderUnavailable(f"Omni render {job} did not finish in time")
 
@@ -298,6 +309,11 @@ def list_omni_dashboards(*, base_url: str | None) -> list[OmniDashboard]:
 
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "tile"
+
+
+def _filter_label(key: str, spec: dict[str, Any]) -> str:
+    """A dashboard filter's display name; Omni omits ``label`` on some filters."""
+    return spec.get("label") or spec.get("fieldName") or key
 
 
 def _describe(spec: dict[str, Any]) -> str:
@@ -385,11 +401,11 @@ def import_omni(
             dashboard with no tile the bundle can represent, or an incomplete
             bundle. A divider is listed in ``outline.md``; a tile of a type the
             bundle cannot represent, or whose saved query is missing, is named
-            there as left out, a tile whose query Omni cannot plan (any
-            ``PLAN*`` error type) is named without SQL, and a KPI whose value
+            there as left out, a tile whose plan job fails (whatever its error
+            type) is named with that type and no SQL, and a KPI whose value
             run Omni answers with an HTTP error is named without values, and a page
-            image whose render does not finish, or whose dashboard already has a
-            render running (HTTP 409), is listed under ``Not fetched``
+            image whose render fails or does not finish, or whose dashboard already
+            has a render running (HTTP 409), is listed under ``Not fetched``
             (the png requirement is waived); the import continues.
             A tile Omni plans as a warehouse query plus a DuckDB query over its
             result gets ``queries/<id>.sql`` (the warehouse step, runnable as
@@ -471,6 +487,7 @@ def _fill_bundle(
     tiles: list[str] = []
     left_out: list[str] = []
     represented = 0
+    unplanned: Counter[str] = Counter()
     for name, _, placements in pages:
         if name:
             tiles += ["", f"## Page: {name}", ""]
@@ -517,7 +534,10 @@ def _fill_bundle(
             try:
                 sql, timezone = omni.plan(query["query"])
             except _Unplannable as exc:
-                tiles.append(f"    - sql: none, Omni could not plan it: {exc}")
+                unplanned[exc.error_type] += 1
+                tiles.append(
+                    f"    - sql: none, Omni could not plan it ({exc.error_type}): {exc}"
+                )
                 continue
             timezones.add(timezone)
             sql, post_sql, step_name = _split_steps(tile_id, sql)
@@ -534,7 +554,7 @@ def _fill_bundle(
                     f"(DuckDB over step 1's result as `{step_name}`: "
                     f"{', '.join(clauses)})"
                 )
-            if chart == "kpi":
+            if chart == "kpi" or _headline(presentation):
                 kpi_file = f"kpi/{_slug(query['name'])}-{tile_id}.csv"
                 try:
                     values = omni.request(
@@ -556,6 +576,9 @@ def _fill_bundle(
             "dashboard has no tile the bundle can represent; left out: "
             + ", ".join(sorted(set(left_out)))
         )
+    if unplanned and not timezones:
+        counts = ", ".join(f"{n} {kind}" for kind, n in unplanned.most_common())
+        raise BundleError(f"no tile could be planned: {counts}")
     tiles += [
         f"- **hidden** `{key}` {saved[key]['name']!r} — not on the dashboard, not fetched"
         for key in metadata["hiddenTiles"]
@@ -563,7 +586,7 @@ def _fill_bundle(
     ]
 
     filters = [
-        f"- {spec['label']} `{key}`"
+        f"- {_filter_label(key, spec)} `{key}`"
         f"{' ' + spec['fieldName'] if 'fieldName' in spec else ''}: {_describe(spec)}"
         for key in collection["filterOrder"]
         for spec in [collection["filterConfig"][key]]
@@ -638,9 +661,17 @@ def _at_dashboard_filters(
 
     The dashboard shows a tile at its filters' defaults, not at the filters saved
     on the query. A dashboard filter with no default (no values, no time range)
-    leaves the tile's own filter alone.
+    leaves the tile's own filter alone. A tile whose map is empty was never wired
+    by hand: Omni lists nothing for it and every filter on the tile's topic reaches
+    it through the filter's own field.
     """
     filters = dict(saved["query"]["filters"])
+    if not listens:
+        listens = {
+            filter_id: spec["fieldName"]
+            for filter_id, spec in collection["filterConfig"].items()
+            if spec.get("base_view") == saved["query"]["table"] and "fieldName" in spec
+        }
     moved = []
     for filter_id in collection["filterOrder"]:
         field = listens.get(filter_id)
@@ -652,9 +683,29 @@ def _at_dashboard_filters(
         key = field if field in filters else re.sub(r"\[[^\]]*\]$", "", field)
         applied = {k: spec[k] for k in DASHBOARD_FILTER_KEYS if k in spec}
         if filters.get(key) != applied:
-            moved.append(f"{spec['label']} = {_describe(applied)}")
+            moved.append(f"{_filter_label(filter_id, spec)} = {_describe(applied)}")
         filters[key] = applied
     return {**saved, "query": {**saved["query"], "filters": filters}}, moved
+
+
+_MARKDOWN_NUMBER = re.compile(
+    r"\{\{\s*result\.(_[a-z]+(?:\.\d+)?)\.([\w.\[\]]+?)\.value\s*\}\}"
+)
+
+
+def _headline(presentation: dict[str, Any]) -> dict[str, Any] | None:
+    """The ``{row, field: {name}}`` a markdown tile shows as its number, if any.
+
+    Omni states it either as a ``number`` entry of ``spec.markdownConfig`` or as
+    a ``{{ result.<row>.<field>.value }}`` placeholder in the ``spec.markdown``
+    template; the first of either is the headline.
+    """
+    spec = presentation["visConfig"].get("spec", {})
+    for entry in spec.get("markdownConfig", []):
+        if entry["type"] == "number":
+            return entry["config"]["field"]
+    found = _MARKDOWN_NUMBER.search(spec.get("markdown", ""))
+    return {"row": found[1], "field": {"name": found[2]}} if found else None
 
 
 def _displayed_row(
@@ -662,8 +713,7 @@ def _displayed_row(
 ) -> bytes:
     """A KPI csv cut to its header and the one row the tile displays, headline first.
 
-    The headline is the field of the first ``number`` entry of the tile's
-    ``markdownConfig`` and ``field.row`` names the row shown: ``_first``,
+    The headline is the tile's ``_headline`` field and ``field.row`` names the row shown: ``_first``,
     ``_second``, ``_last`` or ``_totals.N`` (the last row Omni appends when the
     query asks for column totals). A tile with no ``number`` entry shows its first
     row. A pivoted query's csv has two header rows and no column per field, so it
@@ -673,8 +723,7 @@ def _displayed_row(
     spec = query["query"]
     if spec["pivots"]:
         return values
-    entries = presentation["visConfig"].get("spec", {}).get("markdownConfig", [])
-    shown = next((e["config"]["field"] for e in entries if e["type"] == "number"), None)
+    shown = _headline(presentation)
     header, *data = csv.reader(io.StringIO(values.decode()))
     total = None
     if "::total::" in (spec.get("column_totals") or {}) and data:

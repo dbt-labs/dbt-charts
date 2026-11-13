@@ -19,7 +19,10 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPointLabels,
     ResolvedPointMarkStyle,
 )
-from dbt_charts.core.compile.models.style.theme.marks import label_anchors
+from dbt_charts.core.compile.models.style.theme.marks import (
+    label_anchors,
+    labels_drawn,
+)
 from dbt_charts.core.compile.resolve.chart._annotations import (
     NO_ANNOTATIONS,
     annotation_chart,
@@ -32,7 +35,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     _rail_off_for_layers,
     _rail_off_for_multiples,
     _reject_dual_axis_layered_endpoint_labels,
-    cartesian_color_domain_values,
+    cartesian_series_domain_values,
     cartesian_series_naming,
     cartesian_top_legend_entries,
     estimate_cartesian_plot_height,
@@ -47,7 +50,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     LayerDatasets,
 )
 from dbt_charts.core.compile.resolve.chart._conditional import (
-    validate_mark_conditional,
+    resolve_mark_conditional,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
     _bake_y_zero,
@@ -213,7 +216,7 @@ def _resolve_line(
         temporal_band_axes=frozenset(),
     )
     line = chart_local_style_context.line
-    validate_mark_conditional(line.conditional, data, y=normalized.y)
+    line_conditional = resolve_mark_conditional(line.conditional, data, y=normalized.y)
     primary = plan.primary
     channels = plan.channels
     tooltip_format_values = quantitative_channel_values(data, normalized.y)
@@ -269,7 +272,9 @@ def _resolve_line(
     # layer to name -- but rarely reaches it in practice: a multi-series line
     # usually carries its own endpoint-label rail instead (see
     # cartesian_series_naming's `not suppress_legend` gate).
-    color_domain_values = cartesian_color_domain_values(dataset, normalized.color)
+    color_domain_values = cartesian_series_domain_values(
+        dataset, normalized.y, normalized.color, normalized.field_labels
+    )
     legend_entries = cartesian_top_legend_entries(
         normalized.y if isinstance(normalized.y, str) else None,
         normalized.y_label,
@@ -498,7 +503,9 @@ def _resolve_line(
     line_stroke = resolved_line_mark.stroke.width
     # Decided here, before bake_point_companions, which leaves a set size alone.
     effective_labels = (
-        resolved_line_labels if resolved_line_labels.visible else resolved_point_labels
+        resolved_line_labels
+        if labels_drawn(resolved_line_labels.visible)
+        else resolved_point_labels
     )
     anchored_only = (
         bool(label_anchors(effective_labels.visible))
@@ -539,7 +546,7 @@ def _resolve_line(
         layout_padding=line.padding,
         suppress_legend=naming.suppress_legend,
         top_legend=naming.top_legend,
-        wrap_legend=naming.wrap_legend,
+        wrap_columns=naming.wrap_columns,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
         legend_hidden_under_edge=naming.hidden_under_edge,
     )
@@ -603,7 +610,7 @@ def _resolve_line(
             ),
             line_mark=resolved_line_mark,
             point_mark=line_point_mark,
-            conditional=line.conditional,
+            conditional=line_conditional,
             endpoint_labels=endpoint_labels,
             single_series_fill=single_series_fill,
             label_usable_ratio=chart_style_context.label_usable_ratio,

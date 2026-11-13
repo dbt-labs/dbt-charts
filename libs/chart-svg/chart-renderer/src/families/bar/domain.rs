@@ -284,8 +284,6 @@ pub(super) fn value_domain_and_ticks(
     // overwritten with `[0, max total]` (`endpoint_labels.py`), so an authored
     // pair never reaches Vega and the scale is not niced.
     rail_pins_domain: bool,
-    // A centered stack's labels sit on the zero stack (`labels_on_zero_stack`).
-    zero_stack_labels: bool,
 ) -> Result<(f64, f64, Vec<f64>), String> {
     // A centered stack shares the zero stack's extent and ladder; only its
     // segments' offset differs, and they pile magnitudes up from 0, so no
@@ -358,7 +356,7 @@ pub(super) fn value_domain_and_ticks(
     };
     // Vega nices both ends of a stacked extent that holds a negative running
     // sum (production paints a −400 floor over a −300 sum).
-    let stack_floor = if stack == "zero" && (!centered || zero_stack_labels) {
+    let stack_floor = if stack == "zero" && !centered {
         stack_reach(rows, cat_field, val_field).0
     } else if stack == "none" && unbaked && start_field.is_none() {
         // An unbaked axis has no ladder to pin a floor from: Vega's `zero: true`
@@ -742,10 +740,9 @@ impl CenterStack {
 }
 
 /// The spans a stack's value labels anchor on when they are not the bars' own.
-/// A centered stack's `middle` label sits on the both-signs stack, and a
-/// non-`middle` label of a centered or normalized stack sits on the raw zero
-/// stack (`labels_on_zero_stack`; over a `[0, 1]` scale that puts it far past
-/// the plot).
+/// A centered stack's labels sit on the both-signs stack the bars are drawn on,
+/// and a non-`middle` label of a normalized stack sits on the raw zero stack
+/// (over a `[0, 1]` scale that puts it far past the plot).
 pub(super) fn stack_label_spans(
     r: &BarResolved,
     // The both-signs stack of every row a `middle` label centers on.
@@ -758,10 +755,7 @@ pub(super) fn stack_label_spans(
     let middle = label_position(labels, true) == "middle";
     let order = if stack_order.is_empty() { &[String::new()][..] } else { stack_order };
     match r.stack.as_str() {
-        "center" => {
-            let centered = middle.then_some(label_stack).flatten();
-            stack_spans(cat_domain, order, data_map, false, centered).map(Some)
-        }
+        "center" => stack_spans(cat_domain, order, data_map, false, label_stack).map(Some),
         "normalize" if !middle => stack_spans(cat_domain, order, data_map, false, None).map(Some),
         _ => Ok(None),
     }

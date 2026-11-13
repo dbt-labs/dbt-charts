@@ -16,7 +16,7 @@ from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.authored._annotations import ChartSort
 from dbt_charts.core.compile.models.chart.authored._support_table import (
     ChartSupportTable,
-    ChartSupportTablePerSeries,
+    support_table_column,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
@@ -42,6 +42,7 @@ _RADIAL: Mapping[int, tuple[str, ...]] = {1: ("theta",), 2: ("color", "theta")}
 #: Per family: the channels a query's columns bind, by column count.
 POSITIONAL_CHANNELS: Mapping[str, Mapping[int, tuple[str, ...]]] = {
     "bar": _CARTESIAN,
+    "funnel": _CARTESIAN,
     "line": _CARTESIAN,
     "area": _CARTESIAN,
     "scatter": {2: ("x", "y"), 3: ("color", "x", "y")},
@@ -55,6 +56,7 @@ POSITIONAL_CHANNELS: Mapping[str, Mapping[int, tuple[str, ...]]] = {
 #: Per family: the channels that are named together; the rest are optional.
 REQUIRED_CHANNELS: Mapping[str, tuple[str, ...]] = {
     "bar": ("x", "y"),
+    "funnel": ("x", "y"),
     "line": ("x", "y"),
     "area": ("x", "y"),
     "scatter": ("x", "y"),
@@ -68,6 +70,7 @@ REQUIRED_CHANNELS: Mapping[str, tuple[str, ...]] = {
 #: Per family: every channel that takes part, optional ones included.
 CHANNELS: Mapping[str, tuple[str, ...]] = {
     "bar": ("x", "y", "color", "pattern"),
+    "funnel": ("x", "y", "color", "pattern"),
     "line": ("x", "y", "color"),
     "area": ("x", "y", "color", "pattern"),
     "scatter": ("x", "y", "color", "size", "shape"),
@@ -89,6 +92,7 @@ _LAYERED = ("layers", "multiples", "tooltip")
 #: read that column a second time; it is half-named, like a `y` with no `x`.
 PINNED_FIELDS: Mapping[str, tuple[str, ...]] = {
     "bar": ("y_start", *_LAYERED),
+    "funnel": ("y_start", *_LAYERED),
     "line": ("connect", *_LAYERED),
     "area": _LAYERED,
     "scatter": _LAYERED,
@@ -104,6 +108,7 @@ _CARTESIAN_ATTACHMENTS = ("annotations", "support_table")
 #: chart left unbound by a zero-row result.
 ATTACHMENTS: Mapping[str, tuple[str, ...]] = {
     "bar": _CARTESIAN_ATTACHMENTS,
+    "funnel": _CARTESIAN_ATTACHMENTS,
     "line": _CARTESIAN_ATTACHMENTS,
     "area": _CARTESIAN_ATTACHMENTS,
     "scatter": ("annotations",),
@@ -121,6 +126,7 @@ _SIDED = ("sort", "support_table", "labels")
 #: channel, so a shape with one refuses every side column but the measure.
 SIDE_FIELDS: Mapping[str, tuple[str, ...]] = {
     "bar": _SIDED,
+    "funnel": _SIDED,
     "line": _SIDED,
     "area": _SIDED,
     "scatter": ("sort", "labels"),
@@ -169,12 +175,7 @@ def _side_columns(chart: Chart, field: str) -> list[str]:
     if isinstance(value, ChartSort):
         return [value.by]
     if isinstance(value, ChartSupportTable):
-        return [
-            entry.per_series
-            if isinstance(entry, ChartSupportTablePerSeries)
-            else entry.source
-            for entry in value.entries
-        ]
+        return [support_table_column(entry) for entry in value.entries]
     return []
 
 

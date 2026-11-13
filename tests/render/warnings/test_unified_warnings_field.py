@@ -14,6 +14,10 @@ from types import ModuleType
 import pytest
 
 from dbt_charts.core.board import BoardRenderResult
+from dbt_charts.core.compile.models.source import (
+    DuckDBSourceConfig,
+    ResolvedSourceConfig,
+)
 from dbt_charts.core.diagnostics import (
     WARN_TABLE_COLUMNS_OVERFLOW,
     WARN_UNREFERENCED_CHART,
@@ -23,6 +27,10 @@ from dbt_charts.core.project import Project
 from dbt_charts.core.render.warnings.base import WarningContext
 
 from ..._scripted_env import ScriptedBackend, scripted_env
+
+_EXAMPLES_DB: dict[str, ResolvedSourceConfig] = {
+    "examples_db": DuckDBSourceConfig(type="duckdb", path=":memory:")
+}
 
 _ORPHAN_YAML = """
 source: examples_db
@@ -61,7 +69,9 @@ class TestBoardRenderResultUnifiedWarnings:
         from dbt_charts.core.project import InMemoryBoard
 
         # Set up a project-less exec env mock.
-        registry = scripted_env(ScriptedBackend([{"x": 1, "y": 2}]))
+        registry = scripted_env(
+            ScriptedBackend([{"x": 1, "y": 2}]), named_sources=_EXAMPLES_DB
+        )
 
         project = local_project(tmp_path)
         result = render_dashboard(
@@ -105,7 +115,9 @@ class TestBoardRenderResultUnifiedWarnings:
 
         monkeypatch.setattr(renderer_mod, "run_all", _run_all)
 
-        registry = scripted_env(ScriptedBackend([{"x": 1, "y": 2}]))
+        registry = scripted_env(
+            ScriptedBackend([{"x": 1, "y": 2}]), named_sources=_EXAMPLES_DB
+        )
 
         yaml_content = """
 source: examples_db

@@ -503,7 +503,7 @@ def _draw_field(
         return _draw_buttons(control, box, x, y, width, variables_style, align)
     sizing = traits_of(box.input).sizing
     if sizing == "checkbox":
-        return _draw_checkbox(control, x, y, variables_style)
+        return _draw_checkbox(control, box, x, y, height, variables_style)
     if sizing == "slider":
         return _draw_slider(control, box, x, y, width, height, variables_style)
     return _draw_text_field(
@@ -696,32 +696,29 @@ def _draw_buttons(
 
 
 def _draw_checkbox(
-    control: ResolvedControl, x: float, y: float, variables_style: VariablesStyle
+    control: ResolvedControl,
+    box: ControlBox,
+    x: float,
+    y: float,
+    height: float,
+    variables_style: VariablesStyle,
 ) -> list[str]:
-    """A square, ticked when the value reads as yes.
+    """Yes or No as text, and a square ticked when the value reads as yes.
 
-    The one field that keeps its outline at rest. Every other control states its
-    value as text, so the box around it is decoration a static export can drop.
-    An unticked checkbox has no text — with a transparent fill and no stroke it
-    renders as nothing at all, and a reader cannot tell it from a variable that
-    was never drawn. The box *is* the value here, so it is not an affordance to
-    withhold.
-
-    Stroked from the same source as ``--dbt-variable-field-border``, which is
-    what the interactivity rule paints every field with — a different token here
-    would repaint this one box the moment a host bound it. The width is stated
-    rather than read from ``border.width``: that field is the *panel's* border
-    and resolves to 0 on every theme, which is precisely the "no border" it is
-    meant to express.
+    At rest the strip states values like every other control, so the square is
+    drawn hidden for the runtime to reveal and the word hides in its place.
     """
     size = float(variables_style.input.widths.checkbox)
     top = y + (float(variables_style.input.height) - size) / 2
     parts = [
-        f'<rect data-dbt-field="checkbox" data-dbt-ornament="checkbox" '
+        _value_text(
+            box.value, x, y + height / 2, variables_style, ' data-dbt-at-rest="true"'
+        ),
+        '<g data-dbt-ornament="checkbox" opacity="0">',
+        f'<rect data-dbt-field="checkbox" '
         f'x="{px(x)}" y="{px(top)}" width="{px(size)}" height="{px(size)}" '
         f'rx="{px(float(variables_style.input.border.radius))}" '
-        f'fill="{escape_attr(variables_style.input.background)}" '
-        f'stroke="{escape_attr(variables_style.border.color)}" stroke-width="1"/>'
+        f'fill="{escape_attr(variables_style.input.background)}" stroke="none"/>',
     ]
     if control.checked:
         parts.append(
@@ -731,6 +728,7 @@ def _draw_checkbox(
             f'fill="none" stroke="{escape_attr(variables_style.value.font.color)}" '
             'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
         )
+    parts.append("</g>")
     return parts
 
 
@@ -743,27 +741,40 @@ def _draw_slider(
     height: float,
     variables_style: VariablesStyle,
 ) -> list[str]:
-    """A track with a thumb at the committed value, and the value beside it."""
+    """The value as text, then a track with a thumb at it.
+
+    The value sits where every other control's does; the track and thumb fill
+    the rest of the field, drawn hidden for the runtime to reveal.
+    """
+    track_width = float(variables_style.input.widths.range)
+    track_x = x + width - track_width
+    mid = y + height / 2
+    thumb = track_x + track_width * _slider_fraction(control)
+
+    return [
+        _value_text(
+            box.value, x, mid, variables_style, ' data-dbt-ornament="slider-value"'
+        ),
+        f'<rect data-dbt-field="slider" data-dbt-ornament="slider" opacity="0" '
+        f'x="{px(track_x)}" y="{px(mid - 2)}" width="{px(track_width)}" height="4" rx="2" '
+        f'fill="{escape_attr(variables_style.input.background)}" stroke="none"/>',
+        f'<circle data-dbt-ornament="slider-thumb" opacity="0" cx="{px(thumb)}" cy="{px(mid)}" r="6" '
+        f'fill="{escape_attr(variables_style.value.font.color)}"/>',
+    ]
+
+
+def _value_text(
+    value: str, x: float, mid: float, variables_style: VariablesStyle, attrs: str
+) -> str:
     font_size = _font_size(variables_style)
     value_font = variables_style.value.font
     assert value_font.family is not None, _CASCADE_GAP
-    family = str(value_font.family)
-    track_width = float(variables_style.input.widths.range)
-    mid = y + height / 2
-    thumb = x + track_width * _slider_fraction(control)
-
-    return [
-        f'<rect data-dbt-field="slider" data-dbt-ornament="slider" '
-        f'x="{px(x)}" y="{px(mid - 2)}" width="{px(track_width)}" height="4" rx="2" '
-        f'fill="{escape_attr(variables_style.input.background)}" stroke="none"/>',
-        f'<circle data-dbt-ornament="slider-thumb" cx="{px(thumb)}" cy="{px(mid)}" r="6" '
-        f'fill="{escape_attr(variables_style.value.font.color)}"/>',
-        f'<text data-dbt-ornament="slider-value" '
-        f'x="{px(x + track_width + float(variables_style.control_gap))}" '
-        f'y="{px(mid + centered_baseline_offset(value_font.family, font_size))}" font-size="{px(font_size)}" '
-        f'font-family="{escape_attr(family)}" fill="{escape_attr(variables_style.value.font.color)}">'
-        f"{html.escape(box.value)}</text>",
-    ]
+    return (
+        f'<text{attrs} x="{px(x)}" '
+        f'y="{px(mid + centered_baseline_offset(value_font.family, font_size))}" '
+        f'font-size="{px(font_size)}" font-family="{escape_attr(str(value_font.family))}" '
+        f'fill="{escape_attr(value_font.color)}">{html.escape(value)}</text>'
+    )
 
 
 def _slider_fraction(control: ResolvedControl) -> float:

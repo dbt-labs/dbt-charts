@@ -84,8 +84,8 @@ def test_inline_and_anchored_queries_carry_their_own_ttl(tmp_path: Path) -> None
     policies = _rendered_policies(tmp_path)
 
     assert policies["named"] == "10m"
-    assert policies["_inline_query_c_inline"] == "45s"
-    assert policies["shared.yml#totals"] == "30s"
+    assert policies["@charts.c_inline.query"] == "45s"
+    assert policies["charts/shared.yml#totals"] == "30s"
 
 
 def test_a_board_of_only_inline_queries_still_reports_policies(

@@ -46,7 +46,6 @@ def _geometry(
     executor = Run(
         result.board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
     out = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert out.board_error is None, out.board_error

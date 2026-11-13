@@ -373,56 +373,31 @@ def render_template(
 # ---------------------------------------------------------------------------
 
 
-def expand_registered_view(
+def render_registered_view_yaml(
     match: RouteMatch,
     query_results: dict[str, QueryResult],
     resolve_dialect: Callable[[], str | None] = lambda: None,
-) -> AuthoredBoard:
-    """Expand a matched registered view into a normal authored board.
+) -> str:
+    """The board YAML a matched registered view renders to.
 
-    Pipeline:
-    1. Load the template text from the package.
-    2. Render it with ``path.*`` and ``queries.<name>`` in context.
-    3. Parse the rendered YAML into an ``AuthoredBoard`` using the normal
-       board parser (same path as authored YAML files).
-
-    After this function returns, the generated board is indistinguishable
-    from an authored board and passes through the normal compile/validate/
-    query/render pipeline unchanged.
-
-    Args:
-        match: A successful route match containing the view definition and
-            extracted path params.
-        query_results: Pre-executed registry query results keyed by name
-            (typically from ``run_registry_queries``). Pass ``{}`` when the
-            view declares no ``queries:``.
-        resolve_dialect: Zero-arg callable resolving the matched source's
-            dialect, threaded through to ``render_template`` — see its
-            docstring for the laziness contract. Defaults to a resolver that
-            always returns ``None`` (no dialect-correct quoting).
-
-    Returns:
-        Parsed ``AuthoredBoard`` ready for validation and compilation.
+    Loads the template text from the package and renders it with ``path.*`` and
+    ``queries.<name>`` in context. ``resolve_dialect`` is threaded through to
+    ``render_template`` — see its docstring for the laziness contract.
 
     Raises:
         TemplateLoadError: If the template file cannot be found.
         ExpansionError: If template rendering fails (bad template syntax,
             missing path param, missing query result, an identifier that
-            fails validation, or a source dialect that can't be resolved) or
-            if the rendered output is not valid board YAML. The template path
-            is always included in the error message.
+            fails validation, or a source dialect that can't be resolved). The
+            template path is always included in the error message.
     """
     template_path = match.view.template
-
-    # Step 1: Load the template text.
     template_text = load_template(template_path)
-
-    # Step 2: Render the template.
     # Re-raise with the template path so the error is actionable; use a
     # distinct prefix ("Failed to render") to avoid repeating the inner
     # "Template rendering failed" text from render_template.
     try:
-        rendered_yaml = render_template(
+        return render_template(
             template_text,
             path_params=match.path_params,
             query_results=query_results,
@@ -433,7 +408,15 @@ def expand_registered_view(
             f"Failed to render template {template_path!r}: {exc}"
         ) from exc
 
-    # Step 3: Parse rendered YAML into an AuthoredBoard.
+
+def parse_registered_view(rendered_yaml: str, template_path: str) -> AuthoredBoard:
+    """The ``AuthoredBoard`` a registered view's rendered YAML parses to, by the normal board
+    parser (same path as authored YAML files): from here the generated board is
+    indistinguishable from an authored board.
+
+    Raises:
+        ExpansionError: If the rendered output is not valid board YAML.
+    """
     from dbt_charts.core.compile.parse.parser import ParseError, parse_yaml
 
     try:
@@ -442,3 +425,23 @@ def expand_registered_view(
         raise ExpansionError(
             f"Generated board from template {template_path!r} is not valid board YAML: {exc}"
         ) from exc
+
+
+def expand_registered_view(
+    match: RouteMatch,
+    query_results: dict[str, QueryResult],
+    resolve_dialect: Callable[[], str | None] = lambda: None,
+) -> AuthoredBoard:
+    """Expand a matched registered view into a normal authored board.
+
+    ``render_registered_view_yaml`` then ``parse_registered_view``.
+
+    Raises:
+        TemplateLoadError: If the template file cannot be found.
+        ExpansionError: If template rendering fails or the rendered output is
+            not valid board YAML.
+    """
+    return parse_registered_view(
+        render_registered_view_yaml(match, query_results, resolve_dialect),
+        match.view.template,
+    )

@@ -97,6 +97,12 @@ class BarChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
         ),
         Forbids(
             ("y_start",),
+            "y_start is not supported on type: funnel: a funnel centers each "
+            "bar, so a bar has no start of its own. Use type: bar for ranged bars.",
+            when=(ValueIn("type", ("funnel",)),),
+        ),
+        Forbids(
+            ("y_start",),
             "y_start sets each bar's start, so it can't be stacked; "
             "remove style.stack or y_start.",
             when=(ValueIn("style.stack", ("zero", "normalize", "center")),),
@@ -113,13 +119,13 @@ class BarChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
             ("layers",),
             "Bar chart: layers are not supported with multi-metric "
             "(y: [...]) charts. Use a long-form query with one y field.",
-            when=(ValueIn("type", ("bar",)), IsList("y")),
+            when=(ValueIn("type", ("bar", "funnel")), IsList("y")),
             nonempty=("layers",),
         ),
     )
 
     type: Annotated[
-        Literal["bar", "histogram"],
+        Literal["bar", "histogram", "funnel"],
         Field(description="Selects the chart family."),
     ]
     y_start: Annotated[

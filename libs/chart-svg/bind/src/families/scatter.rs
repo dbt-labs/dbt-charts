@@ -26,8 +26,8 @@ use std::collections::HashMap;
 use board_model::board::Board;
 use board_model::chart::{ColorColumn, Columns, MultiplesConfig, MultiplesScale, ScatterChart};
 use board_model::ids::ChartId;
+use board_model::style::marks::labels_drawn;
 use board_model::style::font::SymbolShape;
-use board_model::style::marks::LabelVisible;
 use model_core::Engine;
 use diagnostic::{diag, refuse, Diagnostic};
 
@@ -97,7 +97,7 @@ fn point_style(chart: &ScatterChart) -> Result<PointStyle, Diagnostic> {
         ("a `shape`", !matches!(point.shape, Engine::Rule(_) | Engine::Value(SymbolShape::Circle))),
         ("a `color`", !matches!(point.color, Engine::Rule(_))),
         ("`filled: false`", !point.filled),
-        ("value labels", !matches!(point.labels.base.visible, LabelVisible::Off)),
+        ("value labels", labels_drawn(&point.labels.base.visible)),
     ];
     if let Some(aspect) = unported.into_iter().find_map(|(aspect, set)| set.then_some(aspect)) {
         return Err(unsupported(refuse!("a scatter point mark with {aspect} is not supported")));

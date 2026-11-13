@@ -1230,7 +1230,7 @@ mod tests {
         theme["row"]["stripe"] = json!({"color": "#F7F8FA"});
         theme["header"]["visible"] = json!(false);
         theme["outer_padding"] = json!(0.0);
-        theme["pagination"] = json!({"enabled": false});
+        theme["pagination"] = json!({"enabled": false, "mode": "pages"});
         json!({
             "link_open": "page",
             "columns": {

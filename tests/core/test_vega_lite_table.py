@@ -403,7 +403,9 @@ class TestTableProportionalSizing:
 
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart(
+            "table", x=None, y=None, style={"table": {"pagination": {"mode": "pages"}}}
+        )
         data = [{"name": f"row{i}"} for i in range(25)]
         chart = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
         # Interactive-host contract: a single page renders. A static export
@@ -456,7 +458,11 @@ class TestTableProportionalSizing:
             "table",
             x=None,
             y=None,
-            style={"table": {"pagination": {"enabled": True, "page_rows": 5}}},
+            style={
+                "table": {
+                    "pagination": {"enabled": True, "mode": "pages", "page_rows": 5}
+                }
+            },
         )
         data = [{"name": f"row{i}"} for i in range(10)]
         chart = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
@@ -486,7 +492,7 @@ class TestTableProportionalSizing:
             "table",
             x=None,
             y=None,
-            style={"table": {"pagination": {"enabled": True}}},
+            style={"table": {"pagination": {"enabled": True, "mode": "pages"}}},
         )
         data = [{"name": f"row{i}"} for i in range(25)]
         chart = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
@@ -542,7 +548,9 @@ class TestTableProportionalSizing:
             + _PAGINATION_CONTROL_HEIGHT
         )
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart(
+            "table", x=None, y=None, style={"table": {"pagination": {"mode": "pages"}}}
+        )
         # Data values must be longer than the header ("Name" = 4 chars)
         # so the column is wide enough for the header at 14pt under the
         # char-count heuristic (CI has no fonttools). At 14pt, max_chars

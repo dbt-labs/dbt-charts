@@ -1,0 +1,3 @@
+kind: Fixes
+body: A read-only board shows a checkbox's and a slider's value as text, like every other control, instead of a form widget.
+time: 2026-11-11T10:33:19.001283-08:00

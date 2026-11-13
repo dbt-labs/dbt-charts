@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct import omni captures the displayed value of a markdown tile that shows a number, and applies the dashboard's filter defaults to every tile they reach.
+time: 2026-11-12T09:21:13.432057-08:00

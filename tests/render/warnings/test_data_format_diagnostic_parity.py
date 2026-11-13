@@ -100,7 +100,6 @@ def _build_executor(
     return Run(
         board,
         env=build_exec_env(project),
-        query_registry=query_registry,
     )
 
 

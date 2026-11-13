@@ -40,6 +40,7 @@ from dbt_charts.core.compile.models.style.authored import (
     AxisXStylePatch,
     AxisYStylePatch,
     BandAxisStylePatch,
+    BarChartStylePatch,
     BaseAxisStylePatch,
     PaginationConfig,
     PieChartStylePatch,
@@ -202,6 +203,7 @@ class ChartStyleContext:
 
     # --- Per-family theme style ---
     bar: BarChartStyle
+    funnel: BarChartStylePatch | None
     line: LineChartStyle
     area: AreaChartStyle
     scatter: ScatterChartStyle

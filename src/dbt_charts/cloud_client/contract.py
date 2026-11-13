@@ -71,6 +71,9 @@ class ErrorCode(enum.StrEnum):
     # Distinct from CONNECTION_TEST_FAILED: a create that hits this keeps the
     # row it saved, where a real failure discards it (connections/service.py).
     CONNECTION_TEST_INCONCLUSIVE = "connection_test_inconclusive"
+    # A comment the server refused: an empty or oversized body, or a quote that
+    # is not in the owner's text. `field_errors` names the field.
+    COMMENT_REJECTED = "comment_rejected"
     UNAVAILABLE = "unavailable"
     RATE_LIMITED = "rate_limited"
 
@@ -155,12 +158,26 @@ class DeviceLoginStarted(ContractModel):
 
 
 class ProjectConnectStarted(ContractModel):
-    """What `dct cloud project connect github --start` reports: the install/pick
-    URL, never a project -- the browser pick hasn't landed yet."""
+    """A GitHub connect that has begun but has no project yet.
+
+    Cloud answers with it when a client asks for a connect URL naming a
+    repository, and `dct cloud project connect github --start` reports it.
+    """
 
     org: str = Field(description="The org this connect is against.")
     url: str = Field(
-        description="Where to install the GitHub App and pick a repository."
+        description=(
+            "Where a person authorizes GitHub and installs the GitHub App."
+            " Always a working URL, including when `picked` is set and no"
+            " browser step is needed."
+        )
+    )
+    picked: str | None = Field(
+        default=None,
+        description=(
+            "owner/name of the repository already verified for this connect;"
+            " null while a browser step is still needed."
+        ),
     )
 
 
@@ -522,18 +539,17 @@ DBT_ROOT_OTHER = "__other__"
 
 
 class RepoPick(ContractModel):
-    """The repository a user picked in the browser, for the CLI to resume from.
+    """The repository verified for a connect, for the CLI to finish a project from.
 
-    Records the outcome of the browser flow; it is not a way to make a pick.
-    Repository authorization still comes from the user's own GitHub OAuth
-    listing, in the browser, every time.
+    A pick exists only once a GitHub user token showed, live, that the caller
+    administers the repository.
     """
 
     repo_id: str = Field(description="Cloud's id for the picked repository.")
     full_name: str = Field(description="owner/name of the picked repository.")
     default_branch: str = Field(description="The repository's own default branch.")
     private: bool = Field(description="Whether the repository is private.")
-    picked_at: datetime = Field(description="When the browser pick completed.")
+    picked_at: datetime = Field(description="When the pick was recorded.")
     dbt_roots: list[DbtRoot] = Field(
         default_factory=list, description="dbt project roots found in the repository."
     )
@@ -1057,4 +1073,69 @@ class ConnectionAccessRow(ContractModel):
 class ConnectionAccessList(ContractModel):
     access: list[ConnectionAccessRow] = Field(
         default_factory=list, description="Everyone with a grant on the connection."
+    )
+
+
+class CommentAnchor(ContractModel):
+    """The run of text a thread is about."""
+
+    owner: str = Field(
+        description=(
+            "What the text belongs to: a chart id, or an authored path "
+            "(`title`, `text`, or a nested board's layout path)."
+        )
+    )
+    owner_label: str = Field(
+        description="The owner's title or block label when the thread was posted."
+    )
+    quote: str = Field(description="The quoted text, whitespace collapsed.")
+
+
+class CommentSummary(ContractModel):
+    """One comment: a thread's root or a reply."""
+
+    id: str = Field(description="The comment's id.")
+    author: str | None = Field(
+        description=(
+            "The author's account email; null for Wizard and once the account is "
+            "deleted."
+        )
+    )
+    author_kind: Literal["member", "wizard"] = Field(
+        description="Who wrote it: an organization member, or Wizard."
+    )
+    body: str = Field(description="Plain text.")
+    created_at: datetime = Field(description="When it was posted.")
+    edited_at: datetime | None = Field(
+        description="When the author last edited the body; null if never."
+    )
+
+
+class CommentThread(CommentSummary):
+    """A thread root with its replies, oldest first."""
+
+    board: str = Field(description="The board's slug.")
+    anchor: CommentAnchor = Field(description="The text the thread is about.")
+    detached: bool = Field(
+        description="The anchor's owner is no longer on the board. Never hidden."
+    )
+    variables: dict[str, str] = Field(
+        description="The board's variable values when the thread was posted."
+    )
+    branch: str = Field(description="The branch the thread was posted from.")
+    review: str | None = Field(
+        description="The id of the review the thread was posted from; null if none."
+    )
+    resolved_at: datetime | None = Field(
+        description="When the thread was resolved; null while open."
+    )
+    resolved_by: str | None = Field(
+        description="Email of who resolved it; null while open."
+    )
+    replies: list[CommentSummary] = Field(description="Replies, oldest first.")
+
+
+class CommentList(ContractModel):
+    threads: list[CommentThread] = Field(
+        default_factory=list, description="Threads on the board, newest first."
     )

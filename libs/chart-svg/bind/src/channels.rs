@@ -58,7 +58,7 @@ pub struct Channels {
 pub fn style_gradient<'a>(chart: &'a Chart, own: &Patch<Style>) -> Option<&'a ScaleTargetConfig> {
     let charts = &own.charts;
     let (authored, total) = match chart {
-        Chart::Bar(c) | Chart::Histogram(c) => (&charts.bar.cartesian.painted.color.base.gradient, &c.style.cartesian.painted.color.base.gradient),
+        Chart::Bar(c) | Chart::Histogram(c) | Chart::Funnel(c) => (&charts.bar.cartesian.painted.color.base.gradient, &c.style.cartesian.painted.color.base.gradient),
         Chart::Line(c) => (&charts.line.cartesian.painted.color.base.gradient, &c.style.cartesian.painted.color.base.gradient),
         Chart::Area(c) => (&charts.area.cartesian.painted.color.base.gradient, &c.style.cartesian.painted.color.base.gradient),
         Chart::Scatter(c) => (&charts.scatter.cartesian.painted.color.base.gradient, &c.style.cartesian.painted.color.base.gradient),
@@ -102,7 +102,7 @@ fn authored(chart: &Chart) -> Authored<'_> {
         }
     }
     match chart {
-        Chart::Bar(c) => cartesian(&c.cartesian, &c.layers, true),
+        Chart::Bar(c) | Chart::Funnel(c) => cartesian(&c.cartesian, &c.layers, true),
         Chart::Histogram(c) => cartesian(&c.cartesian, &c.layers, false),
         Chart::Line(c) => cartesian(&c.cartesian, &c.layers, true),
         Chart::Area(c) => cartesian(&c.cartesian, &c.layers, true),

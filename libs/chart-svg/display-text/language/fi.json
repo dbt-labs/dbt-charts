@@ -62,6 +62,7 @@
   "controls.selection_summary": "({n}) {first}",
   "controls.show_all": "Näytä kaikki",
   "controls.show_only_selected": "Näytä vain valitut ({n})",
+  "controls.options_truncated": "Näytetään {shown}/{total}. Hae löytääksesi lisää.",
   "controls.sort": "Lajittele",
   "controls.sort_count_ascending": "Lajittele määrän mukaan, pienin → suurin",
   "controls.sort_count_descending": "Lajittele määrän mukaan, suurin → pienin",

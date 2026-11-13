@@ -24,8 +24,10 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve.chart.link_keys import plan_link_keys
 from dbt_charts.core.execute.link_schema import LinkProbe, LinkSchema
-from dbt_charts.core.execute.plan import make_context
+from dbt_charts.core.execute.plan import make_context, utc_now
 from dbt_charts.core.project import Project
+
+from ...._compile import plan_of
 
 
 class _DuckdbSources(dict[str, str | None]):
@@ -44,7 +46,7 @@ _DUCKDB = LinkSchema(columns={}, fk_edges={}, dialects=_DuckdbSources(), errors=
 def _probe(env: ExecEnv) -> LinkProbe:
     board = compile("title: Probe").board
     assert board is not None
-    return LinkProbe(make_context(board, env))
+    return LinkProbe(make_context(board, plan_of(board, env, utc_now()), env))
 
 
 def _sql_query(sql: str, source: str = "dw") -> SqlQuery:

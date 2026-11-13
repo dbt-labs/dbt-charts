@@ -3,6 +3,7 @@
 //! `default` rule that applies only when nothing else matched. A family deserializes its own
 //! rule body beside a flattened [`Predicate`] and merges the rules [`matching`] returns.
 
+use diagnostic::Diagnostic;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -14,21 +15,41 @@ pub(crate) struct Predicate {
     #[serde(default)]
     pub(crate) ne: Option<Value>,
     #[serde(default)]
-    pub(crate) lt: Option<f64>,
+    pub(crate) lt: Option<Threshold>,
     #[serde(default)]
-    pub(crate) lte: Option<f64>,
+    pub(crate) lte: Option<Threshold>,
     #[serde(default)]
-    pub(crate) gt: Option<f64>,
+    pub(crate) gt: Option<Threshold>,
     #[serde(default)]
-    pub(crate) gte: Option<f64>,
+    pub(crate) gte: Option<Threshold>,
     #[serde(default)]
-    pub(crate) between: Option<(f64, f64)>,
+    pub(crate) between: Option<(Threshold, Threshold)>,
     #[serde(default, rename = "in")]
     pub(crate) in_: Option<Vec<Value>>,
     #[serde(default)]
     pub(crate) is_null: Option<bool>,
     #[serde(default)]
     pub(crate) default: Option<bool>,
+}
+
+/// A comparison operand: a number, or ISO date text ordered as days since the epoch.
+#[derive(Clone, Copy)]
+pub(crate) struct Threshold {
+    key: f64,
+    date: bool,
+}
+
+impl<'de> Deserialize<'de> for Threshold {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        match Value::deserialize(d)? {
+            Value::Number(n) => n.as_f64().map(|key| Threshold { key, date: false }),
+            Value::String(text) if text.len() >= 10 => {
+                d3rs::calendar::date_text_day(&text).map(|key| Threshold { key, date: true })
+            }
+            _ => None,
+        }
+        .ok_or_else(|| serde::de::Error::custom("a conditional operand is a number or an ISO date"))
+    }
 }
 
 /// Whether `a` and `b` compare equal — a scalar-only port of Python's `==`:
@@ -54,11 +75,11 @@ pub(crate) fn is_bool_value(v: Option<&Value>) -> bool {
 }
 
 /// `match_predicate` — the single active predicate on `rule` against
-/// `value`. Errors only on a rule with no predicate op set (unreachable on
+/// `value`, a cell of `column`. Errors only on a rule with no predicate op set (unreachable on
 /// a Pydantic-validated payload; `_validate_exactly_one_predicate` requires
 /// exactly one) and an `in` list holding a non-scalar candidate (JS/Python
 /// equality on nested arrays/objects is not modeled here).
-pub(crate) fn match_predicate(rule: &Predicate, value: Option<&Value>) -> Result<bool, String> {
+pub(crate) fn match_predicate(rule: &Predicate, column: &str, value: Option<&Value>) -> Result<bool, Diagnostic> {
     if rule.default == Some(true) {
         return Ok(true);
     }
@@ -83,34 +104,40 @@ pub(crate) fn match_predicate(rule: &Predicate, value: Option<&Value>) -> Result
                 c,
                 Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)
             ) {
-                return Err(
-                    "conditional rule 'in' with a non-scalar candidate not supported".into(),
-                );
+                return Err(Diagnostic::refused(
+                    "conditional rule 'in' with a non-scalar candidate not supported",
+                ));
             }
         }
         return Ok(candidates.iter().any(|c| {
             is_bool_value(value) == matches!(c, Value::Bool(_)) && json_loose_eq(value, c)
         }));
     }
-    let Some(v) = coerce_numeric_cell(value) else {
-        return Ok(false);
+    let bounds = [rule.lt, rule.lte, rule.gt, rule.gte].into_iter().flatten();
+    let dated = bounds.chain(rule.between.into_iter().flat_map(|(lo, hi)| [lo, hi])).any(|t| t.date);
+    let v = match value.filter(|v| !v.is_null()) {
+        Some(cell) if dated => bind::conditional::date_cell_day(column, cell)?,
+        _ => match coerce_numeric_cell(value) {
+            Some(v) => v,
+            None => return Ok(false),
+        },
     };
     if let Some(lt) = rule.lt {
-        return Ok(v < lt);
+        return Ok(v < lt.key);
     }
     if let Some(lte) = rule.lte {
-        return Ok(v <= lte);
+        return Ok(v <= lte.key);
     }
     if let Some(gt) = rule.gt {
-        return Ok(v > gt);
+        return Ok(v > gt.key);
     }
     if let Some(gte) = rule.gte {
-        return Ok(v >= gte);
+        return Ok(v >= gte.key);
     }
     if let Some((lo, hi)) = rule.between {
-        return Ok(lo <= v && v <= hi);
+        return Ok(lo.key <= v && v <= hi.key);
     }
-    Err("conditional rule has no active predicate".into())
+    Err(Diagnostic::refused("conditional rule has no active predicate"))
 }
 
 /// Whether `column`'s rules skip the mark drawn for `row`: a multi-y fold draws one mark per
@@ -120,20 +147,21 @@ pub(crate) fn other_series(row: &serde_json::Map<String, Value>, column: &str, m
         && row.get(::bind::wide::WIDE_KEY_FIELD).and_then(Value::as_str).is_some_and(|key| key != column)
 }
 
-/// The rules to apply for `value`, in order: every non-default rule that matches, or, when
+/// The rules to apply for `value`, a cell of `column`, in order: every non-default rule that matches, or, when
 /// none did, the `default: true` rule. `predicate` reads a rule's condition.
 pub(crate) fn matching<'a, R>(
     rules: &'a [R],
     predicate: impl Fn(&R) -> &Predicate,
+    column: &str,
     value: Option<&Value>,
-) -> Result<Vec<&'a R>, String> {
+) -> Result<Vec<&'a R>, Diagnostic> {
     let mut hits = Vec::new();
     let mut default_rule = None;
     for rule in rules {
         let condition = predicate(rule);
         if condition.default == Some(true) {
             default_rule = Some(rule);
-        } else if match_predicate(condition, value)? {
+        } else if match_predicate(condition, column, value)? {
             hits.push(rule);
         }
     }
@@ -227,10 +255,10 @@ impl MarkPatch {
         rules: Option<&std::collections::BTreeMap<String, Vec<MarkRule>>>,
         row: &serde_json::Map<String, Value>,
         kind: MarkKind,
-    ) -> Result<MarkPatch, String> {
+    ) -> Result<MarkPatch, Diagnostic> {
         let mut patch = MarkPatch::default();
         for (column, column_rules) in rules.into_iter().flatten() {
-            for rule in matching(column_rules, |r| &r.predicate, row.get(column))? {
+            for rule in matching(column_rules, |r| &r.predicate, column, row.get(column))? {
                 let Some(marks) = &rule.marks else { continue };
                 let paint = match kind {
                     MarkKind::Slice => &marks.slice,
@@ -250,7 +278,7 @@ impl MarkPatch {
                     if let Some(weight) = &font.weight {
                         let css = crate::families::table::bind::font_weight_as_css(weight);
                         if !crate::families::table::VALID_FONT_WEIGHTS.contains(&css.as_str()) {
-                            return Err(format!("conditional font weight {css:?} is not a CSS weight"));
+                            return Err(format!("conditional font weight {css:?} is not a CSS weight").into());
                         }
                         patch.font_weight = Some(css);
                     }
@@ -280,11 +308,28 @@ mod tests {
 
     fn picked(list: Value, value: Value) -> Vec<usize> {
         let all = rules(list);
-        matching(&all, |p| p, Some(&value))
+        matching(&all, |p| p, "c", Some(&value))
             .unwrap()
             .into_iter()
             .map(|hit| all.iter().position(|p| std::ptr::eq(p, hit)).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn a_date_operand_orders_date_cells_by_instant() {
+        let list = json!([{"gt": "2026-01-01"}, {"between": ["2026-01-01", "2026-01-31T12:00:00"]}]);
+        assert_eq!(picked(list.clone(), json!("2026-01-02")), [0, 1]);
+        assert_eq!(picked(list.clone(), json!("2026-01-01T00:00:00Z")), [1]);
+        assert!(picked(list, json!("2025-12-31")).is_empty());
+        let all = rules(json!([{"lt": "2026-01-01"}]));
+        assert!(matching(&all, |p| p, "c", None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_date_operand_refuses_a_cell_that_is_no_date() {
+        let all = rules(json!([{"lt": "2026-01-01"}]));
+        let err = matching(&all, |p| p, "signup", Some(&json!(42))).err().unwrap();
+        assert!(err.starts_with("ERR-CONDITIONAL-NOT-A-DATE"), "{err}");
     }
 
     #[test]

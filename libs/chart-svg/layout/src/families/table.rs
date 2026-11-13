@@ -173,7 +173,6 @@ fn sanitize_color(color: &str) -> Result<Option<&str>, Diagnostic> {
 
 /// Every leaf of the table's style that this slice draws another way than production does.
 fn refuse_unmodeled(style: &TableChartStyle) -> Result<(), Diagnostic> {
-    let pagination = &style.pagination;
     let unmodeled = [
         (!style.header.visible, "a hidden header"),
         (style.row_numbers.visible, "row numbers"),
@@ -183,7 +182,6 @@ fn refuse_unmodeled(style: &TableChartStyle) -> Result<(), Diagnostic> {
         (!style.header.divider.continuous && style.header.divider.divider.visible, "a header divider under each column"),
         (style.header.divider.divider.dasharray.is_some() || style.row.divider.divider.dasharray.is_some(), "a dashed divider"),
         (style.column_layout.freeze > 0, "`column_layout.freeze`"),
-        (pagination.enabled && pagination.mode == PaginationMode::Scroll, "scrolling rows"),
         (style.outer_padding != 0.0, "an authored `outer_padding`"),
     ];
     match unmodeled.iter().find(|(set, _)| *set) {
@@ -408,6 +406,10 @@ pub fn plan(card: &TableCard, book: &FontBook, width: f64) -> Result<Plan, Diagn
     if pagination.enabled && n_rows > pagination.page_rows.map_or(n_rows, |rows| rows as usize + PAGINATION_GROW_CAP) {
         return Err(Diagnostic::refused(refuse!("a table with more rows than one page is not supported")));
     }
+    // table.rs:`row_scrollbar_band`: a scrolling table longer than `page_rows` reserves the bar's band.
+    if pagination.enabled && pagination.mode == PaginationMode::Scroll && pagination.page_rows.is_none_or(|rows| n_rows > rows as usize) {
+        return Err(Diagnostic::refused(refuse!("a table with scrolling rows is not supported")));
+    }
     let pad = style.column_layout.cell_padding.trunc();
     // `outer_padding` is refused above, so the table spans its whole width.
     let table_width = width;
@@ -524,6 +526,7 @@ pub fn draw(card: &TableCard, plan: &Plan) -> Result<Vec<Node>, Diagnostic> {
             .quick("font-weight", title.face.weight.attr())
             .quick("fill", title.face.color.as_str())
             .quick("font-family", title.face.family.as_str())
+            .quick("class", "role-title-text")
             .quick("data-authored-kind", "title");
         let drawn = Run::Tspan { x: Some(0.0), y: Some(plan.title_baseline), dx: None, dy: None, attrs: Attrs::new(), runs: vec![Run::Chars(Chars::new(title.text.as_str(), Escape::Quick))] };
         nodes.push(Node::new(Role::Title, attrs, scene::Shape::Text { at: (0.0, plan.title_baseline), bounds: None, runs: title.full.iter().map(|full| Run::Title(Chars::new(full.as_str(), Escape::Quick))).chain([drawn]).collect() }));

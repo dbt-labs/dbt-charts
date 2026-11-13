@@ -16,7 +16,7 @@ use model_derive::Model;
 #[model(
     read_under = "type",
     constraint(forbids(support_table, when(is_in(type, "histogram")),
-        message = "chart.support_table is not supported for chart type 'histogram' in v1. Supported chart types: area, bar, line."
+        message = "chart.support_table is not supported for chart type 'histogram' in v1. Supported chart types: area, bar, funnel, line."
     )),
     constraint(not_null(y_start,
         message = "y_start names no column; remove it for bars that start at zero."
@@ -45,13 +45,16 @@ use model_derive::Model;
     constraint(forbids(y_start, when(is_in(type, "histogram")),
         message = "y_start is not supported on type: histogram — a histogram's bars count from zero, so it takes no y_start."
     )),
+    constraint(forbids(y_start, when(is_in(type, "funnel")),
+        message = "y_start is not supported on type: funnel: a funnel centers each bar, so a bar has no start of its own. Use type: bar for ranged bars."
+    )),
     constraint(forbids(y_start, when(is_in("style.stack", "zero", "normalize", "center")),
         message = "y_start sets each bar's start, so it can't be stacked; remove style.stack or y_start."
     )),
     constraint(forbids(y_start, when(list(y)),
         message = "y_start sets one start per bar, so y must name a single column, not a list."
     )),
-    constraint(forbids(layers, when(is_in(type, "bar"), list(y)), nonempty(layers),
+    constraint(forbids(layers, when(is_in(type, "bar", "funnel"), list(y)), nonempty(layers),
         message = "Bar chart: layers are not supported with multi-metric (y: [...]) charts. Use a long-form query with one y field."
     ))
 )]

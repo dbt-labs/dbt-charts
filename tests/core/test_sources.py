@@ -944,7 +944,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         data = executor.execute_query("get_answer")
 
@@ -990,7 +989,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         data = executor.execute_query("column_stats")
 
@@ -1038,7 +1036,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         users_data = executor.execute_query("users")
@@ -1118,7 +1115,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         assert executor.execute_query("metric") == [{"value": 7}]
 
@@ -1377,6 +1373,7 @@ rows:
 
         from dbt_charts.core.compile import compile_file
 
+        from .._compile import remember
         from .._run import Run
 
         project_dir = tmp_path / "project"
@@ -1410,15 +1407,14 @@ rows:
         )
 
         project = local_project(project_dir)
-        result = compile_file(project.path("charts/dashboard.yml").read_board())
+        board_file = project.path("charts/dashboard.yml").read_board()
+        result = compile_file(board_file)
         assert result.success
         assert "analytics" in result.board.sources
+        # compile_file bypasses the recorder; Run plans the board from its text.
+        remember(result.board, board_file.content, board_file.path.parent)
 
-        executor = Run(
-            result.board,
-            env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
-        )
+        executor = Run(result.board, env=build_exec_env(project))
         data = executor.execute_query("get_answer")
         assert data == [{"answer": 42}]
 
@@ -2131,7 +2127,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         with pytest.raises(QueryError) as exc:

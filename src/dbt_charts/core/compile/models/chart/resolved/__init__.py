@@ -53,6 +53,7 @@ from ._support_table import (
     ResolvedSupportTable,
     ResolvedSupportTableAggregate,
     ResolvedSupportTableEntry,
+    ResolvedSupportTablePercent,
     ResolvedSupportTablePerSeries,
     ResolvedSupportTableSource,
 )
@@ -119,6 +120,7 @@ __all__ = [
     "ResolvedSupportTable",
     "ResolvedSupportTableAggregate",
     "ResolvedSupportTableEntry",
+    "ResolvedSupportTablePercent",
     "ResolvedSupportTablePerSeries",
     "ResolvedSupportTableSource",
     "ResolvedKpiSupportConfig",

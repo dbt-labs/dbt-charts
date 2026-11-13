@@ -93,7 +93,7 @@ impl Schema {
         theme: &J,
         at: &str,
         cascade: bool,
-        fills: &[String],
+        fills: &[(String, J)],
         stack: &mut Vec<&'a str>,
         w: &mut Walked,
     ) {
@@ -120,24 +120,25 @@ impl Schema {
                     w.note(m.name, p.key, at, stated.is_some(), cascade);
                     let empty = J::Null;
                     let below = format!("{}.", p.key);
-                    let fills: Vec<String> = p
+                    let fills: Vec<(String, J)> = p
                         .field
                         .attrs
                         .fills_at
                         .iter()
-                        .map(|(to, _)| to.to_string())
-                        .chain(
-                            fills
-                                .iter()
-                                .filter_map(|f| f.strip_prefix(&below))
-                                .map(String::from),
-                        )
+                        .map(|(to, v)| (to.to_string(), fill_json(v)))
+                        .chain(fills.iter().filter_map(|(f, v)| {
+                            f.strip_prefix(&below).map(|f| (f.to_string(), v.clone()))
+                        }))
                         .collect();
                     self.walk_theme(n, stated.unwrap_or(&empty), &path, under, &fills, stack, w)
                 }
                 Ty::Map(_) | Ty::Keys(_) => {}
                 _ => {
-                    let filled = p.field.attrs.fill_value.as_ref().map(fill_json);
+                    // A mount's `fill_at` holds its own value over the field's `fill`.
+                    let mount_fill = fills.iter().find(|(f, _)| f == p.key).map(|(_, v)| v);
+                    let filled = mount_fill
+                        .cloned()
+                        .or_else(|| p.field.attrs.fill_value.as_ref().map(fill_json));
                     if let (Some(f), Some(t)) = (&filled, stated) {
                         if !same(f, t) {
                             w.differ.push((
@@ -148,8 +149,13 @@ impl Schema {
                             ));
                         }
                     }
-                    let mount_fill = fills.iter().any(|f| f == p.key);
-                    w.note(m.name, p.key, at, stated.is_some(), cascade || mount_fill);
+                    w.note(
+                        m.name,
+                        p.key,
+                        at,
+                        stated.is_some(),
+                        cascade || mount_fill.is_some(),
+                    );
                     if let Some(v) = stated.cloned().or(filled) {
                         w.values.insert(path, v);
                     }

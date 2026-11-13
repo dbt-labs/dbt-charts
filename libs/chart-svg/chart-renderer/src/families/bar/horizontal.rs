@@ -30,12 +30,13 @@ use std::collections::HashMap;
 use super::axes::{HorizontalValueAxis, flush_edge, flush_threshold, format_tick_labels};
 use super::BarResolved;
 use super::bind::zero_label;
+use super::ribbons::{RibbonDraft, RibbonLabelCtx};
 use super::domain::{BarChartState, CenterStack, SegmentSpans, TopRail, bar_value_extent, base_series, build_chart_domains, build_data_map, Extras, category_totals, collapsed_authored_domain, grouped_spans, horizontal_min_height, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_spans, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
 use super::facet::color_1to1_with_cat;
 use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, mark_labels, plain_sites, value_label_layers};
 use super::layout::{Drawn, clipped_if, warn_band_too_narrow};
 use super::legend::{LayeredBarLegend, LegendState, bar_link_keys, build_legend_state, numeric_legends_of};
-use super::marks::{RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, capped_thickness, collapsed_bars, direction_layers, grouped_overlap_fraction, horizontal_bar_layer_marks, hover_band_for, labels_on_zero_stack, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, touching_width, unity_rule};
+use super::marks::{RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, capped_thickness, collapsed_bars, direction_layers, grouped_overlap_fraction, horizontal_bar_layer_marks, hover_band_for, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, touching_width, unity_rule};
 use super::tooltip::{bar_datum_aria, stack_group_total, tooltip_order_domain};
 use super::vertical::refuse_numeric_x_on_bands;
 
@@ -457,16 +458,24 @@ pub(super) fn render_horizontal_panel(
         Some(axis) => (axis.domain.0, axis.domain.1, axis.ticks.clone()),
         None => value_domain_and_ticks(
             value_rows, cat_field, val_field, ax_y, &r.stack, r.stacked_domain_max, false, r.y_start.as_deref(),
-            false, labels_on_zero_stack(&r),
+            false,
         )?,
     };
-    // A descending authored pair collapses the horizontal x scale to a single
-    // point, so every mark paints with no width.
-    if r.y_start.is_none()
-        && ax_y.authored_continuous_domain().is_some_and(|(lo, hi)| lo > hi)
-        && rows.iter().any(|row| row_num(row, val_field).is_some_and(|v| v != 0.0))
-    {
-        return Err(crate::painted_no_marks(w, json!(chart_id), rows.len()));
+    // `x_reverse` is a descending pair like an authored one: both put the value
+    // axis's high end on the left, so bars grow leftward from the zero line.
+    if ax_x.scale.get("x_reverse").and_then(Value::as_bool) == Some(true) && linear_domain_min < linear_domain_max {
+        (linear_domain_min, linear_domain_max) = (linear_domain_max, linear_domain_min);
+    }
+    let reversed = linear_domain_min > linear_domain_max;
+    if reversed && is_stacked {
+        return Err(diagnostic::refuse!(
+            "bar: chart {chart_id:?} is stacked under a reversed value axis (axis_x.scale.x_reverse or a descending axis_y domain), which is not supported"
+        )
+        .into());
+    }
+    // Ticks run left to right, which a reversed axis makes descending.
+    if reversed {
+        tick_values.sort_by(|a, b| b.total_cmp(a));
     }
     // A scatter layer shares the bar's one value scale, which then nices both
     // ends (`nice_shared_scale`), as does a line layer.
@@ -647,6 +656,9 @@ pub(super) fn render_horizontal_panel(
     // resolve_xy_titles(measure_field, cat_field, ..., ay, ax, ...) call in
     // emitters/bar.py, which threads chart.style.axis_x to the category
     // (VL-y) title and chart.style.axis_y to the measure (VL-x) title.
+    // The end of a bar that rounds is the one away from the zero line: the right for a rising
+    // value on a normal axis, the left on a reversed one.
+    let far_end = |value: f64| Rounded::by_sign(if reversed { -value } else { value });
     let cat_title_text = axis_title_text(cat_field, r.x_label.as_deref(), &r.field_labels)?;
     // A folded val has no single measure field to title from — fall back to
     // the joined measure names (`wide_measures_title`), same as an authored
@@ -861,8 +873,9 @@ pub(super) fn render_horizontal_panel(
     warn_band_too_narrow(chart_id, h, distinct_values(r.whole_rows.as_deref().unwrap_or(rows), cat_field), series);
 
     // The category axis follows `axis_y.position` on a horizontal bar.
+    // A reversed value axis puts the zero line on the right, and the category labels go with it.
     let cat_on_right = match ax_y.position.as_deref() {
-        Some("left") => false,
+        Some("left") => reversed,
         Some("right") => true,
         Some(other) => return Err(format!("bar: axis_y.position {other:?} is neither left nor right").into()),
         None => return Err("bar: axis_y.position absent (theme required)".into()),
@@ -946,6 +959,7 @@ pub(super) fn render_horizontal_panel(
                 series_ink.as_deref(),
                 sub_offsets.as_deref(),
                 r.strip_linked().then_some(&strip_links),
+                r.style.mark.ribbons.visible(),
             )?;
             built.describe(&strip_cell_aria(&r, &cat_title_text, &cat_domain, None, color_field)?);
             support_table_columns::warn_block_share(
@@ -1022,6 +1036,12 @@ pub(super) fn render_horizontal_panel(
         g.case = ax_x.labels.font.case.clone();
     }
     let mirror_active = ghost.is_some();
+    if reversed && (mirror_active || facet.is_some() || support_table.is_some()) {
+        return Err(diagnostic::refuse!(
+            "bar: chart {chart_id:?} has a reversed value axis (axis_x.scale.x_reverse or a descending axis_y domain) with mirrored axes, facets or a support table, which is not supported"
+        )
+        .into());
+    }
     // The ghost's own format reads each category as the number d3 sees (`gate_label_format`).
     let ghost_cats: Vec<String> = match &ghost {
         Some(g) if g.format.is_some() || g.ruler.is_some() => {
@@ -1285,7 +1305,7 @@ pub(super) fn render_horizontal_panel(
                     .zip(rows.iter())
                     .map(|((&tv, &lw), &lines)| {
                         let span = linear_domain_max - linear_domain_min;
-                        let x = if span > 0.0 { pw * (tv - linear_domain_min) / span } else { 0.0 };
+                        let x = if span != 0.0 { pw * (tv - linear_domain_min) / span } else { 0.0 };
                         let align = match flush_edge(x, pw, flush_thr) {
                             Some(true) => "left",
                             Some(false) => "right",
@@ -1343,7 +1363,7 @@ pub(super) fn render_horizontal_panel(
                     }
                 }
                 let span = linear_domain_max - linear_domain_min;
-                let at = |v: f64| if span > 0.0 { pw * (v - linear_domain_min) / span } else { 0.0 };
+                let at = |v: f64| if span != 0.0 { pw * (v - linear_domain_min) / span } else { 0.0 };
                 if let Some(bars) = &bar_ink {
                     b.union(bars);
                 }
@@ -1380,7 +1400,7 @@ pub(super) fn render_horizontal_panel(
                     let span = linear_domain_max - linear_domain_min;
                     for (on, datum) in [(rules.zero, 0.0), (rules.unity, 1.0)] {
                         if on {
-                            let x = if span > 0.0 { pw * (datum - linear_domain_min) / span } else { 0.0 };
+                            let x = if span != 0.0 { pw * (datum - linear_domain_min) / span } else { 0.0 };
                             b.union(&vega_fit::Bounds::new(x, 0.0, x, ph).expand(rules.width));
                         }
                     }
@@ -1748,6 +1768,17 @@ pub(super) fn render_horizontal_panel(
 
     // Bars
     let bars_from = plot.len();
+    let ribbon_labels = r
+        .style
+        .mark
+        .ribbons
+        .labeled()
+        .then(|| -> Result<RibbonLabelCtx, String> {
+            let ml = r.style.mark.labels.as_ref().ok_or("bar: style.mark.labels absent (ribbon labels use its font)")?;
+            Ok(RibbonLabelCtx { rows, cat_field, val_field, color_field, font: super::labels::label_font(ml, board_style)?, fonts })
+        })
+        .transpose()?;
+    let mut ribbons = RibbonDraft::new(&r.style.mark.ribbons, is_grouped && !is_stacked, ribbon_labels)?;
     if is_stacked {
         let bw = band.bandwidth();
         let mark_h = capped_thickness((bw * mark_band_width).min(bw), r.style.mark.max_size);
@@ -1801,9 +1832,12 @@ pub(super) fn render_horizontal_panel(
                 // its right (far) end, a negative one its left.
                 let outer = if raw_val < 0.0 { outers.1 } else { outers.0 } == Some(series);
                 let (edge, edge_w) = mark.seam(crate::pattern::STACK_EDGE_W);
+                ribbons.record(&key, (seg_start, bar_y, seg_w, mark_h), aria.as_deref(), Some(series_text(base_series(series)).trim().to_string()), || {
+                    crate::common::series_color(base_series(series), &palette_domain, &r.series_palette, category_scale, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color)
+                })?;
                 let segment_r = if outer { corner_r } else { 0.0 };
                 plot.extend(bar_passes(base_mark(&datum_of, &key), true, seg_start, bar_y, seg_w, mark_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w), segment_r,
-                    Rounded::by_sign(raw_val), false, None, aria.as_deref(), anchor_of(&key))?);
+                    far_end(raw_val), false, None, aria.as_deref(), anchor_of(&key))?);
             }
         }
     } else if is_grouped {
@@ -1916,7 +1950,7 @@ pub(super) fn render_horizontal_panel(
                 _ if spans.contains_key(&key) => {
                     let span = &spans[&key];
                     let (x, w, _) = ranged_extent(|v| linear.scale(v), span.end, Some(span.start));
-                    (x, w, Rounded::by_sign(val))
+                    (x, w, far_end(val))
                 }
                 None if val_x >= zero_x => (zero_x, val_x - zero_x, Rounded::Positive),
                 None => (val_x, zero_x - val_x, Rounded::Negative),
@@ -1959,11 +1993,13 @@ pub(super) fn render_horizontal_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), val_x, bar_y + mark_h / 2.0, ghost_ink.clone(), hrefs.get(&key).cloned()));
             }
+            ribbons.record(&key, (bar_x, bar_y, bar_w, mark_h), aria.as_deref(), None, || Ok(r.style.single_series_fill.clone()))?;
             let mark = r.single_series_paint(rows, &cat_domain, cat)?.for_mark(bar_w.min(mark_h), stroke_color, stroke_w);
             plot.extend(bar_passes(base_mark(&datum_of, &key), true, bar_x, bar_y, bar_w, mark_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(&mark.stroke), patch.stroke_w(mark.stroke_w), corner_r,
                 ends, true, None, aria.as_deref(), anchor_of(&key))?);
         }
     }
+    let ribbon_label_group = ribbons.paint(&mut plot, bars_from, true, &cat_domain, &r.canvas)?;
     let knocked = crate::knockout::knock_out(
         plot.split_off(bars_from),
         &r.canvas,
@@ -1972,6 +2008,7 @@ pub(super) fn render_horizontal_panel(
         (0.0, 0.0, plot_w, plot_h),
     );
     plot.extend(knocked.marks);
+    plot.extend(ribbon_label_group);
     plot.splice(under_annotations..under_annotations, knocked.undercoat);
 
     // Layers paint on the base's own band scale and shared value scale in
@@ -2041,7 +2078,7 @@ pub(super) fn render_horizontal_panel(
                     let layer_href = crate::families::layers::layer_link(link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())).map(|link| link.href(m.row)).transpose()?;
                     layer_bars.extend(bar_passes(
                         layer_mark(1 + position, bl, m.row, m.datum), true, x1.min(x2), band_y + bar_pad, (x2 - x1).abs(), mark_h, &fill, None, bl.bar_mark.opacity, bl_stroke_color,
-                        bl_stroke_w, bl_corner_r, if layer_clip { Rounded::Fall } else if bl.y_start.is_none() { Rounded::by_sign(m.value) } else if m.to >= m.from { Rounded::Both } else { Rounded::Fall }, true, None, aria.as_deref(),
+                        bl_stroke_w, bl_corner_r, if layer_clip { Rounded::Fall } else if bl.y_start.is_none() { far_end(m.value) } else if m.to >= m.from { Rounded::Both } else { Rounded::Fall }, true, None, aria.as_deref(),
                         r.link_open.anchor(layer_href.as_deref()),
                     )?);
                 }

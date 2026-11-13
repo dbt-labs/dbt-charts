@@ -629,7 +629,7 @@ pub(super) fn column_demand(
     families: &MeasureFonts,
     font_size: f64,
     pad: f64,
-) -> Result<f64, String> {
+) -> Result<f64, Diagnostic> {
     let texts = cells
         .iter()
         .zip(rows)
@@ -639,12 +639,12 @@ pub(super) fn column_demand(
             let text = cell_text_with_glyph(col, row, raw_value, &measured_cell_text(cell))?;
             Ok((text, cell_measure_family(col, row, families)))
         })
-        .collect::<Result<Vec<(String, &str)>, String>>()?;
-    Measure { fonts }.column_demand(
+        .collect::<Result<Vec<(String, &str)>, Diagnostic>>()?;
+    Ok(Measure { fonts }.column_demand(
         texts.iter().map(|(text, family)| (text.as_str(), *family)),
         font_size,
         pad,
-    )
+    )?)
 }
 
 /// Round-half-to-even, matching Python's `round()` — used for the row-rule
@@ -953,9 +953,6 @@ pub(super) struct ScrollPanes<'a> {
     pub rows: Vec<Node>,
     /// The frozen columns' rows, painted a second time into their own pane.
     pub frozen: Option<Vec<Node>>,
-    /// No host binds the panes (a static export), so the board carries
-    /// `table_scroll.js` itself.
-    pub standalone: bool,
     /// The frozen edge's colors, set when columns are frozen.
     pub edge: Option<FreezeEdge<'a>>,
 }
@@ -1247,9 +1244,6 @@ pub(super) fn emit_scroll_panes(tree: &mut Tree, p: ScrollPanes) {
         );
     }
     tree.close(Open::Group);
-    if p.standalone {
-        embed_table_scroll_script(tree);
-    }
 }
 
 /// The scroll runtime for a static export, which no host binds. Vendored
@@ -1257,6 +1251,101 @@ pub(super) fn emit_scroll_panes(tree: &mut Tree, p: ScrollPanes) {
 pub(super) fn embed_table_scroll_script(tree: &mut Tree) {
     let stripped = strip_js_comments(include_str!("../../../assets/table_scroll.js"));
     tree.script(Attrs::new().quick("type", "text/javascript"), &stripped);
+}
+
+/// The muted row-range label's look, shared by the pager and the scrolling
+/// body's row total.
+fn range_label_attrs(theme: &PaginatorTheme, font_family: &str) -> Attrs {
+    Attrs::new()
+        .quick("class", "dbt-paginator-label")
+        .quick("font-size", (theme.font.size_or(11.0) as i64).to_string())
+        .quick("fill", theme.color_inactive.as_str())
+        .quick("font-family", font_family)
+        .quick("font-weight", theme.weight_inactive.to_string())
+        .quick("style", "font-variant-numeric: tabular-nums;")
+}
+
+/// The pager of a body that scrolls its rows: the paged table's pager, a page
+/// being a viewport of rows. One is drawn per page and `table_scroll.js` shows
+/// the one the body is scrolled to, restating its range as the body moves and
+/// scrolling to a page on click. `row_ends` are the data rows' bottoms from the
+/// first row's top. Past `POOL_PAGER_MAX_PAGES`, and on a live host whose
+/// filters change the page count, the compact pager stands in.
+#[allow(clippy::too_many_arguments)]
+fn emit_scroll_pagers(
+    tree: &mut Tree,
+    theme: &PaginatorTheme,
+    body_family: &str,
+    chart_id: &str,
+    table_width: f64,
+    y: f64,
+    padding: f64,
+    viewport_h: f64,
+    page_rows: usize,
+    row_ends: &[f64],
+    interactive: bool,
+    fonts: &FontBook,
+) -> Result<(), String> {
+    let total = row_ends.len();
+    if page_rows == 0 {
+        return Err("table: the scrolling viewport shows no data row, only summary rows; give the table a taller slot".to_string());
+    }
+    let pages = total.div_ceil(page_rows);
+    let per_page = pages <= POOL_PAGER_MAX_PAGES;
+    let template = display_text::language::tr(
+        "controls.page_range",
+        None,
+        &[("first", "{first}"), ("last", "{last}"), ("total", "{total}")],
+    )?;
+    let ends: Vec<String> = row_ends.iter().map(|end| num_full(*end)).collect();
+    let page_var_name = format!("{chart_id}_page");
+    tree.open(
+        Open::Group,
+        Role::Chrome,
+        Attrs::new()
+            .quick("data-dbt-scroll-range", total.to_string())
+            .quick("data-dbt-scroll-for", chart_id)
+            .quick("data-template", template)
+            .quick("data-row-ends", ends.join(","))
+            .quick("data-viewport", num_full(viewport_h))
+            .quick("data-page-rows", page_rows.to_string()),
+    );
+    let pager = |tree: &mut Tree, id: String, page: usize, hidden: bool, compact: bool| {
+        tree.open(
+            Open::Group,
+            Role::Chrome,
+            Attrs::new().quick("data-dbt-scroll-pager", id).set_if(hidden, "display", "none"),
+        );
+        let first = (page - 1) * page_rows;
+        render_pagination_controls(
+            tree,
+            theme,
+            body_family,
+            page as i64,
+            if compact { 2 } else { pages as i64 },
+            if compact { 2 } else { pages as i64 },
+            &page_var_name,
+            table_width,
+            y,
+            first + 1,
+            (first + page_rows).min(total),
+            total,
+            padding,
+            false,
+            compact,
+            fonts,
+        )?;
+        tree.close(Open::Group);
+        Ok::<(), String>(())
+    };
+    for page in (1..=pages).filter(|_| per_page) {
+        pager(tree, page.to_string(), page, page != 1, false)?;
+    }
+    if interactive || !per_page {
+        pager(tree, "compact".to_string(), 1, per_page, true)?;
+    }
+    tree.close(Open::Group);
+    Ok(())
 }
 
 /// Static-export pagination control bar: right-anchored chevrons + windowed
@@ -1396,13 +1485,7 @@ pub(super) fn render_pagination_controls(
         tree.text_el(
             Role::Label,
             (padding, text_y),
-            Attrs::new()
-                .quick("class", "dbt-paginator-label")
-                .quick("font-size", font_size.to_string())
-                .quick("fill", theme.color_inactive.as_str())
-                .quick("font-family", font_family)
-                .quick("font-weight", theme.weight_inactive.to_string())
-                .quick("style", "font-variant-numeric: tabular-nums;")
+            range_label_attrs(theme, font_family)
                 .set_if(compact, "data-dbt-pager-label", ""),
             &label_text,
         );
@@ -2109,6 +2192,12 @@ fn sort_key(value: Option<&Value>) -> Option<String> {
     }
 }
 
+/// The whole text of a cell painted cut, for the host to reveal on hover
+/// (`table_cell_reveal.js`); `None` when it painted whole.
+fn cut_from<'a>(painted: &str, whole: &'a str) -> Option<&'a str> {
+    (painted != whole).then_some(whole)
+}
+
 /// Count one cut element for column `name`, keeping columns in first-cut
 /// order: production's warning lists them in the order its sink recorded them.
 pub(super) fn count_cut(truncations: &RefCell<Vec<(String, usize)>>, name: &str) {
@@ -2606,11 +2695,9 @@ impl TableBody<'_> {
                 }
 
                 // Spark cell placement law: a
-                // `None`/absent cell value, or a cell whose spark content comes
-                // back empty (a plain `bar` clamped to <= 0 — see the
-                // `content.is_empty()` check below), draws no mark and falls
-                // through to the ordinary cell paint below (only the empty-
-                // content case is reached by this corpus). `spark_x = px(cell_x
+                // `None`/absent cell value falls through to the ordinary cell
+                // paint below; empty spark content (a zero-length `bar`/`column`)
+                // draws an empty cell. `spark_x = px(cell_x
                 // + 4)`; `spark_y = row_y + (this_row_h -
                 // spark_height) / 2` centers the mark in the row's own
                 // (possibly grown) band — `this_row_h` is production's
@@ -2627,13 +2714,8 @@ impl TableBody<'_> {
                             // marks this renderer supports all fill the cell
                             // width from the left-edge anchor, so the reported
                             // width is unused here.
-                            // `if spark_content:` is a
-                            // truthiness check, not a `None` check: a plain
-                            // `bar` cell whose fill clamps to <= 0 returns
-                            // `Some(("", w, h))` (no track's
-                            // `fill_width > 0` gate) — falsy in Python, so
-                            // production falls through to the ordinary cell
-                            // paint below rather than drawing an empty mark.
+                            // Empty content (a zero-length `bar`/`column`) draws an
+                            // empty cell: no mark, no cell text.
                             let spark_layout = SparkLayout {
                                 has_negative: signed_columns.contains(col.name.as_str()),
                                 negative_tone: tones.map(|t| t.negative.as_str()),
@@ -2673,8 +2755,8 @@ impl TableBody<'_> {
                                     );
                                     tree.extend(row_marks(content, ri));
                                     tree.close(Open::Group);
-                                    continue;
                                 }
+                                continue;
                             }
                         }
                     }
@@ -2865,6 +2947,15 @@ impl TableBody<'_> {
                     } else {
                         (number_xs[ci], "end")
                     };
+                    // A date-like cell leaves the lane branch for the cutting text
+                    // branch, so a date wider than its column is cut, not spilled.
+                    let number_text = if col.is_date
+                        && !(is_numeric_cell(col, cell_raw) && !is_date_text(&col.kind, cell_raw))
+                    {
+                        self.cut_cell(ci, &cell.text, cell_style.glyph.as_deref())?
+                    } else {
+                        cell.text.clone()
+                    };
                     // The text sits where its first tspan does; the tspans place themselves.
                     let first_x = if left_run {
                         cx + pad
@@ -2892,7 +2983,8 @@ impl TableBody<'_> {
                             .quick("data-col", data_col.to_string())
                             .quick_some("data-value", lane_value)
                             .quick_some("data-dbt-sort", sort_key.as_deref())
-                            .quick_some("data-dbt-day", day.as_deref()),
+                            .quick_some("data-dbt-day", day.as_deref())
+                            .quick_some("data-dbt-full", cut_from(&number_text, &cell.text)),
                     );
                     if left_run {
                         if let Some(glyph) = glyph {
@@ -2915,15 +3007,6 @@ impl TableBody<'_> {
                             affix_tspan(tree, prefix_xs[ci], "end", prefix, mask.map(|m| (m, variant)), None);
                         }
                     }
-                    // A date-like cell leaves the lane branch for the cutting text
-                    // branch, so a date wider than its column is cut, not spilled.
-                    let number_text = if col.is_date
-                        && !(is_numeric_cell(col, cell_raw) && !is_date_text(&col.kind, cell_raw))
-                    {
-                        self.cut_cell(ci, &cell.text, cell_style.glyph.as_deref())?
-                    } else {
-                        cell.text.clone()
-                    };
                     let led = glyph.is_some() || cell.prefix.is_some();
                     tree.tspan(
                         Span { x: placed.then_some(number_x), dx: (!placed && led).then_some(SUFFIX_GAP), ..Span::default() },
@@ -3040,7 +3123,8 @@ impl TableBody<'_> {
                                     .quick_some("text-decoration", font_decoration)
                                     .quick("data-col", data_col.to_string())
                                     .quick_some("data-dbt-sort", sort_key.as_deref())
-                                    .quick_some("data-dbt-day", day.as_deref()),
+                                    .quick_some("data-dbt-day", day.as_deref())
+                                    .quick_some("data-dbt-full", cut_from(&text, &cell.text)),
                             );
                             emit_glyph_prefix(tree);
                             tree.text(&text);
@@ -3367,6 +3451,7 @@ pub(super) fn emit_title_band(tree: &mut Tree, band: &TitleBand, outer: f64) {
                 .quick("font-weight", title_weight.as_str())
                 .quick("fill", title_color.as_str())
                 .quick("font-family", title_family.as_str())
+                .quick("class", "role-title-text")
                 .quick("data-authored-kind", "title"),
         );
         // The full text rides along when the drawn lines differ from it.
@@ -3387,6 +3472,7 @@ pub(super) fn emit_title_band(tree: &mut Tree, band: &TitleBand, outer: f64) {
                     .quick_some("font-style", band.subtitle_style.as_deref())
                     .quick("fill", subtitle_color.as_str())
                     .quick("font-family", subtitle_family.as_str())
+                    .quick("class", "role-title-subtitle")
                     .quick("data-authored-kind", "subtitle"),
             );
             if band.subtitle_lines.join(" ") != subtitle_text {
@@ -3628,7 +3714,7 @@ pub(super) fn column_inputs(
     header_size: f64,
     header_visible: bool,
     pad: f64,
-) -> Result<ColumnInputs, String> {
+) -> Result<ColumnInputs, Diagnostic> {
     let measure = Measure { fonts };
     let mut demands: BTreeMap<String, f64> = BTreeMap::new();
     let mut header_demands: BTreeMap<String, f64> = BTreeMap::new();
@@ -3983,7 +4069,7 @@ pub(crate) fn lay_out(
     // A glyph-possible column
     // composes `glyph_run + rendered` before measuring, same as the demand
     // pass.
-    let overflows = |pad_now: f64, font_now: f64, header_now: f64| -> Result<bool, String> {
+    let overflows = |pad_now: f64, font_now: f64, header_now: f64| -> Result<bool, Diagnostic> {
         for ((col, cells), cw) in cols.iter().zip(cell_data.iter()).zip(col_ws.iter()) {
             if is_swatch(col) {
                 continue;
@@ -4584,6 +4670,25 @@ pub(crate) fn lay_out(
         && (1..=ROW_POOL_CAP).contains(&n_rows)
         && summary_is_trailing;
 
+    // A scrolling body pins its trailing summary rows under the viewport; they
+    // are never scrolled and never counted in the range.
+    let pinned_n = row_roles
+        .iter()
+        .rev()
+        .take_while(|role| is_summary_role(**role))
+        .count()
+        .min(n_rows.saturating_sub(1));
+    let pinned_gap = if pinned_n > 0 {
+        ((row_h * 0.4) as i64 as f64).max(hbar_band)
+    } else {
+        0.0
+    };
+    let pinned_h = if pinned_n > 0 {
+        pinned_gap + row_heights[n_rows - pinned_n..].iter().sum::<f64>()
+    } else {
+        0.0
+    };
+
     if let (true, Some(slot_h)) = (th.pagination.enabled, slot_h) {
         // header_height in production's budget is the post-pivot-bump total.
         let header_total_h = group_row_height * n_group_levels as f64 + header_h;
@@ -4624,10 +4729,21 @@ pub(crate) fn lay_out(
             // the overflow is within the cap — one page, content height.
         } else if scroll_y_mode {
             slot_pinned = true;
-            let viewport_rows = safe_page_rows(available);
-            if n_rows > viewport_rows {
+            if n_rows > safe_page_rows(available) {
+                // The row total takes the pager's band under the rows.
                 scroll_y = true;
-                n_shown = viewport_rows;
+                // The viewport is `n_shown` rows and half the next, with the
+                // pinned summary rows and the pager band under it.
+                let rows_avail = available - pagination_control_height - pinned_h;
+                n_shown = safe_page_rows(rows_avail - row_h / 2.0);
+                let n_data = n_rows - pinned_n;
+                while n_shown > 1
+                    && n_shown < n_data
+                    && row_heights[..n_shown].iter().sum::<f64>() + row_heights[n_shown] / 2.0
+                        > rows_avail
+                {
+                    n_shown -= 1;
+                }
             }
         } else {
             slot_pinned = true;
@@ -4680,8 +4796,14 @@ pub(crate) fn lay_out(
             true_total_pages = n_rows.div_ceil(page_rows);
         }
     }
-    // A scrolling body draws every row; `scrolls_rows` capped how many.
-    let scroll_drawn = if scroll_y { n_rows } else { n_shown };
+    // A scrolling body draws every data row; `scrolls_rows` capped how many.
+    let scroll_drawn = if scroll_y { n_rows - pinned_n } else { n_shown };
+    if scroll_y {
+        n_shown = n_shown.min(scroll_drawn);
+    }
+    // Half of the next row stays in view to say there is more, and trails the
+    // last row so the top of the viewport rests on a row at every offset.
+    let scroll_half = if scroll_y && n_shown < scroll_drawn { row_heights[n_shown] / 2.0 } else { 0.0 };
 
     if let Some(sq) = squeezed {
         // Production returns the squeezed height as `effective_row_height`
@@ -4753,7 +4875,8 @@ pub(crate) fn lay_out(
     };
     // The pager sits off the page actually drawn; the canvas is sized for the
     // tallest page so the card does not resize between pages.
-    let shown_rows_h: f64 = row_heights[live_rows.clone()].iter().sum();
+    let shown_rows_h: f64 = row_heights[live_rows.clone()].iter().sum::<f64>()
+        + if scroll_y { scroll_half + pinned_h } else { 0.0 };
     let indicator_y = rows_start_y + shown_rows_h + last_gap + th.bottom_padding + hbar_band;
     // A pool's pager, x scrollbar and frozen edge end under the open page;
     // the runtime moves them by how far a sort or filter moves this bottom.
@@ -4810,7 +4933,7 @@ pub(crate) fn lay_out(
         slot_h
     } else {
         canvas_y
-            + if paginated {
+            + if paginated || scroll_y {
                 pagination_control_height
             } else {
                 0.0
@@ -5364,7 +5487,8 @@ pub(crate) fn lay_out(
             body.render_data_rows(&mut frozen_tree, live_offset, drawn_rows, page_cells, Some(n))?;
         }
 
-        if n_rows > drawn_rows {
+        // A pinned total is drawn under the viewport, not cut.
+        if n_rows > drawn_rows + if scroll_y { pinned_n } else { 0 } {
             if paginated && !chart_id.is_empty() {
                 render_pagination_controls(
                     &mut tail,
@@ -5416,6 +5540,48 @@ pub(crate) fn lay_out(
         }
     }
 
+    // The scrolled viewport's bottom; the pinned summary rows hang below it.
+    let viewport_h = shown_rows_h - if scroll_y { pinned_h } else { 0.0 } + last_gap;
+    let mut pinned_tree = Tree::new();
+    if scroll_y {
+        let mut ends = Vec::new();
+        let mut bottom = 0.0;
+        for i in 0..scroll_drawn {
+            bottom += row_heights[i];
+            if !is_summary_role(row_roles[i]) {
+                ends.push(bottom + summary_gap_at[i]);
+            }
+        }
+        if pinned_n > 0 {
+            let pinned_rows = scroll_drawn..n_rows;
+            let pinned_cells =
+                build_cell_data(&rows[pinned_rows.clone()], &cols, &th.symbol_mode, &row_roles[pinned_rows])?;
+            pinned_tree.open_at(
+                Open::Group,
+                Role::Chrome,
+                vec![Transform::Translate { x: 0.0, y: viewport_h + pinned_gap }],
+                Attrs::new().quick("data-dbt-pinned", chart_id),
+            );
+            body.render_data_rows(&mut pinned_tree, scroll_drawn, pinned_n, &pinned_cells, None)?;
+            pinned_tree.close(Open::Group);
+        }
+        emit_scroll_pagers(
+            &mut tail,
+            &th.paginator,
+            &body_family,
+            chart_id,
+            svg_w,
+            indicator_y,
+            outer,
+            viewport_h,
+            // A page counts data rows: a summary row in the pane takes no number.
+            (0..n_shown).filter(|&i| !is_summary_role(row_roles[i])).count(),
+            &ends,
+            drawn.interactive_controls,
+            fonts,
+        )?;
+    }
+
     if scrolling {
         // The scrolled content's full height: every drawn row and the
         // summary gaps between them.
@@ -5427,10 +5593,11 @@ pub(crate) fn lay_out(
                 summary_gap_at[live_offset + drawn_rows - 1] - summary_gap_at[live_offset]
             } else {
                 0.0
-            };
+            }
+            + scroll_half;
         let body_bottom = rows_start_y
             + if scroll_y {
-                shown_rows_h + last_gap
+                viewport_h
             } else {
                 canvas_rows_h + canvas_gap
             };
@@ -5467,7 +5634,6 @@ pub(crate) fn lay_out(
                     rows_tree.finish()
                 },
                 frozen: frozen_cols.map(|_| frozen_tree.finish()),
-                standalone: !drawn.interactive_controls,
                 edge: frozen_cols.map(|_| FreezeEdge {
                     line_color: th.scrollbar.edge_color.as_str(),
                     shade_color: th.header.divider.line.color.as_str(),
@@ -5478,7 +5644,12 @@ pub(crate) fn lay_out(
         tree.extend(header_nodes);
         tree.extend(rows_tree.finish());
     }
+    tree.extend(pinned_tree.finish());
     tree.extend(tail.finish());
+    // Last, so every node the script binds as it mounts is already parsed.
+    if scrolling && !drawn.interactive_controls {
+        embed_table_scroll_script(&mut tree);
+    }
 
     let truncations = truncations.into_inner();
     if !truncations.is_empty() {

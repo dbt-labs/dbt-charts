@@ -1,5 +1,6 @@
-"""A top legend wider than its card shortens its entries and keeps the full
-name as hover text, instead of painting past the card's edge."""
+"""A top legend entry wider than its card on its own shortens and keeps the
+full name as hover text, instead of painting past the card's edge. Entries
+that fit one per row wrap there instead and are never cut."""
 
 import re
 
@@ -26,7 +27,7 @@ charts:
     y: v
     color: s
 cols:
-  - width: 300
+  - width: 180
     rows:
       - c
 """
@@ -40,3 +41,10 @@ def test_long_legend_entries_are_cut_and_reveal_the_full_name_on_hover() -> None
     )
     assert [full for _, full in cut] == list(_NAMES)
     assert all(full.startswith(shown.rstrip("…").rstrip()) for shown, full in cut)
+
+
+def test_long_legend_entries_that_fit_one_per_row_wrap_there_uncut() -> None:
+    svg = render_board_to_svg(_BOARD.replace("width: 180", "width: 300"))
+
+    shown = re.findall(r"role-legend-label[^>]*><text[^>]*>([^<]*)<", svg)
+    assert sorted(shown) == sorted(_NAMES)

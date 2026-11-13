@@ -711,7 +711,7 @@ fn render_panel(
     plot_w: f64,
     plot_h: f64,
     right: &RightAxis,
-) -> Result<PanelGeometry, String> {
+) -> Result<PanelGeometry, Diagnostic> {
     let x_scale = BandScale::new(x_domain.to_vec(), 0.0, plot_w, 0.0, 0.0);
     let y_scale = BandScale::new(y_domain.to_vec(), 0.0, plot_h, 0.0, 0.0);
     let shown = |band: &String| style.ax_y.labels.cased(band);
@@ -1429,7 +1429,7 @@ fn render_facet(
                 };
                 render_panel(&style, rows, (x_domain, x_axis), y_domain, plot_w, plot_h, &right)
             })
-            .collect::<Result<Vec<_>, String>>()?)
+            .collect::<Result<Vec<_>, Diagnostic>>()?)
     };
     let chrome = FacetChrome {
         title: title_plan.as_ref().map(|plan| TitleChrome {

@@ -156,7 +156,6 @@ def _chart_slot(board, chart_id: str, local_project: Callable) -> float:
     executor = Run(
         board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=None,
     )
     resolved, _cache = build_resolved_board(board, executor, {}, render_first=False)
     stack = [resolved.layout]

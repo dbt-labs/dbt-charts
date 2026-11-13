@@ -871,13 +871,22 @@
     /*{# "Team 10"; case and accents do not split the alphabet in two. #}*/
     var _OPTION_COLLATOR = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
 
-    function _buildSelectPopover(el, varName) {
-        var raw = el.getAttribute('data-dbt-options');
+    /*{# A menu draws at most this many member rows. A column-bound control #}*/
+    /*{# can carry every distinct id in a table, and a row per value held the #}*/
+    /*{# main thread for minutes; the search still reaches every value. #}*/
+    var _SELECT_ROW_LIMIT = 200;
+
+    /*{# The server writes these attributes as JSON; one that does not parse #}*/
+    /*{# is a render bug, so it throws rather than drawing an empty menu. #}*/
+    function _parseOptions(el, attr) {
+        var raw = el.getAttribute(attr);
+        return raw ? JSON.parse(raw) : [];
+    }
+
+    /*{# The card, the unset row, and the search bar; member rows are drawn #}*/
+    /*{# by the binding, a bounded window at a time. #}*/
+    function _buildSelectPopover(el, values, counted) {
         var canUnset = el.getAttribute('data-dbt-can-unset') === 'true';
-        var values = [];
-        if (raw) {
-            try { values = JSON.parse(raw); } catch (e) { values = []; }
-        }
         /*{# An empty option list is still openable when the control can be #}*/
         /*{# returned to unset — that row is the whole menu. #}*/
         if (!values.length && !canUnset) return null;
@@ -917,32 +926,6 @@
             list.appendChild(clear);
         }
 
-        /*{# [count, text] per value, aligned with the values, when the options #}*/
-        /*{# carry counts: the number is what a count sort compares, the text is #}*/
-        /*{# what the row draws, already in the board's format. #}*/
-        var rawCounts = el.getAttribute('data-dbt-option-counts');
-        var counts = rawCounts ? JSON.parse(rawCounts) : [];
-        values.forEach(function(value, i) {
-            var opt = document.createElement('div');
-            opt.className = 'dbt-select-option';
-            opt.setAttribute('role', 'option');
-            opt.setAttribute('data-value', value);
-            opt.id = 'dbt-opt-' + varName + '-' + i;
-            if (counts.length) {
-                var label = document.createElement('span');
-                label.className = 'dbt-select-label';
-                label.textContent = value;
-                var count = document.createElement('span');
-                count.className = 'dbt-select-count';
-                count.textContent = counts[i][1];
-                opt.classList.add('dbt-select-counted');
-                opt.append(label, count);
-                opt.setAttribute('data-count', counts[i][0]);
-            } else {
-                opt.textContent = value;
-            }
-            list.appendChild(opt);
-        });
         /*{# A list long enough to scroll is long enough to lose a value in, so #}*/
         /*{# it gets the search, a sort beside it, and — on a multiselect, whose #}*/
         /*{# ticks scatter through the list — a footer toggle to only them. #}*/
@@ -972,7 +955,7 @@
             sortMenu.setAttribute('role', 'menu');
             sortMenu.hidden = true;
             var sorts = [['asc', 'sort_text_ascending'], ['desc', 'sort_text_descending'], ['', 'clear_sort']];
-            if (counts.length) {
+            if (counted) {
                 sorts.unshift(['count-desc', 'sort_count_descending'], ['count-asc', 'sort_count_ascending']);
             }
             sorts.forEach(function(item) {
@@ -991,8 +974,14 @@
             }
         }
         popover.appendChild(list);
+        if (values.length > _SELECT_ROW_LIMIT) {
+            /*{# Outside the listbox, which may hold only options. #}*/
+            var note = document.createElement('div');
+            note.className = 'dbt-select-truncated';
+            note.hidden = true;
+            popover.appendChild(note);
+        }
         if (only) popover.appendChild(only);
-        _reflectSelection(popover, _committedList(el));
         document.body.appendChild(popover);
         return popover;
     }
@@ -1101,7 +1090,12 @@
     /*{# returns its on-screen box, so the existing positioning machinery works #}*/
     /*{# against SVG unchanged. #}*/
     function _bindSelect(el, name) {
-        var popover = _buildSelectPopover(el, name);
+        var values = _parseOptions(el, 'data-dbt-options');
+        /*{# [count, text] per value, aligned with the values, when the options #}*/
+        /*{# carry counts: the number is what a count sort compares, the text is #}*/
+        /*{# what the row draws, already in the board's format. #}*/
+        var counts = _parseOptions(el, 'data-dbt-option-counts');
+        var popover = _buildSelectPopover(el, values, counts.length > 0);
         if (!popover) {
             /*{# Nothing to open — an option query that returned empty, and no #}*/
             /*{# unset row either. Withdraw the affordances rather than leave a #}*/
@@ -1116,54 +1110,102 @@
         var sortButton = popover.querySelector('.dbt-select-sort');
         var sortMenu = popover.querySelector('.dbt-select-sort-menu');
         var only = popover.querySelector('.dbt-select-only');
-        var members = Array.prototype.slice.call(
-            popover.querySelectorAll('.dbt-select-option:not([data-unset])'));
+        var note = popover.querySelector('.dbt-select-truncated');
         var words = _words(el);
         var multi = el.getAttribute('data-dbt-input') === 'multiselect';
         var field = popover.querySelector('.dbt-select-field');
         var sorted = '';
         var selectedOnly = false;
+        var chosen = _committedList(el);
+        var lowered = values.map(function(v) { return String(v).toLowerCase(); });
+        /*{# Value indexes in the current sort; '' is the order they came in. #}*/
+        var ordered = values.map(function(_, i) { return i; });
+        /*{# A row is built the first time it is drawn, then reused. #}*/
+        var rows = [];
 
-        /*{# The unset row is not a value, so neither the search nor the #}*/
-        /*{# selected-only view ever hides the way out. Unticking the last #}*/
-        /*{# member leaves that view nothing to show, so it ends with it. #}*/
+        function rowFor(i) {
+            if (rows[i]) return rows[i];
+            var opt = document.createElement('div');
+            opt.className = 'dbt-select-option';
+            opt.setAttribute('role', 'option');
+            opt.setAttribute('data-value', values[i]);
+            opt.id = 'dbt-opt-' + name + '-' + i;
+            if (counts.length) {
+                var label = document.createElement('span');
+                label.className = 'dbt-select-label';
+                label.textContent = values[i];
+                var count = document.createElement('span');
+                count.className = 'dbt-select-count';
+                count.textContent = counts[i][1];
+                opt.classList.add('dbt-select-counted');
+                opt.append(label, count);
+                opt.setAttribute('data-count', counts[i][0]);
+            } else {
+                opt.textContent = values[i];
+            }
+            rows[i] = opt;
+            return opt;
+        }
+
+        /*{# Draws the first rows that match the search and the selected-only #}*/
+        /*{# view, in the current sort, and says how many more match. The unset #}*/
+        /*{# row is not a value, so neither filter ever hides the way out. #}*/
+        /*{# Unticking the last member leaves the selected-only view nothing to #}*/
+        /*{# show, so it ends with it. #}*/
         function narrow() {
-            var needle = search.value.toLowerCase();
-            var ticked = members.filter(function(row) {
-                return row.getAttribute('aria-selected') === 'true';
-            }).length;
-            if (!ticked) selectedOnly = false;
-            members.forEach(function(row) {
-                row.hidden = row.getAttribute('data-value').toLowerCase().indexOf(needle) === -1
-                    || (selectedOnly && row.getAttribute('aria-selected') !== 'true');
+            var needle = search ? search.value.toLowerCase() : '';
+            var ticked = new Set(chosen.map(String));
+            var nTicked = 0;
+            values.forEach(function(v) { if (ticked.has(String(v))) nTicked++; });
+            if (!nTicked) selectedOnly = false;
+            var drawn = [];
+            var matched = 0;
+            ordered.forEach(function(i) {
+                if (lowered[i].indexOf(needle) === -1) return;
+                if (selectedOnly && !ticked.has(String(values[i]))) return;
+                matched++;
+                if (drawn.length < _SELECT_ROW_LIMIT) drawn.push(rowFor(i));
             });
+            list.querySelectorAll('.dbt-select-option:not([data-unset])').forEach(function(row) {
+                row.remove();
+            });
+            drawn.forEach(function(row) { list.appendChild(row); });
+            _reflectSelection(popover, chosen);
+            if (note) {
+                note.hidden = matched <= _SELECT_ROW_LIMIT;
+                note.textContent = _fill(words.options_truncated, {
+                    shown: drawn.length.toLocaleString(), total: matched.toLocaleString()
+                });
+            }
             if (only) {
-                only.hidden = !ticked;
+                only.hidden = !nTicked;
                 only.textContent = selectedOnly
-                    ? words.show_all : _fill(words.show_only_selected, {n: ticked});
+                    ? words.show_all : _fill(words.show_only_selected, {n: nTicked});
             }
         }
 
-        /*{# Reorders the member rows in place; '' is the order they came in. #}*/
-        /*{# The sort is stable, so rows a count sort ties keep that order. #}*/
+        /*{# The sort is stable, so values a count sort ties keep their order. #}*/
         function order(how) {
+            if (how === sorted) return;
             sorted = how;
-            var rows = members.slice();
+            ordered = values.map(function(_, i) { return i; });
             if (how) {
                 var byCount = how === 'count-asc' || how === 'count-desc';
-                rows.sort(function(a, b) {
+                ordered.sort(function(a, b) {
                     var by = byCount
-                        ? a.getAttribute('data-count') - b.getAttribute('data-count')
-                        : _OPTION_COLLATOR.compare(a.getAttribute('data-value'), b.getAttribute('data-value'));
+                        ? counts[a][0] - counts[b][0]
+                        : _OPTION_COLLATOR.compare(String(values[a]), String(values[b]));
                     return how === 'desc' || how === 'count-desc' ? -by : by;
                 });
             }
-            rows.forEach(function(row) { list.appendChild(row); });
+            narrow();
             sortButton.classList.toggle('dbt-select-sorted', !!how);
             sortMenu.querySelectorAll('[role="menuitemradio"]').forEach(function(pick) {
                 pick.setAttribute('aria-checked', pick.getAttribute('data-sort') === how ? 'true' : 'false');
             });
         }
+
+        narrow();
 
         function foldSortMenu(folded) {
             sortMenu.hidden = folded;
@@ -1179,7 +1221,7 @@
             _floatPopover(popover);
             popover.classList.add('dbt-popover-open');
             if (search) {
-                /*{# Held at no less than the full list's width: rows do not wrap, #}*/
+                /*{# Held at no less than the drawn rows' width: rows do not wrap, #}*/
                 /*{# so the card would otherwise shrink and shift under the caret #}*/
                 /*{# on each key. A floor, not a width: a menu reopened as the page #}*/
                 /*{# loads is measured before the web font arrives, and has to grow #}*/
@@ -1291,13 +1333,13 @@
         /*{# Every change to a multiselect — a row, a pill's x, Backspace — lands #}*/
         /*{# here. Empty commits '' either way: one spelling of "nothing", which #}*/
         /*{# the server reads as the empty list. #}*/
-        function commit(chosen, closing) {
+        function commit(nextChosen, closing) {
             /*{# A required control with no default has no legal empty state: #}*/
             /*{# committing one renders the next page with no board, and so no #}*/
             /*{# control to get back from. Refuse — nothing has changed yet. #}*/
-            if (!chosen.length && el.getAttribute('data-dbt-can-unset') !== 'true') return;
-            _reflectSelection(popover, chosen);
-            if (search) narrow();
+            if (!nextChosen.length && el.getAttribute('data-dbt-can-unset') !== 'true') return;
+            chosen = nextChosen;
+            narrow();
             if (closing) close();
             else if (isOpen() && search) search.focus();
             /*{# The render's own summary, ahead of it: the count, then the first tick. #}*/

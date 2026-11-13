@@ -8,13 +8,12 @@ Verifies that:
 
 from dbt_charts.core.compile import compile
 from dbt_charts.core.execute.duckdb_cache import (
-    compute_cache_key,
     compute_query_hash,
     compute_source_hash,
     compute_variables_hash,
 )
+from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
-from dbt_charts.core.text.time_zones import UTC
 
 from .._results import rows_result
 from .._run import Run
@@ -53,7 +52,6 @@ def _make_executor(result_cache: TrivialDuckDBCache) -> tuple[Run, ScriptedBacke
     executor = Run(
         result.board,
         env=scripted_env(mock_registry_backend),
-        query_registry=result.query_registry,
         result_cache=result_cache,
     )
     return executor, mock_registry_backend
@@ -69,16 +67,12 @@ def _board_slug() -> str:
 def _seed_cache(cache: TrivialDuckDBCache) -> None:
     """Seed the DuckDB cache with CACHED_ROWS for the 'revenue' query.
 
-    Uses compute_cache_key — the single source of truth — so the seeded key
-    always matches what execute_query will look up.
+    Uses the planned query's cache key — the single source of truth — so the
+    seeded key always matches what execute_query will look up.
     """
-    result = _compiled()
-    query = result.board.queries["revenue"]
-    board = result.board
-
-    source_hash, query_hash, variables_hash = compute_cache_key(
-        query, board_sources=board.sources, time_zone=UTC
-    )
+    run = Run(_compiled().board, env=scripted_env(ScriptedBackend()))
+    [planned] = plan(run.ctx, ["revenue"])
+    source_hash, query_hash, variables_hash = planned.cache_key
 
     cache.put(
         source_hash,
@@ -150,7 +144,6 @@ class TestDuckDBSuccessCacheShortCircuit:
             executor = Run(
                 result.board,
                 env=mock_registry,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
 
@@ -170,7 +163,6 @@ class TestDuckDBSuccessCacheShortCircuit:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
             result_cache=None,
         )
 
@@ -213,7 +205,6 @@ class TestDuckDBSuccessCacheShortCircuit:
             executor = Run(
                 result.board,
                 env=mock_registry,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
 

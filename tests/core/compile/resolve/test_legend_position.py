@@ -450,6 +450,12 @@ def _many(width: float, **legend: Any) -> Any:
     return make_test_resolved_chart(chart, _MANY_ROWS, width=width).legend
 
 
+def _wraps(legend: Any) -> bool:
+    return legend.direction == "horizontal" and (
+        1 <= legend.columns <= legend.compact_columns
+    )
+
+
 def test_a_bottom_legend_that_fits_stays_one_row() -> None:
     legend = _many(3000.0)
     assert (legend.direction, legend.columns) == ("horizontal", 0)
@@ -457,7 +463,7 @@ def test_a_bottom_legend_that_fits_stays_one_row() -> None:
 
 def test_a_bottom_legend_too_wide_for_one_row_wraps() -> None:
     legend = _many(500.0)
-    assert (legend.direction, legend.columns) == ("horizontal", legend.compact_columns)
+    assert _wraps(legend)
 
 
 def test_authored_direction_and_columns_skip_the_fit_fallback() -> None:
@@ -491,7 +497,7 @@ def test_every_cartesian_family_wraps_a_legend_too_wide_for_one_row(
     wide = make_test_resolved_chart(chart, _MANY_ROWS, width=3000.0).legend
     narrow = make_test_resolved_chart(chart, _MANY_ROWS, width=500.0).legend
     assert (wide.direction, wide.columns) == ("horizontal", 0)
-    assert (narrow.direction, narrow.columns) == ("horizontal", narrow.compact_columns)
+    assert _wraps(narrow)
 
 
 def test_an_overlay_legend_is_never_wrapped() -> None:
@@ -512,7 +518,7 @@ def test_a_categorical_heatmap_legend_wraps() -> None:
         style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
     )
     legend = make_test_resolved_chart(chart, _MANY_ROWS, width=500.0).legend
-    assert (legend.direction, legend.columns) == ("horizontal", legend.compact_columns)
+    assert _wraps(legend)
 
 
 def test_a_direct_pie_key_too_wide_for_one_row_wraps() -> None:
@@ -521,10 +527,7 @@ def test_a_direct_pie_key_too_wide_for_one_row_wraps() -> None:
         _pie({"edge": "bottom"}, visible=True), rows, width=600.0
     )
     assert resolved.legend.visible
-    assert (resolved.legend.direction, resolved.legend.columns) == (
-        "horizontal",
-        resolved.legend.compact_columns,
-    )
+    assert _wraps(resolved.legend)
 
 
 def test_a_categorical_point_map_legend_wraps() -> None:
@@ -542,7 +545,7 @@ def test_a_categorical_point_map_legend_wraps() -> None:
         style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
     )
     legend = make_test_resolved_chart(chart, rows, width=500.0).legend
-    assert (legend.direction, legend.columns) == ("horizontal", legend.compact_columns)
+    assert _wraps(legend)
 
 
 def test_a_multi_measure_heatmap_legend_wraps() -> None:
@@ -559,7 +562,7 @@ def test_a_multi_measure_heatmap_legend_wraps() -> None:
     )
     rows = [{"cat": "a", **dict.fromkeys(measures, 1)}]
     legend = make_test_resolved_chart(chart, rows, width=500.0).legend
-    assert (legend.direction, legend.columns) == ("horizontal", legend.compact_columns)
+    assert _wraps(legend)
 
 
 def test_a_choropleth_legend_reads_the_value_field_not_the_color_channel() -> None:
@@ -579,4 +582,36 @@ def test_a_choropleth_legend_reads_the_value_field_not_the_color_channel() -> No
         style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
     )
     legend = make_test_resolved_chart(chart, rows, width=500.0).legend
-    assert legend.columns == legend.compact_columns
+    assert _wraps(legend)
+
+
+def test_a_wrapped_legend_takes_more_columns_on_a_wider_card() -> None:
+    narrow = _many(500.0)
+    wide = _many(1200.0)
+    assert 1 <= narrow.columns < wide.columns <= wide.compact_columns
+
+
+def test_compact_columns_caps_a_wrapped_legend() -> None:
+    assert _many(1200.0, compact_columns=3).columns == 3
+
+
+def test_a_card_too_narrow_for_two_labels_wraps_one_per_row() -> None:
+    assert _many(200.0).columns == 1
+
+
+def test_a_wide_bar_measures_its_folded_series() -> None:
+    """A `y:` list with no `color:` names one legend entry per measure, so a
+    bottom legend too narrow for them wraps like any other."""
+    measures = [f"Measure name number {i}" for i in range(12)]
+    chart = BarChart(
+        id="w1",
+        type="bar",
+        query_name="q",
+        x="cat",
+        y=measures,
+        style=BarChartStylePatch.model_validate(
+            {"legend": {"position": {"edge": "bottom"}}}
+        ),
+    )
+    rows = [{"cat": "a", **dict.fromkeys(measures, 1)}]
+    assert _wraps(make_test_resolved_chart(chart, rows, width=500.0).legend)

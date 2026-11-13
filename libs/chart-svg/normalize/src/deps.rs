@@ -121,8 +121,7 @@ impl Dependencies {
             all: &'a BTreeMap<String, BTreeSet<String>>,
         ) -> Option<Vec<String>> {
             if let Some(at) = path.iter().position(|p| *p == node) {
-                let mut around: Vec<String> =
-                    path.iter().skip(at).map(|p| (*p).clone()).collect();
+                let mut around: Vec<String> = path.iter().skip(at).map(|p| (*p).clone()).collect();
                 around.push(node.clone());
                 return Some(around);
             }

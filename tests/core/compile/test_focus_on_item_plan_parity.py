@@ -166,6 +166,7 @@ def test_a_fence_plans_what_focus_on_item_keeps(
         cache_root=(True, "24h", False),
         source_caches={},
         implicit_source=None,
+        zones={},
         sql=_Sqlglot(),
     )
     for fence in chart_fences(page):

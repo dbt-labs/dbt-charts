@@ -40,7 +40,9 @@ def _render(n_rows: int, sink_open: bool) -> dict[str, StaticPagination]:
             query=SqlQuery(sql="SELECT 1", source="test"),
             query_name="q",
             type="table",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         ),
         _data(n_rows),
         chart_style_context=_BOARD_CTX,

@@ -530,6 +530,7 @@ fn held(d: &Declared, v: &Val) -> Result<VariableValue, Diagnostic> {
     let cannot = |what: &str| invalid(d, format!("a {what} cannot be held as a variable value"));
     let slot = |v: &Val| v.atom().map_err(|what| cannot(&what));
     Ok(match v {
+        Val::List(ends) if d.is(InputType::Daterange) && ends.is_empty() => VariableValue::Unset,
         Val::List(ends) if d.is(InputType::Daterange) => match ends.as_slice() {
             [start, end] => VariableValue::Daterange {
                 start: slot(start)?,
@@ -598,15 +599,44 @@ fn value_of(v: &Val) -> Value {
 pub struct Resolved {
     pub query: IndexMap<String, VariableValue>,
     pub render: IndexMap<String, VariableValue>,
+    /// The daterange variables whose value is a preset, by name, to the preset as written: what
+    /// render publishes and links by, where `query` and `render` hold the dates it names.
+    pub presets: IndexMap<String, String>,
+}
+
+/// The host's `presets` against the board's declarations: each names a declared daterange variable
+/// and a preset the grammar knows. A host that passes anything else has a bug, so this is an
+/// error, never an ignored entry.
+pub fn check_presets<'a>(
+    declared: impl IntoIterator<Item = (&'a str, &'a Variable)>,
+    presets: &IndexMap<String, String>,
+) -> Result<(), String> {
+    let declared: Vec<_> = declared.into_iter().collect();
+    for (name, id) in presets {
+        let Some((_, var)) = declared.iter().find(|(n, _)| n == name) else {
+            return Err(format!("presets: {name} is not a declared variable"));
+        };
+        if !Declared::of(name, var)?.is(InputType::Daterange) {
+            return Err(format!("presets: {name} is not a daterange variable"));
+        }
+        if daterange::parse(id).is_none() {
+            return Err(format!(
+                "presets: {name}: {} is not a preset ({GRAMMAR})",
+                py_str_repr(id)
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// What `given` (JSON, in the order the caller set it) makes of each declared variable, or the
-/// first refusal: a name the board does not declare, a value outside the static options, a
-/// value its input cannot read.
+/// first refusal: a name the board does not declare, a value outside the static options (only
+/// when `strict`: a browser's query string may carry any value), a value its input cannot read.
 pub fn resolve(
     declared: &[Declared],
     given: &IndexMap<String, Value>,
     clock: &Clock,
+    strict: bool,
 ) -> Result<Resolved, Diagnostic> {
     let by_name = |name: &str| declared.iter().find(|d| d.name == name);
     let mut set: IndexMap<&str, Val> = IndexMap::new();
@@ -628,9 +658,11 @@ pub fn resolve(
         };
         set.insert(name.as_str(), val);
     }
-    for (name, val) in &set {
-        if let Some(d) = by_name(name) {
-            check_options(d, val)?;
+    if strict {
+        for (name, val) in &set {
+            if let Some(d) = by_name(name) {
+                check_options(d, val)?;
+            }
         }
     }
     let merged: Vec<(&Declared, Val)> = declared
@@ -643,7 +675,15 @@ pub fn resolve(
     let mut out = Resolved {
         query: IndexMap::new(),
         render: IndexMap::new(),
+        presets: IndexMap::new(),
     };
+    for (d, v) in &merged {
+        if let Val::Str(name) = v {
+            if d.is(InputType::Daterange) && !v.is_absent() {
+                out.presets.insert(d.name.clone(), name.clone());
+            }
+        }
+    }
     for (d, v) in &merged {
         out.query
             .insert(d.name.clone(), held(d, &for_queries(d, v, clock)?)?);

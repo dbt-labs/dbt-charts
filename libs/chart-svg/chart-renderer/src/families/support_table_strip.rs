@@ -62,6 +62,9 @@ struct RawSupportTableEntry {
     per_series: Option<String>,
     #[serde(default)]
     by_measure: bool,
+    /// The column a `percent:` entry reads: a `source` entry whose values
+    /// print as a share of the first stage's.
+    percent: Option<String>,
     #[serde(default)]
     ink: Option<String>,
 }
@@ -82,6 +85,9 @@ pub struct SupportTableEntry {
     /// A `per_series` entry that reads one column per row: it names no series
     /// yet still retires the series legend.
     pub by_measure: bool,
+    /// A funnel's `percent:` entry: `source` names the column, and each stage
+    /// prints as a share of the first stage's value.
+    pub percent: bool,
     /// The header's ink when it names the layered series its column reads
     /// (resolve bakes it with the legend hidden); `None` keeps the style's label ink.
     pub ink: Option<String>,
@@ -89,6 +95,18 @@ pub struct SupportTableEntry {
 
 impl From<RawSupportTableEntry> for SupportTableEntry {
     fn from(raw: RawSupportTableEntry) -> Self {
+        if let Some(column) = raw.percent {
+            return SupportTableEntry {
+                source: Some(column),
+                aggregate: None,
+                format: raw.format,
+                label: raw.label,
+                per_series: None,
+                by_measure: false,
+                percent: true,
+                ink: raw.ink,
+            };
+        }
         match raw.per_series {
             Some(column) if raw.by_measure => SupportTableEntry {
                 label: Some(raw.label.unwrap_or_else(|| column.clone())),
@@ -97,6 +115,7 @@ impl From<RawSupportTableEntry> for SupportTableEntry {
                 format: raw.format,
                 per_series: None,
                 by_measure: true,
+                percent: false,
                 ink: raw.ink,
             },
             per_series => SupportTableEntry {
@@ -106,6 +125,7 @@ impl From<RawSupportTableEntry> for SupportTableEntry {
                 label: raw.label,
                 per_series,
                 by_measure: false,
+                percent: false,
                 ink: raw.ink,
             },
         }
@@ -175,6 +195,8 @@ pub struct LabelStyle {
 #[derive(Deserialize, Clone)]
 pub struct SupportTableStyle {
     pub font: Font,
+    /// A funnel's ribbon rows: one step quieter than the stage rows.
+    pub ribbon_color: String,
     /// The line between the plot and the strip, and the gap it reserves.
     pub divider: GappedDivider,
     pub row: RowStyle,
@@ -458,8 +480,54 @@ fn entry_values(
             };
             by_x.insert(value_to_key(x), cell);
         }
-        Ok(domain.iter().map(|x| by_x.get(x).cloned()).collect())
+        let values: Vec<Option<CellValue>> = domain.iter().map(|x| by_x.get(x).cloned()).collect();
+        if entry.percent {
+            return share_of_first(values, field);
+        }
+        Ok(values)
     }
+}
+
+/// A `percent:` column: each stage's value over the first stage's.
+fn share_of_first(values: Vec<Option<CellValue>>, field: &str) -> Result<Vec<Option<CellValue>>, Diagnostic> {
+    let first = match values.first() {
+        Some(Some(CellValue::Num(n))) if n.is_finite() && *n != 0.0 => *n,
+        _ => {
+            return Err(format!("support_table: percent: {field:?} needs a nonzero number in the first stage").into());
+        }
+    };
+    Ok(values
+        .into_iter()
+        .map(|v| match v {
+            Some(CellValue::Num(n)) => Some(CellValue::Num(n / first)),
+            other => other,
+        })
+        .collect())
+}
+
+/// The change from each stage to the next, one value per pair, for the ribbon rows of
+/// a funnel's table: in the column's own units, or, on a `percent:` column, as a share
+/// of the stage it leaves. A pair with a missing or non-numeric stage has none.
+fn ribbon_changes(entry: &SupportTableEntry, stages: &[Option<CellValue>]) -> Result<Vec<Option<CellValue>>, Diagnostic> {
+    stages
+        .windows(2)
+        .map(|pair| match (&pair[0], &pair[1]) {
+            (Some(CellValue::Num(from)), Some(CellValue::Num(to))) if from.is_finite() && to.is_finite() => {
+                if !entry.percent {
+                    return Ok(Some(CellValue::Num(to - from)));
+                }
+                if *from == 0.0 {
+                    return Err(format!(
+                        "support_table: percent: a stage of {:?} follows a stage of 0, so its change has no share",
+                        entry.source.as_deref().unwrap_or_default()
+                    )
+                    .into());
+                }
+                Ok(Some(CellValue::Num((to - from) / from)))
+            }
+            _ => Ok(None),
+        })
+        .collect()
 }
 
 /// Display key for a domain-grouping value — mirrors `row_str`
@@ -900,6 +968,9 @@ pub(crate) struct EntryLines<'a> {
     pub(crate) lines: Vec<Vec<Option<CellValue>>>,
     pub(crate) numerals: Option<StripNumerals>,
     pub(crate) nums: Vec<f64>,
+    /// The change between consecutive stages of a funnel's table, empty unless
+    /// the caller asked for ribbon rows and the entry reads a plain column.
+    pub(crate) ribbons: Vec<Option<CellValue>>,
 }
 
 impl EntryLines<'_> {
@@ -928,6 +999,7 @@ pub(crate) fn entry_lines<'a>(
     domain: &[String],
     color_field: Option<&str>,
     series_order: &[String],
+    ribbon_rows: bool,
 ) -> Result<EntryLines<'a>, Diagnostic> {
     let spec = entry.format.as_ref().map(|f| f.spec.as_str());
     let lines: Vec<Vec<Option<CellValue>>> = if let Some(per_series_field) = &entry.per_series {
@@ -955,9 +1027,15 @@ pub(crate) fn entry_lines<'a>(
     } else {
         vec![entry_values(entry, rows, x_field, domain)?]
     };
+    let ribbons = if ribbon_rows && entry.aggregate.is_none() && entry.per_series.is_none() {
+        ribbon_changes(entry, &lines[0])?
+    } else {
+        Vec::new()
+    };
     let nums: Vec<f64> = lines
         .iter()
         .flatten()
+        .chain(ribbons.iter())
         .filter_map(|v| match v {
             Some(CellValue::Num(n)) => Some(*n),
             Some(CellValue::Text(text)) => coerce_numeric(&Value::String(text.clone())),
@@ -979,7 +1057,7 @@ pub(crate) fn entry_lines<'a>(
             Ok::<_, String>(numerals)
         })
         .transpose()?;
-    Ok(EntryLines { spec, lines, numerals, nums })
+    Ok(EntryLines { spec, lines, numerals, nums, ribbons })
 }
 
 /// Build the composed strip's rows: bare numerals per entry, the strip's one
@@ -1035,6 +1113,7 @@ pub fn build_rows_composed(
                 domain,
                 color_field,
                 series_order,
+                false,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1136,7 +1215,7 @@ pub fn widest_stub(
     let rows = config.source_rows(rows);
     let mut widest = 0.0_f64;
     for entry in &config.entries {
-        let lines = entry_lines(entry, rows, x_field, domain, color_field, series_order)?;
+        let lines = entry_lines(entry, rows, x_field, domain, color_field, series_order, false)?;
         let labels = if entry.per_series.is_some() {
             series_order.iter().map(|name| lines.stub(fonts, family, size, name)).collect::<Result<Vec<_>, _>>()?
         } else {
@@ -1926,6 +2005,7 @@ mod tests {
             "padding_top": padding_top,
             "padding_bottom": padding_bottom,
             "label_max_lines": 2,
+            "ribbon_color": "#999999",
             "position": position,
         }))
         .unwrap()
@@ -1999,6 +2079,7 @@ mod tests {
             lines: Vec::new(),
             numerals: Some(StripNumerals::for_values(&[412_000.0, 388_000.0], "$.3~s").unwrap()),
             nums: Vec::new(),
+            ribbons: Vec::new(),
         };
         let stub = lines.stub(&test_fonts(), TEST_FONT, 11.0, "Pipeline value across every region in $").unwrap();
         assert!(stub.contains('\u{2026}') && stub.ends_with(", $K"), "{stub}");
@@ -2015,6 +2096,7 @@ mod tests {
             "padding_top": 8.0,
             "padding_bottom": 4.0,
             "label_max_lines": 2,
+            "ribbon_color": "#999999",
             "position": "top",
         }))
         .unwrap()
@@ -2148,6 +2230,7 @@ mod tests {
                     label: None,
                     per_series: Some("revenue".into()),
                     by_measure: false,
+                    percent: false,
                     ink: None,
                 },
                 SupportTableEntry {
@@ -2157,6 +2240,7 @@ mod tests {
                     label: Some("Total".into()),
                     per_series: None,
                     by_measure: false,
+                    percent: false,
                     ink: None,
                 },
             ],
@@ -2175,6 +2259,7 @@ mod tests {
                 label: None,
                 per_series: Some("revenue".into()),
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2195,6 +2280,7 @@ mod tests {
                 label: None,
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: Some("#123456".into()),
             }],
             fold: None,
@@ -2217,6 +2303,7 @@ mod tests {
                 label: None,
                 per_series: Some("revenue".into()),
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2243,6 +2330,7 @@ mod tests {
                 label: None,
                 per_series: Some("revenue".into()),
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2292,6 +2380,7 @@ mod tests {
                 label: Some("Total".into()),
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2318,6 +2407,7 @@ mod tests {
                 label: None,
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2345,6 +2435,7 @@ mod tests {
                 label: Some("Units".into()),
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2397,6 +2488,7 @@ mod tests {
                     label: Some("Count".into()),
                     per_series: None,
                     by_measure: false,
+                    percent: false,
                     ink: None,
                 },
                 SupportTableEntry {
@@ -2406,6 +2498,7 @@ mod tests {
                     label: Some("Distinct".into()),
                     per_series: None,
                     by_measure: false,
+                    percent: false,
                     ink: None,
                 },
             ],
@@ -2465,6 +2558,7 @@ mod tests {
                 label: Some("Product".into()),
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2500,6 +2594,7 @@ mod tests {
                 label: Some("Code".into()),
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2533,6 +2628,7 @@ mod tests {
                 label: Some("Revenue".into()),
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2568,6 +2664,7 @@ mod tests {
                 label: Some("Total".into()),
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2597,6 +2694,7 @@ mod tests {
                 label: Some("Revenue".into()),
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2629,6 +2727,7 @@ mod tests {
                 label: Some("Missing".into()),
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2653,6 +2752,7 @@ mod tests {
                 label: Some("Revenue".into()),
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2681,6 +2781,7 @@ mod tests {
                 label: Some("A Very Long Row Label That Overruns The Gutter Width".into()),
                 per_series: None,
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2820,6 +2921,7 @@ mod tests {
                 label: label.map(str::to_string),
                 per_series: Some("revenue".into()),
                 by_measure: false,
+                percent: false,
                 ink: None,
             }],
             fold: None,
@@ -2925,6 +3027,7 @@ mod tests {
             label: Some(source.into()),
             per_series: None,
             by_measure: false,
+            percent: false,
             ink: None,
         }
     }
@@ -3262,6 +3365,7 @@ mod tests {
                     label: None,
                     per_series: Some("revenue".into()),
                     by_measure: false,
+                    percent: false,
                     ink: None,
                 },
                 SupportTableEntry {
@@ -3271,6 +3375,7 @@ mod tests {
                     label: Some("Total".into()),
                     per_series: None,
                     by_measure: false,
+                    percent: false,
                     ink: None,
                 },
             ],
@@ -3356,6 +3461,7 @@ mod tests {
             label: Some("Share".into()),
             per_series: None,
             by_measure: false,
+            percent: false,
             ink: None,
         }
     }

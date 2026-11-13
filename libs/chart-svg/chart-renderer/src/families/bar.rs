@@ -64,6 +64,7 @@ pub(crate) mod labels;
 pub mod layout;
 pub(crate) mod legend;
 pub(crate) mod marks;
+mod ribbons;
 mod time_x;
 mod tooltip;
 mod vertical;
@@ -596,6 +597,9 @@ pub(crate) struct MarkStyle {
     /// _build_bar_total_label_layer`). `visible` is `null` until authored.
     #[serde(default)]
     total_label: Option<TotalLabel>,
+    /// The ribbons joining each series' bars across adjacent categories; off when absent.
+    #[serde(default)]
+    ribbons: ribbons::Ribbons,
 }
 
 /// `style.marks.bar.total_label`: `visible` stays `null` until authored, and
@@ -621,6 +625,7 @@ impl TotalLabel {
         let font = self.font.clone().ok_or("bar: total_label.font absent (theme required)")?;
         Ok(MarkLabels {
             visible: true,
+            visible_auto: false,
             anchors: Vec::new(),
             field: None,
             format: self.format.clone(),
@@ -630,6 +635,7 @@ impl TotalLabel {
             position: Some("above".into()),
             auto: false,
             stacked: None,
+            template: None,
         })
     }
 }
@@ -723,7 +729,7 @@ impl BarResolved {
         rows: &[serde_json::Map<String, Value>],
         datum_of: &std::collections::HashMap<(String, String), usize>,
         key: &(String, String),
-    ) -> Result<BarPatch, String> {
+    ) -> Result<BarPatch, Diagnostic> {
         let mut patch = BarPatch::default();
         let Some(conditional) = self.style.conditional.as_ref().filter(|c| !c.is_empty()) else {
             return Ok(patch);
@@ -733,7 +739,7 @@ impl BarResolved {
             if crate::conditional::other_series(row, column, &self.wide_measures) {
                 continue;
             }
-            for rule in crate::conditional::matching(rules, |r| &r.predicate, row.get(column))? {
+            for rule in crate::conditional::matching(rules, |r| &r.predicate, column, row.get(column))? {
                 let Some(marks) = &rule.marks else { continue };
                 if let Some(bar) = &marks.bar {
                     patch.fill = bar.color.clone().or(patch.fill);
@@ -748,7 +754,7 @@ impl BarResolved {
                     if let Some(weight) = &font.weight {
                         let css = super::table::bind::font_weight_as_css(weight);
                         if !super::table::VALID_FONT_WEIGHTS.contains(&css.as_str()) {
-                            return Err(format!("bar: conditional font weight {css:?} is not a CSS weight"));
+                            return Err(format!("bar: conditional font weight {css:?} is not a CSS weight").into());
                         }
                         patch.label_weight = Some(css);
                     }
@@ -5375,7 +5381,7 @@ mod tests {
             let mut p = make_time_payload(&months_from_2000(72));
             p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
             p["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
-                "visible": false, "position": "above", "field": null, "format": null, "dx": null, "dy": null, "font": null
+                "visible": "auto", "position": "above", "field": null, "format": null, "dx": null, "dy": null, "font": null
             });
             p["resolved"]["style"]["axis_y"]["domain_max"] = serde_json::json!(180.0);
             p["resolved"]["style"]["axis_y"]["tick_values"] = serde_json::json!([0.0, 100.0]);
@@ -6142,6 +6148,7 @@ mod tests {
             "padding_top": 8.0,
             "padding_bottom": 4.0,
             "label_max_lines": 2,
+            "ribbon_color": "#999999",
             "position": "top",
         })
     }
@@ -14368,7 +14375,7 @@ mod tests {
         let rows: Vec<serde_json::Map<String, Value>> =
             vec![serde_json::from_value(serde_json::json!({"revenue": 75404.0})).unwrap()];
         let (_dmin, dmax, ticks) =
-            value_domain_and_ticks(&rows, "revenue", "revenue", &ax, "none", None, true, None, false, false).unwrap();
+            value_domain_and_ticks(&rows, "revenue", "revenue", &ax, "none", None, true, None, false).unwrap();
         assert_eq!(dmax, 90000.0);
         assert_eq!(ticks.last(), Some(&80000.0));
     }
@@ -14399,10 +14406,10 @@ mod tests {
         let ax = baked_floor_axis(vec![-50000.0, -40000.0, -30000.0, -20000.0, -10000.0, 0.0], -54000.0, None);
         let rows = revenue_rows(&[-50000.0, -40000.0, -30000.0, -45000.0]);
         let (floor, top, ticks) =
-            value_domain_and_ticks(&rows, "revenue", "revenue", &ax, "none", None, true, None, false, false).unwrap();
+            value_domain_and_ticks(&rows, "revenue", "revenue", &ax, "none", None, true, None, false).unwrap();
         assert_eq!((floor, top), (-54000.0, 0.0));
         assert_eq!(ticks, [-50000.0, -40000.0, -30000.0, -20000.0, -10000.0, 0.0]);
-        let horizontal = value_domain_and_ticks(&rows, "revenue", "revenue", &ax, "none", None, false, None, false, false).unwrap();
+        let horizontal = value_domain_and_ticks(&rows, "revenue", "revenue", &ax, "none", None, false, None, false).unwrap();
         assert_eq!((horizontal.0, horizontal.1), (-54000.0, 0.0));
     }
 
@@ -14415,7 +14422,7 @@ mod tests {
         let ax = baked_floor_axis(vec![-50.0, 0.0, 50.0, 100.0], -43.2, Some(129.6));
         let rows = revenue_rows(&[-40.0, 120.0]);
         let (floor, top, ticks) =
-            value_domain_and_ticks(&rows, "revenue", "revenue", &ax, "none", None, true, None, false, false).unwrap();
+            value_domain_and_ticks(&rows, "revenue", "revenue", &ax, "none", None, true, None, false).unwrap();
         assert_eq!((floor, top), (-43.2, 129.6));
         assert_eq!(ticks, [0.0, 50.0, 100.0]);
     }
@@ -14445,7 +14452,7 @@ mod tests {
         ]))
         .unwrap();
         let (_dmin, dmax, _ticks) =
-            value_domain_and_ticks(&rows, "revenue", "revenue", &ax, "none", None, true, None, false, false).unwrap();
+            value_domain_and_ticks(&rows, "revenue", "revenue", &ax, "none", None, true, None, false).unwrap();
         assert_eq!(dmax, 210000.0, "un-niced: the raw max, not d3_nice's 220000");
     }
 
@@ -14468,7 +14475,7 @@ mod tests {
         ]))
         .unwrap();
         let (dmin, dmax, ticks) =
-            value_domain_and_ticks(&rows, "cat", "val", &ax, "zero", Some(50.0), true, None, false, false).unwrap();
+            value_domain_and_ticks(&rows, "cat", "val", &ax, "zero", Some(50.0), true, None, false).unwrap();
         assert_eq!(dmin, -15.0, "floor is the most negative per-category running sum, raw");
         assert_eq!(dmax, 50.0);
         assert_eq!(ticks, vec![0.0, 25.0, 50.0], "the -20 rung sits below the floor and is dropped");
@@ -14492,7 +14499,7 @@ mod tests {
         ]))
         .unwrap();
         let (dmin, dmax, ticks) =
-            value_domain_and_ticks(&rows, "cat", "val", &ax, "zero", Some(50.0), true, None, false, false).unwrap();
+            value_domain_and_ticks(&rows, "cat", "val", &ax, "zero", Some(50.0), true, None, false).unwrap();
         assert_eq!(dmin, -20.0, "zero-anchored keeps the ladder's own first rung, not the raw extent");
         assert_eq!(ticks, vec![-20.0, 0.0, 25.0, 50.0]);
         assert_eq!(dmax, 50.0);
@@ -14538,7 +14545,7 @@ mod tests {
             {"cat": "A", "val": 4.0},
         ]))
         .unwrap();
-        let (lo, hi, ticks) = value_domain_and_ticks(&rows, "cat", "val", &ax, "zero", Some(4.0), true, None, false, false)
+        let (lo, hi, ticks) = value_domain_and_ticks(&rows, "cat", "val", &ax, "zero", Some(4.0), true, None, false)
             .expect("an unbaked stack with a negative running sum draws");
         assert_eq!((lo, hi), (-15.0, 4.0));
         // The fixture's authored `ticks.count` of 4 over [-15, 4].
@@ -18518,6 +18525,328 @@ mod tests {
             let (plot_w, plot_h) = clip_size(&svg);
             assert_eq!((x, width), (0.0, plot_w), "a row band spans the plot width");
             assert!(y == 0.0 && height < plot_h * 0.6, "the first of two rows: y {y} height {height}");
+        }
+    }
+
+    // ── Ribbons ──────────────────────────────────────────────────────────
+
+    mod ribbons {
+        use super::*;
+        use serde_json::json;
+
+        type Quad = Vec<(f64, f64)>;
+
+        /// A stacked payload with ribbons on; `colored` false drops the series, so the
+        /// chart is one series of `rows`' values.
+        fn ribbon_payload(orientation: &str, stack: &str, colored: bool) -> serde_json::Value {
+            let mut payload = make_stacked_payload(orientation, stack);
+            payload["resolved"]["style"]["mark"]["ribbons"] = json!({"visible": true});
+            if !colored {
+                payload["resolved"]["color"] = json!(null);
+                payload["rows"] = json!([{"cat": "A", "val": 10.0}, {"cat": "B", "val": 20.0}, {"cat": "C", "val": 15.0}]);
+            }
+            payload
+        }
+
+        fn render_of(payload: serde_json::Value) -> String {
+            render(&make_payload(payload), &test_fonts()).expect("renders")
+        }
+
+        /// Each `<g class="role-ribbon">` group's ribbons: the corners of its `d` and its fill.
+        fn ribbon_groups(svg: &str) -> Vec<Vec<(Quad, String)>> {
+            svg.match_indices("<g class=\"role-ribbon\"")
+                .map(|(at, _)| {
+                    let group = &svg[at..];
+                    group[..group.find("</g>").expect("the group closes")]
+                        .split("<path ")
+                        .skip(1)
+                        .map(|tag| {
+                            let get = |name: &str| tag.split(&format!("{name}=\"")).nth(1).and_then(|v| v.split('"').next()).unwrap_or_else(|| panic!("{name} on {tag}"));
+                            let corners = get("d")
+                                .split(|c: char| c.is_ascii_alphabetic())
+                                .filter(|n| !n.is_empty())
+                                .map(|n| {
+                                    let (x, y) = n.split_once(',').expect("x,y");
+                                    (x.parse().expect("x"), y.parse().expect("y"))
+                                })
+                                .collect();
+                            (corners, get("fill").to_string())
+                        })
+                        .collect()
+                })
+                .collect()
+        }
+
+        fn ribbons_of(svg: &str) -> Vec<(Quad, String)> {
+            ribbon_groups(svg).into_iter().flatten().collect()
+        }
+
+        /// `svg` without its ribbon groups, so bar queries see only bars.
+        fn without_ribbons(svg: &str) -> String {
+            let mut out = svg.to_string();
+            while let Some(at) = out.find("<g class=\"role-ribbon\"") {
+                let end = at + out[at..].find("</g>").expect("the group closes") + "</g>".len();
+                out.replace_range(at..end, "");
+            }
+            out
+        }
+
+        /// The bars of one fill, in category order along the band axis.
+        fn bars_of(svg: &str, fill: &str, horizontal: bool) -> Vec<(f64, f64, f64, f64)> {
+            let mut bars: Vec<_> = parse_rects(&without_ribbons(svg)).into_iter().filter(|r| r.4 == fill && r.2 > 0.0 && r.3 > 0.0).map(|r| (r.0, r.1, r.2, r.3)).collect();
+            bars.sort_by(|a, b| if horizontal { a.1.total_cmp(&b.1) } else { a.0.total_cmp(&b.0) });
+            bars
+        }
+
+        /// The quad joining the edges of `a` and `b` that face each other.
+        fn joining(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64), horizontal: bool) -> Quad {
+            if horizontal {
+                vec![(a.0, a.1 + a.3), (a.0 + a.2, a.1 + a.3), (b.0 + b.2, b.1), (b.0, b.1)]
+            } else {
+                vec![(a.0 + a.2, a.1), (a.0 + a.2, a.1 + a.3), (b.0, b.1 + b.3), (b.0, b.1)]
+            }
+        }
+
+        fn assert_quads(got: &[Quad], want: &[Quad]) {
+            assert_eq!(got.len(), want.len(), "{got:?} against {want:?}");
+            for (g, w) in got.iter().zip(want) {
+                assert_eq!(g.len(), w.len(), "{g:?} against {w:?}");
+                for (g, w) in g.iter().zip(w) {
+                    assert!((g.0 - w.0).abs() < 0.02 && (g.1 - w.1).abs() < 0.02, "{g:?} against {w:?}");
+                }
+            }
+        }
+
+        #[test]
+        fn ribbons_are_off_unless_the_style_turns_them_on() {
+            let svg = render_of(make_stacked_payload("vertical", "zero"));
+            assert!(!svg.contains("ribbon"), "{svg}");
+            let mut payload = make_stacked_payload("vertical", "zero");
+            payload["resolved"]["style"]["mark"]["ribbons"] = json!({"visible": false});
+            assert!(!render_of(payload).contains("ribbon"));
+        }
+
+        #[test]
+        fn a_single_series_joins_the_facing_edges_of_each_adjacent_pair() {
+            for orientation in ["horizontal", "vertical"] {
+                let horizontal = orientation == "horizontal";
+                let svg = render_of(ribbon_payload(orientation, "center", false));
+                let bars = bars_of(&svg, "#3164a3", horizontal);
+                assert_eq!(bars.len(), 3, "{svg}");
+                let ribbons = ribbons_of(&svg);
+                assert_quads(&ribbons.iter().map(|r| r.0.clone()).collect::<Vec<_>>(), &[joining(bars[0], bars[1], horizontal), joining(bars[1], bars[2], horizontal)]);
+                let want = dbt_charts_color::recede("#3164a3", "#ffffff", 0.5).unwrap();
+                assert!(ribbons.iter().all(|r| r.1 == want), "{ribbons:?} against {want}");
+            }
+        }
+
+        #[test]
+        fn a_stack_joins_each_series_segment_to_the_same_series_in_the_next_category() {
+            for orientation in ["horizontal", "vertical"] {
+                for stack in ["zero", "normalize", "center"] {
+                    let horizontal = orientation == "horizontal";
+                    let mut payload = ribbon_payload(orientation, stack, true);
+                    payload["rows"] = json!([
+                        {"cat": "A", "series": "x", "val": 10.0}, {"cat": "A", "series": "y", "val": 30.0},
+                        {"cat": "B", "series": "x", "val": 5.0}, {"cat": "B", "series": "y", "val": 15.0},
+                        {"cat": "C", "series": "x", "val": 8.0}, {"cat": "C", "series": "y", "val": 12.0},
+                    ]);
+                    let svg = render_of(payload);
+                    let mut want: Vec<(Quad, String)> = Vec::new();
+                    for color in ["#3164a3", "#779bc9"] {
+                        let bars = bars_of(&svg, color, horizontal);
+                        assert_eq!(bars.len(), 3, "{orientation} {stack} {color}: {svg}");
+                        let fill = dbt_charts_color::recede(color, "#ffffff", 0.5).unwrap();
+                        want.extend([(joining(bars[0], bars[1], horizontal), fill.clone()), (joining(bars[1], bars[2], horizontal), fill)]);
+                    }
+                    let mut got = ribbons_of(&svg);
+                    let key = |r: &(Quad, String)| (r.1.clone(), (r.0[0].0 * 100.0) as i64, (r.0[0].1 * 100.0) as i64);
+                    got.sort_by_key(key);
+                    want.sort_by_key(key);
+                    assert_eq!(got.iter().map(|r| &r.1).collect::<Vec<_>>(), want.iter().map(|r| &r.1).collect::<Vec<_>>(), "{orientation} {stack}");
+                    assert_quads(&got.into_iter().map(|r| r.0).collect::<Vec<_>>(), &want.into_iter().map(|r| r.0).collect::<Vec<_>>());
+                }
+            }
+        }
+
+        #[test]
+        fn a_series_absent_from_a_category_gets_no_ribbon_for_that_pair() {
+            let mut payload = ribbon_payload("vertical", "zero", true);
+            payload["rows"] = json!([
+                {"cat": "A", "series": "x", "val": 10.0}, {"cat": "A", "series": "y", "val": 30.0},
+                {"cat": "B", "series": "x", "val": 5.0},
+                {"cat": "C", "series": "x", "val": 8.0}, {"cat": "C", "series": "y", "val": 12.0},
+            ]);
+            let svg = render_of(payload);
+            let whole = ["#3164a3", "#779bc9"].into_iter().find(|color| bars_of(&svg, color, false).len() == 3).expect("one series spans all three categories");
+            let want = dbt_charts_color::recede(whole, "#ffffff", 0.5).unwrap();
+            let ribbons = ribbons_of(&svg);
+            assert_eq!(ribbons.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), [want.as_str(), want.as_str()], "the gapped series joins nothing: {ribbons:?}");
+        }
+
+        #[test]
+        fn a_zero_length_segment_gets_no_ribbon() {
+            let mut payload = ribbon_payload("vertical", "zero", true);
+            payload["rows"] = json!([
+                {"cat": "A", "series": "x", "val": 10.0}, {"cat": "A", "series": "y", "val": 30.0},
+                {"cat": "B", "series": "x", "val": 0.0}, {"cat": "B", "series": "y", "val": 15.0},
+            ]);
+            let svg = render_of(payload);
+            let whole = ["#3164a3", "#779bc9"].into_iter().find(|color| bars_of(&svg, color, false).len() == 2).expect("one series has a bar at both categories");
+            let ribbons = ribbons_of(&svg);
+            assert_eq!(ribbons.len(), 1, "{ribbons:?}");
+            assert_eq!(ribbons[0].1, dbt_charts_color::recede(whole, "#ffffff", 0.5).unwrap());
+        }
+
+        #[test]
+        fn ribbons_paint_under_the_bars_inside_the_knockout_mask() {
+            for orientation in ["horizontal", "vertical"] {
+                let mut payload = ribbon_payload(orientation, "zero", true);
+                payload["resolved"]["style"]["mark"]["border"] = json!({"width": 2.0, "color": "#ffffff", "radius": 0.0});
+                let svg = render_of(payload);
+                let masked = svg.find("<g mask=").unwrap_or_else(|| panic!("a knockout mask: {svg}"));
+                let ribbon = svg.find("<g class=\"role-ribbon\"").expect("ribbons");
+                let first_bar = svg.find("fill=\"#3164a3\"").expect("a bar");
+                assert!(masked < ribbon && ribbon < first_bar, "{orientation}: mask {masked}, ribbon {ribbon}, bar {first_bar}");
+            }
+        }
+
+        #[test]
+        fn ribbons_are_not_data_marks() {
+            let svg = render_of(ribbon_payload("vertical", "zero", true));
+            let at = svg.find("<g class=\"role-ribbon\"").expect("ribbons");
+            let group = &svg[at..at + svg[at..].find("</g>").unwrap()];
+            assert!(group.starts_with("<g class=\"role-ribbon\" data-dct-role=\"ribbon\" aria-hidden=\"true\">"), "{group}");
+            assert!(!group.contains("aria-label") && !group.contains("graphics-symbol"), "{group}");
+        }
+
+        /// Each ribbon's `(data-dbt-series, data-dbt-ribbon-from, data-dbt-ribbon-to)`.
+        fn ribbon_stamps(svg: &str) -> Vec<(Option<String>, String, String)> {
+            let at = svg.find("<g class=\"role-ribbon\"").expect("ribbons");
+            let group = &svg[at..at + svg[at..].find("</g>").unwrap()];
+            group
+                .split("<path ")
+                .skip(1)
+                .map(|tag| {
+                    let get = |name: &str| tag.split(&format!(" {name}=\"")).nth(1).and_then(|v| v.split('"').next()).map(str::to_string);
+                    (get("data-dbt-series"), get("data-dbt-ribbon-from").expect("from"), get("data-dbt-ribbon-to").expect("to"))
+                })
+                .collect()
+        }
+
+        /// Every `aria-label` a bar carries, in document order.
+        fn bar_arias(svg: &str) -> Vec<String> {
+            without_ribbons(svg)
+                .split("data-dct-role=\"bar\"")
+                .skip(1)
+                .filter_map(|tail| tail.split(" aria-label=\"").nth(1).and_then(|v| v.split('"').next()).map(str::to_string))
+                .collect()
+        }
+
+        #[test]
+        fn a_ribbon_names_the_two_bars_it_joins_and_its_series() {
+            for orientation in ["horizontal", "vertical"] {
+                let mut payload = ribbon_payload(orientation, "zero", true);
+                payload["rows"] = json!([
+                    {"cat": "A", "series": "x", "val": 10.0}, {"cat": "A", "series": "y", "val": 30.0},
+                    {"cat": "B", "series": "x", "val": 5.0}, {"cat": "B", "series": "y", "val": 15.0},
+                    {"cat": "C", "series": "x", "val": 8.0}, {"cat": "C", "series": "y", "val": 12.0},
+                ]);
+                payload["resolved"]["style"]["tooltip_format"] = json!(",.0f");
+                let svg = render_of(payload);
+                let arias = bar_arias(&svg);
+                let stamps = ribbon_stamps(&svg);
+                assert_eq!(stamps.len(), 4, "{orientation}: {svg}");
+                for (series, from, to) in &stamps {
+                    let series = series.as_deref().unwrap_or_else(|| panic!("{orientation}: a stacked ribbon names its series"));
+                    for end in [from, to] {
+                        assert!(arias.contains(end), "{orientation}: {end:?} is no bar's label: {arias:?}");
+                    }
+                    assert_ne!(from, to);
+                }
+                let mut series: Vec<_> = stamps.iter().filter_map(|s| s.0.clone()).collect();
+                series.sort();
+                assert_eq!(series, ["x", "x", "y", "y"], "{orientation}");
+            }
+        }
+
+        #[test]
+        fn a_single_series_ribbon_names_its_bars_and_no_series() {
+            for orientation in ["horizontal", "vertical"] {
+                let mut payload = ribbon_payload(orientation, "center", false);
+                payload["resolved"]["style"]["tooltip_format"] = json!(",.0f");
+                let svg = render_of(payload);
+                let arias = bar_arias(&svg);
+                assert_eq!(arias.len(), 3, "{orientation}: {svg}");
+                let stamps = ribbon_stamps(&svg);
+                let joins: Vec<_> = stamps.iter().map(|s| (s.0.clone(), s.1.clone(), s.2.clone())).collect();
+                let mut want = vec![(None, arias[0].clone(), arias[1].clone()), (None, arias[1].clone(), arias[2].clone())];
+                let mut got = joins;
+                got.sort();
+                want.sort();
+                assert_eq!(got, want, "{orientation}");
+            }
+        }
+
+        #[test]
+        fn grouped_bars_refuse_ribbons() {
+            for orientation in ["horizontal", "vertical"] {
+                let err = render(&make_payload(ribbon_payload(orientation, "none", true)), &test_fonts()).unwrap_err();
+                assert!(err.contains("bar: ribbons on grouped bars are not supported"), "{err}");
+            }
+        }
+
+        #[test]
+        fn a_stack_over_dates_joins_each_month_to_the_next() {
+            let _locale = ::bind::time_locale::en_us_scope();
+            for stack in ["zero", "normalize"] {
+                let mut payload = make_time_series_payload(stack);
+                payload["resolved"]["style"]["mark"]["ribbons"] = json!({"visible": true});
+                let svg = render_of(payload);
+                let ribbons = ribbons_of(&svg);
+                assert_eq!(ribbons.len(), 2 * 71, "{stack}: one per series per month pair");
+                let bars: Vec<_> = rects(&without_ribbons(&svg)).into_iter().filter(|m| m.fill() == "#3164a3").collect();
+                assert_eq!(bars.len(), 72, "{stack}");
+                let first = &ribbons.iter().find(|r| r.1 == dbt_charts_color::recede("#3164a3", "#ffffff", 0.5).unwrap()).expect("x ribbon").0;
+                assert!((first[0].0 - (bars[0].x() + bars[0].w())).abs() < 0.02 && (first[3].0 - bars[1].x()).abs() < 0.02, "{stack}: {first:?} between {} and {}", bars[0].x(), bars[1].x());
+            }
+        }
+
+        #[test]
+        fn bars_on_a_continuous_x_join_neighbors() {
+            let mut payload = make_continuous_payload(&[(10.0, 100.0), (20.0, 200.0), (30.0, 150.0)]);
+            payload["resolved"]["style"]["mark"]["ribbons"] = json!({"visible": true});
+            let svg = render_of(payload);
+            let ribbons = ribbons_of(&svg);
+            assert_eq!(ribbons.len(), 2, "{svg}");
+            assert_eq!(ribbons[0].1, dbt_charts_color::recede("#3164a3", "#ffffff", 0.5).unwrap());
+            let bars = bar_outlines(&without_ribbons(&svg));
+            assert!((ribbons[0].0[0].0 - bars[0].x2).abs() < 0.02 && (ribbons[0].0[3].0 - bars[1].x1).abs() < 0.02, "{:?} between {} and {}", ribbons[0].0, bars[0].x2, bars[1].x1);
+        }
+
+        /// Neighbors are the drawn order of x, not the query's row order, and a repeated x is one stop.
+        #[test]
+        fn bars_on_a_continuous_x_join_neighbors_in_x_order_whatever_the_row_order() {
+            let mut payload = make_continuous_payload(&[(30.0, 150.0), (10.0, 100.0), (20.0, 200.0), (10.0, 100.0)]);
+            payload["resolved"]["style"]["mark"]["ribbons"] = json!({"visible": true});
+            let svg = render_of(payload);
+            let ribbons = ribbons_of(&svg);
+            assert_eq!(ribbons.len(), 2, "{svg}");
+            let mut bars = bar_outlines(&without_ribbons(&svg));
+            bars.sort_by(|a, b| a.x1.total_cmp(&b.x1));
+            bars.dedup_by(|a, b| (a.x1 - b.x1).abs() < 0.02);
+            for (ribbon, pair) in ribbons.iter().zip(bars.windows(2)) {
+                assert!((ribbon.0[0].0 - pair[0].x2).abs() < 0.02 && (ribbon.0[3].0 - pair[1].x1).abs() < 0.02, "{:?} between {} and {}", ribbon.0, pair[0].x2, pair[1].x1);
+            }
+        }
+
+        #[test]
+        fn each_panel_of_a_facet_draws_its_own_ribbons() {
+            let mut payload = facet::make_facet_payload("shared");
+            payload["resolved"]["style"]["mark"]["ribbons"] = json!({"visible": true});
+            let svg = render_of(payload);
+            let groups = ribbon_groups(&svg);
+            assert_eq!(groups.iter().map(Vec::len).collect::<Vec<_>>(), [2, 2], "{svg}");
         }
     }
 

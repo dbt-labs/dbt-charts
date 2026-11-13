@@ -251,6 +251,9 @@ class ExecEnv:
             introspection must mirror so its connection matches the execute
             connection. DuckDB rejects a second connection to the same file
             opened with a different config.
+        release_thread: Called by the engine-compile worker thread when it is done
+            reading the project, so a host can release what the thread holds.
+            Query-pool threads never call it.
 
     Example:
         >>> from dbt_charts.core.execute.env import build_exec_env
@@ -270,6 +273,11 @@ class ExecEnv:
     profile_type: str | None
     dbt_context: DbtContext | None
     schema_introspection_duckdb_config: DuckDBConfig | None
+    release_thread: Callable[[], None]
+
+
+def _holds_nothing_per_thread() -> None:
+    """The default ``release_thread``: a host with no per-thread resources has none to release."""
 
 
 def make_exec_env(
@@ -283,8 +291,12 @@ def make_exec_env(
     profile_type: str | None = None,
     dbt_context: DbtContext | None = None,
     schema_introspection_duckdb_config: DuckDBConfig | None = None,
+    release_thread: Callable[[], None] = _holds_nothing_per_thread,
 ) -> ExecEnv:
     """An ``ExecEnv`` with the defaults filled in.
+
+    *release_thread* is called on a worker thread that has read the project, once it is done:
+    a host that keeps a resource per thread (a database connection) releases it there.
 
     Use ``build_exec_env`` to get one wired with the standard backends. Here
     ``backends=None`` routes nothing, so a warehouse source is refused by kind, and
@@ -302,6 +314,7 @@ def make_exec_env(
         profile_type=profile_type,
         dbt_context=dbt_context,
         schema_introspection_duckdb_config=schema_introspection_duckdb_config,
+        release_thread=release_thread,
     )
 
 

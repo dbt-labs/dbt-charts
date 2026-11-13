@@ -67,7 +67,6 @@ rows: []
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         with pytest.raises(RenderError) as exc_info:
@@ -93,7 +92,6 @@ text: "static text only"
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         with pytest.raises(FormatError) as exc_info:
@@ -326,7 +324,6 @@ text: "static"
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         injected = ChartDataError.from_code(
             ERR_KPI_MULTIROW,
@@ -378,7 +375,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         from dbt_charts.core.render import renderer as renderer_module

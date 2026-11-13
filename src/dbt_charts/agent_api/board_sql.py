@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from dbt_charts import _engine
 from dbt_charts.agent_api.query import (
     MAX_QUERY_LIMIT,
     BoardFailure,
@@ -16,12 +17,11 @@ from dbt_charts.agent_api.query import (
     error_code_of,
     load_board,
 )
-from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.models.query.normalized import AnyQuery
-from dbt_charts.core.compile.normalize.queries import normalize_query
-from dbt_charts.core.compile.template.variables import check_variable_overrides
+from dbt_charts.core.board import plan_for_board
+from dbt_charts.core.compile.engine import refusal_diagnostics
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_BOARD_QUERY_NOT_FOUND,
     ERR_CACHE_NOT_ATTACHED,
     ERR_CACHE_SQL_FAILED,
 )
@@ -30,7 +30,10 @@ from dbt_charts.core.execute.cache_backend import QueryResultCache
 from dbt_charts.core.execute.cache_composition import CompositionError
 from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.lookup import Ledger, data_age
-from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE, make_context
+from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE, make_context, utc_now
+from dbt_charts.core.execute.plan_reader import embedded_queries, with_adhoc_query
+from dbt_charts.core.execute.query_plan import PlannedQuery
+from dbt_charts.core.execute.query_result import resolve_effective_row_limit
 from dbt_charts.core.execute.query_results import execute
 from dbt_charts.core.project import Project, board_identity
 from dbt_charts.core.validate import normalize_data_for_json
@@ -41,7 +44,7 @@ ADHOC_QUERY = "_adhoc"
 _QUERY_REF_RE = re.compile(r"{{\s*queries\.([A-Za-z_]\w*)")
 
 
-def _inherited_source(sql: str, queries: Mapping[str, AnyQuery]) -> str | None:
+def _inherited_source(sql: str, queries: Mapping[str, PlannedQuery]) -> str | None:
     """The one source the queries *sql* references share, else None.
 
     A reference inlines that query's SQL (or composes over its rows), so the
@@ -51,8 +54,7 @@ def _inherited_source(sql: str, queries: Mapping[str, AnyQuery]) -> str | None:
     sources = {
         source
         for name in set(_QUERY_REF_RE.findall(sql))
-        if name in queries
-        and isinstance(source := getattr(queries[name], "source", None), str)
+        if name in queries and (source := queries[name]["source"]) is not None
     }
     return sources.pop() if len(sources) == 1 else None
 
@@ -93,37 +95,55 @@ def execute_board_sql(
     loaded = load_board(path, project)
     if isinstance(loaded, BoardFailure):
         return _failed(loaded.errors, loaded.error_code)
-    board = loaded.board
-    registry = board.variable_registry or {}
     overrides = variables or {}
-    all_queries = {**board.queries, **loaded.query_registry}
-    source = loaded.default_source or _inherited_source(sql, all_queries)
     try:
-        check_variable_overrides(registry, overrides)
-        adhoc = normalize_query(
-            ADHOC_QUERY,
-            {"sql": sql, "cache": False, "limit": limit + 1},
-            source,
-            sources={**project.sources.sources, **board.sources},
+        plan = plan_for_board(
+            loaded.board_file,
+            project,
+            overrides,
+            None,
+            utc_now(),
+            strict=True,
+            active_tab_only=False,
+            all_queries=True,
         )
-    except (ExecutionError, CompilationError) as exc:
+        unknown = [n for n in embedded_queries(sql) if n not in plan["queries"]]
+        if unknown:
+            raise DbtChartsError.from_code(
+                ERR_BOARD_QUERY_NOT_FOUND,
+                path=loaded.path,
+                query_name=unknown[0],
+                available=sorted(plan["queries"]),
+            )
+        plan = with_adhoc_query(
+            plan,
+            ADHOC_QUERY,
+            sql,
+            loaded.default_source or _inherited_source(sql, plan["queries"]),
+        )
+    except _engine.CompileError as refusal:
+        diagnostics = refusal_diagnostics(refusal, str(loaded.path))
+        return _failed([d.message for d in diagnostics], diagnostics[0].code)
+    except (ExecutionError, DbtChartsError) as exc:
         return _failed([str(exc)], error_code_of(exc))
     cache_refs = list(dict.fromkeys(CACHE_REF_JINJA_RE.findall(sql)))
     if cache_refs and result_cache is None:
         failure = DbtChartsError.from_code(ERR_CACHE_NOT_ATTACHED, query=cache_refs[0])
         return _failed([str(failure)], ERR_CACHE_NOT_ATTACHED.code)
 
+    # One more row than the caller's limit: enough to tell a truncated result.
     ctx = make_context(
-        board,
+        loaded.board,
+        plan,
         env,
-        query_registry={**loaded.query_registry, ADHOC_QUERY: adhoc},
         result_cache=result_cache,
         board_slug=board_identity(str(loaded.path)),
+        row_limit=resolve_effective_row_limit(limit + 1),
     )
     ledger = Ledger()
     try:
-        rows = execute(ctx, [ADHOC_QUERY], overrides, ledger=ledger).execute_query(
-            ADHOC_QUERY, overrides
+        rows = execute(ctx, [ADHOC_QUERY], ctx.variables, ledger=ledger).execute_query(
+            ADHOC_QUERY, ctx.variables
         )
     except DbtChartsError as exc:
         return _failed([str(exc)], error_code_of(exc))

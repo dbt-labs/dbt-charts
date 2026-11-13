@@ -620,6 +620,18 @@ ERR_X_VALUE_NOT_A_DATE = REGISTRY.register(
     )
 )
 
+ERR_CONDITIONAL_NOT_A_DATE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CONDITIONAL-NOT-A-DATE",
+        domain="render",
+        title="A conditional rule compares a date with a cell that is not one",
+        message_template="A conditional rule compares column {column!r} with a date, but {value!r} is not a date or timestamp. Make the query return dates in that column, or compare with a number.",
+        doc="Fired when a `style.conditional` rule's `lt`, `lte`, `gt`, `gte` or `between` operand is a date and a non-null cell of its column does not parse as a date or timestamp. A date rule never silently skips such a cell.",
+        summary="Fired when a date conditional rule meets a cell that is not a date.",
+        docs_topic="charts",
+    )
+)
+
 ERR_LAYER_COLOR_ALL_NULL = REGISTRY.register(
     ErrorCode(
         code="ERR-LAYER-COLOR-ALL-NULL",
@@ -1195,7 +1207,7 @@ WARN_TABLE_SCROLL_ROWS_CAPPED = REGISTRY.register(
         title="Table has too many rows to scroll, so it pages",
         message_template="Table {chart_id!r}: {total_rows} rows is more than the {max_rows} a scrolling table draws, so it pages instead.",
         fix_template="Aggregate or limit the query to at most {max_rows} rows, or set `style.pagination.mode: pages`.",
-        doc="Fires when a table set to scroll its rows has more rows than a scroll region draws. The table falls back to the pager, which reaches every row, instead of dropping the rows past the cap.",
+        doc="Fires when a table has more rows than a scrolling body draws, and scrolling is the default. The table falls back to the pager, which reaches every row, instead of dropping the rows past the cap.",
         docs_topic="charts",
     )
 )
@@ -1640,6 +1652,19 @@ WARN_BAR_CATEGORY_TICKS = REGISTRY.register(
         fix_template="Set `axis_x.ticks.visible: false` in the chart's style.",
         doc="Fires on a vertical bar chart whose resolved `axis_x.ticks.visible` is true, whether authored on the chart, the board, or by the theme. The band axis puts one tick under each bar, repeating the position the bars already mark. Horizontal bars do not draw category ticks and never fire.",
         summary="Fired when a vertical bar chart draws a tick under every bar.",
+        docs_topic="charts",
+    )
+)
+
+WARN_BAR_CENTERED_NO_BASELINE = REGISTRY.register(
+    WarningCode(
+        code="WARN-BAR-CENTERED-NO-BASELINE",
+        domain="render",
+        title="Centered bars share no baseline",
+        message_template="Centered bars share no baseline, so their lengths are hard to compare.",
+        fix_template="To compare them precisely, set `style.stack: zero` so every bar starts at zero.",
+        doc="Fires on every bar chart that resolves to `style.stack: center`, in either orientation and with any number of series, a `type: funnel` included, unless its style sets another stack. A centered bar spreads from a middle line instead of resting on a common baseline, so the eye cannot line the bars up against one edge to judge their lengths; they read as a shape, not as a comparison. The fix is `style.stack: zero`. The render is unchanged by this warning.",
+        summary="Fired on a centered bar or funnel, whose bars share no baseline to compare lengths against.",
         docs_topic="charts",
     )
 )

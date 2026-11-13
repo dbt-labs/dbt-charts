@@ -195,7 +195,7 @@ pub struct QueryBase {
     /// Cache policy override for this query, e.g. cache: 5m: refines the policy inherited from the source and project scopes; cache: false opts out of result caching entirely. Queries with cache: false cannot be used as {{ queries.X.cache }} upstream references.
     #[model(absent = "the policy inherited from the source and project scopes")]
     pub cache: Option<CacheLayer>,
-    /// A column's format, set once on its query, only where the default would misread (currency, percent, a unit); counts and plain numbers need none. Every chart showing the column follows it; a chart sets its own only to differ. A d3 spec is rejected. No entry leaves the column on the default for its kind.
+    /// A column's format, set once on its query, only where the default would misread (currency, percent, a unit); counts and plain numbers need none. Every chart showing the column follows it; a chart sets its own only to differ. A d3 spec needs a `style.formats` name. No entry leaves the column on the default for its kind.
     pub formats: IndexMap<String, FormatName>,
     /// Column used as the monotonic watermark for incremental refresh: the executor fetches only rows after the prior watermark and merges them with the cached result. `incremental: false` opts this query out of a board's incremental setting. Inherits from the board-level incremental setting when omitted.
     #[model(absent = "the board's incremental setting, else a full refresh")]

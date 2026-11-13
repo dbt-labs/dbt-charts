@@ -53,7 +53,6 @@ def _render() -> list[object]:
     executor = Run(
         result.board,
         env=mock_registry,
-        query_registry=result.query_registry,
     )
     render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     return list(render_result.warnings)

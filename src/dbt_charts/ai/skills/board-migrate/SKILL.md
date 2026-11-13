@@ -63,10 +63,39 @@ manager), which you then follow. For a `.env`:
    `set -a; . ./.env; set +a; dct import looker <URL>`.
 
 Never read, print or `cat` `.env` or a key.
-{{/if_surface}}If the user already has a bundle, use it. For any other tool,
-either write a small fetcher against its API that emits the layout below, or
-work from screenshots (§ Sources → Screenshots). Never write a credential
-value into a file, commit or chat yourself.
+{{/if_surface}}If the user already has a bundle, use it. Never write a
+credential value into a file, commit or chat yourself.
+
+### Any other tool
+
+The bundle is the contract, not the importer. A tool with no importer needs
+only these files (the full layout is below): `outline.md` (tiles in reading
+order: type, title, position, fields, filters, formats), `source.json`
+(`tool`, `url`, `fetched_at`), `queries/<tile>.sql` (the SQL each tile runs, as
+the tool compiles it), `kpi/<tile>.csv` (header plus the one displayed row,
+headline first) and `png/` (the tool's own render of each page).
+
+Write a small fetcher script (Python, `requests`) against the tool's API that
+emits that layout, with credentials read from environment variables, then
+migrate exactly as with a fetched bundle. Where the pieces live:
+
+- **Tableau**: the REST API for workbooks and views, with `views/{id}/image`
+  for the PNGs; the Metadata API (GraphQL) for sheets, fields and custom SQL. A
+  downloaded `.twb` is XML with the same.
+- **Mode**: the API for reports, their queries (with SQL) and charts; report
+  run exports for the data.
+- **Metabase**: the API for dashboards and cards, each with a `native` (SQL) or
+  MBQL query; `card/{id}/query/csv` for its rows.
+- **Power BI**: the REST API for reports and datasets; DAX measures through the
+  dataset's `executeQueries`. A `.pbix` or `.pbit` holds the model.
+- **Looker Studio**: no definition API; screenshots plus the underlying data
+  source.
+- **Grafana**: the dashboard JSON API, with each panel's query in the JSON.
+- **Superset, Redash**: the dashboard, chart and query APIs, with the SQL.
+
+With no API or no time, take screenshots of each page and the user's
+description of the data model (§ Sources → Screenshots); the board carries
+notes where a query had to be inferred.
 
 ## Bundle layout
 
@@ -230,9 +259,20 @@ punctuation dropped, spaces and hyphens as `_`) as that variable, and fix every 
 {{ s_render_png_example }}{{/if_surface}}{{#if_surface tool}} with
 `{{ s_render_board }}` and compare its chart list with the source's tiles{{/if_surface}}.
 
-Build the board in this session. If you hand pieces to sub-agents, wait for
-every one and assemble its work before you finish; a session that ends with
-work pending leaves an unfinished board.
+**Big boards.** Build the board in this session. When you can run sub-agents
+and the source has more than 10 query tiles across 3 or more tabs, wire and
+prove one tab per sub-agent (phase 2 and "Prove it"); below that, briefing
+costs more than it saves. Finish phase 1, the shared base query and the
+board-wide variables first, and render once so the shared parts are known
+good. Give each sub-agent its tab's tiles, the bundle files for its page, the
+`source:` and base query names, and the instruction to read `{{ s_skill_chart }}`
+first. It returns its tab's YAML plus one line per tile: matched, approximated,
+or blocked and why. Sub-agents never edit the board file; a tab item rejects
+`extends`, so every tab lives in that one file and only you write to it. Paste
+the tabs in, validate, read across tabs for drift (chart names, formats,
+sizes), and render every tab. Wait for every sub-agent and assemble its work
+before you finish; a session that ends with work pending leaves an unfinished
+board.
 
 Close phase 1 with a tally: "8 sections, 41 tiles — 41 rebuilt." A tile you
 cannot represent is **flagged to the user now, never silently dropped**.

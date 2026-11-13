@@ -43,7 +43,6 @@ def _render_svg(yaml_body: str, local_project: Callable[..., FilesystemProject])
     executor = Run(
         result.board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
     render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert not render_result.warnings or all(
@@ -184,7 +183,6 @@ class TestRowShrinksToContent:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         render_result = render(
             result.board, executor.ctx, executor.ledger, format="svg"

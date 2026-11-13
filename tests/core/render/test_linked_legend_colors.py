@@ -97,7 +97,7 @@ def _render(
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
+        variables={"metric": metric},
     )
     return render(
         result.board,
@@ -210,7 +210,6 @@ def _planned_slots(yaml_content: str, variables: dict[str, str]) -> dict[str, in
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(_SOURCES_DIR)),
-        query_registry=result.query_registry,
     )
     resolved_board, _ = build_resolved_board(
         result.board, executor, variables, render_first=False

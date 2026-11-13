@@ -71,7 +71,6 @@ def test_resolved_board_carries_the_link() -> None:
     executor = Run(
         board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     out = render(board, executor.ctx, executor.ledger, format="json").output
     assert "mailto:{{ email | urlencode }}" in json.dumps(out)
@@ -87,7 +86,6 @@ def test_json_output_keeps_a_filter_link_over_the_text_link() -> None:
     executor = Run(
         board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     assert "mailto" not in json.dumps(
         render(board, executor.ctx, executor.ledger, format="json").output
@@ -101,7 +99,6 @@ def test_a_url_param_that_is_not_a_declared_variable_keeps_the_text_link() -> No
     executor = Run(
         board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     out = render(
         board, executor.ctx, executor.ledger, format="json", variables={"email": "x"}

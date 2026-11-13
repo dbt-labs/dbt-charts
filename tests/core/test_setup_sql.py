@@ -12,17 +12,17 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
+from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.compile.normalize.queries import normalize_query
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.lookup import cache_outcome
-from dbt_charts.core.execute.plan import cache_key
+from dbt_charts.core.execute.plan import plan
 
 from .._results import rows_result
 from .._run import Run
-from ._board_utils import make_test_board
 from .conftest import DbtHarness
 
 pytestmark = pytest.mark.usefixtures("typed_via_execute")
@@ -209,24 +209,25 @@ class TestSetupSqlExecution:
         self, local_project: Callable[..., FilesystemProject]
     ):
         """Dependency setup_sql runs before a derived query."""
-        queries = {
-            "base": SqlQuery(
-                sql="SELECT add_ten(5) AS val",
-                setup_sql="CREATE OR REPLACE MACRO add_ten(x) AS x + 10;",
-                source="db",
+        result = compile(
+            """
+title: T
+queries:
+  base:
+    sql: SELECT add_ten(5) AS val
+    setup_sql: CREATE OR REPLACE MACRO add_ten(x) AS x + 10;
+    source: db
+  derived:
+    sql: SELECT val * 2 AS doubled FROM {{ queries.base }}
+    source: db
+""",
+            project_sources=ProjectSourcesConfig(
+                sources={"db": {"type": "duckdb", "path": ":memory:"}}
             ),
-            "derived": SqlQuery(
-                sql="SELECT val * 2 AS doubled FROM {{ queries.base }}",
-                source="db",
-            ),
-        }
-        board = make_test_board(
-            id="test",
-            queries=queries,
-            sources={"db": {"type": "duckdb", "path": ":memory:"}},
         )
+        assert result.board is not None, result.errors
         executor = Run(
-            board,
+            result.board,
             env=build_exec_env(local_project(Path.cwd())),
             use_cache=False,
         )
@@ -326,29 +327,35 @@ class TestSetupSqlCacheKey:
         self, local_project: Callable[..., FilesystemProject]
     ):
         """Result cache entries must diverge when setup_sql changes."""
-        board = make_test_board(id="test", title="test", queries={}, sources={})
         result_cache = Mock()
-        executor = Run(
-            board,
-            env=build_exec_env(local_project(Path.cwd())),
-            result_cache=result_cache,
-        )
-
-        query_a = SqlQuery(
-            sql="SELECT f(1) AS val",
-            setup_sql="CREATE TEMP FUNCTION f(x INT64) RETURNS INT64 AS (x + 1);",
-            source="s",
-        )
-        query_b = SqlQuery(
-            sql="SELECT f(1) AS val",
-            setup_sql="CREATE TEMP FUNCTION f(x INT64) RETURNS INT64 AS (x + 2);",
-            source="s",
-        )
-
-        key_a = cache_key(executor.ctx, "q", query_a, {}, lambda: None)
-        key_b = cache_key(executor.ctx, "q", query_b, {}, lambda: None)
-        cache_outcome(executor.ctx, "q", query_a, rows_result([{"val": 2}]), {}, key_a)
-        cache_outcome(executor.ctx, "q", query_b, rows_result([{"val": 3}]), {}, key_b)
+        for increment in (1, 2):
+            result = compile(
+                f"""
+title: T
+queries:
+  q:
+    sql: SELECT f(1) AS val
+    setup_sql: CREATE TEMP FUNCTION f(x INT64) RETURNS INT64 AS (x + {increment});
+    source: s
+""",
+                project_sources=ProjectSourcesConfig(
+                    sources={"s": {"type": "duckdb", "path": ":memory:"}}
+                ),
+            )
+            assert result.board is not None, result.errors
+            executor = Run(
+                result.board,
+                env=build_exec_env(local_project(Path.cwd())),
+                result_cache=result_cache,
+            )
+            [planned] = plan(executor.ctx, ["q"])
+            cache_outcome(
+                executor.ctx,
+                "q",
+                planned.entry,
+                rows_result([{"val": 1 + increment}]),
+                planned.cache_key,
+            )
 
         # cache_outcome calls cache.put(source_hash, query_hash, vars_hash, outcome, ...)
         first_hash = result_cache.put.call_args_list[0].args[1]

@@ -10,6 +10,8 @@ use scene::{Attrs, Chars, Child, Element, Escape, Node, Role, Shape};
 /// The root's attributes, the hover facts and the page title included.
 pub fn root_attrs(style: &StylePatch, family: &str, page_title: &str, rendered_at: &jiff::Timestamp) -> Result<Attrs, Diagnostic> {
     let background = leaf(style.background.as_ref(), "style.background")?.as_str();
+    let highlight = leaf(style.comments.highlight.as_ref(), "style.comments.highlight")?.as_str();
+    let highlight_new = leaf(style.comments.highlight_new.as_ref(), "style.comments.highlight_new")?.as_str();
     Ok(Attrs::new()
         .set("preserveAspectRatio", "xMinYMin meet")
         .set("style", "display: block;")
@@ -18,6 +20,8 @@ pub fn root_attrs(style: &StylePatch, family: &str, page_title: &str, rendered_a
         .set("data-dbt-font-family", family)
         .set("data-dbt-tooltip-style", tooltip_json(style)?)
         .set("data-dbt-hover-emphasis", hover_json(style)?)
+        .set("data-dbt-comment-highlight", highlight)
+        .set("data-dbt-comment-highlight-new", highlight_new)
         .set("data-dbt-page-background", background)
         .set("aria-label", page_title))
 }

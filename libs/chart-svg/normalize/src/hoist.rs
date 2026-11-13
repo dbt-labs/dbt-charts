@@ -65,6 +65,35 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+/// Rewrites a variable bound to a column (`options.column`, else `column`) to read the query that
+/// lists the column's values, as Python's pointer rewrite does: `options.query` names it and both
+/// column fields are cleared. One macro for the merged and the authored variable, which share
+/// these fields.
+macro_rules! promote_column {
+    ($name:expr, $var:expr, $found:expr) => {{
+        let var = $var;
+        let options = match &var.options {
+            Tri::Value(o) => Some((&o.column, &o.query)),
+            _ => None,
+        };
+        match bound_column(&var.column, options) {
+            None => Ok(()),
+            Some((field, column)) => {
+                promote_column_query($name, (field, &column), $found).map(|query| {
+                    if !matches!(var.options, Tri::Value(_)) {
+                        var.options = Tri::Value(Default::default());
+                    }
+                    if let Tri::Value(o) = &mut var.options {
+                        o.query = Tri::Value(OptionsQuery::Name(query));
+                        o.column = Tri::Unset;
+                    }
+                    var.column = Tri::Unset;
+                })
+            }
+        }
+    }};
+}
+
 type Patch = <Board as Leaf>::Patch;
 
 /// Why charts could not be gathered into the root's map.
@@ -76,8 +105,9 @@ pub enum HoistError {
     BadChartName(String),
     /// A hoisted query's id that an authored `queries:` key already holds.
     DuplicateQuery(String),
-    /// A chart names a query no board declares and that is not SQL (`ERR-UNKNOWN-QUERY`).
-    UnknownQuery(Box<Diagnostic>),
+    /// Every chart that names a query no board declares and that is not SQL
+    /// (`ERR-UNKNOWN-QUERY`, one per chart, as Python's structure check reports them).
+    UnknownQuery(Vec<Diagnostic>),
     /// A layer names a query nothing declares (`ERR-UNRESOLVED-REFERENCE` in Python, which names
     /// the chart and the layer).
     UnresolvedReference(Box<Diagnostic>),
@@ -130,8 +160,8 @@ impl HoistError {
     /// The registered diagnostics; an error Python raises without a code is `ERR-INTERNAL`.
     pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
         match self {
+            Self::UnknownQuery(d) => d.clone(),
             Self::DuplicateChart(d)
-            | Self::UnknownQuery(d)
             | Self::UnresolvedReference(d)
             | Self::FieldInvalid(d)
             | Self::SourceRequired(d)
@@ -157,7 +187,6 @@ impl fmt::Display for HoistError {
             Self::BadChartName(n) => write!(f, "'{n}' cannot name a chart"),
             Self::DuplicateQuery(n) => write!(f, "query name '{n}' is already declared"),
             Self::DuplicateChart(d)
-            | Self::UnknownQuery(d)
             | Self::UnresolvedReference(d)
             | Self::SourceRequired(d)
             | Self::SourceNotFound(d)
@@ -168,7 +197,7 @@ impl fmt::Display for HoistError {
                 Ok(text) => f.write_str(&text),
                 Err(_) => f.write_str(d.code),
             },
-            Self::File(d) => match d.first().map(Diagnostic::message) {
+            Self::File(d) | Self::UnknownQuery(d) => match d.first().map(Diagnostic::message) {
                 Some(Ok(text)) => f.write_str(&text),
                 _ => f.write_str(d.first().map_or("", |d| d.code)),
             },
@@ -241,14 +270,12 @@ pub fn hoist_charts(
     if let Some(l) = &mut patch.body.layout {
         layout(l, &mut Vec::new(), &mut found)?;
     }
+    for (name, v) in patch.body.variables.iter_mut() {
+        promote_column!(name, v, &mut found)?;
+    }
     let mut root_vars = patch.body.variables.iter_mut().map(|(n, v)| {
-        let options = match &v.options {
-            Tri::Value(o) => Some((&o.column, &o.query)),
-            _ => None,
-        };
-        let bound = bound_column(&v.column, options);
         let (options_slot, query_slot) = patch_query_slots(v);
-        (n, bound, options_slot, query_slot)
+        (n, options_slot, query_slot)
     });
     hoist_variable_queries(&mut root_vars, &[], &mut found)?;
     let mut declared_at: BTreeMap<String, String> = patch
@@ -344,10 +371,13 @@ pub fn hoist_charts(
         return Err(source_required(name));
     }
     let mut uses = elsewhere.uses;
-    // A board with no project location anchors nothing: an inline file source is then refused.
-    let root_dir = files
-        .located()
-        .then(|| file.as_str().rsplit_once('/').map_or("", |(d, _)| d));
+    // A board with no project location anchors an inline file source at its host's anchor
+    // directory, and at nothing (a refusal) when the host names none.
+    let root_dir = if files.located() {
+        Some(file.as_str().rsplit_once('/').map_or("", |(d, _)| d))
+    } else {
+        files.anchor()
+    };
     for (name, query) in &patch.body.queries {
         // A variable's option query is built without the source check; a query another file
         // declares was checked against that file.
@@ -538,9 +568,9 @@ fn check_query(name: &str, query: &QueryAuthored, external: bool) -> Result<(), 
         QueryAuthored::Values(q) if watermark(&q.base) => Err(not_sql()),
         QueryAuthored::Schema(q) if watermark(&q.base) => Err(not_sql()),
         QueryAuthored::Sql(q) => match &q.setup_sql {
-            Tri::Value(s) if s.contains("{{ queries.") => {
-                Err(HoistError::refused(diag::err_setup_sql_composes_query(name)))
-            }
+            Tri::Value(s) if s.contains("{{ queries.") => Err(HoistError::refused(
+                diag::err_setup_sql_composes_query(name),
+            )),
             _ => Ok(()),
         },
         _ => Ok(()),
@@ -617,6 +647,25 @@ fn resolve_names(
     imports: &Imports,
     scopes: &Scopes,
 ) -> Result<Elsewhere, HoistError> {
+    // Python's structure check runs first and reports every unknown query, so they win over any
+    // later refusal.
+    let mut unknowns = Vec::new();
+    let gathered = resolve_each(patch, file, external, imports, scopes, &mut unknowns);
+    if unknowns.is_empty() {
+        gathered
+    } else {
+        Err(HoistError::UnknownQuery(unknowns))
+    }
+}
+
+fn resolve_each(
+    patch: &mut Patch,
+    file: &ProjectPath,
+    external: &External,
+    imports: &Imports,
+    scopes: &Scopes,
+    unknowns: &mut Vec<Diagnostic>,
+) -> Result<Elsewhere, HoistError> {
     let mut uses = Vec::new();
     let mut layers = BTreeSet::new();
     let mut declared_sql = Vec::new();
@@ -675,15 +724,28 @@ fn resolve_names(
                             id
                         } else {
                             let unknown = || {
-                                HoistError::UnknownQuery(Box::new(diag::err_unknown_query(
+                                HoistError::UnknownQuery(vec![diag::err_unknown_query(
                                     chart_name.as_str(),
                                     name.as_str(),
                                     known.iter().cloned().collect::<Vec<String>>(),
-                                )))
+                                )
+                                .at_path(diagnostic::ModelPath(vec![
+                                    "charts".to_string(),
+                                    chart_name.to_string(),
+                                    "query".to_string(),
+                                ]))])
                             };
                             let source = scopes.query_if_sql(chart_name, &name)?;
-                            let id =
-                                resolve(&name, &steps, &known, file, &mut sql, source, unknown)?;
+                            let id = match resolve(
+                                &name, &steps, &known, file, &mut sql, source, unknown,
+                            ) {
+                                Ok(id) => id,
+                                Err(HoistError::UnknownQuery(d)) => {
+                                    unknowns.extend(d);
+                                    continue;
+                                }
+                                Err(e) => return Err(e),
+                            };
                             if id.name().is_inline() {
                                 owners
                                     .entry(id.name().as_str().to_string())
@@ -995,7 +1057,9 @@ impl Scopes {
         let declared = self.declared_in.get(chart).unwrap_or(&self.root);
         let source = places.next().unwrap_or(declared);
         if places.any(|other| other != source) {
-            return Err(HoistError::refused(diag::err_chart_sources_ambiguous(chart)));
+            return Err(HoistError::refused(diag::err_chart_sources_ambiguous(
+                chart,
+            )));
         }
         Ok(source.clone())
     }
@@ -1294,14 +1358,12 @@ fn item<'a>(
                     .keys()
                     .map(|name| (name.clone(), found.board.clone())),
             );
+            for (name, v) in nested.body.variables.iter_mut() {
+                promote_column!(name, v, found)?;
+            }
             let mut vars = nested.body.variables.iter_mut().map(|(n, v)| {
-                let options = match &v.options {
-                    Tri::Value(o) => Some((&o.column, &o.query)),
-                    _ => None,
-                };
-                let bound = bound_column(&v.column, options);
                 let (options_slot, query_slot) = authored_query_slots(v);
-                (n, bound, options_slot, query_slot)
+                (n, options_slot, query_slot)
             });
             hoist_variable_queries(&mut vars, at, found)?;
             if let Some(l) = &mut nested.body.layout {
@@ -1343,11 +1405,10 @@ fn authored_query_slots(
     (options, &mut var.query)
 }
 
-/// One variable to hoist from: its name, the `table.column` it binds (with the authored field it
-/// is read from), its `options.query` slot if it declares options, and its `query` slot.
+/// One variable to hoist from: its name, its `options.query` slot if it declares options, and its
+/// `query` slot.
 type VariableSlot<'a> = (
     &'a String,
-    Option<(&'static str, String)>,
     Option<&'a mut Tri<OptionsQuery>>,
     &'a mut Tri<VariableQuery>,
 );
@@ -1360,10 +1421,7 @@ fn hoist_variable_queries<'a, 'f>(
     below: &[Step<'a>],
     found: &mut Found<'f>,
 ) -> Result<(), HoistError> {
-    for (var_name, bound, slot, query_slot) in vars {
-        if let Some((field, column)) = &bound {
-            check_column_binding(var_name, (field, column), found.scope.is_some())?;
-        }
+    for (var_name, slot, query_slot) in vars {
         let place = |tail: &'static [&'static str]| {
             let mut steps: Vec<Step> = below.to_vec();
             steps.extend([Step::Key("variables"), Step::Key(var_name)]);
@@ -1412,13 +1470,15 @@ fn bound_column(
     }
 }
 
-/// Python turns a bound column into a SQL query of the board's default source, and refuses a
-/// reference that is no `table.column` of bare identifiers, or a board with no source to run it on.
-fn check_column_binding(
+/// Python's `promote_column_option_queries`: a bound column becomes a SQL query of the board's
+/// default source listing each value with its row count, and the variable's `options.query` names
+/// it. A reference that is no `table.column` of bare identifiers, or a board with no source to run
+/// it on, is refused.
+fn promote_column_query(
     var: &str,
     (field, column): (&str, &str),
-    has_source: bool,
-) -> Result<(), HoistError> {
+    found: &mut Found<'_>,
+) -> Result<QueryName, HoistError> {
     let at = format!("variables.{var}.{field}");
     let Some((table, name)) = column.rsplit_once('.') else {
         return Err(HoistError::FieldInvalid(Box::new(
@@ -1439,13 +1499,26 @@ fn check_column_binding(
             && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
     };
     if !table.split('.').all(ident) {
-        return Err(HoistError::refused(diag::err_variable_table_invalid(at, table)));
+        return Err(HoistError::refused(diag::err_variable_table_invalid(
+            at, table,
+        )));
     }
     if !ident(name) {
-        return Err(HoistError::refused(diag::err_variable_column_invalid(at, name)));
+        return Err(HoistError::refused(diag::err_variable_column_invalid(
+            at, name,
+        )));
     }
-    match has_source {
-        true => Ok(()),
-        false => Err(source_required(&format!("_var_options_{var}"))),
+    let query_name = format!("_var_options_{var}");
+    if found.scope.is_none() {
+        return Err(source_required(&query_name));
     }
+    let mut query = sql_query(&format!(
+        "SELECT {name}, COUNT(*) AS dbt_option_count FROM {table} GROUP BY {name} ORDER BY {name}"
+    ))?;
+    stamp(&mut query, found.scope.as_ref());
+    found.synthetic.insert(query_name.clone());
+    found.own_query(&query_name);
+    found.queries.push((query_name.clone(), query));
+    QueryName::try_from(query_name.as_str())
+        .map_err(|e| HoistError::QueryId(format!("{query_name}: {e}")))
 }

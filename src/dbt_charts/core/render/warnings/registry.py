@@ -41,6 +41,7 @@ import dbt_charts.core.render.warnings.axis_label_collision as axis_label_collis
 import dbt_charts.core.render.warnings.axis_title_truncated as axis_title_truncated
 import dbt_charts.core.render.warnings.bar_band_width_too_narrow as bar_band_width_too_narrow
 import dbt_charts.core.render.warnings.bar_category_ticks as bar_category_ticks
+import dbt_charts.core.render.warnings.bar_centered_no_baseline as bar_centered_no_baseline
 import dbt_charts.core.render.warnings.bar_grouped_series_coincide as bar_grouped_series_coincide
 import dbt_charts.core.render.warnings.callout_text_truncated as callout_text_truncated
 import dbt_charts.core.render.warnings.category_color_pin_unseen as category_color_pin_unseen
@@ -158,6 +159,7 @@ _DATA_DETECTORS: list[ModuleType] = [
     annotation_nothing_drawn,
     area_unstacked_reads_as_stacked,
     bar_category_ticks,
+    bar_centered_no_baseline,
     category_color_pin_unseen,
     trend_on_bars,
     dual_axis_competing_scales,

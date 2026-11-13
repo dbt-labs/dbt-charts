@@ -126,12 +126,17 @@ class HoverEmphasisStyle(BaseModel):
     )
 
 
-# A sparse patch: a donut starts from the pie slot and only what a theme or board
-# writes under `donut` differs. build_patch_model is cached, so the authored
-# surface's own PieChartStylePatch is this same class.
+# Sparse patches: a donut starts from the pie slot and a funnel from the bar slot,
+# and only what a theme or board writes under `donut` or `funnel` differs.
+# build_patch_model is cached, so the authored surface's own patches are these
+# same classes. BarChartStyle forward-refs authored axis patches, so its patch is
+# built, and `funnel` resolved, by `style/authored/_base.py`'s ChartsStyle rebuild.
 if TYPE_CHECKING:
 
     class PieChartStylePatch(PieChartStyle):
+        pass
+
+    class BarChartStylePatch(BarChartStyle):
         pass
 
 else:
@@ -320,6 +325,13 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     # Primary chart families
     bar: BarChartStyle = Field(
         description="Bar chart style; histogram has its own block."
+    )
+    funnel: Annotated[BarChartStylePatch | None, SkipInheritSlots()] = Field(
+        default=None,
+        description=(
+            "Funnel recipe, applied over `bar`: a board's bar or funnel style "
+            "reaches every funnel, and `funnel` styles funnels only."
+        ),
     )
     line: LineChartStyle = Field(description="Line chart style.")
     area: AreaChartStyle = Field(description="Area chart style.")

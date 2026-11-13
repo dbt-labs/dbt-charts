@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from math import ceil
+from math import ceil, floor
 from typing import Generic, Literal, NamedTuple, TypeVar
 
 from dbt_charts.core.compile.errors import CompilationError
@@ -47,6 +47,10 @@ from dbt_charts.core.compile.models.style.theme import (
     _CartesianChartStyle,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, ChartRows
+from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    wide_measure_labels_for,
+    wide_series_names,
+)
 from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
     estimate_plot_height,
     plot_height_floor_px,
@@ -109,12 +113,14 @@ __all__ = [
     "_extract_axis_overrides",
     "_reject_dual_axis_layered_endpoint_labels",
     "cartesian_color_domain_values",
+    "cartesian_series_domain_values",
     "cartesian_series_naming",
     "cartesian_top_legend_entries",
     "color_legend_entries",
     "estimate_cartesian_plot_height",
     "estimate_left_axis_reserve_px",
     "legend_row_fits",
+    "legend_wrap_columns",
     "legend_wrap_fits_height_budget",
     "legend_wrap_marginal_height_px",
     "legend_wrap_required_height_px",
@@ -769,6 +775,27 @@ def cartesian_color_domain_values(
     return tuple(str(v) for v in dataset.column_values(color) if v is not None)
 
 
+def cartesian_series_domain_values(
+    dataset: ChartDataset,
+    y: str | list[str] | None,
+    color: str | None,
+    field_labels: Mapping[str, str],
+) -> tuple[str, ...]:
+    """The series a cartesian chart's color legend names: a wide ``y:``
+    list's folded series (crossed with ``color`` when authored), else the
+    color column's values (``cartesian_color_domain_values``)."""
+    if isinstance(y, list):
+        return tuple(
+            wide_series_names(
+                y,
+                color,
+                dataset.all_rows(),
+                wide_measure_labels_for(tuple(y), field_labels),
+            )
+        )
+    return cartesian_color_domain_values(dataset, color)
+
+
 def cartesian_top_legend_entries(
     y: str | None,
     y_label: str | None,
@@ -840,14 +867,42 @@ def legend_row_fits(
     """
     if not entries:
         return True
+    total = sum(_legend_entry_widths(entries, legend))
+    total += legend.row.entry_gap * (len(entries) - 1)
+    return total <= width
+
+
+def _legend_entry_widths(
+    entries: Sequence[str], legend: ResolvedLegendStyle
+) -> list[float]:
+    """Each entry's full width: swatch and padding chrome plus its whole
+    label in the legend's own font. Never cut at ``label.max_width``: a fit
+    that counts on the cut would draw truncated names."""
     measurer = get_weighted_font_measurer(
         legend.label.font.family, legend.label.font.weight
     )
-    font_size = legend.label.font.size
     chrome = legend.row.swatch_width + legend.label.padding
-    total = sum(chrome + measurer.measure(entry, font_size) for entry in entries)
-    total += legend.row.entry_gap * (len(entries) - 1)
-    return total <= width
+    return [
+        chrome + measurer.measure(entry, legend.label.font.size) for entry in entries
+    ]
+
+
+def legend_wrap_columns(
+    entries: Sequence[str], width: float, legend: ResolvedLegendStyle
+) -> int | None:
+    """Columns a horizontal legend naming ``entries`` wraps into within
+    ``width``; ``None`` when one row holds every entry (``legend_row_fits``).
+
+    Every column is as wide as the widest entry, so the grid this sizes
+    never cuts a label to fit: the most columns whose cells and gaps fit
+    ``width``, at most ``legend.compact_columns``, never fewer than one.
+    """
+    if legend_row_fits(entries, width, legend):
+        return None
+    cell = max(_legend_entry_widths(entries, legend))
+    gap = legend.row.entry_gap
+    fitted = floor((width + gap) / (cell + gap))
+    return max(1, min(fitted, legend.compact_columns, len(entries)))
 
 
 def estimate_left_axis_reserve_px(
@@ -911,7 +966,7 @@ def estimate_left_axis_reserve_px(
 
 
 def legend_wrapped_row_count(
-    entry_count: int, symbol_limit: int | None, columns: int
+    entry_count: int, symbol_limit: int | None, columns: int | None
 ) -> int:
     """Row count a wrapped, multi-column legend needs to name ``entry_count``
     series.
@@ -927,9 +982,12 @@ def legend_wrapped_row_count(
     plot-height floor that charges its own fixed chrome separately -- the
     floor's own compact-legend charge and ``legend_wrap_fits_height_budget``)
     -- the row count itself is one calculation regardless of which height
-    question a caller goes on to ask of it.
+    question a caller goes on to ask of it. ``columns`` is
+    ``legend_wrap_columns``'s answer: ``None`` is a legend that fits one row.
     """
     capped = min(entry_count, symbol_limit) if symbol_limit else entry_count
+    if columns is None:
+        return min(capped, 1)
     return ceil(capped / columns)
 
 
@@ -959,7 +1017,7 @@ def color_legend_entries(
 
 
 def legend_wrap_required_height_px(
-    entry_count: int, symbol_limit: int | None, columns: int
+    entry_count: int, symbol_limit: int | None, columns: int | None
 ) -> float:
     """Pixel height a wrapped, multi-column legend needs to name
     ``entry_count`` series: row count times a fixed per-row height, plus
@@ -983,7 +1041,7 @@ def legend_wrap_required_height_px(
 
 
 def legend_wrap_marginal_height_px(
-    entry_count: int, symbol_limit: int | None, columns: int
+    entry_count: int, symbol_limit: int | None, columns: int | None
 ) -> float:
     """Marginal pixel height a wrapped, multi-column legend adds against a
     plot-height floor: row count times a flat per-row cost, no fixed chrome
@@ -1009,6 +1067,7 @@ def legend_wrap_marginal_height_px(
 
 def legend_wrap_fits_height_budget(
     entries: Sequence[str],
+    width: float,
     legend: ResolvedLegendStyle,
     plot_height_estimate: float,
     *,
@@ -1018,7 +1077,8 @@ def legend_wrap_fits_height_budget(
 ) -> bool:
     """True when putting a wrapped, multi-column top legend naming
     ``entries`` above the plot still leaves the plot clearing
-    ``PLOT_HEIGHT_FLOOR_RATIO`` of the card's own height.
+    ``PLOT_HEIGHT_FLOOR_RATIO`` of the card's own height. The legend wraps
+    into the columns ``legend_wrap_columns`` fits within ``width``.
 
     Rung 2 of the top-legend fallback ladder, between a single-row fit
     (``legend_row_fits``) and giving up on top placement. Asks the same
@@ -1042,7 +1102,9 @@ def legend_wrap_fits_height_budget(
     hand for its own floor-adjacent logic or axis cascade.
     """
     marginal = legend_wrap_marginal_height_px(
-        len(entries), legend.symbol_limit, legend.compact_columns
+        len(entries),
+        legend.symbol_limit,
+        legend_wrap_columns(entries, width, legend),
     )
     card_height = plot_height_estimate + 2 * card_padding_px
     estimated_plot_height = estimate_plot_height(
@@ -1119,7 +1181,7 @@ class SeriesNaming(NamedTuple):
     suppress_legend: bool
     top_legend: Literal["compact", "row", "off"]
     legend_position_overridden_by_width: LegendEdge | Literal["endpoints"] | None
-    wrap_legend: bool
+    wrap_columns: int | None
     hidden_under_edge: LegendEdge | None
 
 
@@ -1209,7 +1271,7 @@ def cartesian_series_naming(
     entries yet still wants to try -- means this family follows the
     three-rung fallback ladder: top, single row, while those
     entries fit ``width`` (``legend_row_fits``); failing that, top, wrapped
-    at ``legend.compact_columns``, while putting that wrap on top still
+    into ``legend_wrap_columns``, while putting that wrap on top still
     leaves the plot clearing ``PLOT_HEIGHT_FLOOR_RATIO``
     (``legend_wrap_fits_height_budget``, asking the same floor
     ``bar.py``'s own starved-plot warning asks); right, the family's own
@@ -1325,6 +1387,7 @@ def cartesian_series_naming(
         and not top_legend_series_row_fits
         and legend_wrap_fits_height_budget(
             top_legend_series,
+            width - left_axis_reserve_px,
             legend,
             plot_height_estimate,
             card_padding_px=card_padding_px,
@@ -1354,14 +1417,16 @@ def cartesian_series_naming(
             )
         )
     )
-    wrap_legend = not gradient_color and not legend_row_fits(
-        legend_entries, width - left_axis_reserve_px, legend
+    wrap_columns = (
+        None
+        if gradient_color
+        else legend_wrap_columns(legend_entries, width - left_axis_reserve_px, legend)
     )
     return SeriesNaming(
         resolved_endpoint_labels,
         suppress_legend,
         top_legend,
         legend_position_overridden_by_width,
-        wrap_legend,
+        wrap_columns,
         hidden_under_edge,
     )

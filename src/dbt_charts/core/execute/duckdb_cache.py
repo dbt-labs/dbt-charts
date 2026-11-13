@@ -23,12 +23,14 @@ See also:
 
 import hashlib
 import json
+from collections.abc import Collection
 from typing import Any
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.compile.models.source import SourceConfig
 from dbt_charts.core.execute.cache_keys import source_identity
+from dbt_charts.core.execute.plan_sources import RawSource
 from dbt_charts.core.text.time_zones import UTC, TimeZoneName
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -95,14 +97,21 @@ def compute_source_hash(
 
 def compute_relevant_variables(
     query: AnyQuery, variables: VariableValues | None
-) -> dict[str, Any]:
+) -> VariableValues:
     """Filter variables to the subset a query's cache key actually depends on.
 
     The single filter both `compute_cache_key` hashes and callers that need the
     filtered dict itself (e.g. cache-row audit metadata) reuse.
     """
-    if variables and query.variable_dependencies:
-        return {k: v for k, v in variables.items() if k in query.variable_dependencies}
+    return relevant_to(query.variable_dependencies, variables)
+
+
+def relevant_to(
+    dependencies: Collection[str], variables: VariableValues | None
+) -> VariableValues:
+    """*variables* restricted to the names in *dependencies*."""
+    if variables and dependencies:
+        return {k: v for k, v in variables.items() if k in dependencies}
     return {}
 
 
@@ -140,37 +149,67 @@ def compute_cache_key(
         time_zone: The session zone a SQL query runs in: the same SQL buckets
             differently per zone. A query no board owns passes UTC.
     """
-    variables_hash = compute_variables_hash(
-        compute_relevant_variables(query, variables)
-    )
+    relevant = compute_relevant_variables(query, variables)
     if is_sql_query(query):
-        content = query.sql
-        if query.setup_sql:
-            content += "\n" + query.setup_sql
-        # Fold only when incremental is active (a watermark column name) so a
-        # non-incremental query — the common case — hashes exactly as it did
-        # before this feature existed. Folding unconditionally would bust
-        # every existing cache entry on upgrade. Inactive contributes nothing
-        # to the content, so a column literally named "None" can't collide
-        # with the inactive state either.
-        if isinstance(query.incremental, str):
-            content += f"\n__incremental:{query.incremental}"
-        # Folded only when set so existing entries keep their keys.
-        if query.dialect is not None:
-            content += f"\n__dialect:{query.dialect}"
-        # Folded only off UTC so existing entries keep their keys.
-        if time_zone != UTC:
-            content += f"\n__time_zone:{time_zone}"
-        source_hash = compute_source_hash(query.source, board_sources=board_sources)
-        if source_version:
-            source_hash = compute_query_hash(f"{source_hash}:{source_version}")
-        return (
-            source_hash,
-            compute_query_hash(content),
-            variables_hash,
+        return keyed(
+            query.sql,
+            query.setup_sql,
+            query.dialect,
+            query.incremental,
+            query.source,
+            relevant,
+            board_sources,
+            source_version,
+            time_zone,
         )
+    return keyed_other(query.source_description, relevant)
+
+
+def keyed(
+    sql: str,
+    setup_sql: str | None,
+    dialect: str | None,
+    incremental: str | bool | None,
+    source: str | None,
+    relevant_variables: VariableValues,
+    board_sources: dict[str, RawSource] | None,
+    source_version: str,
+    time_zone: TimeZoneName,
+) -> tuple[str, str, str]:
+    """The key of a SQL query's fields: ``compute_cache_key``'s content rules."""
+    content = sql
+    if setup_sql:
+        content += "\n" + setup_sql
+    # Fold only when incremental is active (a watermark column name) so a
+    # non-incremental query — the common case — hashes exactly as it did
+    # before this feature existed. Folding unconditionally would bust
+    # every existing cache entry on upgrade. Inactive contributes nothing
+    # to the content, so a column literally named "None" can't collide
+    # with the inactive state either.
+    if isinstance(incremental, str):
+        content += f"\n__incremental:{incremental}"
+    # Folded only when set so existing entries keep their keys.
+    if dialect is not None:
+        content += f"\n__dialect:{dialect}"
+    # Folded only off UTC so existing entries keep their keys.
+    if time_zone != UTC:
+        content += f"\n__time_zone:{time_zone}"
+    source_hash = compute_source_hash(source, board_sources=board_sources)
+    if source_version:
+        source_hash = compute_query_hash(f"{source_hash}:{source_version}")
+    return (
+        source_hash,
+        compute_query_hash(content),
+        compute_variables_hash(relevant_variables),
+    )
+
+
+def keyed_other(
+    description: str, relevant_variables: VariableValues
+) -> tuple[str, str, str]:
+    """The key of a query that is not SQL: its description, against the default source."""
     return (
         compute_source_hash(None),
-        compute_query_hash(query.source_description),
-        variables_hash,
+        compute_query_hash(description),
+        compute_variables_hash(relevant_variables),
     )

@@ -181,16 +181,6 @@ pub(super) fn horizontal_bar_layer_marks<'a>(
     Ok(marks)
 }
 
-/// A centered stack's non-`middle` value labels are text marks on Vega-Lite's
-/// default `zero` stack (`_build_bar_text_layer`), not on the centered bars:
-/// they sit at the zero stack's ends, and a negative running sum there joins
-/// the shared value scale's extent.
-pub(super) fn labels_on_zero_stack(r: &BarResolved) -> bool {
-    r.stack == "center"
-        && r.wide_measures.is_empty()
-        && r.style.mark.labels.as_ref().is_some_and(|l| l.visible && label_position(l, true) != "middle")
-}
-
 /// `all_marks_degenerate` (`mark_extents.py`) over a bar chart's rects, and the
 /// `ERR-CHART-PAINTED-NO-MARKS` production raises when some measure should have
 /// painted (`rendering.py`; an all-zero chart is a faithful blank render). A
@@ -453,7 +443,7 @@ pub(super) fn layer_label_place(
     font_size: f64,
 ) -> (f64, Option<LabelSide>) {
     let at = spec.extent(value, position, plot_h);
-    plain_label_place(&spec.position, value, at, position, (plot_h, 0.0), label_need(false, 0.0, font_size))
+    plain_label_place(&spec.position, value, at, position, (plot_h, 0.0), label_need(false, 0.0, font_size), value, false)
 }
 
 /// Each bar-layer value label's text box, where `layer_bar_labels` puts it (one per rect at

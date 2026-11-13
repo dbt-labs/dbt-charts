@@ -134,6 +134,7 @@ _CONTROLS_RUNTIME_WORDS = (
     "selection_summary",
     "show_all",
     "show_only_selected",
+    "options_truncated",
     "sort",
     "sort_count_ascending",
     "sort_count_descending",
@@ -154,6 +155,7 @@ _PATTERN_PLACEHOLDERS = {
     "range_same_month": ("start_day", "end_day", "month", "year"),
     "page_range": ("first", "last", "total"),
     "show_only_selected": ("n",),
+    "options_truncated": ("shown", "total"),
     "remove_value": ("value",),
     "selection_summary": ("first", "n"),
 }
@@ -216,7 +218,7 @@ def controls_language() -> dict[str, str]:
 
 @cache
 def page_runtime_source() -> str:
-    """The board runtimes that need no host (the English controls words, the calendar, chart hover, then table scroll and sort/filter/paging) as JS.
+    """The board runtimes that need no host (the English controls words, the calendar, chart hover, then table scroll, sort/filter/paging and cut-cell reveal) as JS.
 
     Everything a page can do with the board it already holds: a static HTML
     export ships exactly this. Strips the ``/*{# ... #}*/``-fenced comments,
@@ -231,6 +233,7 @@ def page_runtime_source() -> str:
             hover_runtime_source(),
             strip_js_comments(_read_script("table_scroll.js")),
             strip_js_comments(_read_script("table_runtime.js")),
+            strip_js_comments(_read_script("table_cell_reveal.js")),
         ]
     )
 

@@ -82,7 +82,6 @@ def test_support_table_width_share_warns_before_the_floor(
     executor = Run(
         result.board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
     render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
@@ -114,7 +113,6 @@ def test_support_table_width_no_warning_or_error_at_a_comfortable_width(
     executor = Run(
         result.board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
     render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 
@@ -186,7 +184,6 @@ def test_support_table_width_floor_does_not_fire_on_a_row_strip(
     executor = Run(
         result.board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
     render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
 

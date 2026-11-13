@@ -812,7 +812,7 @@ class TestSignedLayoutScopedToFullDataset:
         chart = _make_chart(
             style={
                 "columns": {"name": {}, "val": {"spark": {"type": "bar"}}},
-                "pagination": {"page_rows": 3},
+                "pagination": {"mode": "pages", "page_rows": 3},
             }
         )
         # Page 1 (rows 0-2) is all-positive on its own; the negative only
@@ -924,7 +924,7 @@ class TestBarSparkDashboard842Style:
                     "revenue_count_connectors": {"spark": {"type": "bar"}},
                 },
                 "row_numbers": {"visible": True},
-                "pagination": {"page_rows": 12},
+                "pagination": {"mode": "pages", "page_rows": 12},
             },
         )
 

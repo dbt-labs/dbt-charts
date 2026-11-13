@@ -36,24 +36,26 @@ def _footer_lines(svg: str) -> list[str]:
     return re.findall(r'<line[^>]*stroke-width="0.5"[^>]*/>', svg)
 
 
-def test_footer_divider_draws_by_default() -> None:
-    assert len(_footer_lines(_render())) == 1
+_FOOTER_DIVIDER_ON = "style:\n  footer:\n    divider:\n      visible: true\n"
 
 
-def test_footer_divider_hidden() -> None:
-    svg = _render("style:\n  footer:\n    divider:\n      visible: false\n")
-    assert _footer_lines(svg) == []
+def test_footer_divider_hidden_by_default() -> None:
+    assert _footer_lines(_render()) == []
+
+
+def test_footer_divider_opt_in() -> None:
+    assert len(_footer_lines(_render(_FOOTER_DIVIDER_ON))) == 1
 
 
 def test_footer_divider_dashed() -> None:
-    svg = _render("style:\n  footer:\n    divider:\n      dasharray: 6 3\n")
+    svg = _render(_FOOTER_DIVIDER_ON + "      dasharray: 6 3\n")
     (line,) = _footer_lines(svg)
     assert 'stroke-dasharray="6 3"' in line
 
 
-def test_footer_divider_color_alone_keeps_it_on() -> None:
+def test_footer_divider_color_alone_keeps_it_off() -> None:
     svg = _render("style:\n  footer:\n    divider:\n      color: '#abcdef'\n")
-    assert 'stroke="#abcdef"' in svg
+    assert _footer_lines(svg) == []
 
 
 def _table_dividers(svg: str) -> list[str]:

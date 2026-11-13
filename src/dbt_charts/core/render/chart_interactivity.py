@@ -111,5 +111,7 @@ def hover_runtime_attributes(resolved_style: "ResolvedStyle") -> str:
         "data-dbt-hover-emphasis": json.dumps(
             _build_hover_emphasis_dict(resolved_style)
         ),
+        "data-dbt-comment-highlight": resolved_style.comments.highlight,
+        "data-dbt-comment-highlight-new": resolved_style.comments.highlight_new,
     }
     return "".join(f' {attr_name(k)}="{escape_attr(v)}"' for k, v in values.items())

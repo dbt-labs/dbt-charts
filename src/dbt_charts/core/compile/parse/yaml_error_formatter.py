@@ -1885,7 +1885,6 @@ _UNSUPPORTED_CHART_SHAPES = frozenset(
         "sankey",
         "treemap",
         "violin",
-        "funnel",
         "gauge",
         "radar",
         "sunburst",

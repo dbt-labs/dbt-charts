@@ -76,7 +76,6 @@ def _resolve_board(
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     kwargs: dict[str, Any] = (
         {} if resolve_errors is None else {"resolve_errors": resolve_errors}

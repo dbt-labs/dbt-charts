@@ -755,7 +755,6 @@ class TestExecutorGlobCacheKey:
         ex = Run(
             board,
             env=self._registry(project, file_materializer=mat),
-            query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
         )
 
@@ -779,7 +778,6 @@ class TestExecutorGlobCacheKey:
         ex1 = Run(
             board,
             env=self._registry(project, file_materializer=mat1),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         ex1.execute_query("q")
@@ -789,7 +787,6 @@ class TestExecutorGlobCacheKey:
         ex2 = Run(
             board,
             env=self._registry(project, file_materializer=mat2),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         ex2.execute_query("q")
@@ -810,7 +807,6 @@ class TestExecutorGlobCacheKey:
         ex1 = Run(
             board,
             env=self._registry(project, file_materializer=mat1),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         rows1 = ex1.execute_query("q")
@@ -825,7 +821,6 @@ class TestExecutorGlobCacheKey:
         ex2 = Run(
             board,
             env=self._registry(project, file_materializer=mat2),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         rows2 = ex2.execute_query("q")
@@ -886,7 +881,6 @@ class TestExecutorGlobErrorCodes:
         ex = Run(
             board,
             env=registry,
-            query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
         )
 
@@ -909,7 +903,6 @@ class TestExecutorGlobErrorCodes:
         ex = Run(
             board,
             env=registry,
-            query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
         )
 
@@ -935,7 +928,6 @@ class TestExecutorGlobErrorCodes:
         ex = Run(
             board,
             env=registry,
-            query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
         )
 

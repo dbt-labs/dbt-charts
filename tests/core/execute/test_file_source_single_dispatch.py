@@ -52,7 +52,7 @@ def _executor(registry: ExecEnv, board_yaml: str = _BOARD_YAML) -> Run:
     assert result.success, result.errors
     board = result.board
     assert board is not None
-    return Run(board, env=registry, query_registry=dict(board.queries))
+    return Run(board, env=registry)
 
 
 def test_injected_materializer_serves_executor_and_registry(tmp_path: Path) -> None:

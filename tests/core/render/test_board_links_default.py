@@ -62,7 +62,6 @@ def _svg(links: str, chart: str) -> str:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert not rendered.chart_errors, rendered.chart_errors
@@ -235,7 +234,6 @@ def _inactive_tab_board() -> tuple[Board, Run]:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     return result.board, executor
 

@@ -20,6 +20,7 @@ from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
 from dbt_charts.core.render.board_resolve import build_resolved_board
 
+from ..._compile import remember
 from ..._run import Run
 
 _THREE_COL_YAML = """\
@@ -60,7 +61,6 @@ def _sized_layout(
     executor = Run(
         board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=None,
     )
     resolved_board, _cache = build_resolved_board(
         board, executor, {}, render_first=False
@@ -103,6 +103,8 @@ def test_yaml_and_api_focus_give_identical_widths(
     dashboard = compile(_THREE_COL_YAML)
     assert dashboard.success and dashboard.board is not None, dashboard.errors
     api_board = focus_on_chart(dashboard.board, "small_bar")
+    # The focused board is the dashboard's, so it runs the dashboard text's plan.
+    remember(api_board, _THREE_COL_YAML)
     yaml_result = compile(_THREE_COL_YAML + "chart_focus: small_bar\n")
     assert yaml_result.success and yaml_result.board is not None
     assert _chart_item_width(
@@ -125,6 +127,7 @@ def test_authored_width_does_not_carry_into_focused_board(
     )
 
     focused = focus_on_chart(dashboard.board, "small_bar")
+    remember(focused, yaml)
     preferred = _preferred(dashboard.board, "small_bar")
     margin = float(dashboard.board.resolved_style.frame.margin)
     assert (

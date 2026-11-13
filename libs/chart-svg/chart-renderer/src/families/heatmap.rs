@@ -567,7 +567,7 @@ pub(crate) fn bind_cells(
     x_domain: &[String],
     y_domain: &[String],
     c: &CellPaint,
-) -> Result<Vec<Cell>, String> {
+) -> Result<Vec<Cell>, Diagnostic> {
     fn first_index(domain: &[String]) -> HashMap<&str, usize> {
         let mut index = HashMap::new();
         for (i, band) in domain.iter().enumerate() {

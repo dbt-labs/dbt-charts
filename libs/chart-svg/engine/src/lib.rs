@@ -72,9 +72,14 @@ pub fn render_board(board: &Board, styles: &ChartStyles, run: &RunResult, book: 
 }
 
 fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, book: &FontBook, facts: &mut impl EngineFacts) -> Result<Rendered, Diagnostic> {
-    let filled = texts::filled(board, run, &*facts)?;
+    let filled = texts::filled(board, styles, run, &*facts)?;
     let board = &filled;
-    let bound = bind::bind(board, styles, run)?;
+    let mut bound = bind::bind(board, styles, run)?;
+    // A chart the slots cannot place is that chart's refusal, as one the bind cannot read is: the
+    // rest of the board is placed without it.
+    while let Err(refusal) = slot::plan(board, styles, &bound, &*facts).map(|_| ()) {
+        refuse_chart(board, styles, &mut bound, refusal)?;
+    }
     let slots = slot::plan(board, styles, &bound, &*facts)?;
     let laid = layout::board::assemble::lay_out(board, bound.drawn(), &mut slots.facts(&*facts, book))?;
     let mut diagnostics: Vec<Diagnostic> = bound
@@ -96,4 +101,17 @@ fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, book: &Fo
         svg: print::print(&nodes),
         report: Report { diagnostics, boxes, width: laid.width, height: laid.height },
     })
+}
+
+/// The refusal `plan` raised for one placement, made that chart's failure; any other error is the
+/// board's.
+fn refuse_chart(board: &Board, styles: &ChartStyles, bound: &mut bind::bound::Board, refusal: Diagnostic) -> Result<(), Diagnostic> {
+    let placement = match refusal.params.get("placement") {
+        Some(serde_json::Value::String(placement)) if refusal.code == diagnostic::codes::ERR_ENGINE_REFUSED.id => placement.clone(),
+        _ => return Err(refusal),
+    };
+    let drawn = bound.drawn().charts(board).map_err(|e| diagnostic::diag::err_internal(format!("{e:?}")))?;
+    let (at, id) = drawn.into_iter().find(|(at, _)| at.to_string() == placement).ok_or_else(|| diagnostic::diag::err_internal(format!("no chart is placed at {placement}")))?;
+    let diagnostic = refusal.with_sink_param("chart_id", styles.public_id(id)?.into());
+    bound.fail(&at, bind::bound::Failure { chart: id.clone(), diagnostic }).map_err(|e| diagnostic::diag::err_internal(format!("{e:?}")))
 }

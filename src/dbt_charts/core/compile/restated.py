@@ -8,18 +8,14 @@ only a key that provably changes nothing is reported.
 from __future__ import annotations
 
 import json
-import re
 import typing
 from collections.abc import Callable, Iterator, Sequence
 from functools import partial, reduce
 from typing import Any, TypeAlias
 
-import sqlglot
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefinedType
-from sqlglot import exp
-from sqlglot.errors import SqlglotError
 
 from dbt_charts.core.compile.format import declared_column_format, declared_format
 from dbt_charts.core.compile.merge import (
@@ -31,14 +27,9 @@ from dbt_charts.core.compile.merge import (
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.chart.normalized import (
-    AreaChart,
-    BarChart,
     CalloutChart,
     Chart,
-    LineChart,
-    ScatterChart,
 )
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.variable.authored import Variable
@@ -46,7 +37,7 @@ from dbt_charts.core.compile.normalize.variable_input_refinement import (
     refine_input_type_from_data,
 )
 from dbt_charts.core.compile.normalize.variables import detect_variable_input_type
-from dbt_charts.core.compile.resolve.chart.positional import POSITIONAL_FIELDS
+from dbt_charts.core.compile.resolve.chart._kwargs import board_family_style
 from dbt_charts.core.compile.resolve.style.board import resolve_cascaded_font
 from dbt_charts.core.compile.template.variables import choice_member_type
 from dbt_charts.core.diagnostics import (
@@ -55,7 +46,6 @@ from dbt_charts.core.diagnostics import (
     WARN_RESTATED_STYLE,
     Diagnostic,
 )
-from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.registry import WarningCode
 from dbt_charts.core.text.case import inferred_display_name
 from dbt_charts.core.text.format_d3 import language_scope
@@ -201,23 +191,14 @@ def _without(model: BaseModel, names: frozenset[str]) -> BaseModel:
     )
 
 
-def chart_restated_paths(chart: Chart, ctx: ChartStyleContext) -> frozenset[str]:
-    """Paths the compile-time chart checks already report, for the render pass to skip."""
-    return frozenset(w.path for w in _chart_restated(chart, ctx) if w.path)
-
-
 def _chart_restated(chart: Chart, ctx: ChartStyleContext) -> list[Diagnostic]:
     """Chart-local style keys the board's family tier or the query already supply."""
     style = chart.style
     if style is None:
         return []
-    from dbt_charts.core.compile.normalize.charts import (
-        _AUTHORED_FAMILY_TO_MONOLITHIC_KEY,
-    )
-
     where = {"chart": chart.id}
     base = f"charts.{chart.id}.style"
-    family = getattr(ctx, _AUTHORED_FAMILY_TO_MONOLITHIC_KEY[chart.type])
+    family = board_family_style(ctx, chart)
     warnings = [
         restated_diagnostic(
             WARN_RESTATED_STYLE,
@@ -437,331 +418,10 @@ def scoped_charts(board: Board) -> Iterator[tuple[Chart, Board]]:
             yield from scoped_charts(item.board)
 
 
-def _style_leaves(node: _Tree, path: tuple[str, ...] = ()) -> Iterator[tuple[str, ...]]:
-    """Paths of every authored leaf of a style patch (model fields and dict keys)."""
-    if isinstance(node, BaseModel):
-        children = {name: getattr(node, name) for name in node.model_fields_set}
-    elif isinstance(node, dict):
-        children = node
-    else:
-        yield path
-        return
-    for key, child in children.items():
-        if child is not None:
-            yield from _style_leaves(child, (*path, str(key)))
-
-
-def _drop_leaf(node: _Tree, path: Sequence[str]) -> _Tree:
-    """*node* with the leaf at *path* made unauthored."""
-    head, *rest = path
-    if isinstance(node, dict):
-        return {
-            key: _drop_leaf(value, rest) if rest and str(key) == head else value
-            for key, value in node.items()
-            if rest or str(key) != head
-        }
-    values = {name: getattr(node, name) for name in type(node).model_fields}
-    fields = set(node.model_fields_set)
-    if rest:
-        values[head] = _drop_leaf(values[head], rest)
-    else:
-        field = type(node).model_fields[head]
-        if field.is_required():
-            raise ValueError(
-                f"{type(node).__name__}.{head} has no default to fall back to"
-            )
-        values[head] = field.get_default(call_default_factory=True)
-        fields.discard(head)
-    return type(node).model_construct(_fields_set=fields, **values)
-
-
 # Style keys the normalizer copies onto the chart before resolution: dropping
 # them from `chart.style` alone leaves the promoted copy in place, so the
 # resolve-and-compare cannot judge them.
 _PROMOTED_TOP_LEVEL = frozenset({"stack", "aspect_ratio", "min_height", "max_height"})
-_PROMOTED_AT_NORMALIZE = _PROMOTED_TOP_LEVEL | {
-    "axis_y.labels.format",
-    "color.gradient",
-}
-# `notes` is never drawn; `link` and `link_open` resolve against render-only
-# context (automatic and foreign-key links) this comparison does not rebuild.
-# A channel is never a restatement: dropped, the query's columns bind it by
-# position, and naming it is the explicit form this check must not argue away.
-_CHART_NOT_JUDGED = POSITIONAL_FIELDS | frozenset(
-    {
-        "type",
-        "id",
-        "query",
-        "style",
-        "warnings_ignore",
-        "authored_fields",
-        "notes",
-        "link",
-        "link_open",
-    }
-)
-_LAYOUT_FIELDS = frozenset(
-    {"height", "width", "aspect_ratio", "min_height", "max_height"}
-)
-_RESOLVE_REFUSALS = (DbtChartsError, ValidationError, ValueError)
-
-
-def _chart_leaves(chart: Chart) -> Iterator[tuple[str, ...]]:
-    """Paths of every authored setting of *chart*: style leaves, then other fields."""
-    if chart.style is not None:
-        yield from _style_leaves(chart.style, ("style",))
-    fields = type(chart).model_fields
-    for name in sorted(chart.authored_fields - _CHART_NOT_JUDGED):
-        if name in fields and not fields[name].is_required():
-            value = getattr(chart, name)
-            if value is not None:
-                yield from _style_leaves(value, (name,))
-
-
-def _equals_declared_default(
-    field: FieldInfo,
-    value: Any,  # type-state: explicit_any — any authored value
-) -> bool:
-    """Whether *value* is the field's declared default, spelled with its type.
-
-    ``"auto"`` asks for inference and a single-member ``Literal`` is a union
-    discriminator: neither is a value to judge.
-    """
-    default = field.default
-    return (
-        not isinstance(default, PydanticUndefinedType)
-        and default is not None
-        and default != "auto"
-        and not _is_tag(field.annotation)
-        and type(value) is type(default)
-        and value == default
-    )
-
-
-def _is_declared_default(chart: Chart, path: Sequence[str]) -> bool:
-    """Whether the leaf equals its model's declared default (the compile-time check's)."""
-    try:
-        parent = _authored_value(chart, path[:-1])
-    except (AttributeError, KeyError):
-        return False
-    if not isinstance(parent, BaseModel):
-        return False
-    field = type(parent).model_fields.get(path[-1])
-    return field is not None and _equals_declared_default(
-        field, getattr(parent, path[-1])
-    )
-
-
-def _without_leaf(chart: Chart, path: Sequence[str]) -> Chart:
-    """*chart* with the setting at *path* made unauthored."""
-    name, *rest = path
-    value = getattr(chart, name)
-    if rest:
-        return chart.model_copy(update={name: _drop_leaf(value, rest)})
-    return chart.model_copy(
-        update={
-            name: type(chart).model_fields[name].get_default(call_default_factory=True)
-        }
-    )
-
-
-def _shadowed_by_annotation(chart: Chart, path: Sequence[str]) -> bool:
-    """Whether every annotation of the type authors the leaf of
-    ``style.annotations.<type>`` itself: removing the chart's value changes nothing
-    only because the annotations win, so it is not a restatement. One annotation
-    that inherits the leaf makes the value load-bearing, which the resolve-and-compare
-    already sees."""
-    if path[:2] != ("style", "annotations") or not isinstance(
-        chart, BarChart | LineChart | AreaChart | ScatterChart
-    ):
-        return False
-    kind, *leaf = path[2:]
-    styles = [a.style for a in chart.annotations if a.type == kind]
-    return bool(styles) and all(
-        style is not None and _sets(style, leaf) for style in styles
-    )
-
-
-def auto_restated(
-    chart: Chart,
-    resolve: Callable[[Chart], tuple[BaseModel, _Artifact]],
-    skip: frozenset[str] = frozenset(),
-) -> list[Diagnostic]:
-    """Warn for each authored chart setting whose removal resolves and emits the same chart.
-
-    ``skip`` holds paths an earlier check already reported.
-    """
-    try:
-        resolved, artifact = resolve(chart)
-    except _RESOLVE_REFUSALS:
-        return []  # the render reports a chart that does not resolve
-    warnings: list[Diagnostic] = []
-    for path in _chart_leaves(chart):
-        dotted = f"charts.{chart.id}.{'.'.join(path)}"
-        if (
-            dotted in skip
-            or any(
-                ".".join(path[1:]).startswith(promoted)
-                for promoted in _PROMOTED_AT_NORMALIZE
-            )
-            or path[0] in _LAYOUT_FIELDS
-            or _is_declared_default(chart, path)
-            or _shadowed_by_annotation(chart, path)
-        ):
-            continue
-        try:
-            trimmed, trimmed_artifact = resolve(_without_leaf(chart, path))
-        except Exception:  # noqa: BLE001 — a chart that fails to resolve or emit without the key (a data binding such as `x` trips emitter asserts) means the key matters
-            continue
-        # A non-style field is kept verbatim on the resolved chart, so its own
-        # entry differs by construction; what it feeds must not. A `format`
-        # leaf is echoed in the resolved style too: what it prints is judged
-        # by the columns and the artifact.
-        ignore = {path[0]} if path[0] != "style" or path[-1] == "format" else set()
-        if (
-            trimmed.model_dump(exclude=ignore) == resolved.model_dump(exclude=ignore)
-            and trimmed_artifact == artifact
-        ):
-            warnings.append(
-                restated_diagnostic(
-                    WARN_RESTATED_FORMAT
-                    if path[-1] == "format"
-                    else WARN_RESTATED_INFERRED,
-                    dotted,
-                    _authored_value(chart, path),
-                    "what the renderer picks for this chart's data",
-                    "renderer picks it",
-                    chart=chart.id,
-                    field=".".join(path),
-                )
-            )
-    # A pivot needs one of `rows`/`values` spelled out: each is inferable from the
-    # other, but deleting both is an error. Keep `rows`, flag only `values`.
-    if {"rows", "values"} <= {w.field for w in warnings}:
-        warnings = [w for w in warnings if w.field != "rows"]
-    return warnings
-
-
-# Variable settings a control reflects on its own. Others (data_type, options,
-# min/max/step) also feed validation and sizing that this comparison never sees.
-_CONTROL_SETTINGS = frozenset({"input", "default", "placeholder"})
-
-
-def auto_restated_variable(
-    name: str,
-    var: Variable,
-    resolve: Callable[[Variable], _Artifact],
-    infer_input: Callable[[Variable], None],
-    prefix: str,
-) -> list[Diagnostic]:
-    """Warn for each authored control setting whose removal draws the same control.
-
-    ``resolve`` settles the variable the way the render does (options loaded,
-    widget refined by data); ``infer_input`` re-runs input detection on a copy
-    whose ``input`` was reset to ``auto``.
-    """
-    baseline = resolve(var)
-    warnings: list[Diagnostic] = []
-    data_dependent = (var.options is not None and bool(var.options.query)) or bool(
-        var.column or isinstance(var.query, str)
-    )
-    for field in sorted(var.authored_fields & _CONTROL_SETTINGS):
-        if field == "input" and not data_dependent:
-            continue  # the compile-time check settles it without data
-        trial = var.model_copy(
-            update={
-                field: Variable.model_fields[field].get_default(
-                    call_default_factory=True
-                ),
-                "input_auto_detected": False,
-            }
-        )
-        if field == "input":
-            infer_input(trial)
-        if resolve(trial) == baseline:
-            warnings.append(
-                restated_diagnostic(
-                    WARN_RESTATED_INFERRED,
-                    f"{prefix}variables.{name}.{field}",
-                    getattr(var, field),
-                    "what its options and data settle",
-                    "inferred",
-                    field=field,
-                )
-            )
-    return warnings
-
-
-_FILTER_USE = re.compile(r"""\bfilter\(\s*(['"])(\w+)\1\s*,\s*(\w+)\s*[,)]""")
-_JINJA_TAG = re.compile(r"\{%.*?%\}", re.DOTALL)
-_JINJA_EXPR = re.compile(r"\{\{.*?\}\}", re.DOTALL)
-
-
-def filtered_column(
-    name: str, queries: Sequence[SqlQuery]
-) -> tuple[SqlQuery, str, str] | None:
-    """The ``(query, table, column)`` every ``filter('<column>', <name>, ...)`` in *queries* reads.
-
-    ``None`` when the variable is never filtered on, the uses disagree, or a
-    using query is not a plain single-table SELECT: no guessing.
-    """
-    found: dict[tuple[str, str], SqlQuery] = {}
-    for query in queries:
-        columns = {
-            column for _q, column, var in _FILTER_USE.findall(query.sql) if var == name
-        }
-        if not columns:
-            continue
-        flat = _JINJA_EXPR.sub("1", _JINJA_TAG.sub("", query.sql))
-        try:
-            tables = list(sqlglot.parse_one(flat).find_all(exp.Table))
-        except SqlglotError:
-            return None
-        if len(tables) != 1:
-            return None
-        table = tables[0].copy()
-        table.set("alias", None)
-        for column in columns:
-            found.setdefault((table.sql(), column), query)
-    if len(found) != 1:
-        return None
-    ((table_sql, column), query) = next(iter(found.items()))
-    return query, table_sql, column
-
-
-def static_options_restated(
-    name: str,
-    var: Variable,
-    table: str,
-    column: str,
-    values: Sequence[Any],  # type-state: explicit_any — DB values
-    prefix: str,
-) -> list[Diagnostic]:
-    """Warn when ``options.static`` lists, in order, every value of the column the
-    variable filters; a curated order is a choice, not a restatement.
-
-    *values* come ordered as ``column:`` options are (``ORDER BY`` the column).
-    """
-    static = var.options.static if var.options is not None else None
-    if not static or list(static) != [v for v in values if v is not None]:
-        return []
-    return [
-        restated_diagnostic(
-            WARN_RESTATED_INFERRED,
-            f"{prefix}variables.{name}.options.static",
-            list(static),
-            f"every value of `{table}.{column}`, as `column: {table}.{column}` lists them",
-            "inferred",
-            field="options.static",
-            fix=f"Replace `options.static` with `column: {table}.{column}`.",
-        )
-    ]
-
-
-def _authored_value(node: _Tree, path: Sequence[str]) -> _Tree:
-    for key in path:
-        node = node[key] if isinstance(node, dict) else getattr(node, key)
-    return node
 
 
 def _is_tag(annotation: Any) -> bool:  # type-state: explicit_any — a typing annotation
@@ -828,3 +488,23 @@ def schema_default_restated(
                 value, item, (*path, str(index)), html_policy
             )
     return warnings
+
+
+def _equals_declared_default(
+    field: FieldInfo,
+    value: Any,  # type-state: explicit_any — any authored value
+) -> bool:
+    """Whether *value* is the field's declared default, spelled with its type.
+
+    ``"auto"`` asks for inference and a single-member ``Literal`` is a union
+    discriminator: neither is a value to judge.
+    """
+    default = field.default
+    return (
+        not isinstance(default, PydanticUndefinedType)
+        and default is not None
+        and default != "auto"
+        and not _is_tag(field.annotation)
+        and type(value) is type(default)
+        and value == default
+    )

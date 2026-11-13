@@ -17,6 +17,7 @@ from dbt_charts.core.compile.config import (
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 
+from .._compile import remember
 from .._paths import DBT_CHARTS_DIR
 from .._run import Run
 
@@ -57,7 +58,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg_output = render(
@@ -119,7 +119,6 @@ cols:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg_output = render(
@@ -184,7 +183,6 @@ grid:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg_output = render(
@@ -272,7 +270,6 @@ tabs:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg_output = render(
@@ -332,7 +329,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg_output = render(
@@ -346,18 +342,18 @@ rows:
     ):
         """The nested-layouts playground example should not collapse any first-row column."""
         project = local_project(DBT_CHARTS_DIR)
-        result = compile_file(
-            project.path(
-                "examples/playground/charts/cards/nested-layouts.yml"
-            ).read_board()
-        )
+        board_file = project.path(
+            "examples/playground/charts/cards/nested-layouts.yml"
+        ).read_board()
+        result = compile_file(board_file)
         assert result.success
         assert result.board is not None
+        # compile_file bypasses the recorder; Run plans the board from its text.
+        remember(result.board, board_file.content)
 
         executor = Run(
             result.board,
             env=build_exec_env(project),
-            query_registry=result.query_registry,
         )
         svg_output = render(
             result.board, executor.ctx, executor.ledger, format="svg"
@@ -394,7 +390,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         svg_output = render(
             result.board, executor.ctx, executor.ledger, format="svg"

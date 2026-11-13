@@ -1,6 +1,6 @@
 //! The one temporal x axis of a chart, built in bind and read by every family that has a time x.
 //!
-//! Each distinct x value is parsed here once, by the only date parser in the engine, into its UTC
+//! Each distinct x value is parsed here once, by the only date parser in the engine (`d3rs::calendar`), into its UTC
 //! instant (an offset applied, millisecond precision) and the bucket of its grain. The raw text stays
 //! the key rows, links and tooltips join on. The axis sorts a domain by instant, so no family orders
 //! or compares dates as text. A value that parses as no date is [`Unreadable`], which every family
@@ -11,96 +11,8 @@ use std::collections::HashMap;
 
 use diagnostic::Diagnostic;
 use crate::temporal::{extent_of, floor_day, instant_iso, next_bucket, TimePart, TimeUnit};
-use d3rs::calendar::{civil_from_days, days_from_civil};
-
-/// `parse_hh_mm_ss_ff`: two-digit fields with one consistent `:` style, an
-/// optional fraction of any length on the seconds.
-pub fn clock_fields(text: &str, max_hour: u8) -> Option<[u8; 3]> {
-    let b = text.as_bytes();
-    let pair = |at: usize| -> Option<u8> {
-        let d = b.get(at..at + 2)?;
-        d.iter().all(u8::is_ascii_digit).then(|| (d[0] - b'0') * 10 + (d[1] - b'0'))
-    };
-    let hour = pair(0)?;
-    let mut at = 2;
-    let mut fields = [hour, 0, 0];
-    let colon = b.get(at) == Some(&b':');
-    for field in fields.iter_mut().skip(1) {
-        if at >= b.len() {
-            break;
-        }
-        if colon {
-            if b[at] != b':' {
-                return None;
-            }
-            at += 1;
-        }
-        *field = pair(at)?;
-        at += 2;
-    }
-    if at < b.len() {
-        // A fraction hangs off the seconds only.
-        let fraction = b.get(at).is_some_and(|c| matches!(c, b'.' | b','));
-        let digits = &b[at + 1..];
-        if !fraction || fields_len(b, colon) < 3 || digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
-            return None;
-        }
-    }
-    (fields[0] <= max_hour && fields[1] <= 59 && fields[2] <= 59).then_some(fields)
-}
-
-/// How many `HH` fields the clock text carries before any fraction.
-fn fields_len(b: &[u8], colon: bool) -> usize {
-    let head = b.iter().position(|c| matches!(c, b'.' | b',')).unwrap_or(b.len());
-    if colon { (head + 1) / 3 } else { head / 2 }
-}
-
-/// A date cell as days since the epoch, with any clock `datetime.fromisoformat` takes
-/// after `[T ]` as the day's fraction and an optional `Z` or `±HH[[:]MM[[:]SS]]` offset. A clock without an
-/// offset is UTC (the render pins the zone). Fractional seconds keep V8's
-/// millisecond precision. `None` for any other shape, and for a day the month does not have.
-pub fn date_text_day(text: &str) -> Option<f64> {
-    read_clock(text).map(|(day, ..)| day)
-}
-
-/// [`date_text_day`] with whether the wall clock (before any offset) has a nonzero hour, minute or second, and the
-/// date as written.
-fn read_clock(text: &str) -> Option<(f64, bool, (i32, u8, u8))> {
-    let (y, m, d) = parse_date_part(text.get(..text.len().min(10))?)?;
-    if text.len() <= 10 {
-        return Some((days_from_civil(y, m, d) as f64, false, (y, m, d)));
-    }
-    if !matches!(text.as_bytes()[10], b'T' | b' ') {
-        return None;
-    }
-    let clock = text.get(11..)?;
-    let (clock, offset_minutes) = match clock.find(['Z', '+', '-']) {
-        None => (clock, 0.0),
-        Some(i) => {
-            let (head, zone) = clock.split_at(i);
-            let minutes = match zone.as_bytes()[0] {
-                b'Z' if zone.len() == 1 => 0.0,
-                sign @ (b'+' | b'-') => {
-                    let [hours, minutes, seconds] = clock_fields(&zone[1..], 23)?;
-                    let total = f64::from(hours) * 60.0 + f64::from(minutes) + f64::from(seconds) / 60.0;
-                    if sign == b'+' { total } else { -total }
-                }
-                _ => return None,
-            };
-            (head, minutes)
-        }
-    };
-    let [hours, minutes, seconds] = clock_fields(clock, 23)?;
-    let millis = match clock.find(['.', ',']) {
-        None => 0.0,
-        Some(i) => format!("{:0<3}", &clock[i + 1..])[..3].parse::<f64>().ok()?,
-    };
-    // Whole milliseconds, so every spelling of one instant is the same float.
-    let clock_ms = (i64::from(hours) * 3600 + i64::from(minutes) * 60 + i64::from(seconds)) * 1000 + millis as i64;
-    let offset_ms = (offset_minutes * 60_000.0).round() as i64;
-    let total_ms = days_from_civil(y, m, d) * 86_400_000 + clock_ms - offset_ms;
-    Some((total_ms as f64 / 86_400_000.0, hours != 0 || minutes != 0 || seconds != 0, (y, m, d)))
-}
+use d3rs::calendar::{civil_from_days, days_from_civil, parse_date_part, read_clock};
+pub use d3rs::calendar::{clock_fields, date_text_day};
 
 /// A date cell's calendar date on the board's wall clock, `(year, month, day)`: a timestamp carrying `Z` or an
 /// offset is an instant, read in the board zone (`crate::time_zone`); a bare date or a naive timestamp is already
@@ -118,29 +30,6 @@ pub fn parse_iso_date(s: &str) -> Option<(i32, u8, u8)> {
         return Some(civil_from_days(wall.floor() as i64));
     }
     parse_date_part(s)
-}
-
-/// `"YYYY-MM-DD"`, `"YYYY-MM"` or `"YYYY"` as written.
-fn parse_date_part(s: &str) -> Option<(i32, u8, u8)> {
-    let b = s.as_bytes();
-    match b.len() {
-        10 => d3rs::calendar::parse_ymd(s),
-        7 if b[4] == b'-' => {
-            let y = parse_digits4(&b[0..4])?;
-            let m = parse_digits2(&b[5..7])?;
-            (1..=12).contains(&m).then_some((y, m, 1))
-        }
-        4 => Some((parse_digits4(&b[0..4])?, 1, 1)),
-        _ => None,
-    }
-}
-
-fn parse_digits4(b: &[u8]) -> Option<i32> {
-    b.iter().all(u8::is_ascii_digit).then(|| b.iter().fold(0, |n, c| n * 10 + i32::from(c - b'0')))
-}
-
-fn parse_digits2(b: &[u8]) -> Option<u8> {
-    b.iter().all(u8::is_ascii_digit).then(|| (b[0] - b'0') * 10 + (b[1] - b'0'))
 }
 
 /// An x value the axis cannot place.

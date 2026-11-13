@@ -107,6 +107,7 @@ def render_chart_fences(
         result = session.render_board(
             board=page,
             compile_result=dataclasses.replace(compiled, board=focused),
+            only_charts=[c.id for c in focused.placed_charts() if c.id],
             variables=variables,
             format="svg",
             ignore_codes=ignore_codes,

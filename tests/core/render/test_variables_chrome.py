@@ -243,44 +243,46 @@ def test_the_stylesheet_reveals_the_ornaments_on_bind() -> None:
     assert '.dbt-interactive [data-dbt-ornament="calendar"]' in css
 
 
-def test_a_checkbox_draws_a_box_not_a_text_field() -> None:
-    svg, _ = _strip({"active": Variable(input="checkbox", label="Active")})
-
-    assert 'data-dbt-ornament="checkbox"' in svg
+def _root(svg: str) -> ET.Element:
+    return ET.fromstring(f"<svg xmlns='http://www.w3.org/2000/svg'>{svg}</svg>")
 
 
-def test_an_unticked_checkbox_is_visible_in_a_static_export() -> None:
-    """The one control whose box is its value, so the box cannot be withheld.
-
-    Its fill is transparent on every theme but neon. Without a stroke it draws
-    nothing at all, and an export gives the reader no way to tell an unticked
-    box from a variable that was never rendered.
-    """
-    svg, _ = _strip({"active": Variable(input="checkbox", label="Active")}, {})
-    root = ET.fromstring(f"<svg xmlns='http://www.w3.org/2000/svg'>{svg}</svg>")
-
-    box = next(e for e in root.iter() if e.get("data-dbt-ornament") == "checkbox")
-    assert box.get("stroke") not in (None, "none")
+def _ornament(svg: str, name: str) -> ET.Element:
+    return next(e for e in _root(svg).iter() if e.get("data-dbt-ornament") == name)
 
 
-def test_the_checkbox_outline_does_not_change_color_when_a_host_binds() -> None:
-    """It is the one field drawn stroked, so it is the one that can disagree.
+@pytest.mark.parametrize(("value", "word"), [(True, "Yes"), (False, "No")])
+def test_a_checkbox_states_its_value_as_text_at_rest(value: bool, word: str) -> None:
+    """At rest a checkbox reads Yes or No; its box is drawn hidden for a host."""
+    svg, _ = _strip(
+        {"active": Variable(input="checkbox", label="Active")}, {"active": value}
+    )
 
-    The interactivity rule paints every field from --dbt-variable-field-border.
-    A checkbox stroked from a different token would be one color in a downloaded
-    PNG and another the instant the runtime added the class.
-    """
-    svg, _ = _strip({"active": Variable(input="checkbox", label="Active")})
-    root = ET.fromstring(f"<svg xmlns='http://www.w3.org/2000/svg'>{svg}</svg>")
-
-    box = next(e for e in root.iter() if e.get("data-dbt-ornament") == "checkbox")
-    assert f"--dbt-variable-field-border: {box.get('stroke')}" in svg
+    assert _drawn_text(svg) == ["Active:", word]
+    assert _ornament(svg, "checkbox").get("opacity") == "0"
 
 
-def test_a_slider_draws_a_track_and_a_thumb() -> None:
-    svg, _ = _strip({"limit": Variable(input="slider", min=0, max=10)}, {"limit": 5})
+def test_a_slider_states_its_value_as_text_at_rest() -> None:
+    """The value sits where every other control's value sits; track and thumb wait."""
+    svg, _ = _strip(
+        {"limit": Variable(input="slider", label="Limit", min=0, max=10)}, {"limit": 5}
+    )
+    group = _groups(svg)[0]
+    value = [e for e in group.iter() if e.tag.endswith("text")][-1]
+    track = _ornament(svg, "slider")
 
-    assert 'data-dbt-ornament="slider"' in svg
+    assert value.text == "5"
+    assert float(value.get("x")) < float(track.get("x"))
+    assert track.get("opacity") == "0"
+    assert _ornament(svg, "slider-thumb").get("opacity") == "0"
+
+
+def test_the_stylesheet_swaps_the_resting_text_for_the_widget_on_bind() -> None:
+    css = controls_stylesheet()
+
+    for ornament in ("checkbox", "slider", "slider-thumb"):
+        assert f'.dbt-interactive [data-dbt-ornament="{ornament}"]' in css
+    assert ".dbt-interactive [data-dbt-at-rest]" in css
 
 
 def test_input_borders_are_off_until_a_host_turns_them_on() -> None:

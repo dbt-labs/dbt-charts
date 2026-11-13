@@ -18,7 +18,7 @@ const TABLE_PAGINATION_CONTROL_HEIGHT: f64 = 28.0;
 /// What a chart needs at a width: its natural height there, its floors and card
 /// padding included but not the shift its `cols` row gives it, and where its
 /// title sits from its top, `None` for a chart that takes no part in a row's
-/// title band (a kpi, a callout, an untitled chart, one that failed).
+/// title band (a kpi, a callout, an untitled chart).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NaturalPlan {
     pub height: f64,
@@ -676,7 +676,10 @@ fn rows_boxes(board: &Node, items: &[Drawn], room: f64, gap: f64) -> Vec<Rect> {
 /// when the board fills.
 fn cols_boxes(board: &Node, items: &[Drawn], room: f64, gap: f64) -> Vec<Rect> {
     let demand = cols_demand(items, room);
-    let (row, cell) = if demand.specified >= demand.auto {
+    // Production's row law keeps a zero row when nothing asks for height (`sizing.py`), but a nested
+    // board paints at least its slot (`render_nested_board`'s `available_height`), so cells that ask
+    // for nothing (a board of blank text) are given the room a filling row has.
+    let (row, cell) = if demand.specified > 0.0 && demand.specified >= demand.auto {
         (demand.specified, demand.drawn.min(demand.specified))
     } else if board.fill_height {
         (room, room)

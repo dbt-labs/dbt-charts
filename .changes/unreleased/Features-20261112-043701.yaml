@@ -1,0 +1,3 @@
+kind: Features
+body: dct query --cache PATH shares a query-result cache file across runs, so a board's cache-composed queries execute their upstream once.
+time: 2026-11-12T04:37:01.807317-08:00

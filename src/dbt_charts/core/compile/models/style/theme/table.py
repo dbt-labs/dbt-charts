@@ -698,6 +698,12 @@ class SupportTableStyle(BaseModel):
             "labels) when `font.color` is 'auto'."
         ),
     )
+    ribbon_color: Annotated[str, Color()] = Field(
+        description=(
+            "Ink for a funnel's ribbon rows, the change between two stage rows. "
+            "The stage rows print in the stage names' ink."
+        )
+    )
     divider: SupportTableDividerStyle = Field(
         description=(
             "Line at the boundary between the chart plot and the data strip. "

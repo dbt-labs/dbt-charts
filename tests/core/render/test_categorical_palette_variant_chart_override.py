@@ -72,7 +72,6 @@ def _render_yaml(board_yaml: str) -> RenderResult:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     return render(result.board, executor.ctx, executor.ledger, format="svg")
 

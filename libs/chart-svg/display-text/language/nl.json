@@ -62,6 +62,7 @@
   "controls.selection_summary": "({n}) {first}",
   "controls.show_all": "Alles tonen",
   "controls.show_only_selected": "Alleen geselecteerde tonen ({n})",
+  "controls.options_truncated": "{shown} van {total} getoond. Zoek om meer te vinden.",
   "controls.sort": "Sorteren",
   "controls.sort_count_ascending": "Sorteren op aantal, laag → hoog",
   "controls.sort_count_descending": "Sorteren op aantal, hoog → laag",

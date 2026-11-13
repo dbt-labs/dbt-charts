@@ -41,6 +41,8 @@ _PRIMITIVES: dict[str, dict[str, Any]] = {
     "int": {"type": "integer"},
     "float": {"type": "number"},
     "bool": {"type": "boolean"},
+    "date": {"type": "string", "format": "date"},
+    "datetime": {"type": "string", "format": "date-time"},
     "None": {"type": "null"},
 }
 

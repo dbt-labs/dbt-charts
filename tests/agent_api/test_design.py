@@ -12,6 +12,7 @@ import pytest
 # and a fifteen-name private import block reads like an API this test is entitled
 # to — the opposite of the message. They are `design.py`'s internals, and the
 # aim is for most of them to stop existing.
+from dbt_charts import _engine
 from dbt_charts.agent_api import design as _design
 from dbt_charts.agent_api.design import (
     DesignNode,
@@ -1308,11 +1309,15 @@ def _render_failures(board: str) -> list[str]:
     compiled_board = result.board
     if not result.success or compiled_board is None:
         return [d.code for d in result.errors]
-    executor = Run(
-        compiled_board,
-        env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
-    )
+    try:
+        executor = Run(
+            compiled_board,
+            env=build_exec_env(FilesystemProject(Path.cwd())),
+        )
+    except _engine.CompileError as refusal:
+        # The engine plans every board, and refuses at compile what the Python
+        # resolver only refuses at render: still no board, so the same outcome.
+        return [str(refusal)]
     rendered = render(compiled_board, executor.ctx, executor.ledger, format="svg")
     codes = [d.code for d in rendered.chart_errors]
     if rendered.board_error is not None:
@@ -3284,6 +3289,18 @@ class TestSupportTableDesignProperty:
         prop = self._chart(board).properties["support_table"]
         assert prop.readonly is True
 
+    def test_a_funnel_percent_entry_is_read_only_and_named(self) -> None:
+        board = (
+            "charts:\n  c:\n    type: funnel\n    query: q\n"
+            "    x: stage\n    y: users\n"
+            "    support_table:\n"
+            "      - source: users\n"
+            "      - percent: users\n"
+        )
+        prop = self._chart(board).properties["support_table"]
+        assert prop.readonly is True
+        assert prop.value == ["users", "users"]
+
     def test_a_per_series_entry_is_read_only(self) -> None:
         board = (
             "charts:\n  c:\n    type: bar\n    query: q\n"
@@ -3417,7 +3434,6 @@ def _render_output(board: str) -> str:
     executor = Run(
         compiled,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
         clock=pinned_clock,
     )
     svg = render(compiled, executor.ctx, executor.ledger, format="svg").output
@@ -3506,9 +3522,8 @@ def test_height_is_read_on_a_nested_board_and_discarded_at_the_root() -> None:
         "a nested board's `height` no longer reaches its layout slot"
     )
 
-    assert _render_output(_ROOT) == _render_output("height: 400\n" + _ROOT), (
-        "the root board now honors `height` — `_design._NESTED_ONLY` is stale"
-    )
+    with pytest.raises(_engine.CompileError, match="height"):
+        _render_output("height: 400\n" + _ROOT)
 
     assert "height" not in _flat(_targets(_ROOT)[""])
     assert "height" in _flat(_targets(_NESTED)["rows.0"])

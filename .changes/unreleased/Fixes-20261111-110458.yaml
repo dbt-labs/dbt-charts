@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct validate lists diagnostics in a stable canonical order.
+time: 2026-11-11T11:04:58.879706727Z

@@ -181,6 +181,8 @@ fn scalar(s: Scalar) -> J {
         Scalar::Int => json!({"type": "integer"}),
         Scalar::Float => json!({"type": "number"}),
         Scalar::Str => json!({"type": "string"}),
+        Scalar::Date => json!({"type": "string", "format": "date"}),
+        Scalar::DateTime => json!({"type": "string", "format": "date-time"}),
         Scalar::Json => json!({}),
         Scalar::Object => json!({"type": "object"}),
     }
@@ -456,14 +458,32 @@ impl Emit<'_> {
             Ty::Map(i) => json!({"type": "object", "additionalProperties": self.ty(i)}),
             Ty::Option(i, _) => any_of(vec![self.ty(i), json!({"type": "null"})]),
             Ty::Enum(v) => json!({"enum": v}),
-            // A closed set of values beside `auto` is one enum, as pydantic merges the literals.
+            // A closed set of values beside `auto` is one enum, as pydantic merges the literals,
+            // whether the set is the whole value or one arm of its union.
             Ty::Engine(v, rules) => match &**v {
                 Ty::Enum(values) => {
                     let mut all: Vec<&str> = rules.clone();
                     all.extend(values.iter());
                     json!({"enum": all})
                 }
-                v => any_of(vec![json!({"enum": rules}), self.ty_in(v, true)]),
+                v => {
+                    let mut j = self.ty_in(v, true);
+                    let merged = j
+                        .get_mut("anyOf")
+                        .and_then(J::as_array_mut)
+                        .and_then(|arms| arms.iter_mut().find_map(bare_enum))
+                        .map(|values| {
+                            for (i, rule) in rules.iter().enumerate() {
+                                values.insert(i, json!(rule));
+                            }
+                        })
+                        .is_some();
+                    if merged {
+                        j
+                    } else {
+                        any_of(vec![json!({"enum": rules}), j])
+                    }
+                }
             },
             // An explicit union spells its own alternatives, a bare string among them.
             Ty::Accept(a, b) => {
@@ -738,4 +758,12 @@ pub(super) fn needs_saying(p: &Prop) -> bool {
         || a.directive
         || a.inherit.is_some()
         || a.inherit_slot.is_some())
+}
+
+/// The values of an arm that is nothing but an `enum`, to merge a sibling literal into.
+fn bare_enum(arm: &mut J) -> Option<&mut Vec<J>> {
+    match arm {
+        J::Object(o) if o.len() == 1 => o.get_mut("enum").and_then(J::as_array_mut),
+        _ => None,
+    }
 }

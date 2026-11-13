@@ -35,6 +35,7 @@ charts:
       pagination:
         enabled: true
         page_rows: 10
+        mode: pages
 rows:
   - t
 """
@@ -46,7 +47,6 @@ def _render(fmt: RenderFormat) -> str:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
         clock=pinned_clock,
     )
     return render(result.board, executor.ctx, executor.ledger, format=fmt).output
@@ -58,6 +58,8 @@ def test_a_static_export_ships_every_runtime_that_needs_no_host() -> None:
     assert ".dbt-chart text.dbt-table-cell-inert" in page
     assert "window.dbtChartHover" in page
     assert "window.dbtTableRuntime" in page
+    assert "window.dbtTableCellReveal" in page
+    assert ".dbt-table-cell-tip-pinned" in page
     assert "window.dbtControls = {" not in page
     assert "window.dbtLinkModal" not in page
 

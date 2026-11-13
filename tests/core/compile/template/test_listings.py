@@ -22,6 +22,7 @@ from dbt_charts.core.render.board_replay import render_board_from_artifact
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.render_result import RenderResult
 
+from ...._compile import remember
 from ...._run import Run
 
 INDEX = """\
@@ -52,7 +53,12 @@ def _project(in_memory_project: Callable[..., Project], index: str) -> Project:
 
 
 def _compile(project: Project, relpath: str = "charts/index.yml") -> CompileResult:
-    return compile_file(project.path(relpath).read_board())
+    board_file = project.path(relpath).read_board()
+    result = compile_file(board_file)
+    if result.board is not None:
+        # compile_file bypasses the recorder; Run plans the board from its text.
+        remember(result.board, board_file.content, board_file.path.parent)
+    return result
 
 
 def _render(project: Project, relpath: str = "charts/index.yml") -> RenderResult:
@@ -62,7 +68,6 @@ def _render(project: Project, relpath: str = "charts/index.yml") -> RenderResult
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
         clock=lambda: datetime(2001, 2, 3, tzinfo=UTC),
     )
     return render(result.board, executor.ctx, executor.ledger, format="svg")
@@ -222,7 +227,6 @@ def test_board_without_location_fails_the_render(
     executor = Run(
         result.board,
         env=build_exec_env(_project(in_memory_project, INDEX)),
-        query_registry=result.query_registry,
     )
     rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert rendered.board_error is not None
@@ -238,7 +242,6 @@ def test_replay_rejects_a_listing_board_before_rendering(
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
     resolved, _ = build_resolved_board(result.board, executor, {})
     recording = record_board(resolved, executor.results(list(resolved.queries), {}), {})

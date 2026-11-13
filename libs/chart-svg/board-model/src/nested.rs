@@ -124,15 +124,22 @@ pub fn dropped_fields() -> Vec<&'static str> {
         .collect()
 }
 
-/// A layer's `charts.pie` reaches its donuts, and the layer's own `charts.donut` wins over it, so
-/// a board's pie beats the theme's donut default (`_pie_reaches_donut`).
-pub fn pie_reaches_donut(patch: &mut StylePatch) {
-    if model_core::Empty::is_empty(&patch.charts.pie) {
-        return;
+/// A layer's `charts.pie` reaches its donuts and its `charts.bar` its funnels, and the layer's own
+/// `charts.donut` or `charts.funnel` wins over it, so a board's pie beats the theme's donut default
+/// and a board's bar the theme's funnel recipe (`_family_reaches_recipe`).
+pub fn family_reaches_recipe(patch: &mut StylePatch) {
+    if !model_core::Empty::is_empty(&patch.charts.pie) {
+        let mut donut = (*patch.charts.pie).clone();
+        if let Tri::Value(own) = std::mem::replace(&mut patch.charts.donut, Tri::Unset) {
+            donut.merge(own);
+        }
+        patch.charts.donut = Tri::Value(donut);
     }
-    let mut donut = (*patch.charts.pie).clone();
-    if let Tri::Value(own) = std::mem::replace(&mut patch.charts.donut, Tri::Unset) {
-        donut.merge(own);
+    if !model_core::Empty::is_empty(&patch.charts.bar) {
+        let mut funnel = (*patch.charts.bar).clone();
+        if let Tri::Value(own) = std::mem::replace(&mut patch.charts.funnel, Tri::Unset) {
+            funnel.merge(own);
+        }
+        patch.charts.funnel = Tri::Value(funnel);
     }
-    patch.charts.donut = Tri::Value(donut);
 }

@@ -70,6 +70,119 @@ pub fn parse_ymd(s: &str) -> Option<(i32, u8, u8)> {
     ((1..=12).contains(&m) && d >= 1 && u32::from(d) <= days_in_month(y, u32::from(m))).then_some((y, m, d))
 }
 
+/// `parse_hh_mm_ss_ff`: two-digit fields with one consistent `:` style, an
+/// optional fraction of any length on the seconds.
+pub fn clock_fields(text: &str, max_hour: u8) -> Option<[u8; 3]> {
+    let b = text.as_bytes();
+    let pair = |at: usize| -> Option<u8> { parse_digits2(b.get(at..at + 2)?) };
+    let hour = pair(0)?;
+    let mut at = 2;
+    let mut fields = [hour, 0, 0];
+    let colon = b.get(at) == Some(&b':');
+    for field in fields.iter_mut().skip(1) {
+        if at >= b.len() {
+            break;
+        }
+        if colon {
+            if b.get(at) != Some(&b':') {
+                return None;
+            }
+            at += 1;
+        }
+        *field = pair(at)?;
+        at += 2;
+    }
+    if at < b.len() {
+        // A fraction hangs off the seconds only.
+        let fraction = b.get(at).is_some_and(|c| matches!(c, b'.' | b','));
+        let digits = b.get(at + 1..).unwrap_or_default();
+        if !fraction || fields_len(b, colon) < 3 || digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+    }
+    let [hours, minutes, seconds] = fields;
+    (hours <= max_hour && minutes <= 59 && seconds <= 59).then_some(fields)
+}
+
+/// How many `HH` fields the clock text carries before any fraction.
+fn fields_len(b: &[u8], colon: bool) -> usize {
+    let head = b.iter().position(|c| matches!(c, b'.' | b',')).unwrap_or(b.len());
+    if colon { (head + 1) / 3 } else { head / 2 }
+}
+
+/// A date cell as days since the epoch, with any clock `datetime.fromisoformat` takes
+/// after `[T ]` as the day's fraction and an optional `Z` or `±HH[[:]MM[[:]SS]]` offset. A clock without an
+/// offset is UTC (the render pins the zone). Fractional seconds keep V8's
+/// millisecond precision. `None` for any other shape, and for a day the month does not have.
+pub fn date_text_day(text: &str) -> Option<f64> {
+    read_clock(text).map(|(day, ..)| day)
+}
+
+/// [`date_text_day`] with whether the wall clock (before any offset) has a nonzero hour, minute or second, and the
+/// date as written.
+pub fn read_clock(text: &str) -> Option<(f64, bool, (i32, u8, u8))> {
+    let (y, m, d) = parse_date_part(text.get(..text.len().min(10))?)?;
+    if text.len() <= 10 {
+        return Some((days_from_civil(y, m, d) as f64, false, (y, m, d)));
+    }
+    if !matches!(text.as_bytes().get(10), Some(b'T' | b' ')) {
+        return None;
+    }
+    let clock = text.get(11..)?;
+    let (clock, offset_minutes) = match clock.find(['Z', '+', '-']) {
+        None => (clock, 0.0),
+        Some(i) => {
+            let (head, zone) = clock.split_at_checked(i)?;
+            let minutes = match zone.as_bytes().first() {
+                Some(b'Z') if zone.len() == 1 => 0.0,
+                Some(&sign @ (b'+' | b'-')) => {
+                    let [hours, minutes, seconds] = clock_fields(zone.get(1..)?, 23)?;
+                    let total = f64::from(hours) * 60.0 + f64::from(minutes) + f64::from(seconds) / 60.0;
+                    if sign == b'+' { total } else { -total }
+                }
+                _ => return None,
+            };
+            (head, minutes)
+        }
+    };
+    let [hours, minutes, seconds] = clock_fields(clock, 23)?;
+    let millis = match clock.find(['.', ',']) {
+        None => 0.0,
+        Some(i) => format!("{:0<3}", clock.get(i + 1..)?).get(..3)?.parse::<f64>().ok()?,
+    };
+    // Whole milliseconds, so every spelling of one instant is the same float.
+    let clock_ms = (i64::from(hours) * 3600 + i64::from(minutes) * 60 + i64::from(seconds)) * 1000 + millis as i64;
+    let offset_ms = (offset_minutes * 60_000.0).round() as i64;
+    let total_ms = days_from_civil(y, m, d) * 86_400_000 + clock_ms - offset_ms;
+    Some((total_ms as f64 / 86_400_000.0, hours != 0 || minutes != 0 || seconds != 0, (y, m, d)))
+}
+
+/// `"YYYY-MM-DD"`, `"YYYY-MM"` or `"YYYY"` as written.
+pub fn parse_date_part(s: &str) -> Option<(i32, u8, u8)> {
+    let b = s.as_bytes();
+    match b.len() {
+        10 => parse_ymd(s),
+        7 if b.get(4) == Some(&b'-') => {
+            let y = parse_digits4(b.get(0..4)?)?;
+            let m = parse_digits2(b.get(5..7)?)?;
+            (1..=12).contains(&m).then_some((y, m, 1))
+        }
+        4 => Some((parse_digits4(b)?, 1, 1)),
+        _ => None,
+    }
+}
+
+fn parse_digits4(b: &[u8]) -> Option<i32> {
+    b.iter().all(u8::is_ascii_digit).then(|| b.iter().fold(0, |n, c| n * 10 + i32::from(c - b'0')))
+}
+
+fn parse_digits2(b: &[u8]) -> Option<u8> {
+    match b {
+        [high @ b'0'..=b'9', low @ b'0'..=b'9'] => Some((high - b'0') * 10 + (low - b'0')),
+        _ => None,
+    }
+}
+
 /// A valid instant broken into calendar fields.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Dt {

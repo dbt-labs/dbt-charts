@@ -45,7 +45,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     LayerDatasets,
 )
 from dbt_charts.core.compile.resolve.chart._conditional import (
-    validate_mark_conditional,
+    resolve_mark_conditional,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
     _bake_x_zero,
@@ -159,8 +159,9 @@ def _resolve_scatter(
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )
-    scatter_conditional = chart_local_style_context.scatter.conditional
-    validate_mark_conditional(scatter_conditional, data, y=normalized.y)
+    scatter_conditional = resolve_mark_conditional(
+        chart_local_style_context.scatter.conditional, data, y=normalized.y
+    )
     plan = plan_cartesian(
         normalized,
         data,
@@ -451,7 +452,7 @@ def _resolve_scatter(
             layout_padding=scatter.padding,
             suppress_legend=naming.suppress_legend,
             top_legend=naming.top_legend,
-            wrap_legend=naming.wrap_legend,
+            wrap_columns=naming.wrap_columns,
             legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
         ),
         **_ck,

@@ -27,6 +27,7 @@ from dbt_charts.core.render.board_resolve import (
 )
 from dbt_charts.core.render.chart.table_overflow import collect_table_overflows
 
+from ..._compile import remember
 from ..._run import Run
 
 
@@ -55,7 +56,6 @@ def _executor(board: Board, project: Project) -> Run:
     return Run(
         board,
         env=build_exec_env(project),
-        query_registry=None,
     )
 
 
@@ -231,6 +231,8 @@ def test_focus_renders_table_at_its_own_measured_width(
     result = compile(yaml)
     assert result.success and result.board is not None, result.errors
     api_board = focus_on_chart(result.board, "t")
+    # The focused board is the dashboard's, so it runs the dashboard text's plan.
+    remember(api_board, yaml)
     api_resolved, _cache = build_resolved_board(
         api_board,
         _executor(api_board, local_project(Path.cwd())),

@@ -145,11 +145,13 @@ pub struct LegendStyleBase {
     /// top/bottom, vertical on left/right.
     #[model(fill = "auto")]
     pub direction: Engine<LegendDirection, Auto>,
-    /// Legend entry columns. Zero keeps the renderer default; positive values
-    /// set Vega-Lite legend columns.
+    /// Legend entry columns. Zero keeps the renderer default; a positive value
+    /// sets the columns, and a bar's top or bottom legend takes fewer when its
+    /// labels would not fit.
     pub columns: u32,
-    /// Entry columns when a horizontal legend wraps: the automatic compact top
-    /// legend, or an inferred-horizontal legend too wide for one row. At least 1.
+    /// Most entry columns when a horizontal legend wraps (the automatic compact
+    /// top legend, or an inferred-horizontal legend too wide for one row); it
+    /// takes fewer when its labels would not fit. At least 1.
     pub compact_columns: u32,
     /// Chrome around each entry of a single-row top legend.
     pub row: LegendRowStyle,

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A legend too wide for one row now wraps into as many columns as its labels fit, instead of two, without cutting names.
+time: 2026-11-12T03:30:48.826278-08:00

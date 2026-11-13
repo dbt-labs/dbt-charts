@@ -52,7 +52,7 @@ def _warnings(board_yaml: str) -> list:
     result = compile(board_yaml)
     assert result.success and result.board is not None, result.errors
     registry = scripted_env(ScriptedBackend(_ROWS))
-    executor = Run(result.board, env=registry, query_registry=result.query_registry)
+    executor = Run(result.board, env=registry)
     rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert rendered.board_error is None and rendered.output
     return [w for w in rendered.warnings if w.code == _CODE]

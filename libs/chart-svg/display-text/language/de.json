@@ -62,6 +62,7 @@
   "controls.selection_summary": "({n}) {first}",
   "controls.show_all": "Alle anzeigen",
   "controls.show_only_selected": "Nur ausgewählte anzeigen ({n})",
+  "controls.options_truncated": "{shown} von {total} angezeigt. Suchen, um weitere zu finden.",
   "controls.sort": "Sortieren",
   "controls.sort_count_ascending": "Nach Anzahl sortieren, niedrig → hoch",
   "controls.sort_count_descending": "Nach Anzahl sortieren, hoch → niedrig",

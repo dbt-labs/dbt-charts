@@ -347,6 +347,40 @@ class TestCallForms:
         assert exc_info.value.code is ERR_DBT_REF_UNKNOWN_NODE
 
 
+class TestUnresolvedReason:
+    """A host that knows why a name has no relation ships it; the error says it."""
+
+    _WHY = "no table named 'orders' in schema a_zendesk"
+    _WITH_WHY = ref_index(
+        LoadedManifest(
+            raw={
+                "nodes": {},
+                "sources": {},
+                "unresolved": {"orders": _WHY, "raw.events": "source why"},
+            },
+            relpath="target/manifest.json",
+            version="v1",
+        )
+    )
+
+    def test_unknown_ref_error_carries_the_reason(self) -> None:
+        with pytest.raises(DbtChartsError) as exc_info:
+            resolve_dbt_refs_with_provenance("{{ ref('orders') }}", self._WITH_WHY)
+        assert self._WHY in str(exc_info.value)
+
+    def test_unknown_source_error_carries_the_reason(self) -> None:
+        with pytest.raises(DbtChartsError) as exc_info:
+            resolve_dbt_refs_with_provenance(
+                "{{ source('raw', 'events') }}", self._WITH_WHY
+            )
+        assert "source why" in str(exc_info.value)
+
+    def test_a_name_with_no_stored_reason_adds_nothing(self) -> None:
+        with pytest.raises(DbtChartsError) as exc_info:
+            resolve_dbt_refs_with_provenance("{{ ref('nope') }}", _INDEX)
+        assert "Why" not in str(exc_info.value)
+
+
 class TestUnsupportedCallForms:
     """A call detection routed here but substitution can't rewrite must raise.
 

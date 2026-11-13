@@ -47,7 +47,7 @@ def _make_executor(
     """A run over three rows; *truncated* lowers the row ceiling below that."""
     monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "2" if truncated else "100")
     mock_registry = scripted_env(ScriptedBackend([{"x": 1}, {"x": 2}, {"x": 3}]))
-    return Run(board, env=mock_registry, query_registry=query_registry)
+    return Run(board, env=mock_registry)
 
 
 def test_fires_when_query_result_truncated(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -189,7 +189,6 @@ rows:
             executor = Run(
                 result.board,
                 env=registry,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             render_result = render(
@@ -266,7 +265,6 @@ rows:
             executor1 = Run(
                 result.board,
                 env=registry,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             fresh_render = render(
@@ -281,7 +279,6 @@ rows:
             executor2 = Run(
                 result.board,
                 env=registry,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             assert "q" in executor2.lookup(["q"]).hits
@@ -335,7 +332,6 @@ rows:
             executor1 = Run(
                 result.board,
                 env=registry,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             written_rows = executor1.execute_query("q")
@@ -349,7 +345,6 @@ rows:
             executor2 = Run(
                 result.board,
                 env=registry,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             assert "q" in executor2.lookup(["q"]).hits

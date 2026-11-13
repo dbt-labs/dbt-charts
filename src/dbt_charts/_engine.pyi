@@ -40,11 +40,14 @@ class CompileError(ValueError):
     warnings: list[CompileDiagnostic]
 
 class CompiledBoard:
-    """A board compiled in Rust. Opaque: no board model crosses to Python."""
+    """A board compiled in Rust. Opaque: no board model crosses to Python.
+
+    `validate_findings` are the errors only `dct validate` reports; compile accepts the board."""
 
     def diagnostics(self) -> list[CompileDiagnostic]: ...
     def index_json(self) -> str: ...
     def host_facts_json(self) -> str: ...
+    def validate_findings(self) -> list[CompileDiagnostic]: ...
 
 class SqlAnalyzer(Protocol):
     """The host's SQL analysis: one call per compile, one outcome per request, in request order.
@@ -70,9 +73,11 @@ def compile(
     cache_root: CacheLayer,
     source_caches: dict[str, CacheLayer],
     implicit_source: str | None,
+    zones: dict[str, tuple[str, str | None]],
     sql: SqlAnalyzer | None = None,
     named: bool = False,
     text: str | None = None,
+    anchor: str | None = None,
 ) -> CompiledBoard: ...
 def index(
     files: ProjectFiles,
@@ -92,7 +97,10 @@ def plan(
     active_tab_only: bool,
     strict: bool,
     only_charts: list[str] | None,
-) -> str: ...
+) -> str:
+    """The QueryPlan JSON (`core/execute/query_plan.py`). `chart_queries` and `variable_queries` name
+    the plan key of each shown chart's and variable's queries; they cover only what is planned."""
+    ...
 
 class RenderedBoard:
     svg: str
@@ -102,6 +110,11 @@ class RenderedBoard:
     width: float
     height: float
 
+class RenderedCell:
+    svg: str
+    height: float
+    diagnostics: list[dict[str, Any]]
+
 class ShapedFonts: ...
 
 def load_shaped_fonts(fonts_dir: str) -> ShapedFonts: ...
@@ -110,10 +123,32 @@ def render_board(
     datasets: str,
     chart_errors: str,
     variables: str,
+    presets: str,
     overridden: list[str],
     fonts: ShapedFonts,
     rendered_at: str,
+    link_context: str | None,
 ) -> RenderedBoard: ...
+def render_chart_in_cell(
+    board: CompiledBoard,
+    datasets: str,
+    chart_errors: str,
+    variables: str,
+    presets: str,
+    overridden: list[str],
+    fonts: ShapedFonts,
+    rendered_at: str,
+    link_context: str | None,
+    placement: str,
+    width: float,
+    height: float | None,
+    inset: tuple[float, float, float, float],
+) -> RenderedCell:
+    """The chart placed as `placement` (`RenderedBoard.boxes`' keys) drawn in the host's cell: `width`
+    and `height` (`None`: the chart's own) inside the padding `inset` (left, right, top, bottom) the
+    slot was shrunk by, as `render_native` takes them. No other part of the board is laid out."""
+    ...
+
 def load_rows(rows_json: str) -> Rows: ...
 def render_chart(
     rows: Rows, datasets: dict[str, Rows], layout_json: str

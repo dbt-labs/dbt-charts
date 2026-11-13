@@ -31,7 +31,6 @@ def render_board_svg_text(yaml_text: str) -> str:
         executor = Run(
             result.board,
             build_exec_env(FilesystemProject(Path(tmp))),
-            query_registry=result.query_registry,
         )
         variables: dict[str, object] = {}
         resolved, render_cache = build_resolved_board(result.board, executor, variables)

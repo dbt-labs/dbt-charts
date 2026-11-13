@@ -53,7 +53,9 @@ from dbt_charts.core.compile.models.style.resolved.table import (
 from dbt_charts.core.compile.models.style.theme import TableChartStyle
 from dbt_charts.core.compile.resolve.chart._channels import _channels_for
 from dbt_charts.core.compile.resolve.chart._conditional import (
-    validate_mark_conditional,
+    has_aggregate,
+    resolve_mark_conditional,
+    resolve_rule_aggregates,
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
@@ -163,43 +165,62 @@ def _style_input_columns(
     return frozenset(s for s in specs if isinstance(s, str) and s in query_keys)
 
 
-def _validate_conditional(
+def _resolve_conditional(
     columns: Mapping[str, TableColumnConfig],
     data: Sequence[Mapping[str, Any]],  # type-state: explicit_any — query rows
     is_pivot: bool,
-) -> None:
-    """Raise ValueError for a column rule the table cannot paint.
+) -> dict[str, TableColumnConfig]:
+    """``columns`` with each rule's aggregates computed over its column, after
+    refusing a rule the table cannot paint.
 
     A rule's column must be a query column; a pivot's leaf names only exist after
-    render's pivot, so render finds them. A ``tone`` or ``glyph_color`` needs a
-    glyph, which a rule can take from its own key or the column.
+    render's pivot, so render finds them, and no aggregate can read them here. A
+    ``tone`` or ``glyph_color`` needs a glyph, which a rule can take from its own
+    key or the column.
     """
     available = set(data[0]) if data else set()
+    resolved = dict(columns)
     for column, config in columns.items():
         rules = config.conditional
         if not rules:
             continue
+        where = f"style.columns.{column}.conditional"
         if available and not is_pivot and column not in available:
             raise ValueError(
-                f"style.columns.{column}.conditional targets column '{column}' "
+                f"{where} targets column '{column}' "
                 f"which is not in the query result. Available: {sorted(available)}"
             )
         has_glyph = config.glyph or any(rule.glyph is not None for rule in rules)
         if not has_glyph and any(r.glyph_color or r.tone for r in rules):
             raise ValueError(
-                f"style.columns.{column}.conditional sets tone or glyph_color "
+                f"{where} sets tone or glyph_color "
                 f"without a glyph: set glyph in a rule or in style.columns.{column}."
             )
+        if is_pivot:
+            if any(has_aggregate(rule) for rule in rules):
+                raise ValueError(
+                    f"{where}: a pivot table's rule cannot take an aggregate "
+                    "function; name a literal"
+                )
+            continue
+        resolved[column] = config.model_copy(
+            update={
+                "conditional": resolve_rule_aggregates(rules, column, data, where)
+                or None
+            }
+        )
+    return resolved
 
 
-def _validate_row_conditional(
+def _resolve_row_conditional(
     table: TableChartStyle,
     columns: Mapping[str, TableColumnConfig] | None,
     data: Sequence[Mapping[str, Any]],  # type-state: explicit_any — query rows
     is_pivot: bool,
     glyph_columns: Collection[str],
-) -> None:
-    """Raise ValueError for a row rule the table cannot paint.
+) -> TableChartStyle:
+    """``table`` with its row rules' aggregates computed, after refusing a row rule
+    the table cannot paint.
 
     The pivot and transposed layouts rename their columns after resolve, so a rule
     could not find its cells. A tested column may be any query column; a
@@ -208,7 +229,7 @@ def _validate_row_conditional(
     """
     rules = table.row.conditional
     if not rules:
-        return
+        return table
     if is_pivot:
         raise ValueError(
             "style.row.conditional is not supported on a pivot table: its columns "
@@ -219,9 +240,19 @@ def _validate_row_conditional(
             "style.row.conditional is not supported with transpose: true: the rows "
             "become columns. Use style.columns.<col>.conditional."
         )
-    validate_mark_conditional(rules, data, where="style.row.conditional")
+    resolved = table.model_copy(
+        update={
+            "row": table.row.model_copy(
+                update={
+                    "conditional": resolve_mark_conditional(
+                        rules, data, where="style.row.conditional"
+                    )
+                }
+            )
+        }
+    )
     if not data:
-        return
+        return resolved
     shown = {
         name
         for name in data[0]
@@ -248,6 +279,7 @@ def _validate_row_conditional(
                         f"{where} with a {ink} but no glyph: set glyph in the "
                         f"rule's columns.{target} or in style.columns.{target}."
                     )
+    return resolved
 
 
 def _materialize_table_columns(
@@ -909,9 +941,11 @@ def _resolve_table(
     authored_columns = (
         primary.columns if primary is not None and primary.columns else {}
     )
-    _validate_conditional(authored_columns, data, is_pivot=bool(normalized.columns))
+    resolved_authored = _resolve_conditional(
+        authored_columns, data, is_pivot=bool(normalized.columns)
+    )
     table_columns = _materialize_table_columns(
-        primary.columns if primary is not None else None,
+        resolved_authored if primary is not None and primary.columns else None,
         column_defaults_val,
         data,
         normalized.row_role,
@@ -920,7 +954,7 @@ def _resolve_table(
         table_column_rows,
         table.hide_underscore_columns,
     )
-    _validate_row_conditional(
+    table = _resolve_row_conditional(
         table,
         table_columns,
         data,
@@ -965,7 +999,7 @@ def _resolve_table(
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=table.padding,
             legendless=True,
-            wrap_legend=False,
+            wrap_columns=None,
         ),
         **_shared_kwargs(normalized, display_text, chart_local_style_context),
         chart_type="table",

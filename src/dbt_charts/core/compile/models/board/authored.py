@@ -703,7 +703,7 @@ class AuthoredBoard(ConstrainedModel):
     )
     style: Annotated[StylePatch | None, Merge(Strategy.DEEP)] = Field(
         default=None,
-        description="Appearance overrides for this board (background, border, and more). Most fields this board or an ancestor board explicitly authors cascade to nested child boards. Per-board fields (margin, padding): a nested board resolves these against its own theme, never an ancestor's. Root-board-only fields (footer, timestamp): a nested board never draws its own footer or timestamp line, so these never reach it either. background is the one appearance field that never cascades: unset means transparent, not an ancestor's color.",
+        description="Appearance overrides for this board (background, border, and more). Most fields this board or an ancestor board explicitly authors cascade to nested child boards. Per-board fields (margin, padding): a nested board resolves these against its own theme, never an ancestor's. Root-board-only fields (footer, timestamp, comments): a nested board never draws its own footer, timestamp line, or comment highlights, so these never reach it either. background is the one appearance field that never cascades: unset means transparent, not an ancestor's color.",
     )
     width: Annotated[str | int | None, Merge(Strategy.OVERRIDE)] = Field(
         default=None,

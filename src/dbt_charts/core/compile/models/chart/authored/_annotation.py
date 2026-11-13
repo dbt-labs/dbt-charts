@@ -8,7 +8,6 @@ category) depends on the axis it lands on, which resolve knows.
 
 from __future__ import annotations
 
-import re
 from datetime import date, datetime
 from typing import Annotated, Any, ClassVar, Literal
 
@@ -20,6 +19,13 @@ from pydantic import (
     StringConstraints,
 )
 
+from dbt_charts.core.compile.models.aggregate import (
+    AGGREGATE_FUNCTIONS,
+    AggregateAnchor,
+    aggregate_call,
+    call,
+    number,
+)
 from dbt_charts.core.compile.models.constraints import (
     AtLeastOneOf,
     ConstrainedModel,
@@ -38,39 +44,11 @@ from dbt_charts.core.compile.models.style.authored._base import (
     TrendAnnotationStylePatch,
 )
 
-_CALL = re.compile(r"^\s*([A-Za-z_]+)\s*\((.*)\)\s*$")
 _ANCHOR_FUNCTIONS = (
-    "min(), max(), avg(), median(), percentile(<0-100>), now(), "
-    "current(day | week | month | quarter | year)"
+    f"{AGGREGATE_FUNCTIONS}, now(), current(day | week | month | quarter | year)"
 )
 ClockUnit = Literal["day", "week", "month", "quarter", "year"]
 _CLOCK_UNITS: tuple[ClockUnit, ...] = ("day", "week", "month", "quarter", "year")
-
-
-class AggregateAnchor(ConstrainedModel):
-    """A value computed over the plotted rows of the axis column."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
-
-    __constraints__: ClassVar[tuple[Constraint, ...]] = (
-        Requires(
-            ("percent",),
-            "percentile takes a percent.",
-            when=(ValueIn("fn", ("percentile",)),),
-        ),
-        Forbids(
-            ("percent",),
-            "Only percentile takes a percent.",
-            when=(ValueIn("fn", ("percentile",), negate=True),),
-        ),
-    )
-
-    fn: Literal["min", "max", "avg", "median", "percentile"] = Field(
-        description="Which aggregate."
-    )
-    percent: float | None = Field(
-        default=None, ge=0, le=100, description="The percentile, 0 to 100."
-    )
 
 
 class ClockAnchor(ConstrainedModel):
@@ -134,32 +112,17 @@ class IntervalFunction(BaseModel):
     percent: float = Field(gt=0, lt=100, description="Coverage, in percent.")
 
 
-def _call(text: str) -> tuple[str, str] | None:
-    match = _CALL.match(text)
-    return (match.group(1), match.group(2).strip()) if match else None
-
-
-def _number(arg: str, what: str) -> float:
-    try:
-        return float(arg)
-    except ValueError:
-        raise ValueError(f"{what} takes a number, got {arg!r}") from None
-
-
 def _parse_anchor_function(
     value: object,  # type-state: object_annotation — raw YAML
 ) -> object:  # type-state: object_annotation — the field validates it
     """A function call string becomes its typed anchor; anything else passes."""
-    if not isinstance(value, str) or (call := _call(value)) is None:
+    if not isinstance(value, str) or (parsed := call(value)) is None:
         return value
-    name, arg = call
-    if name in ("min", "max", "avg", "median", "now") and not arg:
+    name, arg = parsed
+    if (aggregate := aggregate_call(name, arg)) is not None:
+        return aggregate
+    if name == "now" and not arg:
         return {"fn": name}
-    if name == "percentile" and arg:
-        percent = _number(arg, "percentile()")
-        if not 0 <= percent <= 100:
-            raise ValueError(f"function percentile() takes 0 to 100, got {arg}")
-        return {"fn": name, "percent": percent}
     if name == "current" and arg in _CLOCK_UNITS:
         return {"fn": name, "unit": arg}
     raise ValueError(
@@ -173,9 +136,9 @@ def _parse_fit(
 ) -> object:  # type-state: object_annotation — the field validates it
     if not isinstance(value, str):
         return value
-    call = _call(value)
-    if call is not None:
-        name, arg = call
+    parsed = call(value)
+    if parsed is not None:
+        name, arg = parsed
         if name in ("linear", "exponential", "log", "power") and not arg:
             return {"kind": name}
         if name == "polynomial" and arg.isdigit() and int(arg) >= 2:
@@ -191,11 +154,11 @@ def _parse_interval(
 ) -> object:  # type-state: object_annotation — the field validates it
     if not isinstance(value, str):
         return value
-    call = _call(value)
-    if call is not None and call[0] in ("confidence", "prediction") and call[1]:
-        percent = _number(call[1], f"{call[0]}()")
+    parsed = call(value)
+    if parsed is not None and parsed[0] in ("confidence", "prediction") and parsed[1]:
+        percent = number(parsed[1], f"{parsed[0]}()")
         if 0 < percent < 100:
-            return {"kind": call[0], "percent": percent}
+            return {"kind": parsed[0], "percent": percent}
     raise ValueError(
         f"interval {value!r} is not an interval function; use confidence(<pct>) "
         "or prediction(<pct>), with pct between 0 and 100"

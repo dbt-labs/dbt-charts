@@ -9,6 +9,7 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile
+from dbt_charts.core.compile.engine import engine_compile
 from dbt_charts.core.diagnostics.codes_execute import (
     WARN_SESSION_TIME_ZONE_UNSUPPORTED,
     WARN_SOURCE_TIME_ZONE_OVERRIDDEN,
@@ -97,3 +98,37 @@ def test_a_source_zone_that_differs_from_the_board_warns(
     assert _codes(tmp_path, local_project, source) == [
         WARN_SOURCE_TIME_ZONE_OVERRIDDEN.code
     ]
+
+
+def _engine_codes(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    source: str,
+    zone: str = "America/New_York",
+) -> list[str]:
+    (tmp_path / "dbt_charts.yml").write_text(_SOURCES)
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts/board.yml").write_text(_BOARD.format(zone=zone, source=source))
+    project = local_project(tmp_path)
+    compiled = engine_compile(project.path("charts/board.yml"))
+    return [d["code"] for d in compiled.diagnostics() if "TIME-ZONE" in d["code"]]
+
+
+@pytest.mark.parametrize(
+    ("source", "zone", "codes"),
+    [
+        ("lite", "America/New_York", [WARN_SESSION_TIME_ZONE_UNSUPPORTED.code]),
+        ("lite", "UTC", []),
+        ("duck", "America/New_York", []),
+        ("duck_tokyo", "America/New_York", [WARN_SOURCE_TIME_ZONE_OVERRIDDEN.code]),
+        ("trino_tokyo", "America/New_York", [WARN_SOURCE_TIME_ZONE_OVERRIDDEN.code]),
+    ],
+)
+def test_the_engine_reports_the_source_time_zone_warnings(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    source: str,
+    zone: str,
+    codes: list[str],
+) -> None:
+    assert _engine_codes(tmp_path, local_project, source, zone) == codes

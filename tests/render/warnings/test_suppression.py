@@ -312,7 +312,7 @@ rows:
 
 def _make_executor(board, query_registry):
     backend = ScriptedBackend([{"category": "a", "value": 1}])
-    return Run(board, env=scripted_env(backend), query_registry=query_registry)
+    return Run(board, env=scripted_env(backend))
 
 
 def _fake_detector(code: str, chart_id: str | None = "c") -> ModuleType:

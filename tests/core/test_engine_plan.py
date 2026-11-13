@@ -55,6 +55,7 @@ def compiled(
         cache_root=(True, "24h", False),
         source_caches={},
         implicit_source=None,
+        zones={},
     )
 
 
@@ -132,6 +133,7 @@ def test_a_plan_carries_an_inline_file_source() -> None:
         implicit_source=None,
         cache_root=(True, "24h", False),
         source_caches={},
+        zones={},
         sql=Sqlglot(),
     )
     plan = run_plan(board)
@@ -255,3 +257,29 @@ def test_a_focused_plan_names_the_charts_and_an_unknown_one_raises() -> None:
     with pytest.raises(_engine.RenderDiagnosticError) as raised:
         run_plan(board, only_charts=["nope"])
     assert raised.value.code == "ERR-UNKNOWN-CHART"
+
+
+INLINE = """
+charts:
+  k:
+    type: kpi
+    query:
+      columns: [n]
+      values: [[1]]
+    value: n
+rows:
+  - k
+"""
+
+
+class InlineFiles(Files):
+    def read(self, path: str) -> str | None:
+        return INLINE if path == "a.yml" else None
+
+
+def test_a_chart_on_an_inline_query_names_its_plan_key() -> None:
+    plan = run_plan(compiled(InlineFiles()))
+    key = plan["chart_queries"]["k"]["query"]
+    assert key is not None and key in plan["queries"]
+    assert plan["chart_queries"]["k"]["layers"] == []
+    assert plan["variable_queries"] == {}

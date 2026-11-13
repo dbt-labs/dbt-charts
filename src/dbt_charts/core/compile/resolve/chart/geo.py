@@ -41,14 +41,14 @@ from dbt_charts.core.compile.models.vega_lite.contracts import (
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
     color_legend_entries,
-    legend_row_fits,
+    legend_wrap_columns,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _channels_for,
     _column_numeric_values,
 )
 from dbt_charts.core.compile.resolve.chart._conditional import (
-    validate_mark_conditional,
+    resolve_mark_conditional,
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
@@ -355,7 +355,9 @@ def _resolve_geoshape(
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
     geoshape = merge_unset(board_family_style(chart_style_context, normalized), primary)
-    validate_mark_conditional(geoshape.conditional, data)
+    geoshape = geoshape.model_copy(
+        update={"conditional": resolve_mark_conditional(geoshape.conditional, data)}
+    )
     channels = _channels_for(normalized, data)
     _tf = resolve_title_font(chart_local_style_context, width)
     # The tooltip formats chart.value_field (the choropleth tooltip), which
@@ -376,7 +378,7 @@ def _resolve_geoshape(
             ),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=geoshape.padding,
-            wrap_legend=not legend_row_fits(
+            wrap_columns=legend_wrap_columns(
                 color_legend_entries(
                     channels,
                     data,
@@ -431,7 +433,9 @@ def _resolve_point_map(
             "style.conditional cannot be combined with collapse: a collapsed mark "
             "stands for many rows, so no single row decides its style"
         )
-    validate_mark_conditional(point_map.conditional, data)
+    point_map = point_map.model_copy(
+        update={"conditional": resolve_mark_conditional(point_map.conditional, data)}
+    )
     channels = _channels_for(normalized, data)
     # The point tooltip formats only size_field with tooltip_format -- the
     # color entry gets no format at all, so voting on color would drag an
@@ -508,7 +512,7 @@ def _resolve_point_map(
             ),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=point_map.padding,
-            wrap_legend=not legend_row_fits(
+            wrap_columns=legend_wrap_columns(
                 color_legend_entries(channels, data),
                 width,
                 merge_legend(chart_style_context.legend, point_map.legend),

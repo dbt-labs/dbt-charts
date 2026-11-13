@@ -27,6 +27,7 @@ from dbt_charts.core.execute.env import ExecEnv, build_exec_env
 from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from .._compile import remember
 from .._results import rows_result
 from .._run import Run
 
@@ -116,12 +117,12 @@ def put(
         loaded = load_board(Path(f"{board}.yml"), project)
         assert not isinstance(loaded, BoardFailure)
         variables = {"region": region} if region is not None else {}
+        remember(loaded.board, loaded.board_file.content)
         executor = Run(
             loaded.board,
             env=registry,
-            query_registry=loaded.query_registry,
         )
-        [planned] = plan(executor.ctx, [query], variables)
+        [planned] = plan(executor.under(variables), [query])
         key = planned.cache_key
         slug, name = writer or (board, query)
         cache.put(
@@ -330,6 +331,10 @@ def test_variants_are_limited_to_the_window_and_the_cap_with_an_older_count(
     put: Put,
 ) -> None:
     inside = MAX_CACHED_VARIANTS + 2
+    slices = [*(f"R{i}" for i in range(inside)), "OLD"]
+    (project.root / "charts" / "rev.yml").write_text(
+        _REVENUE.replace("[US, EU, APAC]", f"[US, EU, APAC, {', '.join(slices)}]")
+    )
     for i in range(inside):
         put(timedelta(hours=i + 1), f"R{i}")
     put(timedelta(days=CACHED_WINDOW_DAYS + 2), "OLD")

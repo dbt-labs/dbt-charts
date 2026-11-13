@@ -280,12 +280,19 @@ LabelAnchor = Literal["first", "last", "min", "max"]
 
 
 def label_anchors(
-    visible: bool | Literal["last"] | list[LabelAnchor] | None,
+    visible: bool | Literal["auto", "last"] | list[LabelAnchor] | None,
 ) -> frozenset[LabelAnchor]:
     """The anchors a ``labels.visible`` value names; empty when it names none."""
     if visible == "last":
         return frozenset({"last"})
     return frozenset(visible) if isinstance(visible, list) else frozenset()
+
+
+def labels_drawn(
+    visible: bool | Literal["auto", "last"] | list[LabelAnchor] | None,
+) -> bool:
+    """Whether a ``labels.visible`` value labels marks: ``auto`` and ``false`` draw none."""
+    return visible not in (None, False, "auto")
 
 
 def _unique_anchors(anchors: list[LabelAnchor]) -> list[LabelAnchor]:
@@ -306,7 +313,7 @@ class MarkLabelsStyle(BaseModel):
     # Cascade tier sentinel: None means "not specified at this tier".
     visible: (
         bool
-        | Literal["last"]
+        | Literal["auto", "last"]
         | Annotated[
             list[LabelAnchor], Field(min_length=1), AfterValidator(_unique_anchors)
         ]
@@ -315,6 +322,8 @@ class MarkLabelsStyle(BaseModel):
         default=None,
         description=(
             "Show numeric value labels on every mark or on listed anchors. "
+            "`auto` is the theme default: no labels, except a bar too short to "
+            "see keeps its zero label, which `false` hides too. "
             "Anchors are `first`, `last`, `min`, `max`, per series; a tie "
             "labels every tied mark. A stacked bar's anchors pick stacks and "
             "print their totals; a grouped bar takes none. `first` and `last` "
@@ -430,6 +439,19 @@ class BarLabelsStyle(MarkLabelsStyle):
             "plain bars keep their labels either way."
         ),
     )
+    template: Annotated[
+        str | None,
+        AfterValidator(validate_label_template),
+        Absent("the value, formatted"),
+    ] = Field(
+        default=None,
+        description=(
+            "Jinja2 label template, like a pie's. Its names are the row's columns and "
+            "`value`, the bar's measure; on bars joined by ribbons `percent` is the "
+            "value as a share of the first stage's. `value` and `percent` replace a same-named "
+            "column. Without one the label prints the formatted value."
+        ),
+    )
 
 
 class PointLabelsStyle(MarkLabelsStyle):
@@ -454,6 +476,49 @@ class PointLabelsStyle(MarkLabelsStyle):
             "'right' to the right. "
             "'middle' centers on the point."
         ),
+    )
+
+
+class RibbonLabelsStyle(BaseModel):
+    """Labels on a funnel's ribbons: what each stage lost since the one before."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Cascade tier sentinel: None means "not specified at this tier".
+    visible: bool | None = Field(
+        default=None,
+        description="Label each ribbon. Funnel only; any other chart refuses it.",
+    )
+    template: Annotated[
+        str | None,
+        AfterValidator(validate_label_template),
+        Absent("no label text"),
+    ] = Field(
+        default=None,
+        description=(
+            "Jinja2 label template, like a pie's. Its names are the columns of the "
+            "row the ribbon flows into, `value`, that stage's value less the "
+            "previous stage's (negative for a loss), and `percent`, that change as "
+            "a share of the previous stage's value. `value` and `percent` replace a "
+            "same-named column. The label uses the bar value labels' font."
+        ),
+    )
+
+
+class BarRibbonsStyle(BaseModel):
+    """Ribbons joining each bar, or stacked segment, to the next category's."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Cascade tier sentinel: None means "not specified at this tier".
+    visible: bool | None = Field(
+        default=None,
+        description="Join each bar or segment to its series in the next category.",
+    )
+    # SkipInheritSlots(cascade=True): leaf fields inside labels inherit individually.
+    labels: Annotated[RibbonLabelsStyle, SkipInheritSlots(cascade=True)] = Field(
+        default_factory=RibbonLabelsStyle,
+        description="Labels on the ribbons. Funnel only.",
     )
 
 
@@ -551,6 +616,11 @@ class BarMarkStyle(BaseModel):
             "Stack total label style. Only takes effect on stacked bar charts; "
             "ignored otherwise."
         ),
+    )
+    # SkipInheritSlots(cascade=True): leaf `visible` inherits individually.
+    ribbons: Annotated[BarRibbonsStyle, SkipInheritSlots(cascade=True)] = Field(
+        default_factory=BarRibbonsStyle,
+        description="Ribbons joining each bar, or stacked segment, to the next.",
     )
 
 

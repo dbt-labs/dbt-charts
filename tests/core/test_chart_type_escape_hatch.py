@@ -52,7 +52,7 @@ def test_compiledchart_rejects_unknown_type_name():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        TypeAdapter(Chart).validate_python({"id": "x", "type": "funnel"})
+        TypeAdapter(Chart).validate_python({"id": "x", "type": "gauge"})
 
     with pytest.raises(ValidationError):
         TypeAdapter(Chart).validate_python({"id": "x", "type": "my_custom_chart"})

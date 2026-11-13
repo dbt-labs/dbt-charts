@@ -225,14 +225,17 @@ with `--org <org>`:
     flow below.
   - **Fails, including a network failure that couldn't confirm public**, or
     the user wants Cloud to push and open PRs: the App flow, `dct cloud
-    project connect github` with no URL. `--start` prints an install/pick URL
-    and returns immediately, no backgrounding needed. `--start` and `--wait`
-    are one inseparable unit, not two steps split across other work: hand
-    over the URL, then immediately run `--wait` in the same turn, before Step
-    4 and before any board authoring. The project does not exist in Cloud
-    until `--wait` completes — running `--start` and moving on leaves the
-    connect silently unfinished, and `dct cloud status` stays
-    `missing_project` until someone notices and re-runs `--wait`.
+    project connect github` with no URL. It names this checkout's repository
+    itself. With `gh` signed in (Before you start) and the GitHub App
+    already covering the repo, it verifies the repo with that login and
+    there is no browser step. Otherwise `--start` prints a
+    URL and returns immediately, no backgrounding needed. `--start` and
+    `--wait` are one inseparable unit, not two steps split across other work:
+    hand over the URL (if there is one), then immediately run `--wait` in the
+    same turn, before Step 4 and before any board authoring. The project does
+    not exist in Cloud until `--wait` completes — running `--start` and
+    moving on leaves the connect silently unfinished, and `dct cloud status`
+    stays `missing_project` until someone notices and re-runs `--wait`.
   - A user who cannot install the App can instead supply a fine-grained
     personal access token: `dct cloud project connect github --org <org>
     --git-url https://github.com/<owner>/<repo>` with `DCT_GIT_TOKEN` set.
@@ -241,19 +244,21 @@ with `--org <org>`:
   URL=$(dct cloud project connect github --org <org> --start)
   ```
 
-  Hand `$URL` to the user, then right away, still in this turn:
+  An empty `$URL` means `gh` already verified the repo: go straight to
+  `--wait`. Otherwise hand `$URL` to the user, who authorizes GitHub and
+  installs the App, then right away, still in this turn:
 
   ```bash
   dct cloud project connect github --wait
   ```
 
-  This blocks until the pick lands (it prints `Connected`), then returns,
+  This blocks until the connect lands (it prints `Connected`), then returns,
   so you continue on your own, don't ask the user to tell you when they're
-  done. If the App already covers the repo, the pick is a single click. The
-  page after the pick tells the user to come back to the terminal; nothing
-  on it needs pressing. If `--wait` times out, run it again: the pick has
-  no expiry of its own, so it resumes the same pending connect rather than
-  needing a fresh `--start`.
+  done. There is nothing to pick: the page after the browser step tells the
+  user to come back to the terminal, and nothing on it needs pressing. If
+  `--wait` times out, run it again: it resumes the same pending connect
+  rather than needing a fresh `--start`. `--repo OWNER/NAME` names another
+  repository; `--no-gh` skips the `gh` login.
 
 A successful connect records where the project now lives — `published_to:
 "https://<host>/<org>/<project>/"` — in the repo's `dbt_charts.yml`, and

@@ -28,6 +28,18 @@ def test_theme_provides_the_switch_board_wide() -> None:
     assert isinstance(resolved.chart_defaults.hover_emphasis.visible, bool)
 
 
+@pytest.mark.parametrize("theme", _PRODUCTION_THEMES)
+def test_theme_resolves_two_distinct_comment_tints(theme: str) -> None:
+    """Both highlight tints are palette tokens every theme resolves to a color;
+    which colors is the theme's business."""
+    from dbt_charts.core.colors import is_sanitizable_color
+
+    comments = resolve_style(get_theme_style(theme)).comments
+    assert is_sanitizable_color(comments.highlight)
+    assert is_sanitizable_color(comments.highlight_new)
+    assert comments.highlight != comments.highlight_new
+
+
 def test_every_theme_recedes_to_the_same_contrast_target() -> None:
     targets = {
         get_theme_style(theme).charts.hover_emphasis.recede_contrast

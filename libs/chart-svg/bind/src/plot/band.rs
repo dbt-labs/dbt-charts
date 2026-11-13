@@ -134,7 +134,7 @@ mod tests {
 
     fn keys_of(rows: &[Map<String, Value>], declared: &ColumnType) -> Vec<Key> {
         let schema = ColumnTypes(HashMap::from([("c".to_string(), declared.clone())]));
-        let dataset = Dataset { rows: rows.to_vec().into(), schema };
+        let dataset = Dataset { rows: rows.to_vec().into(), schema, cell_text: Vec::new() };
         decode(&dataset).unwrap().keys("c").unwrap().to_vec()
     }
 

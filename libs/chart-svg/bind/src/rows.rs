@@ -3,26 +3,9 @@
 
 use std::borrow::Cow;
 
-use column_types::ColumnTypes;
+use column_types::{CellRow, CellTag, CellText, ColumnTypes};
 use serde::Deserialize;
 use serde_json::Value;
-
-/// What the wire tagged on one cell: the Python `str()` of the value, and the
-/// non-finite float a `null` stands for (`None` for a Decimal).
-#[derive(Clone, Debug, PartialEq)]
-pub struct CellTag {
-    pub text: String,
-    pub non_finite: Option<f64>,
-}
-
-/// The tags of one row's tagged cells, keyed by column.
-pub type CellRow = std::collections::BTreeMap<String, CellTag>;
-
-/// Per-row tags of the cells the wire tagged (`{"decimal": text}`,
-/// `{"non_finite": kind, "text": text}`). A pivot labels its dimension columns
-/// with the text, and KPI and spark_bar print a non-finite cell's text;
-/// everything else reads the decoded number.
-pub type CellText = Vec<CellRow>;
 
 /// The tag of the cell at `row`, `column`, if the wire tagged it.
 pub fn tag_at<'a>(tags: &'a [CellRow], row: usize, column: &str) -> Option<&'a CellTag> {

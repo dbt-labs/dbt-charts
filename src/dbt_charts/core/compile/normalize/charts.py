@@ -27,6 +27,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     AuthoredChart,
     CalloutChart as AuthoredCalloutChart,
     CartesianLayer,
+    ChartSupportTablePercent,
     CustomChart as AuthoredCustomChart,
     _BaseChartFields,
 )
@@ -78,7 +79,10 @@ from dbt_charts.core.compile.template.jinja import (
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_CUSTOM_FIELDS,
     ERR_CUSTOM_TEMPLATE,
+    ERR_FUNNEL_LABEL_POSITION,
+    ERR_FUNNEL_MULTIPLE_MEASURES,
     ERR_MULTIPLES_SELF_CROSSED,
+    ERR_PERCENT_ENTRY_NOT_FUNNEL,
 )
 
 _AUTHORED_CHART_ADAPTER: TypeAdapter[AuthoredChart] = TypeAdapter(AuthoredChart)
@@ -229,6 +233,28 @@ def normalize_chart(
     is_donut = chart_type == "donut"
     if is_donut:
         chart_type = "pie"
+
+    # --- Funnel: a bar the theme's funnel recipe styles ---
+    if chart_type == "funnel":
+        if isinstance(authored.y, list):
+            raise CompilationError.from_code(
+                ERR_FUNNEL_MULTIPLE_MEASURES, chart_id=chart_id
+            )
+        # The authored patch, not the merged style: the funnel's own default is `middle`.
+        # A cohort funnel (`color:`) labels its segments as a stack, which honors position.
+        marks = authored.style.marks if authored.style is not None else None
+        bar_marks = marks.bar if marks is not None else None
+        labels = bar_marks.labels if bar_marks is not None else None
+        if (
+            authored.color is None
+            and labels is not None
+            and labels.position not in (None, "middle")
+        ):
+            raise CompilationError.from_code(
+                ERR_FUNNEL_LABEL_POSITION,
+                chart_id=chart_id,
+                position=labels.position,
+            )
 
     # --- Display text: the variables and queries it reads ---
     display_text_list = list(display_texts(authored, chart_type).values())
@@ -401,7 +427,7 @@ def normalize_chart(
 
     # --- Dispatch by type ---
     match chart_type:
-        case "bar" | "histogram":
+        case "bar" | "histogram" | "funnel":
             return _build_cartesian(
                 BarChart,
                 base,
@@ -724,6 +750,16 @@ def _build_cartesian(
         promo_min_height = authored_style.min_height
         promo_max_height = authored_style.max_height
     support_table = authored.support_table
+    if support_table is not None and authored.type != "funnel":
+        shares = [
+            entry.percent
+            for entry in support_table.entries
+            if isinstance(entry, ChartSupportTablePercent)
+        ]
+        if shares:
+            raise CompilationError.from_code(
+                ERR_PERCENT_ENTRY_NOT_FUNNEL, chart_id=chart_id, column=shares[0]
+            )
     layers = extra.get("layers")
     if layers and query_registry is not None:
         _promote_layer_inline_queries(
@@ -805,6 +841,7 @@ def _promote_layer_inline_queries(
 _AUTHORED_FAMILY_TO_MONOLITHIC_KEY: dict[str, str] = {
     "bar": "bar",
     "histogram": "bar",
+    "funnel": "bar",
     "line": "line",
     "area": "area",
     "scatter": "scatter",

@@ -98,7 +98,6 @@ class TestWarmRenderSkipsMaterializer:
         ex1 = Run(
             board,
             env=_registry(project, file_materializer=mat1),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         rows1 = ex1.execute_query("q")
@@ -110,7 +109,6 @@ class TestWarmRenderSkipsMaterializer:
         ex2 = Run(
             board,
             env=_registry(project, file_materializer=mat2),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         rows2 = ex2.execute_query("q")
@@ -127,7 +125,6 @@ class TestWarmRenderSkipsMaterializer:
         ex1 = Run(
             board,
             env=_registry(project, file_materializer=mat1),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         rows1 = ex1.execute_query("q")
@@ -143,7 +140,6 @@ class TestWarmRenderSkipsMaterializer:
         ex2 = Run(
             board,
             env=_registry(project, file_materializer=mat2),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         rows2 = ex2.execute_query("q")
@@ -168,7 +164,6 @@ class TestSourceVersionMemoizedMidRender:
         ex = Run(
             board,
             env=_registry(project, file_materializer=mat),
-            query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
         )
         ex.execute_query("q")
@@ -232,7 +227,6 @@ class TestMultiFileSource:
         ex1 = Run(
             board,
             env=_registry(project, file_materializer=mat1),
-            query_registry={"j": board.queries["j"]},
             result_cache=result_cache,
         )
         assert [r["name"] for r in ex1.execute_query("j")] == ["Alice", "Bob"]
@@ -247,7 +241,6 @@ class TestMultiFileSource:
         ex2 = Run(
             board,
             env=_registry(project, file_materializer=mat2),
-            query_registry={"j": board.queries["j"]},
             result_cache=result_cache,
         )
         assert [r["name"] for r in ex2.execute_query("j")] == ["Alice", "Robert"]
@@ -270,7 +263,6 @@ class TestLazySharedMaterializer:
         ex1 = Run(
             board,
             env=_registry(project, file_materializer_factory=_factory),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         ex1.execute_query("q")
@@ -281,7 +273,6 @@ class TestLazySharedMaterializer:
         ex2 = Run(
             board,
             env=_registry(project, file_materializer_factory=_factory),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         ex2.execute_query("q")
@@ -363,7 +354,7 @@ class TestRenderPathComposesFileSourceQueries:
         composed: list[str] = []
 
         def spy(*args: Any, **kwargs: Any) -> Any:
-            composed.append(args[0])
+            composed.append(kwargs["sql"])
             return compose_file_source(*args, **kwargs)
 
         monkeypatch.setattr(run_stage, "compose_file_source", spy)
@@ -372,7 +363,6 @@ class TestRenderPathComposesFileSourceQueries:
         executor = Run(
             board,
             env=_registry(project),
-            query_registry={"q": board.queries["q"]},
         )
 
         rows = executor.execute_query("q")
@@ -415,7 +405,6 @@ class TestRouteFollowsTheResolvedSource:
         executor = Run(
             board,
             env=_registry(FilesystemProject(tmp_path)),
-            query_registry={"q": board.queries["q"]},
         )
 
         assert executor.execute_query("q") == [{"n": 7}]
@@ -440,7 +429,6 @@ class TestRouteFollowsTheResolvedSource:
         executor = Run(
             board,
             env=registry,
-            query_registry={"q": board.queries["q"]},
         )
 
         assert executor.execute_query("q") == [{"n": 7}]

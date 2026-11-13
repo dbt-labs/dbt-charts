@@ -16,6 +16,7 @@ HOST = {
     "cache_root": (True, "24h", False),
     "source_caches": {},
     "implicit_source": None,
+    "zones": {},
 }
 
 
@@ -71,6 +72,7 @@ def test_the_handle_exposes_no_board_model() -> None:
         "diagnostics",
         "host_facts_json",
         "index_json",
+        "validate_findings",
     ]
 
 

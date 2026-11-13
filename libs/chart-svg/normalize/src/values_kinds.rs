@@ -73,9 +73,11 @@ fn check(path: &str, values: &[Cell]) -> Result<(), Diagnostic> {
                         Kind::Seq(nodes) => Some(nodes),
                         _ => None,
                     });
-                    v.as_array().into_iter().flatten().enumerate().map(move |(i, item)| {
-                        (item, nodes.and_then(|nodes| nodes.get(i)))
-                    })
+                    v.as_array()
+                        .into_iter()
+                        .flatten()
+                        .enumerate()
+                        .map(move |(i, item)| (item, nodes.and_then(|nodes| nodes.get(i))))
                 })
                 .filter(|(i, _)| !i.is_null())
                 .collect();

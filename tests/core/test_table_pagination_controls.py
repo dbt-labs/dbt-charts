@@ -82,7 +82,9 @@ class TestAutoShrinkOverridesTruncationFooter:
             x=None,
             y=None,
             id="autoshrink",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 20}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 20}
+            ),
         )
         data = _make_data(30)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -187,7 +189,9 @@ class TestPaginationControlsInSvg:
             x=None,
             y=None,
             id="details",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -214,7 +218,9 @@ class TestPaginationControlsInSvg:
             x=None,
             y=None,
             id="small_table",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 50}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 50}
+            ),
         )
         data = _make_data(10)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -262,7 +268,9 @@ class TestPaginationControlsInSvg:
             x=None,
             y=None,
             id="paged",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -295,7 +303,9 @@ class TestPaginationControlsInSvg:
             x=None,
             y=None,
             id="nav_test",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -332,7 +342,9 @@ class TestPaginationControlsInSvg:
             x=None,
             y=None,
             id="first_page",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -363,7 +375,9 @@ class TestPaginationControlsInSvg:
             x=None,
             y=None,
             id="last_page",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -396,7 +410,9 @@ class TestPaginationControlsInSvg:
             x=None,
             y=None,
             id="stale",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -430,7 +446,9 @@ class TestPaginationControlsInSvg:
             x=None,
             y=None,
             id="indicator",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 10}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 10}
+            ),
         )
         data = _make_data(30)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -470,7 +488,9 @@ class TestPaginationControlsInSvg:
             x=None,
             y=None,
             id="tab",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -497,7 +517,9 @@ class TestPaginationControlsInSvg:
             x=None,
             y=None,
             id="ra",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         table_width = 600.0
@@ -552,9 +574,17 @@ class TestPaginationViewBoxContainment:
         allotted height only fits 11 rows + pagination. Pagination must
         appear and stay within viewBox.
         """
+        from dbt_charts.core.compile.models.style.authored import (
+            TableChartStylePatch,
+        )
+
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", id="ht_lim")
+        chart = make_chart(
+            "table",
+            id="ht_lim",
+            style=TableChartStylePatch(pagination={"mode": "pages"}),
+        )
         chart.title = "Most Visited Museums"
         chart.subtitle = "C1 — Auto-sized, no column config"
         data = _make_data(12)
@@ -594,7 +624,7 @@ class TestPaginationViewBoxContainment:
         chart = make_chart(
             "table",
             id="ps_lim",
-            style={"pagination": {"enabled": True, "page_rows": 5}},
+            style={"pagination": {"enabled": True, "mode": "pages", "page_rows": 5}},
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -635,7 +665,9 @@ class TestStaticMultiPagePagination:
             x=None,
             y=None,
             id="static1",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -660,7 +692,9 @@ class TestStaticMultiPagePagination:
             x=None,
             y=None,
             id="static2",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)  # 4 pages of 5
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -694,7 +728,9 @@ class TestStaticMultiPagePagination:
             x=None,
             y=None,
             id="static3",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -725,7 +761,9 @@ class TestStaticMultiPagePagination:
             x=None,
             y=None,
             id="static4",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -748,7 +786,9 @@ class TestStaticMultiPagePagination:
             x=None,
             y=None,
             id="static5",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 50}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 50}
+            ),
         )
         data = _make_data(10)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -781,7 +821,9 @@ class TestStaticMultiPagePagination:
             x=None,
             y=None,
             id="static_cap",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(n_rows)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -821,7 +863,9 @@ class TestStaticMultiPagePagination:
             x=None,
             y=None,
             id="static_cap3",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(n_rows)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -853,7 +897,9 @@ class TestStaticMultiPagePagination:
             x=None,
             y=None,
             id="static_uncapped",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)  # 4 pages — well under the cap
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -901,7 +947,7 @@ class TestStaticMultiPagePagination:
                 id="static_gap",
                 row_role="kind",
                 style=TableChartStylePatch(
-                    pagination={"enabled": True, "page_rows": 5},
+                    pagination={"enabled": True, "mode": "pages", "page_rows": 5},
                 ),
             )
             resolved = resolve(chart, rows, chart_style_context=_BOARD_STYLE)
@@ -947,7 +993,9 @@ class TestStripPaginationChrome:
             x=None,
             y=None,
             id="raster1",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+            ),
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -981,7 +1029,9 @@ class TestStripPaginationChrome:
             x=None,
             y=None,
             id="raster2",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 50}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 50}
+            ),
         )
         data = _make_data(10)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -1014,7 +1064,9 @@ class TestPaginatorRowRangeLabel:
             x=None,
             y=None,
             id="labeled",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 10}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 10}
+            ),
         )
         data = _make_data(50)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -1043,7 +1095,9 @@ class TestPaginatorRowRangeLabel:
             x=None,
             y=None,
             id="tail",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 20}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 20}
+            ),
         )
         data = _make_data(41)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -1085,7 +1139,9 @@ class TestPaginatorRowRangeLabel:
             x=None,
             y=None,
             id="labeled",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 10}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 10}
+            ),
         )
         data = _make_data(50)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -1118,7 +1174,9 @@ class TestPaginatorRowRangeLabel:
             x=None,
             y=None,
             id="labeled",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 10}),
+            style=TableChartStylePatch(
+                pagination={"enabled": True, "mode": "pages", "page_rows": 10}
+            ),
         )
         data = _make_data(50)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -1158,7 +1216,7 @@ class TestPooledPagerFollowsItsPage:
             y=None,
             id="wobble",
             style=TableChartStylePatch(
-                pagination={"enabled": True, "page_rows": 5},
+                pagination={"enabled": True, "mode": "pages", "page_rows": 5},
                 columns={"note": {"width": 60, "visible": True}},
             ),
         )
@@ -1233,7 +1291,9 @@ def test_a_live_paginator_over_the_row_pool_cap_publishes_its_variable(
         x=None,
         y=None,
         id="live1",
-        style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+        style=TableChartStylePatch(
+            pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+        ),
     )
     data = _make_data(1001)
     chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -1259,7 +1319,9 @@ def test_a_pooled_table_carries_the_board_languages_menu_words(make_chart) -> No
         x=None,
         y=None,
         id="t1",
-        style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+        style=TableChartStylePatch(
+            pagination={"enabled": True, "mode": "pages", "page_rows": 5}
+        ),
     )
     data = _make_data(12)
     chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)

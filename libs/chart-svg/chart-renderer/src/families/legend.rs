@@ -32,8 +32,9 @@ pub struct LegendConfig {
     #[serde(deserialize_with = "legend_position")]
     pub position: LegendPosition,
     pub direction: String,
-    /// The resolver's compact-mode wrap (`_kwargs.py`: `compact_columns`
-    /// when the card is too narrow for one row, else 0 — one row).
+    /// The resolver's wrap (`_axes.py`: `legend_wrap_columns`, the most
+    /// columns the measured labels fit, when the card is too narrow for one
+    /// row, else 0 — one row).
     #[serde(default)]
     pub columns: Option<u32>,
     /// The wrap [`limited_labels`] found a top or bottom legend needs once its labels were measured
@@ -884,10 +885,9 @@ pub fn legend_room(cfg: &LegendConfig, span: f64) -> Option<f64> {
 const MIN_FIT_LABEL_LIMIT: f64 = 40.0;
 
 /// Each entry's label as it is drawn: cut with an ellipsis at `labelLimit`. Where the legend has
-/// only `room` px and its entries do not fit one row, it wraps into the most columns that fit
-/// (recorded in `cfg.fitted_columns`; an authored `columns` is kept), and only when even one
-/// entry per row is too wide are labels cut, at the widest limit that fits (never under
-/// [`MIN_FIT_LABEL_LIMIT`]).
+/// only `room` px and its entries do not fit, it wraps into the most columns that fit, never more
+/// than a set `columns` (recorded in `cfg.fitted_columns`), and only when even one entry per row
+/// is too wide are labels cut, at the widest limit that fits (never under [`MIN_FIT_LABEL_LIMIT`]).
 pub fn limited_labels(
     entries: &[LegendEntry],
     mixed_marks: bool,
@@ -910,8 +910,12 @@ pub fn limited_labels(
     if fits(theme_limit)? {
         return cut(theme_limit);
     }
-    if cfg.direction == "horizontal" && cfg.columns.unwrap_or(0) == 0 {
-        for columns in (1..entries.len() as u32).rev() {
+    if cfg.direction == "horizontal" {
+        let most = match cfg.columns {
+            Some(set) if set > 0 => set - 1,
+            _ => (entries.len() as u32).saturating_sub(1),
+        };
+        for columns in (1..=most).rev() {
             cfg.fitted_columns.set(Some(columns));
             if fits(theme_limit)? {
                 return cut(theme_limit);
@@ -1013,7 +1017,7 @@ pub fn vega_legend(
 /// in one row (0) for a horizontal one. Production forwards only a positive
 /// count (`legend_to_vl`, `vl_field_maps.py:1050-1051`).
 pub fn entry_columns(cfg: &LegendConfig) -> usize {
-    match cfg.columns.filter(|&columns| columns > 0).or(cfg.fitted_columns.get()) {
+    match cfg.fitted_columns.get().or(cfg.columns.filter(|&columns| columns > 0)) {
         Some(columns) => columns as usize,
         None => usize::from(cfg.direction == "vertical"),
     }
@@ -2015,6 +2019,24 @@ mod tests {
             "title": {"font": {"family": TEST_FONT}, "visible": false},
         }))
         .unwrap()
+    }
+
+    /// A set column count too wide for the room drops columns before it cuts a
+    /// label: every name is drawn in full in the most columns that fit.
+    #[test]
+    fn a_set_column_count_too_wide_for_the_room_drops_columns_before_cutting() {
+        let fonts = test_fonts();
+        let labels = ["Customer Solutions Group", "Internal Operations General", "Business Intelligence", "Developer Experience", "Strategy & Operations", "Customer Support"];
+        let entries: Vec<LegendEntry> = labels
+            .iter()
+            .map(|label| LegendEntry { label, fill: "#000", symbol: None, series_key: None, recede: None, action: None })
+            .collect();
+        let mut cfg = legend_cfg("horizontal", Some(6));
+        cfg.position.edge = "top".into();
+        let drawn = limited_labels(&entries, false, "", &cfg, &fonts, Some(420.0)).unwrap();
+        assert_eq!(drawn, labels);
+        let fitted = cfg.fitted_columns.get().unwrap();
+        assert!((1..6).contains(&fitted), "{fitted}");
     }
 
     /// `entryColumns` (vega-parser `guides/guide-util.js:23-26`): the

@@ -59,7 +59,6 @@ def test_a_local_cache_entry_written_under_one_version_misses_under_the_next(
             Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             ).execute_query("q")
 

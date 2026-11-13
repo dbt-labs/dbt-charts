@@ -138,7 +138,6 @@ def test_a_cache_hit_returns_the_schema_the_miss_wrote() -> None:
             return Run(
                 compiled.board,
                 env=adapter,
-                query_registry=compiled.query_registry,
                 result_cache=cache,
             ).execute_query_result("q")
 

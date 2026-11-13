@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 
+use diagnostic::Diagnostic;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -77,13 +78,13 @@ pub(crate) fn patch_of(
     rules: Option<&BTreeMap<String, Vec<PointRule>>>,
     row: &Map<String, Value>,
     measures: &[String],
-) -> Result<PointPatch, String> {
+) -> Result<PointPatch, Diagnostic> {
     let mut patch = PointPatch::default();
     for (column, column_rules) in rules.into_iter().flatten() {
         if crate::conditional::other_series(row, column, measures) {
             continue;
         }
-        for rule in crate::conditional::matching(column_rules, |r| &r.predicate, row.get(column))? {
+        for rule in crate::conditional::matching(column_rules, |r| &r.predicate, column, row.get(column))? {
             let Some(marks) = &rule.marks else { continue };
             if let Some(point) = &marks.point {
                 patch.color = point.color.clone().or(patch.color);
@@ -99,7 +100,7 @@ pub(crate) fn patch_of(
                 if let Some(weight) = &font.weight {
                     let css = crate::families::table::bind::font_weight_as_css(weight);
                     if !crate::families::table::VALID_FONT_WEIGHTS.contains(&css.as_str()) {
-                        return Err(format!("point: conditional font weight {css:?} is not a CSS weight"));
+                        return Err(format!("point: conditional font weight {css:?} is not a CSS weight").into());
                     }
                     patch.label_weight = Some(css);
                 }

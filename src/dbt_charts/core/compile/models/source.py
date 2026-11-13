@@ -2115,3 +2115,14 @@ def source_cache_layer(
     if isinstance(config, BaseSourceConfig):
         return validate_cache_layer(scope, config.cache)
     return None
+
+
+def authored_time_zone(config: SourceConfig) -> str | None:
+    """The time zone a parsed source sets for its own session, if its type has one."""
+    if isinstance(config, TrinoSourceConfig):
+        return config.timezone
+    if isinstance(config, DuckDBSourceConfig) and config.settings:
+        for key, value in config.settings.items():
+            if key.lower() == "timezone":
+                return str(value)
+    return None

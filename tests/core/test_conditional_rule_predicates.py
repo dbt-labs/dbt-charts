@@ -548,3 +548,52 @@ class TestMatchPredicateCsvStringCoercion:
         assert match_predicate(rule, "nan") is False
         assert match_predicate(rule, float("inf")) is False
         assert match_predicate(rule, float("nan")) is False
+
+
+class TestDateOperands:
+    def test_yaml_date_operand_compares_iso_cells_by_date(self) -> None:
+        from datetime import date
+
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            match_predicate,
+        )
+
+        rule = ConditionalPredicate.model_validate({"gt": date(2026, 1, 1)})
+        assert match_predicate(rule, "2026-01-02") is True
+        assert match_predicate(rule, "2025-12-31") is False
+        assert match_predicate(rule, date(2026, 3, 1)) is True
+        assert match_predicate(rule, None) is False
+
+    def test_date_between_is_inclusive(self) -> None:
+        from datetime import date
+
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            match_predicate,
+        )
+
+        rule = ConditionalPredicate.model_validate(
+            {"between": [date(2026, 1, 1), date(2026, 1, 31)]}
+        )
+        assert match_predicate(rule, "2026-01-31") is True
+        assert match_predicate(rule, "2026-02-01T00:00:00") is False
+
+    def test_date_rule_refuses_a_non_date_cell(self) -> None:
+        from datetime import date
+
+        from dbt_charts.core.compile.models.conditional_predicate import (
+            match_predicate,
+        )
+
+        rule = ConditionalPredicate.model_validate({"lt": date(2026, 1, 1)})
+        with pytest.raises(ValueError, match="not a date"):
+            match_predicate(rule, 42)
+
+    def test_between_refuses_mixed_number_and_date(self) -> None:
+        from datetime import date
+
+        with pytest.raises(ValidationError):
+            ConditionalPredicate.model_validate({"between": [0, date(2026, 1, 1)]})
+
+    def test_between_refuses_a_quoted_mix(self) -> None:
+        with pytest.raises(ValidationError, match="not a mix"):
+            ConditionalPredicate.model_validate({"between": ["1", "2026-01-01"]})

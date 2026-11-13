@@ -28,6 +28,7 @@ class ChartType(StrEnum):
     PIE = "pie"  # -> arc
     DONUT = "donut"  # -> pie styled by charts.donut (normalized alias)
     HISTOGRAM = "histogram"  # -> bar + binning
+    FUNNEL = "funnel"  # -> centered horizontal bar with ribbons (normalized alias)
     MAP = "map"  # -> geoshape (generic map)
     POINT_MAP = "point_map"  # -> circle marks with lat/lng
     BUBBLE_MAP = "bubble_map"  # -> circle marks with size encoding
@@ -52,6 +53,7 @@ CHART_TYPE_DISPLAY: dict[ChartType, dict[str, str]] = {
     ChartType.PIE: {"label": "Pie", "icon": "🥧"},
     ChartType.DONUT: {"label": "Donut", "icon": "🍩"},
     ChartType.HISTOGRAM: {"label": "Histogram", "icon": "📊"},
+    ChartType.FUNNEL: {"label": "Funnel", "icon": "⏬"},
     ChartType.MAP: {"label": "Map", "icon": "🗺️"},
     ChartType.POINT_MAP: {"label": "Point Map", "icon": "📍"},
     ChartType.BUBBLE_MAP: {"label": "Bubble Map", "icon": "🫧"},

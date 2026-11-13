@@ -62,6 +62,7 @@
   "controls.selection_summary": "({n}) {first}",
   "controls.show_all": "Tümünü göster",
   "controls.show_only_selected": "Yalnızca seçilenleri göster ({n})",
+  "controls.options_truncated": "{total} değerden {shown} tanesi gösteriliyor. Daha fazlası için arayın.",
   "controls.sort": "Sırala",
   "controls.sort_count_ascending": "Sayıya göre sırala, düşük → yüksek",
   "controls.sort_count_descending": "Sayıya göre sırala, yüksek → düşük",

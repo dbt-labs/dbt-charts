@@ -1843,7 +1843,7 @@ _CROSS_BOARD_QUERY_PREFIX = "_ximport_"
 
 class ImportedQueries(dict[str, AnyQuery]):
     """The pool imported charts' queries resolve into, keyed by
-    `_cross_board_query_key`. `origin` names the `file#name` that first took
+    `cross_board_query_key`. `origin` names the `file#name` that first took
     each key, so a second import sanitizing to it is refused by name."""
 
     def __init__(self) -> None:
@@ -1851,7 +1851,7 @@ class ImportedQueries(dict[str, AnyQuery]):
         self.origin: dict[str, str] = {}
 
 
-def _cross_board_query_key(file_relpath: str, name: str) -> str:
+def cross_board_query_key(file_relpath: str, name: str) -> str:
     """Identifier-safe key for a query pulled in by lexical
     scoping from a cross-board chart import (see compile/AGENTS.md's
     "Cross-board chart imports scope queries lexically" invariant). Like
@@ -1955,7 +1955,7 @@ def _resolve_cross_board_query(
             file=file_relpath,
         )
 
-    qualified_key = _cross_board_query_key(file_relpath, name)
+    qualified_key = cross_board_query_key(file_relpath, name)
     site = f"{file_relpath}#{name}"
     first = pool.origin.setdefault(qualified_key, site)
     if first != site:

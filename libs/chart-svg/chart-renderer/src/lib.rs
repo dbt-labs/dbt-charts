@@ -507,7 +507,7 @@ pub struct Payload {
     /// The `str()` text of each cell the wire tagged (a Decimal, a non-finite
     /// value) in `rows`, by row and column; filled when the payload is parsed.
     #[serde(skip)]
-    pub cell_text: Arc<::bind::rows::CellText>,
+    pub cell_text: Arc<::column_types::CellText>,
 }
 
 impl Payload {

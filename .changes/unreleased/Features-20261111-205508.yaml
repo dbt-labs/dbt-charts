@@ -1,0 +1,3 @@
+kind: Features
+body: 'Markdown boards default to a wider page: a 90-character line instead of 75. Set `style.text.column.max_chars` to change it.'
+time: 2026-11-11T20:55:08.615154-08:00

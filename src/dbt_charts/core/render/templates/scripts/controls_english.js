@@ -26,6 +26,7 @@ window.dbtControlsEnglish = {
     "selection_summary": "({n}) {first}",
     "show_all": "Show all",
     "show_only_selected": "Show only selected ({n})",
+    "options_truncated": "Showing {shown} of {total}. Search to find more.",
     "sort": "Sort",
     "sort_count_ascending": "Sort by count, low → high",
     "sort_count_descending": "Sort by count, high → low",

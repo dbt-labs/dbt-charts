@@ -266,6 +266,10 @@ pub fn err_concat_overshoot_nonpositive(new_w: impl Into<Value>, orig_w: impl In
     Diagnostic::new(&codes::ERR_CONCAT_OVERSHOOT_NONPOSITIVE, [("new_w", new_w.into()), ("orig_w", orig_w.into()), ("overshoot", overshoot.into()), ("target_width", target_width.into())])
 }
 
+pub fn err_conditional_not_a_date(column: impl Into<Value>, value: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_CONDITIONAL_NOT_A_DATE, [("column", column.into()), ("value", value.into())])
+}
+
 pub fn err_config_key_moved(key: impl Into<Value>, replacement: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_CONFIG_KEY_MOVED, [("key", key.into()), ("replacement", replacement.into())])
 }
@@ -326,12 +330,12 @@ pub fn err_dbt_project_no_local_warehouse(dbt_project_path: impl Into<Value>, ca
     Diagnostic::new(&codes::ERR_DBT_PROJECT_NO_LOCAL_WAREHOUSE, [("dbt_project_path", dbt_project_path.into()), ("candidates", candidates.into())])
 }
 
-pub fn err_dbt_ref_unknown_node(ref_name: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_DBT_REF_UNKNOWN_NODE, [("ref_name", ref_name.into()), ("available", available.into())])
+pub fn err_dbt_ref_unknown_node(ref_name: impl Into<Value>, available: impl Into<Value>, why: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_DBT_REF_UNKNOWN_NODE, [("ref_name", ref_name.into()), ("available", available.into()), ("why", why.into())])
 }
 
-pub fn err_dbt_source_unknown_table(source_name: impl Into<Value>, table_name: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_DBT_SOURCE_UNKNOWN_TABLE, [("source_name", source_name.into()), ("table_name", table_name.into()), ("available", available.into())])
+pub fn err_dbt_source_unknown_table(source_name: impl Into<Value>, table_name: impl Into<Value>, available: impl Into<Value>, why: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_DBT_SOURCE_UNKNOWN_TABLE, [("source_name", source_name.into()), ("table_name", table_name.into()), ("available", available.into()), ("why", why.into())])
 }
 
 pub fn err_dbt_target_path_invalid(origin: impl Into<Value>, detail: impl Into<Value>) -> Diagnostic {
@@ -522,6 +526,22 @@ pub fn err_format_unsupported(format: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_FORMAT_UNSUPPORTED, [("format", format.into())])
 }
 
+pub fn err_funnel_band_width_too_thin(chart_id: impl Into<Value>, band_width: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_FUNNEL_BAND_WIDTH_TOO_THIN, [("chart_id", chart_id.into()), ("band_width", band_width.into())])
+}
+
+pub fn err_funnel_label_position(chart_id: impl Into<Value>, position: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_FUNNEL_LABEL_POSITION, [("chart_id", chart_id.into()), ("position", position.into())])
+}
+
+pub fn err_funnel_multiple_measures(chart_id: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_FUNNEL_MULTIPLE_MEASURES, [("chart_id", chart_id.into())])
+}
+
+pub fn err_funnel_vertical(chart_id: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_FUNNEL_VERTICAL, [("chart_id", chart_id.into())])
+}
+
 pub fn err_gap_fill_bucket_collision(x_field: impl Into<Value>, value_a: impl Into<Value>, value_b: impl Into<Value>, time_unit: impl Into<Value>, bucket: impl Into<Value>, dim_desc: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_GAP_FILL_BUCKET_COLLISION, [("x_field", x_field.into()), ("value_a", value_a.into()), ("value_b", value_b.into()), ("time_unit", time_unit.into()), ("bucket", bucket.into()), ("dim_desc", dim_desc.into())])
 }
@@ -620,6 +640,10 @@ pub fn err_kpi_value_column_not_found(chart_id: impl Into<Value>, value_column: 
 
 pub fn err_label_format_axis_mismatch(setting: impl Into<Value>, fmt: impl Into<Value>, field: impl Into<Value>, remedy: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_LABEL_FORMAT_AXIS_MISMATCH, [("setting", setting.into()), ("fmt", fmt.into()), ("field", field.into()), ("remedy", remedy.into())])
+}
+
+pub fn err_label_template_accounting_parens(chart_id: impl Into<Value>, field_path: impl Into<Value>, spec: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_LABEL_TEMPLATE_ACCOUNTING_PARENS, [("chart_id", chart_id.into()), ("field_path", field_path.into()), ("spec", spec.into())])
 }
 
 pub fn err_label_values_invalid_date(value: impl Into<Value>) -> Diagnostic {
@@ -922,6 +946,10 @@ pub fn err_pattern_fallback_flat(chart_id: impl Into<Value>, count: impl Into<Va
     Diagnostic::new(&codes::ERR_PATTERN_FALLBACK_FLAT, [("chart_id", chart_id.into()), ("count", count.into())])
 }
 
+pub fn err_percent_entry_not_funnel(chart_id: impl Into<Value>, column: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_PERCENT_ENTRY_NOT_FUNNEL, [("chart_id", chart_id.into()), ("column", column.into())])
+}
+
 pub fn err_percent_range(value: impl Into<Value>, format_spec: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_PERCENT_RANGE, [("value", value.into()), ("format_spec", format_spec.into())])
 }
@@ -1032,6 +1060,10 @@ pub fn err_result_numeric_overflow(column: impl Into<Value>) -> Diagnostic {
 
 pub fn err_retired_field(old: impl Into<Value>, parent: impl Into<Value>, history: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_RETIRED_FIELD, [("old", old.into()), ("parent", parent.into()), ("history", history.into())])
+}
+
+pub fn err_ribbon_labels_funnel_only(chart_id: impl Into<Value>, field_path: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_RIBBON_LABELS_FUNNEL_ONLY, [("chart_id", chart_id.into()), ("field_path", field_path.into())])
 }
 
 pub fn err_scale_domain_requires_continuous_x(chart_id: impl Into<Value>, vl_type: impl Into<Value>) -> Diagnostic {
@@ -1480,6 +1512,10 @@ pub fn warn_bar_band_width_too_narrow(chart_id: impl Into<Value>, distinct: impl
 
 pub fn warn_bar_category_ticks() -> Diagnostic {
     Diagnostic::new(&codes::WARN_BAR_CATEGORY_TICKS, [])
+}
+
+pub fn warn_bar_centered_no_baseline() -> Diagnostic {
+    Diagnostic::new(&codes::WARN_BAR_CENTERED_NO_BASELINE, [])
 }
 
 pub fn warn_bar_grouped_series_coincide(chart_id: impl Into<Value>, field: impl Into<Value>) -> Diagnostic {

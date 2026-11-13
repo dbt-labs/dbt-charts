@@ -162,6 +162,12 @@ def test_a_map_region_fill_and_stroke_are_overridden() -> None:
     assert 'stroke-width="2"' in region
 
 
+def test_a_region_rule_takes_an_aggregate_of_its_column() -> None:
+    rule = {"gt": "avg()", "marks": {"geoshape": {"fill": BLUE}}}
+    svg = _svg(_MAP, _MAP_ROWS, {"conditional": {"pop": [rule]}})
+    assert len([g for g in _geo_tags(svg) if f'fill="{BLUE}"' in g]) == 2
+
+
 def _refusal(text: str) -> str:
     try:
         result = render_board_svg_result(text)

@@ -53,6 +53,7 @@ pub mod kpi;
 pub mod label_template;
 pub mod layers;
 pub mod legend;
+pub mod links;
 pub mod bound;
 pub mod multiples;
 pub mod pattern;
@@ -287,7 +288,7 @@ pub(crate) fn placed_charts(board: &Board) -> Result<Vec<(&ChartId, ItemId, &Cha
 
 fn base(chart: &Chart) -> Option<&ChartBase> {
     Some(match chart {
-        Chart::Bar(c) | Chart::Histogram(c) => &c.cartesian.shared.base,
+        Chart::Bar(c) | Chart::Histogram(c) | Chart::Funnel(c) => &c.cartesian.shared.base,
         Chart::Line(c) => &c.cartesian.shared.base,
         Chart::Area(c) => &c.cartesian.shared.base,
         Chart::Scatter(c) => &c.cartesian.shared.base,
@@ -327,7 +328,7 @@ pub fn query_id(chart: &Chart) -> Result<Option<&QueryId>, Diagnostic> {
 /// whose marks paint from a board scale (a histogram's do not).
 pub(crate) fn color_field(chart: &Chart) -> Option<&str> {
     let color: &Option<ColorColumn> = match chart {
-        Chart::Bar(c) => &c.cartesian.color,
+        Chart::Bar(c) | Chart::Funnel(c) => &c.cartesian.color,
         Chart::Line(c) => &c.cartesian.color,
         Chart::Area(c) => &c.cartesian.color,
         Chart::Scatter(c) => &c.cartesian.color,

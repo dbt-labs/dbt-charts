@@ -72,7 +72,6 @@ def _render_svg(yaml_text: str, local_project: Callable[..., FilesystemProject])
     executor = Run(
         result.board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
     svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
     assert isinstance(svg, str)

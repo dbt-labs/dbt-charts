@@ -1,0 +1,3 @@
+kind: Features
+body: 'Tables scroll their rows inside the tile by default, with a pager below that follows the scroll; set `style.pagination.mode: pages` for the pager alone.'
+time: 2026-11-09T18:21:42.720977-08:00

@@ -132,7 +132,7 @@ class _BaseQueryFields(BaseModel):
             "A column's format, set once on its query, only where the default "
             "would misread (currency, percent, a unit); counts and plain numbers "
             "need none. Every chart showing the column follows it; a chart sets "
-            "its own only to differ. A d3 spec is rejected."
+            "its own only to differ. A d3 spec needs a `style.formats` name."
         ),
     )
     incremental: IncrementalValue = Field(

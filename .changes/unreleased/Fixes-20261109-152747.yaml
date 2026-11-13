@@ -1,0 +1,3 @@
+kind: Fixes
+body: Value labels on centered bar stacks sit at the end of each bar, not where a bar from zero would end.
+time: 2026-11-09T15:27:47.112495-08:00

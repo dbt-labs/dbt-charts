@@ -26,7 +26,8 @@ from dbt_charts.core.execute.plan_sources import resolve_source_config
 from dbt_charts.core.registered_views.expander import (
     ExpansionError,
     TemplateLoadError,
-    expand_registered_view,
+    parse_registered_view,
+    render_registered_view_yaml,
 )
 from dbt_charts.core.registered_views.loader import load_builtin_registry
 from dbt_charts.core.registered_views.query_runner import (
@@ -38,7 +39,6 @@ from dbt_charts.core.registered_views.router import RouteRouter
 if TYPE_CHECKING:
     from dbt_charts.core.board import BoardRenderResult
     from dbt_charts.core.compile.models.board.normalized import Board
-    from dbt_charts.core.compile.models.query.normalized import AnyQuery
     from dbt_charts.core.execute.cache_backend import QueryResultCache
     from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import Project
@@ -99,7 +99,8 @@ class _CompiledView:
     """
 
     board: Board
-    query_registry: dict[str, AnyQuery]
+    # The generated board's text, which the engine plans from.
+    yaml: str
 
 
 def _compile_registered_view(
@@ -171,7 +172,10 @@ def _compile_registered_view(
 
     # --- Step 2: expand template into an AuthoredBoard ---
     try:
-        authored = expand_registered_view(match, query_results, resolve_dialect)
+        rendered_yaml = render_registered_view_yaml(
+            match, query_results, resolve_dialect
+        )
+        authored = parse_registered_view(rendered_yaml, match.view.template)
     except (TemplateLoadError, ExpansionError) as exc:
         return RenderError(
             dashboard=BoardRenderResult(
@@ -203,7 +207,7 @@ def _compile_registered_view(
             )
         )
 
-    return _CompiledView(board=board, query_registry=compile_result.query_registry)
+    return _CompiledView(board=board, yaml=rendered_yaml)
 
 
 def render_registered_view(
@@ -266,14 +270,19 @@ def render_registered_view(
         ``RenderSuccess`` when a route matches and the board renders without errors.
         ``RenderError`` when a route matches but any step fails.
     """
-    from dbt_charts.core.board import BoardRenderResult
+    from dbt_charts import _engine
+    from dbt_charts.core.board import BoardRenderResult, plan_for_board
+    from dbt_charts.core.compile.engine import refusal_diagnostics
     from dbt_charts.core.compile.image_assets import image_scope
     from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
     from dbt_charts.core.diagnostics.execution import ExecutionError
     from dbt_charts.core.execute.lookup import Ledger
-    from dbt_charts.core.execute.plan import make_context
+    from dbt_charts.core.execute.plan import make_context, utc_now
+    from dbt_charts.core.execute.plan_reader import env_sources
+    from dbt_charts.core.project import InMemoryBoard
     from dbt_charts.core.render import render
     from dbt_charts.core.render.errors import RenderError as RenderExecError
+    from dbt_charts.core.render.renderer import EVERY_TAB_FORMATS
 
     compiled = _compile_registered_view(request_path, env, result_cache)
     if compiled is None:
@@ -283,10 +292,20 @@ def render_registered_view(
 
     # --- Step 4: execute + render ---
     try:
+        plan = plan_for_board(
+            InMemoryBoard(compiled.yaml, path=None),
+            project,
+            request_variables,
+            None,
+            utc_now(),
+            strict=False,
+            active_tab_only=format not in EVERY_TAB_FORMATS,
+            sources=env_sources(env),
+        )
         ctx = make_context(
             compiled.board,
+            plan,
             env,
-            query_registry=compiled.query_registry,
             result_cache=result_cache,
         )
         with image_scope(project):
@@ -300,6 +319,12 @@ def render_registered_view(
                 link_context=link_context,
                 controls=controls,
             )
+    except _engine.CompileError as refusal:
+        return RenderError(
+            dashboard=BoardRenderResult(
+                status="failed", validation_errors=refusal_diagnostics(refusal)
+            )
+        )
     except (ExecutionError, RenderExecError) as exc:
         return RenderError(
             dashboard=BoardRenderResult(

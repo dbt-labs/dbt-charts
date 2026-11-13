@@ -657,3 +657,87 @@ def test_a_refusal_of_the_caller_ends_a_bulk_role_change(
 
     assert len(posted) == 1
     assert [failure.email for failure in changes.failed] == emails
+
+
+_COMMENT_THREAD = {
+    "id": "c-1",
+    "author": "a@example.com",
+    "author_kind": "member",
+    "body": "Is this right?",
+    "created_at": "2026-11-08T10:00:00Z",
+    "edited_at": None,
+    "board": "finance/revenue",
+    "anchor": {"owner": "rev", "owner_label": "Revenue", "quote": "Rev"},
+    "detached": False,
+    "variables": {},
+    "branch": "main",
+    "review": None,
+    "resolved_at": None,
+    "resolved_by": None,
+    "replies": [],
+}
+
+
+def test_comment_calls_hit_the_board_scoped_routes_with_their_payloads() -> None:
+    seen: list[tuple[str, str, str, dict[str, str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(
+            (
+                request.method,
+                request.url.path,
+                request.url.query.decode(),
+                json.loads(request.content) if request.content else {},
+            )
+        )
+        body = (
+            {"threads": [_COMMENT_THREAD]}
+            if request.method == "GET"
+            else _COMMENT_THREAD
+        )
+        return httpx.Response(200, json=body)
+
+    with client(handler) as cloud:
+        listed = cloud.list_comments(
+            "acme", "an", "finance/revenue", "all", "rev", "r-1"
+        )
+        cloud.add_comment("acme", "an", "finance/revenue", "rev", "Hi", "Rev", None, [])
+        cloud.add_comment(
+            "acme", "an", "finance/revenue", "rev", "Hi", None, "r-1", ["user:a@x.com"]
+        )
+        cloud.add_comment("acme", "an", "finance/revenue", "rev", "Hi", "", None, [])
+        cloud.reply_comment("acme", "an", "finance/revenue", "c-1", "Yes", ["team:fin"])
+        cloud.edit_comment("acme", "an", "finance/revenue", "c-1", "Yes!", [])
+        cloud.resolve_comment("acme", "an", "finance/revenue", "c-1")
+        cloud.reopen_comment("acme", "an", "finance/revenue", "c-1")
+
+    base = "/api/orgs/acme/projects/an/boards/finance/revenue/comments"
+    assert listed.threads[0].id == "c-1"
+    assert seen == [
+        ("GET", base, "status=all&owner=rev&review=r-1", {}),
+        ("POST", base, "", {"owner": "rev", "body": "Hi", "quote": "Rev"}),
+        (
+            "POST",
+            base,
+            "",
+            {
+                "owner": "rev",
+                "body": "Hi",
+                "review": "r-1",
+                "mentions": ["user:a@x.com"],
+            },
+        ),
+        ("POST", base, "", {"owner": "rev", "body": "Hi", "quote": ""}),
+        ("POST", f"{base}/c-1/replies", "", {"body": "Yes", "mentions": ["team:fin"]}),
+        ("PATCH", f"{base}/c-1", "", {"body": "Yes!"}),
+        ("POST", f"{base}/c-1/resolve", "", {}),
+        ("POST", f"{base}/c-1/reopen", "", {}),
+    ]
+
+
+def test_a_board_path_cannot_escape_its_route() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"threads": []})
+
+    with client(handler) as cloud, pytest.raises(InvalidPathSegment):
+        cloud.list_comments("acme", "an", "finance/../x", "open", None, None)

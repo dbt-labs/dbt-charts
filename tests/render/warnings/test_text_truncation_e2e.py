@@ -12,14 +12,22 @@ from __future__ import annotations
 
 from typing import Any
 
+from dbt_charts.core.compile.models.source import (
+    DuckDBSourceConfig,
+    ResolvedSourceConfig,
+)
 from dbt_charts.core.execute.env import ExecEnv
 
 from ..._scripted_env import ScriptedBackend, scripted_env
 
+_EXAMPLES_DB: dict[str, ResolvedSourceConfig] = {
+    "examples_db": DuckDBSourceConfig(type="duckdb", path=":memory:")
+}
+
 
 def _mock_adapter(rows: list[dict[str, Any]]) -> ExecEnv:
     """Exec env mock that returns ``rows`` for every query."""
-    registry = scripted_env(ScriptedBackend(rows))
+    registry = scripted_env(ScriptedBackend(rows), named_sources=_EXAMPLES_DB)
     return registry
 
 

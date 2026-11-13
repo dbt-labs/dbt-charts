@@ -7,8 +7,6 @@ from datetime import UTC, datetime
 
 import pytest
 
-from dbt_charts.core.compile.models.cache import CachePolicy
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.lookup import Miss
 from dbt_charts.core.execute.run import (
@@ -19,16 +17,15 @@ from dbt_charts.core.execute.run import (
     run,
 )
 
-from ..._lookup import planned_query
+from ..._lookup import planned_query, sql_entry
 from ..._results import rows_result
 
-POLICY = CachePolicy(enabled=True, ttl="1h")
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _miss(name: str, sql: str = "SELECT 1") -> Miss:
-    query = SqlQuery(sql=sql, source="db", cache=POLICY)
-    return Miss(planned_query(name, query, ("s", name, "v")))
+    entry = sql_entry(sql, source="db")
+    return Miss(planned_query(name, entry, ("s", name, "v")))
 
 
 def _rows(miss: Miss) -> Outcome:

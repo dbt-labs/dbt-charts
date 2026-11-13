@@ -50,7 +50,6 @@ class TestTonalFoundationDefaults:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
         assert "#cc1122" in svg
@@ -104,7 +103,6 @@ class TestHtmlPageCanvas:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         return render(
             result.board, executor.ctx, executor.ledger, format="html", **opts
@@ -183,7 +181,6 @@ class TestRenderedSurfaceBackground:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         output = render_run(result.board, executor, format="png").output
 
@@ -229,7 +226,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         viewer_svg = render_run(result.board, executor, format="svg").output
         assert isinstance(viewer_svg, str)

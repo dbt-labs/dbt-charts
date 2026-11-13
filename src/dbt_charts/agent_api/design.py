@@ -28,8 +28,8 @@ from dbt_charts.core.compile.migrations import prepare_board_mapping
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard, TabItem
 from dbt_charts.core.compile.models.chart.authored import (
     CHART_SUPPORT_TABLE_SUPPORTED_TYPES,
-    ChartSupportTablePerSeries,
     ChartSupportTableSource,
+    support_table_column,
 )
 from dbt_charts.core.compile.models.factories import PATCH_SHORTHAND
 from dbt_charts.core.compile.models.markers import Channel, FontFamily, Format
@@ -1452,12 +1452,7 @@ def _support_table_display_names(entries: Any) -> list[str]:
     generic control's `unset` placeholder, so a formatted or aggregated strip
     still reads as "here", not as an empty control the panel forgot to fill.
     """
-    return [
-        entry.per_series
-        if isinstance(entry, ChartSupportTablePerSeries)
-        else entry.source
-        for entry in entries
-    ]
+    return [support_table_column(entry) for entry in entries]
 
 
 def _support_table_attach_blocked(instance: Any) -> bool:

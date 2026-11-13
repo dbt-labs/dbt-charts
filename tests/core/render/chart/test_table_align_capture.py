@@ -48,7 +48,6 @@ def _warnings(yaml_text: str) -> list[str]:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     output = render(result.board, executor.ctx, executor.ledger, format="svg")
     return [w.code for w in output.warnings]

@@ -105,7 +105,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.13.7"
+          version: "0.13.8"
 
       - uses: ./.github/actions/setup-rust
 
@@ -159,7 +159,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.13.7"
+          version: "0.13.8"
 
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         with:
@@ -200,7 +200,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.13.7"
+          version: "0.13.8"
 
       - run: uv publish --trusted-publishing always dist/*
 
@@ -224,7 +224,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.13.7"
+          version: "0.13.8"
 
       - name: Refuse anything but one dev version
         # Each job stamps its own version, so one that saw a fresh tag builds stable.

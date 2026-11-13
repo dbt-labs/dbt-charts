@@ -47,7 +47,6 @@ def _executor(backend: ScriptedBackend, cache: TrivialDuckDBCache) -> Run:
     return Run(
         board,
         env=scripted_env(backend, source=_SOURCE),
-        query_registry={"q": board.queries["q"]},
         result_cache=cache,
     )
 

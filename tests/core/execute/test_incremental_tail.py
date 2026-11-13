@@ -46,7 +46,6 @@ import sqlglot.expressions as exp
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as df_compile
-from dbt_charts.core.compile.compiler import compile_file
 from dbt_charts.core.compile.models.source import (
     DbtTargetSourceConfig,
     DuckDBSourceConfig,
@@ -81,7 +80,6 @@ def _executor(board_result, adapter: ExecEnv, cache) -> Run:
     return Run(
         board_result.board,
         env=adapter,
-        query_registry=board_result.query_registry,
         result_cache=cache,
     )
 
@@ -911,7 +909,6 @@ class TestFileSourceIncrementalDoesNotIntercept:
         ex1 = Run(
             board,
             env=build_exec_env(project, file_materializer=mat1),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         rows1 = ex1.execute_query("q")
@@ -924,7 +921,6 @@ class TestFileSourceIncrementalDoesNotIntercept:
         ex2 = Run(
             board,
             env=build_exec_env(project, file_materializer=mat2),
-            query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
         )
         rows2 = ex2.execute_query("q")
@@ -1415,11 +1411,9 @@ def _varchar_events_project(tmp_path: Path, initial_values: list[str]):
     (tmp_path / "dbt_charts.yml").write_text(
         f"sources:\n  db:\n    type: duckdb\n    path: {db_path}\n"
     )
-    (tmp_path / "charts").mkdir()
-    (tmp_path / "charts" / "board.yml").write_text(_BOARD_TS_INC)
 
     project = FilesystemProject(tmp_path)
-    compiled = compile_file(project.path("charts/board.yml").read_board())
+    compiled = df_compile(_BOARD_TS_INC)
     assert compiled.board is not None, compiled.errors
     spy = _SqlSpyBackend(DuckDBBackend(data_dir=tmp_path, read_only=True))
     registry = build_exec_env(
@@ -1476,7 +1470,6 @@ class TestVarcharIncrementalKeySurvivesRealCache:
             executor = Run(
                 compiled.board,
                 env=registry,
-                query_registry=compiled.query_registry,
                 result_cache=cache,
             )
             return executor.execute_query("q")

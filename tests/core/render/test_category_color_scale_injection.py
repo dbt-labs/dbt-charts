@@ -44,7 +44,6 @@ def _resolve_board(yaml_content: str) -> tuple[Any, Any]:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     resolved_board, _ = build_resolved_board(
         result.board, executor, {}, render_first=False

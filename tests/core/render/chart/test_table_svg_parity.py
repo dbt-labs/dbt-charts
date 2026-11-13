@@ -122,7 +122,7 @@ def test_v2_table_svg_pagination_override() -> None:
     from dbt_charts.core.render.controls import interactive_controls
 
     data = [{"v": v} for v in ("AAA", "BBB", "CCC", "DDD", "EEE")]
-    style = {"pagination": {"enabled": True, "page_rows": 1}}
+    style = {"pagination": {"enabled": True, "mode": "pages", "page_rows": 1}}
     with interactive_controls(True):
         svg = visible_svg(_render(style=style, data=data, width=200))
     assert "AAA" in svg

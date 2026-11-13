@@ -17,6 +17,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedScatterLayer,
 )
 from dbt_charts.core.compile.models.style.resolved import ResolvedMarkLabels
+from dbt_charts.core.compile.models.style.theme.marks import labels_drawn
 from dbt_charts.core.diagnostics import WARN_VALUE_LABELS_CROWD_WIDTH, Diagnostic
 from dbt_charts.core.render.chart.geometry_warnings import EngineParams
 from dbt_charts.core.render.warnings.base import WarningContext, engine_warnings
@@ -38,7 +39,7 @@ def painted_labels(
         case ResolvedAreaChart():
             return "line", chart.style.line_mark.labels, _measure(chart)
         case ResolvedLineChart():
-            if chart.style.line_mark.labels.visible:
+            if labels_drawn(chart.style.line_mark.labels.visible):
                 return "line", chart.style.line_mark.labels, _measure(chart)
             return "point", chart.style.point_mark.labels, _measure(chart)
         case _:
@@ -62,7 +63,7 @@ def _layer_labels(
         case ResolvedAreaLayer():
             return "line", layer.line_mark.labels, layer.y
         case ResolvedLineLayer():
-            if layer.line_mark.labels.visible:
+            if labels_drawn(layer.line_mark.labels.visible):
                 return "line", layer.line_mark.labels, layer.y
             return "point", layer.point_mark.labels, layer.y
         case ResolvedScatterLayer():

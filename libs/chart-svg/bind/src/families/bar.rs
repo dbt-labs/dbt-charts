@@ -26,9 +26,9 @@ use board_model::board::Board;
 use board_model::chart::layer::{CartesianLayer, LineLayer};
 use board_model::chart::{BarChart, ColorColumn, Columns};
 use board_model::ids::ChartId;
+use board_model::style::marks::labels_drawn;
 use board_model::style::bar::{Orientation, StackMode};
 use board_model::style::style::Style;
-use board_model::style::marks::LabelVisible;
 use color::Rgba;
 use diagnostic::{codes, diag, py_str_repr, refuse, Diagnostic};
 use model_core::{Engine, SetLeaves, Tri};
@@ -162,7 +162,7 @@ fn refuse_unported(chart: &BarChart, placed: &Placed<'_>) -> Result<(), Diagnost
     if fields.sort.is_some() {
         return Err(unsupported(refuse!("a bar with `sort:` is not supported")));
     }
-    if chart.style.marks.bar.labels.labels.base.visible != LabelVisible::Off {
+    if labels_drawn(&chart.style.marks.bar.labels.labels.base.visible) {
         return Err(unsupported(refuse!("a bar with value labels is not supported")));
     }
     if chart.style.orientation != Some(Engine::Value(Orientation::Vertical)) {

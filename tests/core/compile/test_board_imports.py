@@ -128,6 +128,7 @@ rows:
         """
         from dbt_charts.core.render import render
 
+        from ..._compile import remember
         from ..._run import Run
 
         child_content = """
@@ -153,9 +154,10 @@ rows:
         errors = validate_board(board)
         assert not errors, f"Validation errors: {errors}"
 
-        compiled = normalize_board(
-            board, base_dir=local_project(root=tmp_path).directory()
-        )
+        base_dir = local_project(root=tmp_path).directory()
+        compiled = normalize_board(board, base_dir=base_dir)
+        # Built below `compile`, so the recorder never saw its text.
+        remember(compiled, parent_content, base_dir)
 
         # Templates must be preserved — NOT resolved to defaults at compile time
         child_board = compiled.layout.items[0].board
@@ -170,7 +172,6 @@ rows:
         executor = Run(
             compiled,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry={},
         )
         svg = render(compiled, executor.ctx, executor.ledger, format="svg").output
         assert "Child for my_table" in svg

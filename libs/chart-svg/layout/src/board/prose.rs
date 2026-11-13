@@ -4,9 +4,9 @@
 //! `_measure`) and `column_packer.py` (`choose_grid`, `grid_span`, `span_boxes`). The old composer's
 //! copies of these laws are `chart-renderer/src/prose.rs` and `title.rs`; the cutover deletes them.
 //!
-//! What this stage does not model is refused by name: template syntax, images, emphasis (the italic
-//! files are not measured), lists, tables, blockquotes and raw HTML, a letter case, and a text long
-//! enough to flow into more than one column.
+//! What this stage does not model is refused by name: template syntax (the engine fills a board's
+//! words first), images, emphasis in a family with no italic file to measure it against, raw HTML, a
+//! letter case, and a text long enough to flow into more than one column.
 //!
 //! [`title`] is the root's one heading through `mdsvg`, filled with the theme's title ink, with its
 //! measured height, the text's line box, its first baseline and its one-line width. [`text`] is one
@@ -29,7 +29,7 @@ use std::sync::LazyLock;
 use crate::board::width::IntrinsicWidth;
 
 use crate::markdown_style::{
-    char_ratio, compact_style, font_slots, has_italic, readable_measure, refuse_case, root_title_overrides,
+    char_ratio, compact_style, font_slots, has_italic, readable_measure, refuse_case, title_overrides,
     Overrides,
 };
 
@@ -83,13 +83,20 @@ fn refuse_template(text: &str, what: &str) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// An image drawn from the markup alone is a data URI; any other source is a file or a link the host
+/// would have to resolve against the board's directory.
+fn refuse_image(url: &str, what: &str) -> Result<(), Diagnostic> {
+    if url.get(..11).is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:image/")) {
+        return Ok(());
+    }
+    Err(Diagnostic::refused(refuse!("a board's {what} with an image that is not a data URI is not supported")))
+}
+
 /// `italic` says whether the family ships an italic file to measure emphasis against ([`has_italic`]).
 fn refuse_spans(spans: &[Span], what: &str, italic: bool) -> Result<(), Diagnostic> {
     for span in spans {
         if span.span_type == SpanType::Image {
-            return Err(Diagnostic::refused(refuse!(
-                "a board's {what} with an image is not supported"
-            )));
+            refuse_image(span.url.as_deref().unwrap_or_default(), what)?;
         }
         if !italic && (matches!(span.span_type, SpanType::Italic | SpanType::BoldItalic) || span.italic) {
             return Err(Diagnostic::refused(refuse!(
@@ -108,20 +115,22 @@ fn refuse_blocks(blocks: &Document, what: &str, italic: bool) -> Result<(), Diag
             AnyBlock::CodeBlock(_) | AnyBlock::HorizontalRule(_) => {}
             AnyBlock::UnorderedList(list) => refuse_items(&list.items, what, italic)?,
             AnyBlock::OrderedList(list) => refuse_items(&list.items, what, italic)?,
-            AnyBlock::ImageBlock(_) => {
-                return Err(Diagnostic::refused(refuse!(
-                    "a board's {what} with an image is not supported"
-                )))
+            AnyBlock::ImageBlock(image) => refuse_image(&image.url, what)?,
+            AnyBlock::Table(table) => {
+                for row in std::iter::once(&table.header).chain(&table.rows) {
+                    for cell in &row.cells {
+                        refuse_spans(&cell.spans, what, italic)?;
+                    }
+                }
             }
-            AnyBlock::Table(_) => {
-                return Err(Diagnostic::refused(refuse!(
-                    "a board's {what} with a table is not supported"
-                )))
-            }
-            AnyBlock::Blockquote(_) => {
-                return Err(Diagnostic::refused(refuse!(
-                    "a board's {what} with a blockquote is not supported"
-                )))
+            // Every theme paints a quote italic, so a family with no italic file would draw it in a width it cannot measure.
+            AnyBlock::Blockquote(quote) => {
+                refuse_blocks(&quote.blocks, what, italic)?;
+                if !italic {
+                    return Err(Diagnostic::refused(refuse!(
+                        "a board's {what} with a blockquote in a family with no italic file is not supported"
+                    )));
+                }
             }
             AnyBlock::RawHtmlBlock(_) => {
                 return Err(Diagnostic::refused(refuse!(
@@ -170,7 +179,7 @@ fn title_blocks(title: &str, italic: bool) -> Result<(Document, Heading), Diagno
 /// (`prose_measure`), inside the card padding on both sides. The title is measured in the title
 /// renderer (`title_min_content_width`, `title_max_content_width`) and the text in the body's
 /// (`prose_content_widths`), both over the blocks the paint pass draws.
-pub fn own_width(style: &Style, title: Option<&str>, text: Option<&str>, book: &FontBook) -> Result<IntrinsicWidth, Diagnostic> {
+pub fn own_width(style: &Style, title: Option<&str>, kind: TitleKind, text: Option<&str>, book: &FontBook) -> Result<IntrinsicWidth, Diagnostic> {
     let body = compact_style(style, &Overrides::PROSE)?;
     let measure = readable_measure(char_ratio(book, &body)? * body.base_font_size, style.text.column.max_chars);
     let inset = 2.0 * style.frame.card_padding;
@@ -181,7 +190,7 @@ pub fn own_width(style: &Style, title: Option<&str>, text: Option<&str>, book: &
     };
     let mut width = IntrinsicWidth::NONE;
     if let Some(title) = title {
-        let (blocks, _, renderer) = title_setup(style, title, book)?;
+        let (blocks, _, renderer) = title_setup(style, title, book, kind)?;
         width = width.combine_max(ask(&renderer, &blocks)?);
     }
     if let Some(text) = text {
@@ -193,10 +202,10 @@ pub fn own_width(style: &Style, title: Option<&str>, text: Option<&str>, book: &
 
 /// What sizing, planning and painting a board's title all read it through (`title_blocks` and
 /// `title_renderer`): its heading, and the renderer of the root title's typography.
-fn title_setup(style: &Style, title: &str, book: &FontBook) -> Result<(Document, Heading, SVGRenderer), Diagnostic> {
+fn title_setup(style: &Style, title: &str, book: &FontBook, kind: TitleKind) -> Result<(Document, Heading, SVGRenderer), Diagnostic> {
     refuse_template(title, "title")?;
     refuse_case(&style.title.font.case, "board title")?;
-    let overrides = root_title_overrides(style)?;
+    let overrides = title_overrides(style, kind.level, kind.root)?;
     let italic = has_italic(&compact_style(style, &overrides)?);
     let (blocks, heading) = title_blocks(title, italic)?;
     let renderer = renderer(book, style, &overrides)?;
@@ -220,14 +229,28 @@ fn text_setup(style: &Style, source: &str, book: &FontBook) -> Result<(Document,
     Ok((blocks, md_style, renderer))
 }
 
-/// `render_title` for the root board's title at `width`, with its measured height and line box.
+/// Which board's title: its semantic level (the count of titled boards from the root down to it) and
+/// whether the root's own.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TitleKind {
+    pub level: u32,
+    pub root: bool,
+}
+
+impl TitleKind {
+    /// The root board's title, a level-1 heading.
+    pub const ROOT: Self = Self { level: 1, root: true };
+}
+
+/// `render_title` for a board's title at `width`, with its measured height and line box.
 pub fn title(
     style: &Style,
     title: &str,
     book: &FontBook,
     width: f64,
+    kind: TitleKind,
 ) -> Result<TitleBlock, Diagnostic> {
-    let (blocks, heading, renderer) = title_setup(style, title, book)?;
+    let (blocks, heading, renderer) = title_setup(style, title, book, kind)?;
     let rendered = renderer
         .render_content(&blocks, width, 0.0)
         .map_err(diag::err_internal)?;
@@ -460,6 +483,8 @@ pub struct ContentBox {
 /// band: the title flows straight into the text (the heading's own bottom margin is the rhythm), any
 /// other block sits one `gap` below whatever is above it, and so does the layout. `card_padding`
 /// insets the first element, as a chart's ink is inset in its own card.
+/// `opens_with_text` (a text row leads the layout): the layout starts `card_padding` above where a gap
+/// would put it, so a title directly over it reads as its own heading flowing into the text.
 pub fn content_box(
     title_height: f64,
     inline_band_height: f64,
@@ -467,6 +492,7 @@ pub fn content_box(
     variables_height: f64,
     gap: f64,
     has_layout_items: bool,
+    opens_with_text: bool,
     card_padding: f64,
 ) -> ContentBox {
     let (mut height, mut has_prev, mut prev_is_title) = (0.0, false, false);
@@ -480,20 +506,22 @@ pub fn content_box(
             height += gap;
         }
         height += text_height;
-        has_prev = true;
+        (has_prev, prev_is_title) = (true, false);
     }
     if variables_height > 0.0 {
         if has_prev {
             height += gap;
         }
         height += variables_height;
-        has_prev = true;
+        (has_prev, prev_is_title) = (true, false);
     }
     let content_top = if has_prev { card_padding } else { 0.0 };
     ContentBox {
         content_top,
         non_layout_height: height + content_top,
-        gap_before_layout: if has_layout_items && has_prev {
+        gap_before_layout: if prev_is_title && opens_with_text {
+            -card_padding
+        } else if has_layout_items && has_prev {
             gap
         } else {
             0.0

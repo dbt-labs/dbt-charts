@@ -25,7 +25,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     cartesian_series_naming,
     color_legend_entries,
     estimate_cartesian_plot_height,
-    legend_row_fits,
+    legend_wrap_columns,
     no_rail,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
@@ -34,7 +34,7 @@ from dbt_charts.core.compile.resolve.chart._channels import (
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, ChartRows
 from dbt_charts.core.compile.resolve.chart._conditional import (
-    validate_mark_conditional,
+    resolve_mark_conditional,
 )
 from dbt_charts.core.compile.resolve.chart._domain import _CartesianTickResolution
 from dbt_charts.core.compile.resolve.chart._kwargs import (
@@ -124,7 +124,9 @@ def _resolve_heatmap(
     )
     primary = plan.primary
     heatmap = merge_unset(board_family_style(chart_style_context, normalized), primary)
-    validate_mark_conditional(heatmap.conditional, data, unsupported=("marks.text",))
+    heatmap_conditional = resolve_mark_conditional(
+        heatmap.conditional, data, unsupported=("marks.text",)
+    )
     channels = plan.channels
     ay_merged = plan.axes.y.style
     # Heatmap's color channel is always a gradient (a continuous scale over
@@ -226,7 +228,7 @@ def _resolve_heatmap(
             ),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=heatmap.padding,
-            wrap_legend=not legend_row_fits(
+            wrap_columns=legend_wrap_columns(
                 # A list `y` with no color field draws one legend entry per measure.
                 tuple(
                     wide_measure_labels_for(
@@ -274,7 +276,7 @@ def _resolve_heatmap(
                 else None
             ),
             rect_mark=heatmap.marks.rect,
-            conditional=heatmap.conditional,
+            conditional=heatmap_conditional,
             label_usable_ratio=chart_style_context.label_usable_ratio,
             title_font=_tf,
             **style_tail,

@@ -61,12 +61,14 @@ _RESOLVED_STYLE = resolve_style(get_theme_style())
 # Calibrated against dbt-charts/tests/visual's case-matrix corpus
 # (12-series-x-width.yml) at its 300px "tiny" card width, whose default
 # aspect-ratio-derived plot height is 200px (min_height/max_height/aspect_ratio
-# defaults: 150/400/1.5). At the tiny tier the legend renders top/compact with
-# a 2-column layout (theme default legend.compact_columns) — the boundary
-# below is measured against the render with the classifier disabled: 18
+# defaults: 150/400/1.5). At the tiny tier the legend renders top/compact; the
+# boundaries below were measured on a 2-column wrap, so `_resolved` caps the
+# legend there (`_CALIBRATED_LEGEND`) and the default's wider fitted wrap is
+# tested on its own. Measured with the classifier disabled: 18
 # series (9 rows) draws fine, 19 (10 rows) collapses to ERR-CHART-PAINTED-NO-
 # MARKS.
 _NARROW_WIDTH = 300.0
+_CALIBRATED_LEGEND = LegendStylePatch(compact_columns=2)
 
 # A second, narrower tiny-tier width where aspect_ratio_height's min_height
 # clamp floors the estimated plot height at 150px (any width <= 225px lands
@@ -111,16 +113,18 @@ def _resolved(
     width: float,
     stack: str = "zero",
     orientation: str | None = None,
-    legend: LegendStylePatch | None = None,
+    legend: LegendStylePatch = _CALIBRATED_LEGEND,
     height: float | None = None,
     aspect_ratio: float | None = None,
     min_height: float | None = None,
+    subtitle: str = "",
 ) -> ResolvedBarChart:
     chart = BarChart(
         id="t",
         query=SqlQuery(sql="SELECT 1", source="t"),
         query_name="q",
         type="bar",
+        subtitle=subtitle,
         x="x_time",
         y="value",
         color="series",
@@ -155,8 +159,9 @@ def _resolved_wide_by_dimension(
     dimension_count: int, measure_count: int, width: float
 ) -> ResolvedBarChart:
     fields = _wide_measure_fields(measure_count)
+    # Short names keep two composite columns on the floor-width card.
     data = [
-        {"x_time": month, "series": f"Series {s:02d}", **dict.fromkeys(fields, 10 + s)}
+        {"x_time": month, "series": f"S{s:02d}", **dict.fromkeys(fields, 10 + s)}
         for month in ("2024-01-01", "2024-02-01", "2024-03-01")
         for s in range(1, dimension_count + 1)
     ]
@@ -168,7 +173,7 @@ def _resolved_wide_by_dimension(
         x="x_time",
         y=fields,
         color="series",
-        style=BarChartStylePatch(stack="zero"),
+        style=BarChartStylePatch(stack="zero", legend=_CALIBRATED_LEGEND),
     )
     resolved = resolve(chart, data, _CTX, width=width)
     assert isinstance(resolved, ResolvedBarChart)
@@ -197,6 +202,12 @@ def test_nineteen_series_drops_the_legend() -> None:
     assert _resolved(19, _NARROW_WIDTH).legend.visible is False
 
 
+def test_a_fitted_wrap_keeps_the_legend_the_two_column_wrap_drops() -> None:
+    """Short labels fit more than two columns on a 300px card, so the same
+    19 series take fewer rows and the legend no longer starves the stack."""
+    assert _resolved(19, _NARROW_WIDTH, legend=LegendStylePatch()).legend.visible
+
+
 def test_twenty_five_series_drops_the_legend() -> None:
     assert _resolved(25, _NARROW_WIDTH).legend.visible is False
 
@@ -210,7 +221,9 @@ def test_authored_legend_position_never_beats_the_yield() -> None:
     """
     for position in ("right", "bottom"):
         resolved = _resolved(
-            25, _NARROW_WIDTH, legend=LegendStylePatch(position={"edge": position})
+            25,
+            _NARROW_WIDTH,
+            legend=LegendStylePatch(position={"edge": position}, compact_columns=2),
         )
         assert resolved.legend.visible is False, position
 
@@ -219,7 +232,7 @@ def test_authored_legend_visible_true_never_beats_the_yield() -> None:
     """The explicit signal must not lose where the weaker one wins."""
     assert (
         _resolved(
-            25, _NARROW_WIDTH, legend=LegendStylePatch(visible=True)
+            25, _NARROW_WIDTH, legend=LegendStylePatch(visible=True, compact_columns=2)
         ).legend.visible
         is False
     )
@@ -311,19 +324,15 @@ def test_author_narrowed_compact_columns_is_read_by_the_classifier() -> None:
 
 
 def test_yield_classifier_is_height_sensitive_not_just_width_tiered() -> None:
-    """The same (symbol_limit-capped) 20-entry, 2-column legend fits a taller plot.
+    """The same 20-entry, 2-column legend fits a taller plot.
 
-    Direct unit coverage of the pure classifier: entries, columns, and
-    symbol_limit held fixed, only ``plot_height`` changes — this is the
+    Direct unit coverage of the pure classifier: entries and columns held
+    fixed, only ``plot_height`` changes — this is the
     height-sensitivity established by measurement (plot height governs, not
     card width).
     """
-    assert (
-        _stack_legend_should_yield("zero", "vertical", 20, 20, 200.0, True, 2) is True
-    )
-    assert (
-        _stack_legend_should_yield("zero", "vertical", 20, 20, 300.0, True, 2) is False
-    )
+    assert _stack_legend_should_yield("zero", "vertical", 20, 200.0, True, 2) is True
+    assert _stack_legend_should_yield("zero", "vertical", 20, 300.0, True, 2) is False
 
 
 def test_yield_classifier_divides_rows_by_legend_columns() -> None:
@@ -331,41 +340,16 @@ def test_yield_classifier_divides_rows_by_legend_columns() -> None:
     (does not) — the row count must come from the legend that actually
     renders, not one row per entry.
     """
-    assert (
-        _stack_legend_should_yield("zero", "vertical", 18, None, 200.0, True, 2)
-        is False
-    )
-    assert (
-        _stack_legend_should_yield("zero", "vertical", 18, None, 200.0, True, 1) is True
-    )
+    assert _stack_legend_should_yield("zero", "vertical", 18, 200.0, True, 2) is False
+    assert _stack_legend_should_yield("zero", "vertical", 18, 200.0, True, 1) is True
 
 
 def test_yield_classifier_ignores_grouped_bars() -> None:
-    assert (
-        _stack_legend_should_yield("none", "vertical", 25, 20, 50.0, True, 2) is False
-    )
+    assert _stack_legend_should_yield("none", "vertical", 25, 50.0, True, 2) is False
 
 
 def test_yield_classifier_ignores_horizontal_orientation() -> None:
-    assert (
-        _stack_legend_should_yield("zero", "horizontal", 25, 20, 50.0, True, 2) is False
-    )
-
-
-def test_yield_classifier_clamps_entries_to_symbol_limit() -> None:
-    """The renderer never draws more legend rows than symbol_limit lets
-    through (excess entries collapse into a single "+N more" swatch) — the
-    row math must clamp distinct_series to symbol_limit before dividing by
-    columns, not charge every distinct series a row. 60 series clamped to
-    symbol_limit=20 at 4 columns needs 5 rows (127px, fits 200px); the same
-    60 series left unclamped needs 15 rows (287px, does not).
-    """
-    assert (
-        _stack_legend_should_yield("zero", "vertical", 60, 20, 200.0, True, 4) is False
-    )
-    assert (
-        _stack_legend_should_yield("zero", "vertical", 60, None, 200.0, True, 4) is True
-    )
+    assert _stack_legend_should_yield("zero", "horizontal", 25, 50.0, True, 2) is False
 
 
 def test_yield_classifier_ignores_a_side_legend() -> None:
@@ -374,9 +358,7 @@ def test_yield_classifier_ignores_a_side_legend() -> None:
     this is what keeps the classifier from over-firing on wider cards where
     the legend renders to the side.
     """
-    assert (
-        _stack_legend_should_yield("zero", "vertical", 25, 20, 50.0, False, 2) is False
-    )
+    assert _stack_legend_should_yield("zero", "vertical", 25, 50.0, False, 2) is False
 
 
 def test_twenty_five_series_at_narrow_card_draws_marks_with_real_height() -> None:
@@ -397,6 +379,37 @@ def test_twenty_five_series_at_narrow_card_draws_marks_with_real_height() -> Non
         render_cache={},
     )
 
+    assert "ERR-CHART-PAINTED-NO-MARKS" not in svg
+    assert not all_marks_degenerate(svg)
+
+
+def test_a_fitted_legend_yields_when_every_entry_and_the_subtitle_are_charged() -> None:
+    """25 entries in the default fitted wrap draw 9 rows, past symbol_limit's
+    20, under a card whose subtitle takes three lines. Charging either fewer
+    entries or the whole card leaves the legend up and the stack blank."""
+    subtitle = (
+        "Monthly cost for every series, stacked by the series that spent it, "
+        "with the smallest spenders at the top of each bar and the largest "
+        "at the bottom so the totals read from the axis."
+    )
+    resolved = _resolved(
+        25, _NARROW_WIDTH, legend=LegendStylePatch(), subtitle=subtitle
+    )
+    assert resolved.legend.visible is False
+
+    data = _stacked_data(25)
+    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
+    executor.execute_query.return_value = data
+    executor.execute_query_result.return_value = rows_result(data)
+    svg, _height = render_chart_item(
+        resolved,
+        executor,
+        variables={},
+        available_width=_NARROW_WIDTH,
+        available_height=200,
+        resolved_style=_RESOLVED_STYLE,
+        render_cache={},
+    )
     assert "ERR-CHART-PAINTED-NO-MARKS" not in svg
     assert not all_marks_degenerate(svg)
 

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.chart.authored._support_table import (
     ChartSupportTableAggregate,
+    ChartSupportTablePercent,
     ChartSupportTablePerSeries,
     ChartSupportTableSource,
 )
@@ -37,10 +38,17 @@ class ResolvedSupportTablePerSeries(ChartSupportTablePerSeries):
     )
 
 
+class ResolvedSupportTablePercent(ChartSupportTablePercent):
+    format: ResolvedFormat | None = Field(
+        default=None, description="Resolved row value format."
+    )
+
+
 ResolvedSupportTableEntry = (
     ResolvedSupportTableSource
     | ResolvedSupportTableAggregate
     | ResolvedSupportTablePerSeries
+    | ResolvedSupportTablePercent
 )
 
 

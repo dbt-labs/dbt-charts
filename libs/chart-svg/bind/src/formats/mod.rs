@@ -128,6 +128,84 @@ impl Alias {
     }
 }
 
+fn notation_of(notation: board_model::primitives::Notation) -> Notation {
+    match notation {
+        board_model::primitives::Notation::Analytic => Notation::Analytic,
+        board_model::primitives::Notation::Narrative => Notation::Narrative,
+    }
+}
+
+fn sign_placement_of(placement: board_model::primitives::SignPlacement) -> SignPlacement {
+    match placement {
+        board_model::primitives::SignPlacement::AfterPrefix => SignPlacement::AfterPrefix,
+        board_model::primitives::SignPlacement::BeforePrefix => SignPlacement::BeforePrefix,
+    }
+}
+
+fn repeat_of(repeat: board_model::primitives::AffixRepeat) -> Repeat {
+    match repeat {
+        board_model::primitives::AffixRepeat::Anchor => Repeat::Anchor,
+        board_model::primitives::AffixRepeat::Every => Repeat::Every,
+    }
+}
+
+/// A `FormatConfig` mapping as the formats law takes it. An empty spec is unset.
+pub fn authored_config(config: &board_model::primitives::FormatConfig) -> AuthoredFormat {
+    AuthoredFormat {
+        spec: config.spec.clone().filter(|spec| !spec.is_empty()),
+        prefix: config.prefix.clone(),
+        suffix: config.suffix.clone(),
+        notation: config.notation.map(notation_of),
+        sign_placement: config.sign_placement.map(sign_placement_of),
+        repeat: config.repeat.map(repeat_of),
+    }
+}
+
+type Patch = model_core::Patch<board_model::primitives::FormatConfig>;
+type Whole = <board_model::primitives::FormatConfig as model_core::Leaf>::Whole;
+
+fn leaf<T: Clone>(field: &model_core::Tri<T>) -> Option<T> {
+    match field {
+        model_core::Tri::Value(value) => Some(value.clone()),
+        model_core::Tri::Unset | model_core::Tri::Null => None,
+    }
+}
+
+/// A `format:` block as the layers merge it: only the leaves it sets. An empty spec is unset.
+/// `Patch` and `Whole` carry the same leaves; the macro reads both.
+macro_rules! authored_block {
+    ($block:expr) => {{
+        let block = $block;
+        AuthoredFormat {
+            spec: leaf(&block.spec).filter(|spec| !spec.is_empty()),
+            prefix: leaf(&block.prefix),
+            suffix: leaf(&block.suffix),
+            notation: leaf(&block.notation).map(notation_of),
+            sign_placement: leaf(&block.sign_placement).map(sign_placement_of),
+            repeat: leaf(&block.repeat).map(repeat_of),
+        }
+    }};
+}
+
+pub fn authored_patch(block: &Patch) -> AuthoredFormat {
+    authored_block!(block)
+}
+
+pub fn authored_whole(block: &Whole) -> AuthoredFormat {
+    authored_block!(block)
+}
+
+/// The aliases of a board's merged `style.formats` patch (`aliases` reads the resolved one).
+pub fn aliases_patch(formats: &IndexMap<String, Patch>) -> IndexMap<String, Alias> {
+    formats.iter().map(|(name, block)| (name.clone(), Alias::Config(authored_patch(block)))).collect()
+}
+
+/// The aliases of a board's `style.formats`, as the formats law reads them: each a mapping, which
+/// is what production's `FormatConfig` makes of a bare name too.
+pub fn aliases(formats: &IndexMap<String, board_model::primitives::FormatConfig>) -> IndexMap<String, Alias> {
+    formats.iter().map(|(name, config)| (name.clone(), Alias::Config(authored_config(config)))).collect()
+}
+
 /// The board's `style.formats` aliases (none when the board has no table).
 #[derive(Clone, Copy)]
 pub struct Formats<'a>(Option<&'a IndexMap<String, Alias>>);

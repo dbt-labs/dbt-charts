@@ -151,6 +151,7 @@ style:
 
     support_table:
       neutral_color: *color_ink
+      ribbon_color: chrome[10]
       divider:
         color: *color_ink
       row:

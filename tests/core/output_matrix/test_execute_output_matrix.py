@@ -226,7 +226,6 @@ def test_execute_output_matrix(
     executor = Run(
         compiled.board,
         build_exec_env(project),
-        query_registry=compiled.query_registry,
         result_cache=TrivialDuckDBCache(),
     )
     snapshot: dict[str, Any] = {}  # type-state: explicit_any — JSON tree

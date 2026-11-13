@@ -93,7 +93,6 @@ def _render(project: FilesystemProject, yaml_text: str) -> Any:
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
     return render(result.board, executor.ctx, executor.ledger, format="svg")
 
@@ -656,7 +655,6 @@ class TestUntestedBranches:
         executor = Run(
             result.board,
             env=build_exec_env(project),
-            query_registry=result.query_registry,
         )
         with template_output_budget(1000):
             out = render(result.board, executor.ctx, executor.ledger, format="svg")
@@ -977,7 +975,7 @@ class TestVariablesAndFonts:
         executor = Run(
             result.board,
             env=build_exec_env(project),
-            query_registry=result.query_registry,
+            variables={"stage": "signup"},
         )
         svg = render(
             result.board,
@@ -1000,7 +998,6 @@ class TestVariablesAndFonts:
         executor = Run(
             result.board,
             env=build_exec_env(project),
-            query_registry=result.query_registry,
         )
         html = render(
             result.board, executor.ctx, executor.ledger, format="html", standalone=True
@@ -1075,7 +1072,6 @@ class TestReviewRegressions:
         executor = Run(
             result.board,
             env=build_exec_env(project),
-            query_registry=result.query_registry,
         )
         unbounded = 10**9
         with template_output_budget(unbounded):
@@ -1137,7 +1133,6 @@ class TestReviewRegressions:
         executor = Run(
             result.board,
             env=build_exec_env(project),
-            query_registry=result.query_registry,
         )
         with template_output_budget(500):
             out = render(result.board, executor.ctx, executor.ledger, format="svg")

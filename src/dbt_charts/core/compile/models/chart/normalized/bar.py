@@ -15,9 +15,10 @@ from ._base import _CartesianChartFields, _PatternField, _TooltipFields
 
 
 class BarChart(_CartesianChartFields, _TooltipFields, _PatternField):
-    """Normalized bar or histogram chart."""
+    """Normalized bar, histogram or funnel chart. A funnel is a bar the
+    board's `charts.funnel` recipe styles."""
 
-    type: Literal["bar", "histogram"]
+    type: Literal["bar", "histogram", "funnel"]
     y_start: ColumnRef | None = Field(
         default=None,
         description="Column each bar starts from; absent, bars start at zero.",

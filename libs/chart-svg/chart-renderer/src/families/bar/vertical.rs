@@ -32,12 +32,13 @@ use std::collections::HashMap;
 
 use super::axes::{BandInterval, BandXAxis, band_tick_snap, bar_temporal_labels, bucket_x, cadence_ratio, format_tick_labels, rotated_rows_reach};
 use super::bind::zero_label;
+use super::ribbons::RibbonDraft;
 use super::domain::{CenterStack, RawX, SegmentSpan, SegmentSpans, bar_value_extent, base_series, build_cat_domain, build_data_map, Extras, cat_order, category_totals, collapsed_authored_domain, grouped_rail_anchors, grouped_spans, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_reach, stack_spans, stacked_rail_anchors, tallest_total, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
 use super::facet::color_1to1_with_cat;
 use super::labels::{FitHide, LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, label_fit_span, label_hang, mark_labels, plain_sites, step_band_of, value_label_layers};
 use super::layout::{Drawn, XScale, clipped_if, warn_vertical_density};
 use super::legend::{LayeredBarLegend, authored_legend_order, bar_link_keys, grouped_legend_domain, numeric_legends_of, stacked_legend_entries};
-use super::marks::{BandColumns, ColumnSplit, Columns, RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, collapsed_bars, direction_layers, grouped_overlap_fraction, hover_band_for, labels_on_zero_stack, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, strip_columns, unity_rule};
+use super::marks::{BandColumns, ColumnSplit, Columns, RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, collapsed_bars, direction_layers, grouped_overlap_fraction, hover_band_for, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, strip_columns, unity_rule};
 use super::time_x::TimeX;
 use super::tooltip::{NativeTitles, bar_datum_aria, imputed_datum_aria, stack_group_total, tooltip_order_domain};
 use super::{BarResolved, x_resolution};
@@ -946,7 +947,6 @@ pub(crate) fn render_vertical_panel(
             true,
             r.y_start.as_deref(),
             rail_pins_domain,
-            labels_on_zero_stack(r),
         )?,
     };
     // The single-series and grouped columns, their value labels and a
@@ -3994,6 +3994,7 @@ pub(crate) fn render_vertical_panel(
         })
     };
     let bars_from = plot.len();
+    let mut ribbons = RibbonDraft::new(&r.style.mark.ribbons, is_grouped && !is_stacked, None)?;
     if is_stacked {
         for cat in &cat_domain {
             let Some(band_x) = band.position(cat) else { continue };
@@ -4074,6 +4075,9 @@ pub(crate) fn render_vertical_panel(
                 let segment_r = if (if raw_val < 0.0 { outers.1 } else { outers.0 }) == Some(series) { corner_r } else { 0.0 };
                 stack_ends = Some(stack_ends.map_or((top_y, bottom_y), |(top, bottom)| (top.min(top_y), bottom.max(bottom_y))));
                 let (edge, edge_w) = mark.seam(crate::pattern::STACK_EDGE_W);
+                ribbons.record(&key, (col_x, top_y, columns.width, seg_h), aria.as_deref(), Some(series_text(base_series(series)).trim().to_string()), || {
+                    crate::common::series_color(base_series(series), palette_domain, &r.series_palette, category_scale, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color)
+                })?;
                 plot.extend(bar_passes(base_mark(&datum_of, &key), false, col_x, top_y, columns.width, seg_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w),
                     segment_r,
                     Rounded::by_sign(raw_val), false, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?);
@@ -4212,11 +4216,13 @@ pub(crate) fn render_vertical_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), col_x + columns.width / 2.0, bar_top, ghost_ink.clone(), hrefs.get(&key).cloned()));
             }
+            ribbons.record(&key, (col_x, bar_top, columns.width, bar_h), aria.as_deref(), None, || Ok(r.style.single_series_fill.clone()))?;
             let mark = r.single_series_paint(rows, &cat_domain, cat)?.for_mark(columns.width.min(bar_h), stroke_color, halo_w(stroke_w, columns.width));
             plot.extend(bar_passes(base_mark(&datum_of, &key), false, col_x, bar_top, columns.width, bar_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(&mark.stroke), patch.stroke_w(mark.stroke_w), corner_r,
                 ends, double_stroke, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?);
         }
     }
+    ribbons.paint(&mut plot, bars_from, false, &cat_domain, &r.canvas)?;
     let knocked = crate::knockout::knock_out(
         plot.split_off(bars_from),
         &r.canvas,

@@ -94,13 +94,15 @@ def query_target_paths(
     queries: Mapping[str, HostQuery],
     project: Project,
     query_names: Iterable[str],
-    board_sources: SourceYaml,
 ) -> dict[str, str | None]:
-    """Each SQL query's authored manifest directory, by its named source."""
+    """Each SQL query's authored manifest directory, by its named source.
+
+    A board declares no sources of its own, so only the project's are read.
+    """
     wanted = set(query_names)
     return {
         name: named_source_target_path(
-            query["source"], board_sources, project.declared_sources.sources
+            query["source"], {}, project.declared_sources.sources
         )
         for name, query in sql_texts(queries).items()
         if name in wanted
@@ -108,7 +110,7 @@ def query_target_paths(
 
 
 def check_manifest_refs(
-    queries: Mapping[str, HostQuery], project: Project, board_sources: SourceYaml
+    queries: Mapping[str, HostQuery], project: Project
 ) -> list[Diagnostic]:
     """Validate ref()/source() calls against the dbt manifest.
 
@@ -122,7 +124,7 @@ def check_manifest_refs(
     if not calls:
         return []
 
-    target_paths = query_target_paths(queries, project, calls, board_sources)
+    target_paths = query_target_paths(queries, project, calls)
     found: list[Diagnostic] = []
     for target_path in dict.fromkeys(target_paths.values()):
         found += _check_manifest(
@@ -166,6 +168,7 @@ def _check_manifest(
                         ERR_DBT_REF_UNKNOWN_NODE,
                         ref_name=ref_name,
                         available=index.available_refs,
+                        why=index.why(ref_name),
                     ).to_diagnostic()
                 )
         for src, tbl in qcalls.sources:
@@ -176,6 +179,7 @@ def _check_manifest(
                         source_name=src,
                         table_name=tbl,
                         available=index.available_sources,
+                        why=index.why(f"{src}.{tbl}"),
                     ).to_diagnostic()
                 )
     return found

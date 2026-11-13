@@ -560,7 +560,7 @@
   level: error
   title: ref() names a node that isn't in the dbt manifest
   template: 'SQL references {{{{ ref({ref_name!r}) }}}}, but no model, seed, or snapshot named
-    {ref_name!r} exists in the dbt manifest. Available: {available}.'
+    {ref_name!r} exists in the dbt manifest. Available: {available}.{why}'
   doc: Fired when a query's SQL calls the dbt `ref()` Jinja function with a name that is not
     present in the loaded manifest. `ref()` addresses models, seeds, and snapshots, not data
     tests or sources (use `source()` for those). Check for a typo, or refresh the manifest
@@ -611,7 +611,7 @@
   level: error
   title: source() names a table that isn't in the dbt manifest
   template: 'SQL references {{{{ source({source_name!r}, {table_name!r}) }}}}, but no matching
-    source table exists in the dbt manifest. Available sources: {available}.'
+    source table exists in the dbt manifest. Available sources: {available}.{why}'
   doc: Fired when a query's SQL calls the dbt `source()` Jinja function with a source/table
     pair that is not present in the loaded manifest. Check for a typo, or refresh the manifest
     (`dbt parse`) if the source was added recently.

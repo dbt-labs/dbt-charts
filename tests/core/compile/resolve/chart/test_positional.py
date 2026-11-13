@@ -592,7 +592,6 @@ def test_the_text_format_reads_the_bound_y_range() -> None:
         run = Run(
             result.board,
             env=build_exec_env(FilesystemProject(Path.cwd())),
-            query_registry=result.query_registry,
             clock=pinned_clock,
         )
         return render_run(result.board, run, format="text").output
@@ -632,7 +631,6 @@ def test_an_automatic_link_reaches_a_shorthand_chart(
         run = Run(
             result.board,
             env=build_exec_env(local_project(tmp_path)),
-            query_registry=result.query_registry,
             clock=pinned_clock,
         )
         rendered = render_run(result.board, run, format="svg")

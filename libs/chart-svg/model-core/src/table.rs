@@ -13,6 +13,10 @@ pub enum Scalar {
     Int,
     Float,
     Str,
+    /// ISO date text, pydantic's `date`.
+    Date,
+    /// ISO date-time text, pydantic's `datetime`.
+    DateTime,
     /// Any JSON value: a cell of inline data, a variable's default.
     Json,
     /// Any mapping, as Python's `dict[str, Any]` states it: `{"type": "object"}` with no value type.

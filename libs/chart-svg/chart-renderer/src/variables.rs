@@ -518,7 +518,7 @@ fn input_width(
     let padding = &vs.input.padding;
     let sizing = traits_of(&spec.input)?.sizing;
     if sizing == "checkbox" {
-        return Ok(widths.checkbox);
+        return Ok(widths.checkbox.max(text_width(&spec.value, font_size, fonts_dir)));
     }
     if sizing == "summary" {
         return Ok(widths.text);
@@ -2485,20 +2485,55 @@ fn draw_text_field(
     Ok(parts)
 }
 
+/// `variables_strip.py::_value_text`.
+fn value_text(
+    value: &str,
+    x: f64,
+    mid: f64,
+    vs: &VariablesStyleDoc,
+    fonts_dir: &str,
+    attrs: &str,
+) -> Result<String, String> {
+    let fs = font_size(vs)?;
+    let value_font = &vs.value.font;
+    let family = value_font.family.as_deref().unwrap_or_default();
+    Ok(format!(
+        r#"<text{attrs} x="{}" y="{}" font-size="{}" font-family="{}" fill="{}">{}</text>"#,
+        pxi(x),
+        pxi(mid + centered_baseline_offset(family, fs, fonts_dir)),
+        pxi(fs),
+        xml_escape_attr(family),
+        xml_escape_attr(value_font.color.as_deref().unwrap_or_default()),
+        xml_escape(value)
+    ))
+}
+
 /// `variables_strip.py::_draw_checkbox`.
-fn draw_checkbox(checked: bool, x: f64, y: f64, vs: &VariablesStyleDoc) -> Vec<String> {
+fn draw_checkbox(
+    checked: bool,
+    box_: &ControlBox,
+    x: f64,
+    y: f64,
+    height: f64,
+    vs: &VariablesStyleDoc,
+    fonts_dir: &str,
+) -> Result<Vec<String>, String> {
     let size = vs.input.widths.checkbox;
     let top = y + (vs.input.height - size) / 2.0;
-    let mut parts = vec![format!(
-        r#"<rect data-dbt-field="checkbox" data-dbt-ornament="checkbox" x="{}" y="{}" width="{}" height="{}" rx="{}" fill="{}" stroke="{}" stroke-width="1"/>"#,
-        pxi(x),
-        pxi(top),
-        pxi(size),
-        pxi(size),
-        pxi(vs.input.border.radius),
-        xml_escape_attr(&vs.input.background),
-        xml_escape_attr(&vs.border.color)
-    )];
+    let at_rest = r#" data-dbt-at-rest="true""#;
+    let mut parts = vec![
+        value_text(&box_.value, x, y + height / 2.0, vs, fonts_dir, at_rest)?,
+        r#"<g data-dbt-ornament="checkbox" opacity="0">"#.to_string(),
+        format!(
+            r#"<rect data-dbt-field="checkbox" x="{}" y="{}" width="{}" height="{}" rx="{}" fill="{}" stroke="none"/>"#,
+            pxi(x),
+            pxi(top),
+            pxi(size),
+            pxi(size),
+            pxi(vs.input.border.radius),
+            xml_escape_attr(&vs.input.background)
+        ),
+    ];
     if checked {
         parts.push(format!(
             r#"<path d="M{} {} L{} {} L{} {}" fill="none" stroke="{}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>"#,
@@ -2511,7 +2546,8 @@ fn draw_checkbox(checked: bool, x: f64, y: f64, vs: &VariablesStyleDoc) -> Vec<S
             xml_escape_attr(vs.value.font.color.as_deref().unwrap_or_default())
         ));
     }
-    parts
+    parts.push("</g>".to_string());
+    Ok(parts)
 }
 
 /// `variables_strip.py::_number_attr`: a bound as the runtime must read it
@@ -2556,37 +2592,25 @@ fn draw_slider(
     vs: &VariablesStyleDoc,
     fonts_dir: &str,
 ) -> Result<Vec<String>, String> {
-    let _ = width;
-    let fs = font_size(vs)?;
-    let value_font = &vs.value.font;
-    let family = value_font.family.as_deref().unwrap_or_default();
     let track_width = vs.input.widths.range;
+    let track_x = x + width - track_width;
     let mid = y + height / 2.0;
-    let thumb =
-        x + track_width * slider_fraction(&control.current, control.slider_min, control.slider_max);
+    let fraction = slider_fraction(&control.current, control.slider_min, control.slider_max);
 
     Ok(vec![
+        value_text(&box_.value, x, mid, vs, fonts_dir, r#" data-dbt-ornament="slider-value""#)?,
         format!(
-            r#"<rect data-dbt-field="slider" data-dbt-ornament="slider" x="{}" y="{}" width="{}" height="4" rx="2" fill="{}" stroke="none"/>"#,
-            pxi(x),
+            r#"<rect data-dbt-field="slider" data-dbt-ornament="slider" opacity="0" x="{}" y="{}" width="{}" height="4" rx="2" fill="{}" stroke="none"/>"#,
+            pxi(track_x),
             pxi(mid - 2.0),
             pxi(track_width),
             xml_escape_attr(&vs.input.background)
         ),
         format!(
-            r#"<circle data-dbt-ornament="slider-thumb" cx="{}" cy="{}" r="6" fill="{}"/>"#,
-            pxi(thumb),
+            r#"<circle data-dbt-ornament="slider-thumb" opacity="0" cx="{}" cy="{}" r="6" fill="{}"/>"#,
+            pxi(track_x + track_width * fraction),
             pxi(mid),
-            xml_escape_attr(value_font.color.as_deref().unwrap_or_default())
-        ),
-        format!(
-            r#"<text data-dbt-ornament="slider-value" x="{}" y="{}" font-size="{}" font-family="{}" fill="{}">{}</text>"#,
-            pxi(x + track_width + vs.control_gap),
-            pxi(mid + centered_baseline_offset(family, fs, fonts_dir)),
-            pxi(fs),
-            xml_escape_attr(family),
-            xml_escape_attr(value_font.color.as_deref().unwrap_or_default()),
-            xml_escape(&box_.value)
+            xml_escape_attr(vs.value.font.color.as_deref().unwrap_or_default())
         ),
     ])
 }
@@ -2608,7 +2632,7 @@ fn draw_field(
         return draw_buttons(control, box_, x, y, width, vs, fonts_dir, align);
     }
     match traits_of(&box_.input)?.sizing {
-        "checkbox" => Ok(draw_checkbox(control.checked, x, y, vs)),
+        "checkbox" => draw_checkbox(control.checked, box_, x, y, height, vs, fonts_dir),
         "slider" => draw_slider(control, box_, x, y, width, height, vs, fonts_dir),
         _ => draw_text_field(
             box_,

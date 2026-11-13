@@ -103,13 +103,11 @@ class TestCrossRaceCacheDedup:
         executor_a = Run(
             result_a.board,
             env=registry_a,
-            query_registry=result_a.query_registry,
             result_cache=in_memory_cache,
         )
         executor_b = Run(
             result_b.board,
             env=registry_b,
-            query_registry=result_b.query_registry,
             result_cache=in_memory_cache,
         )
 
@@ -160,7 +158,6 @@ class TestReferenceExpansionKeysCache:
             executor = Run(
                 compiled.board,
                 env=registry,
-                query_registry=compiled.query_registry,
                 result_cache=in_memory_cache,
             )
             return executor.execute_query("downstream"), registry
@@ -185,7 +182,6 @@ class TestReferenceExpansionKeysCache:
             executor = Run(
                 compiled.board,
                 env=registry,
-                query_registry=compiled.query_registry,
             )
             with patch.object(
                 registry.dbt_refs, "manifest_version", return_value=manifest_version
@@ -387,7 +383,6 @@ class TestQueryResultCacheProtocol:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
             result_cache=noop,
         )
         rows = executor.execute_query("revenue")

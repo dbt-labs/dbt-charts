@@ -31,6 +31,7 @@ charts:
       preferred_width: 400
       pagination:
         enabled: true
+        mode: pages
         page_rows: 5
 queries:
   q:
@@ -43,7 +44,7 @@ rows:
 
 def _make_executor(board: object, query_registry: object, rows: list[dict[str, str]]):
     mock_registry = scripted_env(ScriptedBackend(rows))
-    return Run(board, env=mock_registry, query_registry=query_registry)
+    return Run(board, env=mock_registry)
 
 
 def _find_active_page_text(svg: str) -> str:

@@ -17,10 +17,10 @@ Entry Points:
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.execution import ExecutionError
@@ -33,6 +33,7 @@ from dbt_charts.core.execute.plan import (
     render_with_range_filters,
     text_listings,
 )
+from dbt_charts.core.execute.plan_names import aliases, plan_key
 from dbt_charts.core.execute.run import (
     Failed,
     Outcome,
@@ -47,7 +48,11 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.template.parameterized import DateRangeFilter
     from dbt_charts.core.dbt_manifest import RawTableFormats
     from dbt_charts.core.execute.cache_backend import TruncationInfo
+    from dbt_charts.core.execute.query_plan import QueryPlan
     from dbt_charts.core.execute.query_result import ResolvedRelation
+
+
+_V = TypeVar("_V")
 
 
 class UncollectedQueryError(ExecutionError):
@@ -80,6 +85,7 @@ class QueryResults:
     provenance: Mapping[str, list[ResolvedRelation]]
     listings: Callable[[str, frozenset[ListingCall]], TextListings]
     board: Board
+    plan: QueryPlan
     # None until ``with_link_schema`` plans it; reading it then is an error.
     planned_links: LinkSchema | None
     base_formats: Callable[[str | None], RawTableFormats]
@@ -87,15 +93,14 @@ class QueryResults:
     # failure of a query's dbt column formats, raised where a chart reading it
     # resolves.
     column_format_errors: dict[str, DbtChartsError]
-    range_filters: Callable[
-        [str, VariableValues], tuple[str, str | None, list[DateRangeFilter]] | None
-    ]
-    # Late queries collected under other variable values (``plan_extra``).
-    collections: tuple[QueryResults, ...] = ()
+    range_filters: Callable[[str], tuple[str, str | None, list[DateRangeFilter]] | None]
 
-    def with_collection(self, other: QueryResults) -> QueryResults:
-        """These results plus *other*, collected under its own variable values."""
-        return replace(self, collections=(*self.collections, other))
+    def _key(self, query_name: str) -> str:
+        """The plan key a chart's or variable's query name stands for; a name nothing reads
+        stays as asked and is the uncollected error."""
+        name = query_name.removeprefix("queries.")
+        key = plan_key(self.plan, self.board, name)
+        return name if key is None else key
 
     def execute_query(self, query_name: str, variables: VariableValues) -> CacheRows:
         """The rows collected for ``query_name``; raises its recorded error.
@@ -117,21 +122,17 @@ class QueryResults:
             UncollectedQueryError: The query was not collected, or *variables*
                 differ from the ones it was collected under.
         """
-        name = query_name.removeprefix("queries.")
-        held = [
-            h for h in (self, *self.collections) if dict(h.variables) == dict(variables)
-        ]
-        if not held:
+        name = self._key(query_name)
+        if dict(self.variables) != dict(variables):
             raise UncollectedQueryError(
                 f"Query {name!r} was collected under variables "
                 f"{dict(self.variables)!r}, but render asked for {dict(variables)!r}."
             )
-        for collection in held:
-            if name in collection.errors:
-                raise collection.errors[name]
-            if name in collection.results:
-                return collection.results[name]
-        collected = sorted({n for h in held for n in (*h.results, *h.errors)})
+        if name in self.errors:
+            raise self.errors[name]
+        if name in self.results:
+            return self.results[name]
+        collected = sorted({*self.results, *self.errors})
         raise UncollectedQueryError(
             f"Query {name!r} was not collected before render under variables "
             f"{dict(variables)!r} (collected: {collected})."
@@ -141,8 +142,17 @@ class QueryResults:
         self, query_name: str, variables: VariableValues
     ) -> tuple[str, str | None, list[DateRangeFilter]] | None:
         """The SQL *query_name* runs as and the date ranges its filters recorded;
-        rendering SQL text, not executing it."""
-        return self.range_filters(query_name, variables)
+        rendering SQL text, not executing it.
+
+        Raises:
+            UncollectedQueryError: *variables* differ from the ones the plan binds.
+        """
+        if dict(variables) != dict(self.variables):
+            raise UncollectedQueryError(
+                f"Query {query_name!r} was planned under variables "
+                f"{dict(self.variables)!r}, but render asked for {dict(variables)!r}."
+            )
+        return self.range_filters(self._key(query_name))
 
     @property
     def link_schema(self) -> LinkSchema:
@@ -163,6 +173,14 @@ class QueryResults:
         return self.listings(base_dir, calls)
 
 
+def _under_python_names(by_key: dict[str, _V], names: dict[str, str]) -> dict[str, _V]:
+    """*by_key* with each entry also under the Python name its chart or variable reads it as."""
+    return {
+        **by_key,
+        **{name: by_key[key] for name, key in names.items() if key in by_key},
+    }
+
+
 def collect(
     ctx: ExecContext,
     ledger: Ledger,
@@ -177,6 +195,7 @@ def collect(
     rows only under them. A hit is checked against its ``formats:`` here, as a
     miss is in ``run_misses``. A name is in at most one of the two inputs.
     """
+    names = aliases(ctx.plan, ctx.board)
     results: dict[str, ResultRows] = {}
     errors: dict[str, Exception] = {}
     checked = dict(outcomes)
@@ -197,10 +216,14 @@ def collect(
         errors,
         ctx.rendered_at,
         cache_hit_ats(ledger),
-        dict(ledger.truncations),
-        {name: list(relations) for name, relations in ledger.provenance.items()},
+        _under_python_names(dict(ledger.truncations), names),
+        _under_python_names(
+            {name: list(relations) for name, relations in ledger.provenance.items()},
+            names,
+        ),
         partial(text_listings, ctx),
         ctx.board,
+        ctx.plan,
         None,
         partial(base_column_formats, ctx),
         ledger.column_format_errors,
@@ -240,7 +263,6 @@ def execute(
         ctx,
         ledger,
         names,
-        variables,
         resume_incremental=True,
         use_cache=use_cache,
         force_refresh=force_refresh,

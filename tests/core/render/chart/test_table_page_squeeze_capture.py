@@ -47,7 +47,7 @@ def _render(
     explicit_null: bool = False,
     sink_open: bool = True,
 ) -> dict[str, TablePageSqueeze]:
-    pagination: dict[str, Any] = {"enabled": True}
+    pagination: dict[str, Any] = {"enabled": True, "mode": "pages"}
     if page_rows is not None or explicit_null:
         pagination["page_rows"] = page_rows
     data = _data(n_rows)

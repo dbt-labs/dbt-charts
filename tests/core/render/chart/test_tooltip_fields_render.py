@@ -38,7 +38,6 @@ def _svg(chart: dict[str, Any]) -> str:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     return render(result.board, executor.ctx, executor.ledger, format="svg").output
 
@@ -92,7 +91,6 @@ def test_a_semicolon_in_a_value_is_escaped_for_the_runtime() -> None:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
     assert f"{EXTRA}Note: Q1\ue000 Q2" in svg

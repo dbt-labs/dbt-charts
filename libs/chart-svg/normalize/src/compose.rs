@@ -8,8 +8,8 @@
 //! is told which keys those are and reads their references as the file's own.
 
 use crate::hoist::HoistError;
-use crate::sql::query_id;
 use crate::slug::{is_space, is_word};
+use crate::sql::query_id;
 use board_model::ids::{QueryId, QueryName};
 use board_model::query::QueryAuthored;
 use diagnostic::diag;
@@ -141,7 +141,9 @@ fn references(sql: &str) -> (Vec<String>, Vec<String>) {
 /// Python's `_validate_query_ref_name`: a composed name is a table alias.
 fn reserved(name: &str) -> Result<(), HoistError> {
     match RESERVED.binary_search(&name.to_lowercase().as_str()) {
-        Ok(_) => Err(HoistError::refused(diag::err_query_name_reserved_word(name))),
+        Ok(_) => Err(HoistError::refused(diag::err_query_name_reserved_word(
+            name,
+        ))),
         Err(_) => Ok(()),
     }
 }
@@ -174,7 +176,9 @@ fn setup_sql_composes(
         Some(QueryAuthored::Sql(q)) if matches!(&q.setup_sql, Tri::Value(s) if s.contains("{{ queries.")) =>
         {
             let name = id.label(own);
-            Err(HoistError::refused(diag::err_setup_sql_composes_query(name)))
+            Err(HoistError::refused(diag::err_setup_sql_composes_query(
+                name,
+            )))
         }
         _ => Ok(()),
     }

@@ -17,7 +17,6 @@ def _sql_query(sql: str) -> HostQuery:
         "authored": True,
         "type": "sql",
         "source": None,
-        "ignore": [],
         "sql": sql,
         "setup_sql": None,
         "dialect": None,
@@ -74,7 +73,6 @@ def test_check_manifest_refs_returns_diagnostics_for_unknown_refs(
     found = check_manifest_refs(
         {"q": _sql_query(_REF_SQL), "plain": _sql_query(_PLAIN_SQL)},
         FilesystemProject(tmp_path),
-        {},
     )
     assert [d.code for d in found] == ["ERR-DBT-REF-UNKNOWN-NODE"]
 
@@ -87,6 +85,5 @@ def test_check_manifest_refs_warns_once_when_no_manifest(tmp_path: Path) -> None
     found = check_manifest_refs(
         {"a": _sql_query(_REF_SQL), "b": _sql_query(_REF_SQL)},
         FilesystemProject(tmp_path),
-        {},
     )
     assert [d.code for d in found] == ["WARN-DBT-MANIFEST-MISSING"]

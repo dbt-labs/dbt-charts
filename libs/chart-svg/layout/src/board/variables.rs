@@ -228,10 +228,10 @@ fn input_width(
     let input = &style.variables.input;
     let (widths, padding) = (&input.widths, &input.padding);
     let sizing = control.widget.sizing();
-    if sizing == Sizing::Checkbox {
-        return Ok(widths.checkbox);
-    }
     let value = text_width(book, &control.value, font_size)?;
+    if sizing == Sizing::Checkbox {
+        return Ok(widths.checkbox.max(value));
+    }
     let boxed = value.max(font_size) + padding.left + padding.right;
     Ok(match sizing {
         Sizing::Slider => widths.range + style.variables.control_gap + value.max(widths.slider_value_min),
@@ -626,8 +626,8 @@ fn draw_field(
     height: f64,
 ) -> Result<Vec<Element>, Diagnostic> {
     match control.widget.sizing() {
-        Sizing::Checkbox => Ok(draw_checkbox(ink, control, x, y)),
-        Sizing::Slider => draw_slider(ink, control, x, y, height),
+        Sizing::Checkbox => draw_checkbox(ink, control, x, y, height),
+        Sizing::Slider => draw_slider(ink, control, x, y, width, height),
         _ => draw_text_field(ink, control, x, y, width, height),
     }
 }
@@ -682,24 +682,48 @@ fn draw_text_field(
     Ok(parts)
 }
 
-/// `_draw_checkbox`: the one field that keeps its outline at rest, since the box is the value.
-fn draw_checkbox(ink: &Ink, control: &Control, x: f64, y: f64) -> Vec<Element> {
+/// `_value_text`: a value stated as text where every control's value sits.
+fn value_text(
+    ink: &Ink,
+    control: &Control,
+    x: f64,
+    mid: f64,
+    lead: Attrs,
+) -> Result<Element, Diagnostic> {
+    let vars = ink.vars();
+    let baseline = mid + ink.centered(vars.value.font.family.as_str())?;
+    Ok(text_el(
+        lead.set("x", px(x))
+            .set("y", px(baseline))
+            .set("font-size", px(ink.font_size))
+            .set("font-family", ink.value_family.as_str())
+            .set("fill", vars.value.font.color.as_str()),
+        &control.value,
+    ))
+}
+
+/// `_draw_checkbox`: Yes or No as text at rest, and the box drawn hidden for the runtime.
+fn draw_checkbox(
+    ink: &Ink,
+    control: &Control,
+    x: f64,
+    y: f64,
+    height: f64,
+) -> Result<Vec<Element>, Diagnostic> {
     let vars = ink.vars();
     let size = vars.input.widths.checkbox;
     let top = y + (vars.input.height - size) / 2.0;
-    let mut parts = vec![el(
+    let mut glyph = vec![el(
         "rect",
         Attrs::new()
             .set("data-dbt-field", "checkbox")
-            .set("data-dbt-ornament", "checkbox")
             .set("x", px(x))
             .set("y", px(top))
             .set("width", px(size))
             .set("height", px(size))
             .set("rx", px(vars.input.border.radius))
             .set("fill", vars.input.background.as_str())
-            .set("stroke", vars.border.color.as_str())
-            .set("stroke-width", "1"),
+            .set("stroke", "none"),
         vec![],
     )];
     if control.checked {
@@ -712,7 +736,7 @@ fn draw_checkbox(ink: &Ink, control: &Control, x: f64, y: f64) -> Vec<Element> {
             px(x + size * 0.75),
             px(top + size * 0.3)
         );
-        parts.push(el(
+        glyph.push(el(
             "path",
             Attrs::new()
                 .set("d", d)
@@ -724,15 +748,17 @@ fn draw_checkbox(ink: &Ink, control: &Control, x: f64, y: f64) -> Vec<Element> {
             vec![],
         ));
     }
-    parts
+    let hidden = Attrs::new().set("data-dbt-ornament", "checkbox").set("opacity", "0");
+    Ok(vec![value_text(ink, control, x, y + height / 2.0, Attrs::new().set("data-dbt-at-rest", "true"))?, el("g", hidden, glyph)])
 }
 
-/// `_draw_slider`: a track with a thumb at the committed value, and the value beside it.
+/// `_draw_slider`: the value as text, then a hidden track with a thumb at it.
 fn draw_slider(
     ink: &Ink,
     control: &Control,
     x: f64,
     y: f64,
+    width: f64,
     height: f64,
 ) -> Result<Vec<Element>, Diagnostic> {
     let vars = ink.vars();
@@ -740,16 +766,17 @@ fn draw_slider(
         return Err(diag::err_internal("a slider carries its bounds"));
     };
     let track = vars.input.widths.range;
+    let track_x = x + width - track;
     let mid = y + height / 2.0;
-    let thumb = x + track * fraction;
-    let baseline = mid + ink.centered(vars.value.font.family.as_str())?;
     Ok(vec![
+        value_text(ink, control, x, mid, Attrs::new().set("data-dbt-ornament", "slider-value"))?,
         el(
             "rect",
             Attrs::new()
                 .set("data-dbt-field", "slider")
                 .set("data-dbt-ornament", "slider")
-                .set("x", px(x))
+                .set("opacity", "0")
+                .set("x", px(track_x))
                 .set("y", px(mid - 2.0))
                 .set("width", px(track))
                 .set("height", "4")
@@ -762,21 +789,12 @@ fn draw_slider(
             "circle",
             Attrs::new()
                 .set("data-dbt-ornament", "slider-thumb")
-                .set("cx", px(thumb))
+                .set("opacity", "0")
+                .set("cx", px(track_x + track * fraction))
                 .set("cy", px(mid))
                 .set("r", "6")
                 .set("fill", vars.value.font.color.as_str()),
             vec![],
-        ),
-        text_el(
-            Attrs::new()
-                .set("data-dbt-ornament", "slider-value")
-                .set("x", px(x + track + vars.control_gap))
-                .set("y", px(baseline))
-                .set("font-size", px(ink.font_size))
-                .set("font-family", ink.value_family.as_str())
-                .set("fill", vars.value.font.color.as_str()),
-            &control.value,
         ),
     ])
 }

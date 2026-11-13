@@ -89,7 +89,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         rs = resolve_style(get_theme_style("clarity"))
@@ -178,7 +177,6 @@ cols:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         rs = resolve_style(get_theme_style("clarity"))
@@ -241,7 +239,6 @@ grid:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         rs = resolve_style(get_theme_style("clarity"))
@@ -309,7 +306,6 @@ tabs:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         from dbt_charts.core.compile.config import reset_config
@@ -378,7 +374,6 @@ class TestNestedBoardContainerSizing:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         board, _ = calculate_data_aware_layout(
             result.board, executor, {}, pre_resolved={}
@@ -545,7 +540,6 @@ rows:
         executor = Run(
             board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         from dbt_charts.core.compile.resolve.style.board import resolve_style
@@ -611,7 +605,6 @@ rows:
         executor = Run(
             board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         from dbt_charts.core.compile.resolve.style.board import resolve_style

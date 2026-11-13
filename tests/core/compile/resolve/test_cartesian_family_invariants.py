@@ -373,9 +373,9 @@ def _assert_compact_top_legend(resolved: ResolvedChart, family: str) -> None:
         f"{family}: tiny-width color-series chart did not fall back to a top "
         f"legend (position={resolved.legend.position!r})"
     )
-    assert resolved.legend.columns != 0, (
-        f"{family}: tiny-width top legend is not in compact-columns layout "
-        f"(columns=0 means the uncompacted 'row' layout, not 'compact')"
+    assert resolved.legend.columns <= resolved.legend.compact_columns, (
+        f"{family}: tiny-width top legend wrapped past compact_columns "
+        f"(columns={resolved.legend.columns})"
     )
     # Only the three rail-bearing families discard the rail in favor of the
     # compact legend; scatter/heatmap have no endpoint_labels field to check —

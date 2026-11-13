@@ -13,6 +13,7 @@ from dbt_charts.core.compile.config import get_execution_config, reset_config
 from dbt_charts.core.render import render
 
 from .._run import Run
+from .._scripted_env import ScriptedBackend, scripted_env
 
 # importlib.import_module uses sys.modules directly, bypassing the attribute-
 # traversal problem caused by dbt_charts.core.__init__ shadowing the render
@@ -45,17 +46,17 @@ def _reset():
 
 @pytest.fixture
 def board_and_executor():
-    from unittest.mock import Mock
-
     from dbt_charts.core.column_types import literal_schema
     from dbt_charts.core.execute.query_result import QueryResult
 
     result = compile(BOARD_YAML)
     assert result.success, result.errors
-    registry = Mock()
-    registry.sources.all.return_value = {}
-    registry.execute.return_value = QueryResult(
-        data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+    registry = scripted_env(
+        ScriptedBackend(
+            QueryResult(
+                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+            )
+        )
     )
     executor = Run(result.board, env=registry)
     return result.board, executor

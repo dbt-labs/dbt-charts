@@ -635,8 +635,8 @@ fn conditional_patch(
         for rule in &rules {
             if rule.when.default == Some(true) {
                 default_rule = Some(rule);
-            } else if match_predicate(&rule.when, cell)
-                .map_err(|e| format!("kpi: style.conditional.{column}: {e}"))?
+            } else if match_predicate(&rule.when, column, cell)
+                .map_err(|e| e.in_context(&format!("kpi: style.conditional.{column}")))?
             {
                 matched = true;
                 patch.apply(&rule.patch);
@@ -792,10 +792,11 @@ fn resolve_support_row(
     // one.
     let styled = resolve_conditional_styles(
         support.rules.as_deref().unwrap_or(&[]),
+        support.value.as_deref().unwrap_or_default(),
         Some(&cell).filter(|v| !v.is_null()),
         tones,
     )
-    .map_err(|e| format!("kpi: support {e}"))?;
+    .map_err(|e| e.in_context("kpi: support"))?;
     if styled.tone_needs_board_tones {
         return Err("kpi: support conditional rule tone with no board tones".into());
     }
@@ -1059,10 +1060,11 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     // authored one and its tone colors the whole run.
     let value_styled = resolve_conditional_styles(
         r.value_rules.as_deref().unwrap_or(&[]),
+        &r.value,
         Some(cell).filter(|v| !v.is_null()),
         tones,
     )
-    .map_err(|e| format!("kpi: value {e}"))?;
+    .map_err(|e| e.in_context("kpi: value"))?;
     if value_styled.tone_needs_board_tones {
         return Err("kpi: value conditional rule tone with no board tones".into());
     }
@@ -2910,7 +2912,7 @@ mod render_tests {
     fn a_rule_the_shared_evaluator_cannot_model_names_the_kpi_support_row() {
         let mut p = with_support(kpi_payload("stacked", 300.0));
         p.resolved["support"]["rules"] = json!([{"in": [["nested"]], "glyph": "x"}]);
-        assert!(err_of(&p).starts_with("kpi: support conditional rule 'in' with a non-scalar"));
+        assert!(err_of(&p).starts_with("kpi: support: conditional rule 'in' with a non-scalar"));
     }
 
     #[test]

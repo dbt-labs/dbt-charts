@@ -56,7 +56,7 @@ class ChartFence:
 
 # Lowest priority: meta.yml, extends and frontmatter all override it.
 _DOCUMENT_STYLE: dict[str, Any] = {  # type-state: explicit_any — board YAML patch
-    "text": {"column": {"max_number": 1}}
+    "text": {"column": {"max_number": 1, "max_chars": 90}}
 }
 
 

@@ -388,6 +388,15 @@ pub struct PlaceholderOverlay {
     pub font: FontStyle,
 }
 
+/// Tints a hosting app paints over commented text; carried as data, never drawn.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct CommentsStyle {
+    /// Tint of a comment highlight the viewer has already seen.
+    pub highlight: Color,
+    /// Tint of a comment highlight with activity the viewer has not seen.
+    pub highlight_new: Color,
+}
+
 /// The placeholder drawn over a chart with no data.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct PlaceholderStyle {

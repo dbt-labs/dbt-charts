@@ -46,12 +46,20 @@ pub fn chart_title_spec(style: &Style, width: f64) -> Result<(f64, FontWeightVal
     Ok((size, weight, family))
 }
 
+/// A title slot whose font size is authored is not modeled: the size comes from the heading ramp.
+pub(crate) fn refuse_authored_size(style: &Style) -> Result<(), Diagnostic> {
+    if matches!(style.charts.title.font.size, Engine::Value(_)) {
+        return Err(Diagnostic::refused(refuse!("a chart title with an authored font size is not supported")));
+    }
+    Ok(())
+}
+
 /// The gap between an object title's block and its body when `title.position.offset` is unset
 /// (common.rs:`wrap_title_block`'s `unwrap_or(10.0)`).
 const DEFAULT_TITLE_OFFSET: f64 = 10.0;
 
 /// `title_ascent`'s ratio of a title's size to its first baseline (sizing.rs:`title_ascent`).
-const TITLE_ASCENT_RATIO: f64 = 0.8;
+pub(crate) const TITLE_ASCENT_RATIO: f64 = 0.8;
 
 /// A chart's title as it draws: its lines, its subtitle's, the bands they take and the face they
 /// paint in.
@@ -117,14 +125,14 @@ impl ChartTitle {
                 .set("font-weight", Weight::of(weight).attr())
                 .set("fill", color)
         };
-        let title = face(&self.family, self.size, &self.weight, style.font.style.as_str(), style.font.color.as_str());
+        let title = face(&self.family, self.size, &self.weight, style.font.style.as_str(), style.font.color.as_str()).set("class", "role-title-text");
         let lines = self.title_lines().enumerate().map(|(i, (text, baseline))| {
             let attrs = if i == 0 { title.clone().set("data-authored-kind", "title") } else { title.clone() };
             Node::text(Role::Title, (x, top + baseline), attrs, text)
         });
         let sub = self.subtitle.as_ref().map(|sub| {
             let font = &style.base.subtitle.font;
-            let attrs = face(&sub.family, sub.size, &sub.weight, font.style.as_str(), font.color.as_str());
+            let attrs = face(&sub.family, sub.size, &sub.weight, font.style.as_str(), font.color.as_str()).set("class", "role-title-subtitle");
             self.subtitle_lines().enumerate().map(move |(i, (text, baseline))| {
                 let attrs = if i == 0 { attrs.clone().set("data-authored-kind", "subtitle") } else { attrs.clone() };
                 Node::text(Role::Title, (x, top + baseline), attrs, text)
@@ -155,9 +163,7 @@ pub fn chart_title(chart_id: &str, text: &str, subtitle: Option<&str>, style: &S
         return Ok(None);
     }
     let slot = &style.charts.title;
-    if matches!(slot.font.size, Engine::Value(_)) {
-        return Err(Diagnostic::refused(refuse!("a chart title with an authored font size is not supported")));
-    }
+    refuse_authored_size(style)?;
     let (size, weight, family) = chart_title_spec(style, width)?;
     let cased = display_text::case::apply_case(text, slot.font.case.as_str()).map_err(diag::err_internal)?;
     let title_font = painted_font(&family, size, &weight, slot.font.style.as_str() == "italic")?;

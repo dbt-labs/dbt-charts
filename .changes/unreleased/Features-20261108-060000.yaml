@@ -1,0 +1,3 @@
+kind: Features
+body: '`dct cloud comments` lists, adds, replies to, edits, resolves, and reopens board comment threads from the terminal, `--review` scopes a listing or a new thread to a review, and `--mention` notifies people and teams.'
+time: 2026-11-08T06:00:00.000000+00:00

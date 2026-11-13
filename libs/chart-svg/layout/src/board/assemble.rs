@@ -21,22 +21,33 @@ use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 use model_core::{Leaf, Tri};
 
+use crate::board::band::TitleShift;
 use crate::board::height::{boxes, measure, Boxed, NaturalPlan};
 use crate::board::tree::{Chart, Content, Details, Dim, Item, Kind, Node, Place, Title};
 use crate::board::width::IntrinsicWidth as Width;
-use crate::board::width::{container_width, intrinsic, Frame, IntrinsicWidth};
+use crate::board::width::{container_width, intrinsic, item_widths, Frame, IntrinsicWidth};
 
 /// A body's effective style patch: the theme, its `extends:` and its own `style:`.
 pub type StylePatch = <Style as Leaf>::Patch;
 
-/// What a body's text measures to, at the content width its box gives it.
+/// What a body's text measures to: its title and prose, and at the root the footer row (`Node::own`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Own {
-    /// Its title and prose, and at the root the footer row (`Node::own`).
     pub width: IntrinsicWidth,
-    /// Its title, prose and variables above its layout, with the gap below them.
+}
+
+/// What a nested board's own title, prose and variables take above its layout at the content width
+/// its box gives it: their height with the gap below them, and what the board contributes to the
+/// title band of its `cols` row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NestedBand {
     pub band: f64,
     pub title: Title,
+}
+
+impl NestedBand {
+    /// A board with no title, prose or variables of its own.
+    pub const NONE: Self = Self { band: 0.0, title: Title::None };
 }
 
 /// The measured and data-derived facts the tree holds but the board does not.
@@ -44,11 +55,14 @@ pub trait Facts {
     /// The effective style patch `body` lays out with.
     fn style(&self, body: &BoardBody) -> Result<&StylePatch, Diagnostic>;
     /// `body`'s own text, measured. `root` is the board's own body.
-    fn own(&mut self, body: &BoardBody, root: bool) -> Result<Own, Diagnostic>;
+    fn own(&mut self, at: &ItemId, body: &BoardBody, root: bool) -> Result<Own, Diagnostic>;
     /// The root's own title and text above its layout, as sizing reserves them: the height of the
     /// bands at the root's content width, 0 when it has none. Only the root's depends on a width
     /// the tree decides (the hug), so it is asked after the container width is known.
     fn root_band(&mut self, body: &BoardBody, content_width: f64) -> Result<f64, Diagnostic>;
+    /// The own band of the nested board at `at` (a tab's pane has none) at its content width, known
+    /// once the container's widths are placed.
+    fn nested_band(&mut self, at: &ItemId, content_width: f64, has_items: bool) -> Result<NestedBand, Diagnostic>;
     /// The width facts of the chart `id` drawn at `at`.
     fn chart(&mut self, at: &ItemId, id: &ChartId) -> Result<Chart, Diagnostic>;
     /// A drawn chart's natural plan at a width.
@@ -87,6 +101,8 @@ pub struct Placed {
     pub height: f64,
     /// Whether a board other than the root holds it.
     pub nested: bool,
+    /// Where its `cols` row moves its title and body.
+    pub shift: TitleShift,
 }
 
 /// One board's drawn items in layout order, each in the box its layout gives it.
@@ -114,6 +130,8 @@ pub struct PlacedBoard {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    /// Where its `cols` row moves its title and body.
+    pub shift: TitleShift,
     pub layout: LaidBoard,
 }
 
@@ -143,6 +161,27 @@ impl Laid {
     }
 }
 
+/// A closed tab is built so the board hugs its width, but the run records nothing about a board inside
+/// it, however deep (`bind::board::hide` does not enter a closed tab): a tabs or details board there
+/// has no open tab or section to read, so it is left out, and the engine refuses it by name when the
+/// hug would need it.
+pub fn opens_a_closed_tab_cannot_hold(item: &LayoutItem) -> bool {
+    matches!(item, LayoutItem::Board(nested) if matches!(nested.body.layout, Layout::Tabs(_)) || nested.body.details.is_some())
+}
+
+/// `opens_with_text`: whether the first drawn item of a `rows` board is a text block of its own (text,
+/// no title, not a details section).
+pub fn opens_with_text(body: &BoardBody, at: &ItemId, drawn: &DrawnSet) -> bool {
+    if !matches!(body.layout, Layout::Rows(_)) {
+        return false;
+    }
+    let first = items(body, at).find(|placement| !drawn.is_hidden(&placement.id));
+    match first.map(|placement| placement.item) {
+        Some(LayoutItem::Board(nested)) => nested.body.text.is_some() && nested.body.title.as_ref().is_none_or(|title| title.as_str().is_empty()) && nested.body.details.is_none(),
+        _ => false,
+    }
+}
+
 /// Lays `board` out: its tree, the container width (its `width:` or the hug in
 /// the page frame), every board's height, then every drawn chart's box.
 pub fn lay_out(board: &Board, drawn: &DrawnSet, facts: &mut impl Facts) -> Result<Laid, Diagnostic> {
@@ -150,7 +189,7 @@ pub fn lay_out(board: &Board, drawn: &DrawnSet, facts: &mut impl Facts) -> Resul
     let geometry = board_geometry(facts.style(body)?)?;
     let frame = Frame { max_width: geometry.max_width, margin: geometry.frame_margin };
     let card_gap = if body.card_gap { geometry.card_gap } else { 0.0 };
-    let (mut root, ids) = node(body, &geometry, &ItemId::root(), true, drawn, facts)?;
+    let (mut root, ids) = node(body, &geometry, &ItemId::root(), true, false, drawn, facts)?;
     let max_content = (frame.max_width - 2.0 * frame.margin).max(0.0);
     let authored = board.width.map(|w| w.px());
     let width = container_width(authored, intrinsic(&root, true, max_content, card_gap), &frame);
@@ -160,11 +199,27 @@ pub fn lay_out(board: &Board, drawn: &DrawnSet, facts: &mut impl Facts) -> Resul
     if band > 0.0 {
         root.band = band + root.hug_gap + card_gap;
     }
+    fill_nested_bands(&mut root, &ids, available, card_gap, facts)?;
     let mut natural = |chart: &Chart, at: f64| facts.natural(chart, at);
     let measured = measure(&root, available, card_gap, &mut natural)?;
     let laid = boxes(&root, &measured, measured.height, card_gap);
     let root = collect(&root, &ItemId::root(), &ids, &laid.items, card_gap, false);
     Ok(Laid { width, height: measured.height, root, diagnostics: laid.diagnostics })
+}
+
+/// Gives every nested board its own band at the content width its box gets: the widths are placed
+/// before any height, and a band moves none of them.
+fn fill_nested_bands(board: &mut Node, ids: &Ids, available: f64, card_gap: f64, facts: &mut impl Facts) -> Result<(), Diagnostic> {
+    let placed = item_widths(board, available, card_gap);
+    for ((item, (at, held)), placed) in board.items.iter_mut().zip(&ids.items).zip(placed) {
+        let (Content::Board(inner), Held::Board(inner_ids), Some(placed)) = (&mut item.content, held, placed) else { continue };
+        let width = placed.width - inner.chrome;
+        let own = facts.nested_band(at, width, !inner.items.is_empty())?;
+        inner.band = own.band;
+        inner.title = own.title;
+        fill_nested_bands(inner, inner_ids, width, card_gap, facts)?;
+    }
+    Ok(())
 }
 
 fn collect(node: &Node, at: &ItemId, ids: &Ids, boxes: &[Option<Boxed>], card_gap: f64, nested: bool) -> LaidBoard {
@@ -180,6 +235,7 @@ fn collect(node: &Node, at: &ItemId, ids: &Ids, boxes: &[Option<Boxed>], card_ga
                 width: boxed.width,
                 height: boxed.height,
                 nested,
+                shift: boxed.shift,
             })),
             (Content::Board(inner_node), Held::Board(inner_ids), Some(inner_boxes)) => {
                 items.push(LaidItem::Board(PlacedBoard {
@@ -188,6 +244,7 @@ fn collect(node: &Node, at: &ItemId, ids: &Ids, boxes: &[Option<Boxed>], card_ga
                     y: boxed.y,
                     width: boxed.width,
                     height: boxed.height,
+                    shift: boxed.shift,
                     layout: collect(inner_node, id, inner_ids, inner_boxes, card_gap, true),
                 }))
             }
@@ -199,6 +256,7 @@ fn collect(node: &Node, at: &ItemId, ids: &Ids, boxes: &[Option<Boxed>], card_ga
                     y: boxed.y,
                     width: boxed.width,
                     height: boxed.height,
+                    shift: boxed.shift,
                     layout: LaidBoard { at: id.clone(), kind: inner_node.kind, pitch: inner_node.gap + card_gap, items: Vec::new() },
                 }))
             }
@@ -216,6 +274,7 @@ fn node(
     geometry: &BoardGeometry,
     at: &ItemId,
     root: bool,
+    closed: bool,
     drawn: &DrawnSet,
     facts: &mut impl Facts,
 ) -> Result<(Node, Ids), Diagnostic> {
@@ -233,7 +292,7 @@ fn node(
     let own_gap = geometry.gap.unwrap_or(0.0);
     let (chrome, chrome_height, chrome_top) = if root { (0.0, 0.0, 0.0) } else { geometry.chrome() };
     let min_height = if root { geometry.min_height } else { 0.0 };
-    let own = facts.own(body, root)?;
+    let own = facts.own(at, body, root)?;
     let mut node_items = Vec::new();
     let mut ids = Vec::new();
     // A collapsed details board draws its summary bar alone.
@@ -243,15 +302,15 @@ fn node(
                 let open = drawn.active_tab(&body.id).ok_or_else(|| diag::err_internal(format!("no open tab for the tabs board {}", body.id)))?;
                 for (index, tab) in tabs.items.iter().enumerate() {
                     let id = at.key("tabs").key("items").index(index);
-                    let (pane, inner) = pane(body, tab, index, (index == open).then(|| items(body, at).filter(|p| p.pane == [index]).collect::<Vec<_>>()), drawn, facts)?;
+                    let (pane, inner) = pane(body, tab, index, closed || index != open, Some(items(body, at).filter(|p| p.pane == [index]).collect::<Vec<_>>()), drawn, facts)?;
                     node_items.push(Item { width: None, height: None, place: None, drawn: index == open, drawn_without_data: true, content: Content::Board(pane) });
                     ids.push((id, Held::Board(inner)));
                 }
             }
             layout => {
                 // A hidden item takes no space, and nothing of it is measured.
-                for placement in items(body, at).filter(|p| !drawn.is_hidden(&p.id)) {
-                    let (item, inner) = item(layout, &placement, drawn, facts)?;
+                for placement in items(body, at).filter(|p| !drawn.is_hidden(&p.id) && !(closed && opens_a_closed_tab_cannot_hold(p.item))) {
+                    let (item, inner) = item(layout, &placement, closed, drawn, facts)?;
                     node_items.push(item);
                     ids.push((placement.id, inner));
                 }
@@ -267,8 +326,8 @@ fn node(
         chrome,
         chrome_height,
         chrome_top,
-        title: own.title,
-        band: own.band,
+        title: Title::None,
+        band: 0.0,
         min_height,
         fill_height: !root,
         details,
@@ -292,6 +351,7 @@ fn pane(
     body: &BoardBody,
     tab: &TabItem,
     index: usize,
+    closed: bool,
     placements: Option<Vec<Placement>>,
     drawn: &DrawnSet,
     facts: &mut impl Facts,
@@ -309,8 +369,8 @@ fn pane(
     let (chrome, chrome_height, chrome_top) = geometry.chrome();
     let mut node_items = Vec::new();
     let mut ids = Vec::new();
-    for placement in placements.into_iter().flatten().filter(|p| !drawn.is_hidden(&p.id)) {
-        let (item, inner) = item(&tab.layout, &placement, drawn, facts)?;
+    for placement in placements.into_iter().flatten().filter(|p| !drawn.is_hidden(&p.id) && !(closed && opens_a_closed_tab_cannot_hold(p.item))) {
+        let (item, inner) = item(&tab.layout, &placement, closed, drawn, facts)?;
         node_items.push(item);
         ids.push((placement.id, inner));
     }
@@ -332,7 +392,7 @@ fn pane(
     Ok((node, Ids { items: ids }))
 }
 
-fn item(layout: &Layout, placement: &Placement, drawn: &DrawnSet, facts: &mut impl Facts) -> Result<(Item, Held), Diagnostic> {
+fn item(layout: &Layout, placement: &Placement, closed: bool, drawn: &DrawnSet, facts: &mut impl Facts) -> Result<(Item, Held), Diagnostic> {
     let place = match (placement.cell, layout) {
         (Some(grid), Layout::Grid(layout)) => Some(grid_place(grid, layout.columns as usize)?),
         _ => None,
@@ -344,7 +404,7 @@ fn item(layout: &Layout, placement: &Placement, drawn: &DrawnSet, facts: &mut im
         }
         LayoutItem::Board(nested) => {
             let geometry = board_geometry(facts.style(&nested.body)?)?;
-            let (node, ids) = node(&nested.body, &geometry, &placement.id, false, drawn, facts)?;
+            let (node, ids) = node(&nested.body, &geometry, &placement.id, false, closed, drawn, facts)?;
             (nested.width.map(dim), nested.height.map(dim), Content::Board(node), Held::Board(ids))
         }
     };
@@ -411,7 +471,7 @@ pub struct BoardGeometry {
 impl BoardGeometry {
     /// A nested body's chrome across, down, and above its content:
     /// `effective_padding` (padding plus the border's width on each side) plus its margin.
-    fn chrome(&self) -> (f64, f64, f64) {
+    pub fn chrome(&self) -> (f64, f64, f64) {
         let (p, m, b) = (self.padding, self.margin, self.border_width);
         (
             p.left + p.right + 2.0 * b + m.left + m.right,

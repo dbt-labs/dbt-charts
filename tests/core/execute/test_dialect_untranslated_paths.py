@@ -64,7 +64,7 @@ def test_incremental_query_with_no_resolved_source_is_refused(
     local_project: Callable[..., FilesystemProject], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     executor = _executor(local_project)
-    monkeypatch.setattr(plan_module, "resolve_query_source", lambda *a, **k: None)
+    monkeypatch.setattr(plan_module, "resolve_planned_source", lambda *a, **k: None)
     with pytest.raises(QueryError) as exc:
         executor.execute_query("tailed")
     assert exc.value.code is ERR_SQL_DIALECT_UNSUPPORTED

@@ -62,6 +62,7 @@
   "controls.selection_summary": "（{n}）{first}",
   "controls.show_all": "すべて表示",
   "controls.show_only_selected": "選択済みのみ表示（{n}）",
+  "controls.options_truncated": "{total} 件中 {shown} 件を表示。検索して他の値を探せます。",
   "controls.sort": "並べ替え",
   "controls.sort_count_ascending": "件数で並べ替え（少ない順）",
   "controls.sort_count_descending": "件数で並べ替え（多い順）",

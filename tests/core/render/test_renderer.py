@@ -46,7 +46,7 @@ def _category_rows(n: int) -> list[dict[str, object]]:
 
 def _make_executor(board, query_registry, rows):
     mock_registry = scripted_env(ScriptedBackend(rows))
-    return Run(board, env=mock_registry, query_registry=query_registry)
+    return Run(board, env=mock_registry)
 
 
 _BOARD_YAML = """
@@ -281,7 +281,7 @@ def _make_per_query_executor(board, query_registry, rows_by_query):
             {query_registry[name].sql: rows for name, rows in rows_by_query.items()}
         )
     )
-    return Run(board, env=scripted_env(backend), query_registry=query_registry)
+    return Run(board, env=scripted_env(backend))
 
 
 def test_y_scale_mismatch_fires_when_a_layer_has_its_own_query() -> None:
@@ -553,8 +553,8 @@ def _render_with_duckdb(
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
         clock=clock,
+        variables=variables,
     )
     svg = render(
         result.board, executor.ctx, executor.ledger, format="svg", variables=variables
@@ -727,7 +727,6 @@ def test_a_preset_name_literal_resolves_when_the_executor_runs_outside_a_render(
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
         clock=lambda: datetime(2026, 10, 20, 12, 0, tzinfo=UTC),
     )
 
@@ -769,7 +768,6 @@ def _collected_executor(tmp_path: Path) -> Run:
     return Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
 
 
@@ -827,7 +825,6 @@ def test_strict_override_of_a_hidden_tab_variable_checks_its_options(
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(tmp_path)),
-        query_registry=result.query_registry,
     )
 
     rendered = render(
@@ -869,7 +866,6 @@ def test_a_memo_hit_missing_a_formats_column_fails_only_its_chart(
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
     with pytest.raises(QueryError):
         executor.execute_query("q", {})  # leaves the rows in the memo

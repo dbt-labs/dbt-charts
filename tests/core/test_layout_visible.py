@@ -27,6 +27,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.layouts import render_rows_layout
 
+from .._compile import remember
 from .._run import Run
 
 
@@ -38,7 +39,6 @@ def _executor(local_project: Callable[..., FilesystemProject], board, query_regi
     return Run(
         board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=query_registry,
     )
 
 
@@ -703,10 +703,13 @@ class TestChartVisibleAuthoredOnTheChart:
             (tmp_path / "charts" / "board.yml").write_text(
                 _board_with_chart(placement, visible)
             )
-            result = compile_file(
+            board_file = (
                 FilesystemProject(tmp_path).path("charts/board.yml").read_board()
             )
+            result = compile_file(board_file)
             assert result.success, f"Compile failed: {result.errors}"
+            # compile_file bypasses the recorder; Run plans the board from its text.
+            remember(result.board, board_file.content, board_file.path.parent)
             _, heights[state] = _render_rows(
                 local_project, result.board, result.query_registry, {}
             )

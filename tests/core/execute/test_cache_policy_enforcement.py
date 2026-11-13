@@ -17,14 +17,14 @@ from unittest.mock import Mock
 import pytest
 
 from dbt_charts.core.compile import compile as df_compile
+from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
 from dbt_charts.core.execute.cache_keys import stored_query_hash
 from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.lookup import lookup_and_record, query_data_ages
-from dbt_charts.core.execute.plan import plan
+from dbt_charts.core.execute.plan import CacheKey, plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
-from dbt_charts.core.text.time_zones import UTC as BOARD_UTC
 
 from ..._results import rows_result
 from ..._run import Run
@@ -33,6 +33,11 @@ from ..._scripted_env import ScriptedBackend, backend_of, scripted_env
 
 def _ok_adapter(value: int = 1) -> ExecEnv:
     return scripted_env(ScriptedBackend([{"value": value}]))
+
+
+def _key(board: Board, env: ExecEnv, name: str = "q") -> CacheKey:
+    """The key the plan gives *name*: what a run reads and writes the store under."""
+    return plan(Run(board, env).ctx, [name])[0].cache_key
 
 
 def _board_yaml(cache_block: str) -> str:
@@ -64,7 +69,6 @@ class TestCacheDisabledIsNoStore:
             executor = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             data = executor.execute_query("q")
@@ -75,7 +79,6 @@ class TestCacheDisabledIsNoStore:
             executor2 = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor2.execute_query("q")
@@ -89,15 +92,10 @@ class TestCacheDisabledIsNoStore:
     def test_disabled_query_never_reads_a_pre_seeded_persistent_entry(
         self, tmp_path
     ) -> None:
-        from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-
         result = df_compile(_board_yaml("cache: false"))
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
-            query = result.board.queries["q"]
-            key = compute_cache_key(
-                query, {}, result.board.sources, time_zone=BOARD_UTC
-            )
+            key = _key(result.board, _ok_adapter())
             cache.put(
                 *key,
                 rows_result([{"value": 999}]),
@@ -109,7 +107,6 @@ class TestCacheDisabledIsNoStore:
             executor = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             data = executor.execute_query("q")
@@ -156,7 +153,6 @@ rows:
         executor = Run(
             result.board,
             env=adapter,
-            query_registry=result.query_registry,
             result_cache=None,
         )
         first = executor.execute_query("q")
@@ -177,7 +173,6 @@ rows:
         executor = Run(
             result.board,
             env=adapter,
-            query_registry=result.query_registry,
             result_cache=None,
         )
         executor.execute_query("q", use_cache=False)
@@ -217,7 +212,6 @@ class TestDisabledRootStillHonorsANearerOptIn:
                     Run(
                         result.board,
                         env=adapter,
-                        query_registry=result.query_registry,
                         result_cache=cache,
                     ).execute_query("q")
                 assert backend_of(adapter).execute.call_count == 1, (
@@ -238,7 +232,6 @@ class TestTtlLazyExpiry:
             executor = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor.execute_query("q")
@@ -246,12 +239,7 @@ class TestTtlLazyExpiry:
 
             # Directly age the stored entry past the 1s ttl — no sleep, no
             # timing flake.
-            from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-
-            query = result.board.queries["q"]
-            key = compute_cache_key(
-                query, {}, result.board.sources, time_zone=BOARD_UTC
-            )
+            key = _key(result.board, adapter)
             with cache._connection() as conn:
                 conn.execute(
                     "UPDATE _query_outcomes SET written_at_utc = TIMESTAMP '2000-01-01' "
@@ -265,7 +253,6 @@ class TestTtlLazyExpiry:
             executor2 = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             data = executor2.execute_query("q")
@@ -284,7 +271,6 @@ class TestTtlLazyExpiry:
             executor = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor.execute_query("q")
@@ -292,7 +278,6 @@ class TestTtlLazyExpiry:
             executor2 = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             data = executor2.execute_query("q")
@@ -314,18 +299,13 @@ class TestTtlLazyExpiry:
             executor = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor.execute_query("q")
 
             # Age the stored entry far beyond any realistic ttl — the reader's
             # ttl is None, so no age can evict it.
-            from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-
-            key = compute_cache_key(
-                query, {}, result.board.sources, time_zone=BOARD_UTC
-            )
+            key = _key(result.board, adapter)
             with cache._connection() as conn:
                 conn.execute(
                     "UPDATE _query_outcomes SET written_at_utc = TIMESTAMP '2000-01-01' "
@@ -336,7 +316,6 @@ class TestTtlLazyExpiry:
             executor2 = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             data = executor2.execute_query("q")
@@ -359,7 +338,6 @@ class TestUseCacheFalseIsNoStore:
             executor = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor.execute_query("q", use_cache=False)
@@ -367,7 +345,6 @@ class TestUseCacheFalseIsNoStore:
             executor2 = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor2.execute_query("q")
@@ -389,7 +366,6 @@ class TestCacheHitAts:
             executor = Run(
                 result.board,
                 env=_ok_adapter(),
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             executor.execute_query("q")
@@ -407,7 +383,6 @@ class TestCacheHitAts:
             seed_executor = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             seed_executor.execute_query("q")
@@ -415,7 +390,6 @@ class TestCacheHitAts:
             hit_executor = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             assert hit_executor.cache_hit_ats == []
@@ -476,12 +450,13 @@ def _sibling_executor(board, registry, adapter, cache) -> Run:
     return Run(
         board,
         env=adapter,
-        query_registry=registry,
         result_cache=cache,
     )
 
 
-def _age_shared_entry(cache, board, names: tuple[str, str], hours: int) -> None:
+def _age_shared_entry(
+    cache, board, adapter, names: tuple[str, str], hours: int
+) -> None:
     """Back-date the one entry *names* share, in the column's own frame.
 
     written_at holds a naive UTC wall clock (see `_utc_wall_clock`), so aging it
@@ -490,13 +465,11 @@ def _age_shared_entry(cache, board, names: tuple[str, str], hours: int) -> None:
     future-dated and still be served, and the test would fail for a reason that
     has nothing to do with what it is checking.
     """
-    from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-
     left, right = names
-    key = compute_cache_key(board.queries[left], {}, board.sources, time_zone=BOARD_UTC)
-    assert key == compute_cache_key(
-        board.queries[right], {}, board.sources, time_zone=BOARD_UTC
-    ), "the two queries must share a key — otherwise this test proves nothing"
+    key = _key(board, adapter, left)
+    assert key == _key(board, adapter, right), (
+        "the two queries must share a key — otherwise this test proves nothing"
+    )
     aged = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
     with cache._connection() as conn:
         conn.execute(
@@ -536,7 +509,9 @@ class TestSiblingQueriesKeepTheirOwnTtl:
             assert backend_of(adapter).execute.call_count == 1
 
             # Two hours pass: past the 1h policy, well inside the 24h one.
-            _age_shared_entry(cache, result.board, ("patient", "impatient"), hours=2)
+            _age_shared_entry(
+                cache, result.board, adapter, ("patient", "impatient"), hours=2
+            )
 
             # A distinguishable value proves a re-run rather than a stale hit.
             backend_of(adapter).rows = [{"value": 2}]
@@ -566,7 +541,9 @@ class TestSiblingQueriesKeepTheirOwnTtl:
             ).execute_query("impatient")
             assert backend_of(adapter).execute.call_count == 1
 
-            _age_shared_entry(cache, result.board, ("patient", "impatient"), hours=2)
+            _age_shared_entry(
+                cache, result.board, adapter, ("patient", "impatient"), hours=2
+            )
 
             patient = _sibling_executor(
                 result.board, result.query_registry, adapter, cache
@@ -628,13 +605,8 @@ class TestNoStoreIsEnforcedAtTheStoreRead:
     def test_lookup_refuses_a_disabled_policy(self, tmp_path) -> None:
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
-            from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-
             result = df_compile(_board_yaml("cache: false"))
-            query = result.board.queries["q"]
-            key = compute_cache_key(
-                query, {}, result.board.sources, time_zone=BOARD_UTC
-            )
+            key = _key(result.board, _ok_adapter())
             # A fresh entry the disabled query must not be handed.
             cache.put(
                 *key, rows_result([{"value": 999}]), board_slug="test", query_name="q"
@@ -643,7 +615,6 @@ class TestNoStoreIsEnforcedAtTheStoreRead:
             executor = Run(
                 result.board,
                 env=_ok_adapter(),
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
             found = lookup_and_record(
@@ -701,7 +672,9 @@ class TestSiblingsDoNotShareOneMemoSlot:
                 result.board, result.query_registry, adapter, cache
             ).execute_query("patient")
             assert backend_of(adapter).execute.call_count == 1
-            _age_shared_entry(cache, result.board, ("patient", "impatient"), hours=2)
+            _age_shared_entry(
+                cache, result.board, adapter, ("patient", "impatient"), hours=2
+            )
 
             # Both queries now run on ONE executor, the 24h one first: it takes a
             # legitimate persistent hit and warms the memo.
@@ -804,7 +777,6 @@ class TestQueryDataAgesOnFailure:
         executor = Run(
             result.board,
             env=registry,
-            query_registry=result.query_registry,
             result_cache=None,
         )
 
@@ -820,15 +792,10 @@ class TestQueryDataAgesOnFailure:
 
     def test_failed_cached_query_contributes_data_age_record(self, tmp_path) -> None:
         """A cached failure (within retry window) also contributes a record."""
-        from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
             result = df_compile(_board_yaml("cache:\n      ttl: 1h"))
-            query = result.board.queries["q"]
-            key = compute_cache_key(
-                query, {}, result.board.sources, time_zone=BOARD_UTC
-            )
+            key = _key(result.board, _ok_adapter())
             # Seed a cached failure still inside the 1h retry window.
             cache.put(
                 *key, RuntimeError("seed failure"), board_slug="test", query_name="q"
@@ -837,7 +804,6 @@ class TestQueryDataAgesOnFailure:
             executor = Run(
                 result.board,
                 env=_ok_adapter(),
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
 
@@ -864,8 +830,6 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
     def test_max_rows_truncates_before_cache_write(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-
         monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "3")
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
@@ -875,17 +839,13 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
             executor = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
 
             data = executor.execute_query("q")
             assert len(data) == 3
 
-            query = result.board.queries["q"]
-            key = compute_cache_key(
-                query, {}, result.board.sources, time_zone=BOARD_UTC
-            )
+            key = _key(result.board, adapter)
             cached = cache.get(*key, ttl=None)
             assert cached is not None
             assert len(cached.rows) == 3, (
@@ -900,8 +860,6 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
         """The oversized row sits second, not first — pins that enforcement
         accumulates incrementally rather than sampling the first row and
         extrapolating, which would miss this case."""
-        from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-
         monkeypatch.setenv("DCT_MAX_RESULT_BYTES_CEILING", "200")
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
@@ -918,17 +876,13 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
             executor = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
 
             data = executor.execute_query("q")
             assert data == [{"value": "small"}]
 
-            query = result.board.queries["q"]
-            key = compute_cache_key(
-                query, {}, result.board.sources, time_zone=BOARD_UTC
-            )
+            key = _key(result.board, adapter)
             cached = cache.get(*key, ttl=None)
             assert cached is not None
             assert cached.rows == [{"value": "small"}], (
@@ -947,8 +901,6 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
         would defeat it every time that row recurs. WARN_QUERY_RESULT_TRUNCATED
         (kept_row_count=0) is the honest signal for this case, not a silent
         exception that lets an oversized row slip past the budget."""
-        from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-
         monkeypatch.setenv("DCT_MAX_RESULT_BYTES_CEILING", "200")
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
@@ -960,7 +912,6 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
             executor = Run(
                 result.board,
                 env=adapter,
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
 
@@ -969,10 +920,7 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
             assert executor.ledger.truncations["q"].reason == "max_result_bytes"
             assert executor.ledger.truncations["q"].kept_row_count == 0
 
-            query = result.board.queries["q"]
-            key = compute_cache_key(
-                query, {}, result.board.sources, time_zone=BOARD_UTC
-            )
+            key = _key(result.board, adapter)
             cached = cache.get(*key, ttl=None)
             assert cached is not None
             assert cached.rows == []

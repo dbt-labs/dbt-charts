@@ -59,10 +59,17 @@ def schema_format_fields() -> set[tuple[str, str]]:
     return found
 
 
+# A percent column prints a share of the first stage, a 0-1 ratio: the value
+# bands these invariants sweep never reach it.
+_EXCLUDED_SLOTS = {("ChartSupportTablePercent", "format")}
+
+
 def _is_excluded(class_field: tuple[str, str]) -> bool:
     # A query's `formats:` map takes names only, so no affix shape reaches it.
-    return class_field[1] == "formats" or class_field[0].startswith(
-        _EXCLUDED_CLASS_PREFIXES
+    return (
+        class_field[1] == "formats"
+        or class_field[0].startswith(_EXCLUDED_CLASS_PREFIXES)
+        or class_field in _EXCLUDED_SLOTS
     )
 
 

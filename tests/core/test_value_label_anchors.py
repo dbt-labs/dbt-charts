@@ -46,7 +46,7 @@ rows: [{{rows: [c]}}]
 def _run(result: CompileResult, rows: list[dict[str, object]]) -> RenderResult:
     assert result.board is not None
     registry = scripted_env(ScriptedBackend(rows))
-    executor = Run(result.board, env=registry, query_registry=result.query_registry)
+    executor = Run(result.board, env=registry)
     return render(result.board, executor.ctx, executor.ledger, format="svg")
 
 

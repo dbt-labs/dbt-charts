@@ -47,7 +47,6 @@ def test_a_brace_in_a_slice_format_affix_is_a_chart_error(
     executor = Run(
         result.board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
 
     rendered = render(result.board, executor.ctx, executor.ledger, format="svg")

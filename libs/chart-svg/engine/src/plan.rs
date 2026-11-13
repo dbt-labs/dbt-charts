@@ -5,7 +5,7 @@
 //!
 //! `plan(&CompiledBoard, given, builtins, now_epoch, all_queries, active_tab_only, strict,
 //! only_charts) -> Result<String, Diagnostic>` returns the wire JSON `{version, board_id, time_zone, today,
-//! week_start, fiscal_year_start_month, prefetch, queries, variables: {query, render}, sources:
+//! week_start, fiscal_year_start_month, prefetch, chart_queries, variable_queries, queries, variables: {query, render}, sources:
 //! {project, inline}}` that execute reads instead of the board.
 //!
 //! The clock is the board's own: `regional.time_zone` (UTC when the board has no `regional`)
@@ -26,6 +26,18 @@
 //! only hidden tabs read whose resolved cache policy has `prefetch` on, in the order met; it is
 //! empty when `active_tab_only` is false. `all_queries` and `active_tab_only` do not combine (one
 //! asks for more than the board reads, the other for less) and the call is an internal error (a caller bug).
+//!
+//! The engine names queries by what it hoists them to (an inline query is keyed by position, a
+//! named one by its name), not by the synthetic names Python gives them, so the plan says which
+//! query each chart and variable reads, by the keys of `queries`. `chart_queries` is
+//! `{public chart id: {query, layers}}` for every chart the plan shows (a chart placed twice
+//! appears once): `query` is the chart's own query key, `null` for a chart that reads none (a
+//! callout), and `layers` has one entry per layer, in order, the layer's own query key or `null`
+//! when it draws the chart's. `variable_queries` is `{variable name: {query, options, enabled}}`
+//! for every declared variable the plan shows, nested boards' included (a name is unique across
+//! the board): the keys of its `query:`, its `options.query:` and its `enabled:` probe, each
+//! `null` when it has none. Both cover only what the plan plans: a chart or variable on a hidden
+//! tab under `active_tab_only`, or not focused by `only_charts`, is absent.
 //!
 //! Every entry carries its authored `formats` and its `cache`, the resolved policy
 //! `{enabled, ttl, prefetch}` (project root, source, board, query: `Structure.policies`). A SQL
@@ -88,6 +100,27 @@ fn nullable_text(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({"type": ["string", "null"]})
 }
 
+/// The query keys a placed chart reads.
+#[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ChartQueries {
+    #[cfg_attr(feature = "schema", schemars(required, schema_with = "nullable_text"))]
+    pub query: Option<String>,
+    pub layers: Vec<Option<String>>,
+}
+
+/// The query keys a declared variable reads.
+#[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct VariableQueries {
+    #[cfg_attr(feature = "schema", schemars(required, schema_with = "nullable_text"))]
+    pub query: Option<String>,
+    #[cfg_attr(feature = "schema", schemars(required, schema_with = "nullable_text"))]
+    pub options: Option<String>,
+    #[cfg_attr(feature = "schema", schemars(required, schema_with = "nullable_text"))]
+    pub enabled: Option<String>,
+}
+
 /// The wire document; `dbt_charts.core.execute.query_plan.QueryPlan` mirrors it field for field.
 #[derive(Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -99,6 +132,8 @@ pub struct Plan<'a> {
     pub week_start: u32,
     pub fiscal_year_start_month: u32,
     pub prefetch: Vec<String>,
+    pub chart_queries: IndexMap<String, ChartQueries>,
+    pub variable_queries: IndexMap<String, VariableQueries>,
     pub queries: IndexMap<String, PlannedQuery<'a>>,
     pub variables: PlanVariables,
     pub sources: PlanSources<'a>,
@@ -110,6 +145,9 @@ pub struct Plan<'a> {
 pub struct PlanVariables {
     pub query: Map<String, Value>,
     pub render: Map<String, Value>,
+    /// The preset id of each daterange variable whose value is a preset (its default or the
+    /// caller's), by name: what render publishes and links by. Fixed dates have no entry.
+    pub presets: IndexMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -229,6 +267,8 @@ pub fn plan(
         all: IndexSet::new(),
         open: IndexSet::new(),
         live: true,
+        chart_queries: IndexMap::new(),
+        variable_queries: IndexMap::new(),
         choice: open.as_ref(),
     };
     match only_charts {
@@ -236,6 +276,7 @@ pub fn plan(
         Some(ids) => walk.focused(&board.body, ids)?,
     }
     let (all, open_names) = (walk.all, walk.open);
+    let (chart_queries, variable_queries) = (walk.chart_queries, walk.variable_queries);
     let scoped = active_tab_only && only_charts.is_none();
     let mut names = if scoped { open_names } else { all.clone() };
     if all_queries {
@@ -266,7 +307,7 @@ pub fn plan(
             .filter(|(name, _)| declared.iter().any(|d| d.name() == *name))
             .collect()
     };
-    let mut resolved = resolve(&declared, &set, &clock)?;
+    let mut resolved = resolve(&declared, &set, &clock, strict)?;
     for name in builtins.keys() {
         if let Some(origin) = origin_of(compiled, &declared, name) {
             return Err(diag::err_builtin_shadows_variable(name.as_str(), origin));
@@ -304,10 +345,13 @@ pub fn plan(
         week_start: clock.week_start,
         fiscal_year_start_month: clock.fiscal_start_month,
         prefetch,
+        chart_queries,
+        variable_queries,
         queries,
         variables: PlanVariables {
             query: wire(&resolved.query),
             render: wire(&resolved.render),
+            presets: resolved.presets,
         },
         sources: PlanSources {
             project: &compiled.structure.project_sources,
@@ -440,6 +484,9 @@ struct Walk<'a> {
     open: IndexSet<String>,
     /// Whether the part of the board being walked is shown.
     live: bool,
+    /// Each shown chart's queries by public id, and each shown variable's by name.
+    chart_queries: IndexMap<String, ChartQueries>,
+    variable_queries: IndexMap<String, VariableQueries>,
     /// The tab each tabs layout shows, when scoping; every tab is shown otherwise.
     choice: Option<&'a BTreeMap<ItemId, usize>>,
 }
@@ -462,13 +509,14 @@ impl Walk<'_> {
         self.all.insert(key);
     }
 
-    fn want_name(&mut self, written: &str) {
-        self.want(
-            written
-                .strip_prefix("queries.")
-                .unwrap_or(written)
-                .to_string(),
-        );
+    /// Reads the query written as `written` (`queries.` prefix optional); its plan key.
+    fn want_name(&mut self, written: &str) -> String {
+        let key = written
+            .strip_prefix("queries.")
+            .unwrap_or(written)
+            .to_string();
+        self.want(key.clone());
+        key
     }
 
     /// Whether the tabs layout owned by `at` shows its tab `index`.
@@ -522,14 +570,27 @@ impl Walk<'_> {
     fn variable(&mut self, name: &str, var: &Variable) -> Result<(), Diagnostic> {
         self.declared
             .push(Declared::of(name, var).map_err(diag::err_internal)?);
-        if let Some(VariableQuery::Name(q)) = &var.query {
-            self.want_name(q.as_str());
-        }
-        if let Some(OptionsQuery::Name(q)) = var.options.as_ref().and_then(|o| o.query.as_ref()) {
-            self.want_name(q.as_str());
-        }
-        if let Some(Enabled::Probe(probe)) = &var.enabled {
-            self.want_name(&probe.query);
+        let query = match &var.query {
+            Some(VariableQuery::Name(q)) => Some(self.want_name(q.as_str())),
+            _ => None,
+        };
+        let options = match var.options.as_ref().and_then(|o| o.query.as_ref()) {
+            Some(OptionsQuery::Name(q)) => Some(self.want_name(q.as_str())),
+            _ => None,
+        };
+        let enabled = match &var.enabled {
+            Some(Enabled::Probe(probe)) => Some(self.want_name(&probe.query)),
+            _ => None,
+        };
+        if self.live {
+            self.variable_queries.insert(
+                name.to_string(),
+                VariableQueries {
+                    query,
+                    options,
+                    enabled,
+                },
+            );
         }
         Ok(())
     }
@@ -561,9 +622,30 @@ impl Walk<'_> {
                 }
             }
         }
-        for query in chart.hoisted_queries() {
-            let key = key_of(self.board, &query);
-            self.want(key);
+        let (own, layers) = chart.query_slots();
+        let mut key = |id: Option<QueryId>| {
+            id.map(|id| {
+                let key = key_of(self.board, &id);
+                self.want(key.clone());
+                key
+            })
+        };
+        let (own, layers) = (
+            key(own),
+            layers.into_iter().map(&mut key).collect::<Vec<_>>(),
+        );
+        if self.live {
+            let public = self
+                .compiled
+                .structure
+                .index
+                .public_ids
+                .iter()
+                .find(|(chart, _)| chart.as_str() == id)
+                .map(|(_, public)| public.clone())
+                .ok_or_else(|| diag::err_internal(format!("the chart {id} has no public id")))?;
+            self.chart_queries
+                .insert(public, ChartQueries { query: own, layers });
         }
         Ok(())
     }

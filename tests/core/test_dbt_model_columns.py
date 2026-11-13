@@ -24,9 +24,7 @@ from dbt_charts.core.project import Project
 def check_model_columns(result: CompileResult, project: Project) -> None:
     """Run the check on a compile's queries and file its findings as validate does."""
     for diagnostic in _check_model_columns(
-        sql_host_queries(result.query_registry),
-        project,
-        result.board.sources if result.board else {},
+        sql_host_queries(result.query_registry), project
     ):
         if diagnostic.level == "warning":
             result.warnings.append(diagnostic)

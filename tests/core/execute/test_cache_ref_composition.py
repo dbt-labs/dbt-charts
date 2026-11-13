@@ -11,17 +11,19 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from dbt_charts._engine import CompileError
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.template._helpers import _QueryNamespace
 from dbt_charts.core.execute import run as run_stage
 from dbt_charts.core.execute.plan import plan
+from dbt_charts.core.execute.query_result import resolve_effective_row_limit
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -310,13 +312,13 @@ class TestCacheRefComposition:
         )
         executor = _executor_with_cache(board, cache, local_project)
         executed: list[str] = []
-        real_route = run_stage.run_route
+        real_run = run_stage.run_planned
 
-        def counting_route(registry: Any, route: Any, query: Any, *args: Any) -> Any:
-            executed.append(args[-2])
-            return real_route(registry, route, query, *args)
+        def counting_run(env: Any, plan: Any, name: str, **kwargs: Any) -> Any:
+            executed.append(name)
+            return real_run(env, plan, name, **kwargs)
 
-        monkeypatch.setattr(run_stage, "run_route", counting_route)
+        monkeypatch.setattr(run_stage, "run_planned", counting_run)
 
         outcomes = executor.run_misses(executor.lookup(["reader", "upstream"]), 2)
 
@@ -487,22 +489,17 @@ class TestCacheRefErrors:
     def test_error_when_upstream_not_in_registry(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """{{ queries.X.cache }} referencing an unknown query raises at runtime.
-
-        Compile accepts an unknown cache-ref target (verified: it does not reject
-        it), so the executor's demand-execution loop is the real enforcement.
-        """
-        from dbt_charts.core.diagnostics.execution import ExecutionError
+        """{{ queries.X.cache }} referencing an unknown query is refused when the
+        engine plans the board, before any query runs."""
 
         cache = TrivialDuckDBCache()
         board = _build_board(
             {"consumer": "SELECT x FROM {{ queries.ghost.cache }}"},
             chart_query="consumer",
         )
-        executor = _executor_with_cache(board, cache, local_project)
 
-        with pytest.raises(ExecutionError, match="ghost.*does not exist"):
-            executor.execute_query("consumer")
+        with pytest.raises(CompileError, match="ghost.*is defined"):
+            _executor_with_cache(board, cache, local_project)
 
     def test_error_when_upstream_has_cache_false(
         self, local_project: Callable[..., FilesystemProject]
@@ -617,45 +614,6 @@ class TestCacheRefCycleDetection:
             "query_a" in errors or "query_b" in errors or "circular" in errors.lower()
         )
 
-    def test_registry_cycle_rejected_at_execute(
-        self, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """A cache-ref cycle that spans the cross-board query_registry — which the
-        per-board compile-time check cannot see — is rejected when the cache key
-        is computed, before any upstream executes.
-        """
-        from dbt_charts.core.compile.errors import JinjaError
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.env import (
-            build_exec_env,
-        )
-
-        from ..._run import Run
-
-        # looper (in the board) → partner.cache; partner lives only in the
-        # cross-board registry and points back to looper.cache — a cycle compile
-        # never sees because it validates one board at a time.
-        board = _build_board(
-            {"looper": "SELECT x FROM {{ queries.partner.cache }}"},
-            chart_query="looper",
-        )
-        partner = SqlQuery(
-            sql="SELECT y FROM {{ queries.looper.cache }}",
-            source="db",
-            cache=CachePolicy(enabled=True),
-        )
-        registry = build_exec_env(_project_with_db_source(local_project))
-        executor = Run(
-            board,
-            registry,
-            use_cache=True,
-            result_cache=TrivialDuckDBCache(),
-            query_registry={"partner": partner},
-        )
-
-        with pytest.raises(JinjaError, match="Circular query dependency"):
-            executor.execute_query("looper")
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Persistent cache write-through for composing queries (HIGH 3)
@@ -718,7 +676,7 @@ class TestCacheRefMaxRowsEnforcement:
         rows = executor.execute_query("composed")
         assert len(rows) == 3
 
-        key = plan(executor.ctx, ["composed"], {})[0].cache_key
+        key = plan(executor.ctx, ["composed"])[0].cache_key
         cached = cache.get(*key, ttl=None)
         assert cached is not None
         assert len(cached.rows) == 3, (
@@ -728,15 +686,11 @@ class TestCacheRefMaxRowsEnforcement:
     def test_composing_querys_own_limit_is_honored(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """The composing query's own Query.limit bounds its result too, not
-        just the DCT_MAX_ROWS_CEILING — the composing path shares
-        resolve_effective_row_limit with the four adapters, which resolves
-        the author's own Query.limit the same way they do.
-
-        `limit:` is not an authorable YAML field on any query, so this sets
-        it directly on the compiled query — the same
-        way a non-YAML producer (e.g. the Looker migrator's inline-UDF-script
-        queries) would."""
+        """The context's row limit (the author's own limit, resolved against the
+        ceiling) bounds the composing query's result too, not just
+        DCT_MAX_ROWS_CEILING: the composing path shares ``row_limit`` with the
+        four adapters. A plan entry carries no per-query limit, so the
+        context holds it."""
         cache = TrivialDuckDBCache()
         board = _build_board(
             {
@@ -747,8 +701,8 @@ class TestCacheRefMaxRowsEnforcement:
             },
             chart_query="source_a",
         )
-        board.queries["composed"].limit = 5
         executor = _executor_with_cache(board, cache, local_project)
+        executor.ctx = replace(executor.ctx, row_limit=resolve_effective_row_limit(5))
 
         rows = executor.execute_query("composed")
 
@@ -828,13 +782,13 @@ class TestCacheRefUpstreamScope:
 
         second = _executor_with_cache(board, cache, local_project)
         executed: list[str] = []
-        real_route = run_stage.run_route
+        real_run = run_stage.run_planned
 
-        def counting_route(registry: Any, route: Any, query: Any, *args: Any) -> Any:
-            executed.append(args[-2])
-            return real_route(registry, route, query, *args)
+        def counting_run(env: Any, plan: Any, name: str, **kwargs: Any) -> Any:
+            executed.append(name)
+            return real_run(env, plan, name, **kwargs)
 
-        monkeypatch.setattr(run_stage, "run_route", counting_route)
+        monkeypatch.setattr(run_stage, "run_planned", counting_run)
 
         found = second.lookup(["reader"])
         assert set(found.hits) == {"reader"}
@@ -865,13 +819,13 @@ class TestCacheRefUpstreamScope:
 
         second = _executor_with_cache(board, cache, local_project)
         executed: list[str] = []
-        real_route = run_stage.run_route
+        real_run = run_stage.run_planned
 
-        def counting_route(registry: Any, route: Any, query: Any, *args: Any) -> Any:
-            executed.append(args[-2])
-            return real_route(registry, route, query, *args)
+        def counting_run(env: Any, plan: Any, name: str, **kwargs: Any) -> Any:
+            executed.append(name)
+            return real_run(env, plan, name, **kwargs)
 
-        monkeypatch.setattr(run_stage, "run_route", counting_route)
+        monkeypatch.setattr(run_stage, "run_planned", counting_run)
 
         assert second.execute_query("y") == [{"n": 99}]
         assert executed == []

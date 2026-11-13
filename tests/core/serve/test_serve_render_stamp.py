@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,5 +53,11 @@ def test_each_load_stamps_its_own_render_time(tmp_path: Path) -> None:
     with TestClient(app) as client:
         first = client.get("/x").text
         second = client.get("/x").text
-    assert 'data-rendered-at="2001-02-03T04:00:00Z"' in first
-    assert 'data-rendered-at="2001-02-03T04:00:00Z"' not in second
+    stamps = [
+        re.search(r'data-rendered-at="([^"]*)"', page) for page in (first, second)
+    ]
+    assert all(stamps)
+    first_stamp, second_stamp = (m.group(1) for m in stamps if m)
+    assert first_stamp.startswith("2001-02-03T04:")
+    assert second_stamp.startswith("2001-02-03T04:")
+    assert first_stamp != second_stamp

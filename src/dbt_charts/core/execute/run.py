@@ -31,7 +31,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from graphlib import TopologicalSorter
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.attribution import attribute
 from dbt_charts.core.column_types import ColumnType, declared_literal_cells
@@ -43,9 +43,6 @@ from dbt_charts.core.compile.models.query.normalized import (
     SchemaQuery,
     SqlQuery,
     ValuesQuery,
-    is_schema_query,
-    is_sql_query,
-    is_values_query,
 )
 from dbt_charts.core.compile.models.source import (
     AttributedSourceConfig,
@@ -64,6 +61,7 @@ from dbt_charts.core.compile.template.daterange import (
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_BINDER_UNKNOWN_RELATION,
     ERR_QUERY_DURATION_EXCEEDED,
     ERR_QUERY_FORMAT_COLUMN_MISSING,
 )
@@ -99,18 +97,25 @@ from dbt_charts.core.execute.observability import WarehouseObserver, notify_obse
 from dbt_charts.core.execute.plan import (
     CACHE_REF_JINJA_RE,
     ExecContext,
-    PlannedQuery,
+    QueryRun,
+    cache_policy,
     get_query,
     require_cache_refs,
-    resolve_query_references,
 )
-from dbt_charts.core.execute.plan_reader import compose_fields
+from dbt_charts.core.execute.plan_reader import (
+    board_clock as planned_clock,
+    compose_fields,
+    expanded_sql,
+    reachable,
+    replaced_sql,
+)
 from dbt_charts.core.execute.plan_sources import (
     resolve_query_source,
     source_not_named_error,
 )
-from dbt_charts.core.execute.query_plan import QueryPlan
+from dbt_charts.core.execute.query_plan import PlannedQuery, QueryPlan
 from dbt_charts.core.execute.query_result import (
+    UNKNOWN_RELATION_MANIFEST_NOTE,
     QueryDurationExceeded,
     QueryParams,
     QueryResult,
@@ -134,7 +139,7 @@ from dbt_charts.core.execute.sql_translate import (
     dialect_unsupported,
     translate_sql,
 )
-from dbt_charts.core.text.time_zones import UTC as UTC_ZONE
+from dbt_charts.core.text.time_zones import UTC as UTC_ZONE, TimeZoneName
 
 if TYPE_CHECKING:
     from dbt_charts.core.execute.env import ExecEnv
@@ -186,10 +191,10 @@ def settle(ctx: ExecContext, ledger: Ledger, miss: Miss, outcome: Outcome) -> No
     call-level ``use_cache=False`` writes nothing (no-store, not
     store-and-ignore).
     """
-    name, query = miss.name, miss.query
-    variables, use_store = miss.planned.variables, miss.planned.use_store
+    name, entry = miss.name, miss.entry
+    use_store = miss.planned.use_store
     if isinstance(outcome, Rows):
-        ledger.memo[memo_key(query, miss.cache_key)] = outcome.result
+        ledger.memo[memo_key(entry, miss.cache_key)] = outcome.result
         if outcome.relations:
             ledger.provenance[name] = list(outcome.relations)
         if outcome.truncation is not None:
@@ -199,23 +204,20 @@ def settle(ctx: ExecContext, ledger: Ledger, miss: Miss, outcome: Outcome) -> No
             cache_outcome(
                 ctx,
                 name,
-                query,
+                entry,
                 outcome.result,
-                variables,
                 miss.cache_key,
                 truncated_reason=truncation.reason if truncation else None,
             )
         if outcome.data_as_of is not None:
-            ledger.ages.append((name, outcome.data_as_of, query.cache, False))
+            ledger.ages.append((name, outcome.data_as_of, cache_policy(entry), False))
     else:
         # A composing query in a later wave reads its upstream's failure here.
         ledger.errors[name] = outcome.error
         if outcome.record is not None:
             if use_store:
-                cache_failure(
-                    ctx, name, query, variables, miss.cache_key, outcome.record
-                )
-            ledger.ages.append((name, ctx.clock(), query.cache, False))
+                cache_failure(ctx, name, entry, miss.cache_key, outcome.record)
+            ledger.ages.append((name, ctx.clock(), cache_policy(entry), False))
 
 
 def _waves(misses: Sequence[Miss]) -> list[list[Miss]]:
@@ -227,10 +229,10 @@ def _waves(misses: Sequence[Miss]) -> list[list[Miss]]:
         miss.name: (
             {
                 ref
-                for ref in CACHE_REF_JINJA_RE.findall(miss.query.sql)
+                for ref in CACHE_REF_JINJA_RE.findall(miss.entry["sql"])
                 if ref in by_name
             }
-            if is_sql_query(miss.query)
+            if miss.entry["type"] == "sql"
             else set()
         )
         for miss in misses
@@ -301,7 +303,7 @@ def check_formats(ctx: ExecContext, name: str, result: ResultRows) -> None:
     """Raise when the query's ``formats:`` names a column the rows lack."""
     if result.rows:
         for column in missing_format_columns(
-            name, get_query(ctx, name).formats, result.rows[0]
+            name, get_query(ctx, name)["formats"], result.rows[0]
         ):
             raise QueryError.from_code(
                 ERR_QUERY_FORMAT_COLUMN_MISSING,
@@ -322,24 +324,24 @@ def format_checked(ctx: ExecContext, name: str, outcome: Outcome) -> Outcome:
 
 
 def require_translated_path(
-    query: AnyQuery,
+    entry: PlannedQuery,
     source_config: ResolvedSourceConfig | None,
     query_name: str,
 ) -> None:
     """Refuse an incremental `dialect:` query that differs from the warehouse."""
     if not (
-        is_sql_query(query)
-        and query.dialect is not None
-        and isinstance(query.incremental, str)
+        entry["type"] == "sql"
+        and entry["dialect"] is not None
+        and isinstance(entry["incremental"], str)
     ):
         return
     try:
         if source_config is not None and not dialect_differs(
-            query.dialect, source_config
+            entry["dialect"], source_config
         ):
             return
         err = dialect_unsupported(
-            query.dialect,
+            entry["dialect"],
             "the source's warehouse",
             "incremental refresh wraps the SQL in warehouse SQL, so write it "
             "in the source's dialect",
@@ -354,8 +356,8 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
     incremental tail when the store held prior rows), else a failure. Writes
     no cache; ``settle`` does."""
     planned = miss.planned
-    query_name, original_query = planned.name, planned.query
-    variables, resolve_source = planned.variables, planned.source
+    query_name, entry = planned.name, planned.entry
+    resolve_source = planned.source
 
     def failed(error: Exception) -> Failed:
         if isinstance(error, QueryError):
@@ -376,57 +378,45 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
     # composing query reruns over the cached upstream rows, so no watermark
     # predicate can be appended.
     if planned.upstreams:
-        assert is_sql_query(original_query)
+        assert entry["type"] == "sql"
         composed, cache_ref_reason = _execute_cache_ref_query(
-            ctx,
-            ledger,
-            original_query,
-            planned.upstreams,
-            variables,
-            query_name,
+            ctx, ledger, entry, planned.upstreams, query_name
         )
         limited, truncation = limit_rows(composed, query_name, cache_ref_reason)
         return Rows(limited, ctx.clock(), truncation=truncation)
 
-    query = resolve_query_references(
-        original_query, all_queries=ctx.all_queries, query_name=query_name
-    )
     try:
         source_config = resolve_source()
-        require_translated_path(query, source_config, query_name)
+        require_translated_path(entry, source_config, query_name)
     except Exception as e:  # noqa: BLE001 — a resolver may raise anything (SSRF guard, DNS)
         return failed(e)
 
-    # The route follows the source the resolver chose, not the plan's reading
-    # of the declared sources: the two disagree when a board and the project
-    # declare one name as different kinds.
-    route = route_for(query, source_config)
     tail = miss.tail
     if tail is not None and tail.watermark is not None:
-        # The lookup built a tail only for an SQL query;
-        # resolve_query_references preserves the subtype.
-        assert is_sql_query(query)
+        # The lookup built a tail only for an SQL query.
+        assert entry["type"] == "sql"
+        key_column = entry["incremental"]
+        assert key_column is not None
         # The dialect the adapter will actually execute against — the safety
         # predicate and the tail SQL must agree with it, or a
         # dialect-specific LIMIT spelling (T-SQL TOP) slips the safety guard
         # and a non-ANSI identifier quote gets silently misread.
         dialect = None if source_config is None else sqlglot_dialect(source_config.type)
-        reason = incremental_safety_reason(query.sql, dialect)
+        sql = expanded_sql(ctx.plan, query_name)
+        reason = incremental_safety_reason(sql, dialect)
         if reason is None:
             limited, truncation = run_incremental_tail(
                 query_name,
-                query,
+                sql,
+                key_column,
                 tail,
                 dialect,
-                lambda tail_query: run_route(
+                lambda tail_sql: run_planned(
                     ctx.env,
-                    route,
-                    tail_query,
-                    variables,
-                    None,
-                    ctx.board,
+                    replaced_sql(ctx.plan, query_name, tail_sql),
                     query_name,
-                    source_config,
+                    source_config=source_config,
+                    row_limit=ctx.row_limit,
                 ),
             )
             return Rows(limited, None, truncation=truncation)
@@ -437,15 +427,12 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
         )
 
     try:
-        result = run_route(
+        result = run_planned(
             ctx.env,
-            route,
-            query,
-            variables,
-            None,
-            ctx.board,
+            ctx.plan,
             query_name,
-            source_config,
+            source_config=source_config,
+            row_limit=ctx.row_limit,
         )
     except Exception as e:  # noqa: BLE001 — an adapter may raise anything
         return failed(e)
@@ -471,7 +458,7 @@ def run_and_settle(
     it, so its source is resolved once and its key is the one lookup read."""
 
     def execute(miss: Miss) -> Outcome:
-        with board_clock(ctx.board.clock(ctx.rendered_at)):
+        with board_clock(planned_clock(ctx.plan)):
             return execute_miss(ctx, ledger, miss)
 
     return run(
@@ -512,9 +499,9 @@ def run_misses(
     return results
 
 
-def _settled_rows(ledger: Ledger, upstream: PlannedQuery) -> ResultRows:
+def _settled_rows(ledger: Ledger, upstream: QueryRun) -> ResultRows:
     """The rows an upstream's wave left in the memo; raises its error instead."""
-    rows = ledger.memo.get(memo_key(upstream.query, upstream.cache_key))
+    rows = ledger.memo.get(memo_key(upstream.entry, upstream.cache_key))
     if rows is not None:
         return rows
     if upstream.name not in ledger.errors:
@@ -527,9 +514,8 @@ def _settled_rows(ledger: Ledger, upstream: PlannedQuery) -> ResultRows:
 def _execute_cache_ref_query(
     ctx: ExecContext,
     ledger: Ledger,
-    query: AnyQuery,
-    upstreams: Mapping[str, PlannedQuery],
-    variables: dict[str, Any],  # type-state: explicit_any — variable values
+    entry: PlannedQuery,
+    upstreams: Mapping[str, QueryRun],
     query_name: str,
 ) -> tuple[ResultRows, Literal["max_rows"] | None]:
     """Execute a ``{{ queries.X.cache }}`` composing query in an isolated engine.
@@ -549,10 +535,9 @@ def _execute_cache_ref_query(
     memory during composition, before any post-fetch check runs.
 
     Args:
-        query: The composing SqlQuery, authored SQL (``{{ queries.X.cache }}``
-            and ``{{ variable }}`` templates still present).
-        upstreams: The plan of each referenced X.
-        variables: Merged variable values.
+        entry: The composing query's plan entry, authored SQL
+            (``{{ queries.X.cache }}`` and ``{{ variable }}`` templates still present).
+        upstreams: The run of each referenced X.
         query_name: Name of the composing query (for error messages).
 
     Returns:
@@ -564,10 +549,9 @@ def _execute_cache_ref_query(
         ExecutionError: No result cache is attached, or it cannot serve refs.
     """
     require_cache_refs(ctx, query_name)
-    assert is_sql_query(query)
-    sql = query.sql
+    assert entry["type"] == "sql"
+    sql = entry["sql"]
 
-    all_queries = ctx.all_queries
     ref_names = list(
         dict.fromkeys(CACHE_REF_JINJA_RE.findall(sql))
     )  # preserve order, dedupe
@@ -595,11 +579,11 @@ def _execute_cache_ref_query(
     from dbt_charts.core.execute.cache_composition import compose_over_named_rows
 
     # An unset `dialect:` is SQL written for the engine that runs it.
-    read = "duckdb" if query.dialect is None else query.dialect
+    read = "duckdb" if entry["dialect"] is None else entry["dialect"]
     rendered = render_parameterized_with_queries(
         sql,
-        variables,
-        queries=all_queries,
+        ctx.variables,
+        queries=reachable(ctx.plan, query_name),
         dialect=INLINE_PLACEHOLDERS,
         warehouse=get_dialect(read),
     )
@@ -616,14 +600,14 @@ def _execute_cache_ref_query(
     # Bounds the composition engine's own fetch (fetchmany()) — composed_sql
     # runs unmodified, so an author's own inline LIMIT in the composing SQL
     # behaves exactly as it would without this ceiling.
-    row_fetch_limit = resolve_effective_row_limit(query.limit)
+    row_fetch_limit = ctx.row_limit or resolve_effective_row_limit(None)
     rows, schema = compose_over_named_rows(
         composed_sql,
         named_rows,
         params,
         limit=row_fetch_limit.fetch_limit,
         schemas=schemas,
-        time_zone=ctx.board.regional.time_zone,
+        time_zone=TimeZoneName(ctx.plan["time_zone"]),
     )
     rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
     return ResultRows(rows, schema), truncated_reason
@@ -699,7 +683,7 @@ def run_query(
             # handle_adapter_error keeps the resolver's typed identity, so
             # ERR-SOURCE-NOT-FOUND et al. don't flatten to ERR-INTERNAL.
             return handle_adapter_error("Source resolution", exc)
-    route = route_for(query, source_config)
+    route = route_for(query.query_type, source_config)
     if board_clock_in_scope():
         return run_route(
             env, route, query, variables, params, board, query_name, source_config
@@ -734,11 +718,14 @@ class Warehouse:
 Route = FileSource | Values | Schema | Warehouse
 
 
-def route_for(query: AnyQuery, source_config: ResolvedSourceConfig | None) -> Route:
+def route_for(
+    query_type: Literal["sql", "values", "schema"],
+    source_config: ResolvedSourceConfig | None,
+) -> Route:
     """The route of a query that composes no cached upstream, by its resolved source."""
-    if is_values_query(query):
+    if query_type == "values":
         return Values()
-    if is_schema_query(query):
+    if query_type == "schema":
         return Schema()
     if source_config is not None and is_file_source(source_config):
         return FileSource()
@@ -787,7 +774,7 @@ def run_route(
         match route:
             case Values():
                 assert isinstance(query, ValuesQuery)
-                return _observed(env.observers, None, lambda: run_values(query))
+                return observed(env.observers, None, lambda: run_values(query))
             case Schema():
                 assert isinstance(query, SchemaQuery)
                 if source_config is not None and is_file_source(source_config):
@@ -799,7 +786,7 @@ def run_route(
                         "an authored `type: schema` query) is not yet "
                         "supported for file sources."
                     )
-                return _observed(env.observers, None, lambda: schema_rows(env, query))
+                return observed(env.observers, None, lambda: schema_rows(env, query))
             case FileSource() | Warehouse():
                 assert isinstance(query, SqlQuery)
                 if source_config is None:
@@ -850,7 +837,7 @@ def run_route(
                 )
 
 
-def _observed(
+def observed(
     observers: list[WarehouseObserver],
     warehouse_type: str | None,
     call: Callable[[], QueryResult],
@@ -910,8 +897,10 @@ def execute_on_backend(
     """
     dialect_name = source_config.type
     source_name = source_name or dialect_name
+    resolved: ResolvedQuery | None = None
 
     def call() -> QueryResult:
+        nonlocal resolved
         try:
             backend = env.backends.for_source(source_config)
         except DbtChartsError as exc:
@@ -931,7 +920,7 @@ def execute_on_backend(
                 data=[],
                 error=QueryError(
                     ERR_QUERY_DURATION_EXCEEDED.message_template.format(
-                        seconds=exc.seconds, source=source_name
+                        seconds=exc.seconds, source=source_name or dialect_name
                     ),
                     code=ERR_QUERY_DURATION_EXCEEDED,
                 ),
@@ -958,7 +947,26 @@ def execute_on_backend(
             table, resolved.limit, list(resolved.resolved_relations) or None
         )
 
-    return _observed(env.observers, dialect_name, call)
+    def call_noting_stale_manifest() -> QueryResult:
+        result = call()
+        error = result.error
+        # `resolved` is set by call() before any backend runs; a ref()/source()
+        # that resolved ran against the manifest, so a missing relation may mean
+        # the manifest predates the profile's schema. Every backend funnels here,
+        # including the ones that never reach classify_warehouse_error.
+        if (
+            error is None
+            or error.code is not ERR_BINDER_UNKNOWN_RELATION
+            or resolved is None
+            or not resolved.resolved_relations
+        ):
+            return result
+        noted = QueryError(f"{error} {UNKNOWN_RELATION_MANIFEST_NOTE}", code=error.code)
+        noted.detail = error.detail
+        result.error = noted
+        return result
+
+    return observed(env.observers, dialect_name, call_noting_stale_manifest)
 
 
 def run_file_source(
@@ -1027,7 +1035,7 @@ def run_file_source(
             truncated_reason=truncated_reason,
         )
 
-    return _observed(env.observers, source_config.type, call)
+    return observed(env.observers, source_config.type, call)
 
 
 def run_planned(
@@ -1057,7 +1065,7 @@ def run_planned(
     with attributed(source_config, name, plan["board_id"]):
         if entry["type"] == "values":
             values = ValuesQuery.model_validate(entry["spec"])
-            return _observed(env.observers, None, lambda: run_values(values))
+            return observed(env.observers, None, lambda: run_values(values))
         if entry["type"] == "schema":
             schema = SchemaQuery.model_validate(entry["spec"])
             if source_config is not None and is_file_source(source_config):
@@ -1067,7 +1075,7 @@ def run_planned(
                     "an authored `type: schema` query) is not yet "
                     "supported for file sources."
                 )
-            return _observed(env.observers, None, lambda: schema_rows(env, schema))
+            return observed(env.observers, None, lambda: schema_rows(env, schema))
         assert entry["type"] == "sql"
         if source_config is None:
             return handle_adapter_error(

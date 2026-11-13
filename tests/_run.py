@@ -6,12 +6,12 @@ shared ledger, so the per-render memo holds exactly as it does in a render.
 """
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
 from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
 from dbt_charts.core.compile.models.chart.normalized import Chart
-from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.template.listings import ListingCall, TextListings
 from dbt_charts.core.dbt_manifest import RawTableFormats
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -28,10 +28,13 @@ from dbt_charts.core.execute.plan import (
     text_listings,
     utc_now,
 )
+from dbt_charts.core.execute.plan_names import plan_key
 from dbt_charts.core.execute.query_results import QueryResults, execute
 from dbt_charts.core.execute.run import Outcome, run_misses
 from dbt_charts.core.render import render
 from dbt_charts.core.render.render_result import RenderResult
+
+from ._compile import plan_of  # noqa: E402
 
 
 class Run:
@@ -41,22 +44,37 @@ class Run:
         self,
         board: Board,
         env: ExecEnv,
-        query_registry: dict[str, AnyQuery] | None = None,
         use_cache: bool = True,
         result_cache: QueryResultCache | None = None,
         clock: Callable[[], datetime] = utc_now,
         board_slug: str | None = None,
+        variables: VariableValues | None = None,
     ) -> None:
         self.ctx: ExecContext = make_context(
             board,
+            plan_of(board, env, clock(), variables, all_queries=True),
             env,
-            query_registry,
             use_cache,
             result_cache,
             clock,
             board_slug,
         )
         self.ledger = Ledger()
+
+    def under(self, variables: VariableValues | None) -> ExecContext:
+        """The context planned under *variables*, sharing this run's memos."""
+        if not variables:
+            return self.ctx
+        return replace(
+            self.ctx,
+            plan=plan_of(
+                self.ctx.board,
+                self.ctx.env,
+                self.ctx.rendered_at,
+                variables,
+                all_queries=True,
+            ),
+        )
 
     def results(
         self,
@@ -65,9 +83,12 @@ class Run:
         use_cache: bool | None = None,
         force_refresh: bool = False,
     ) -> QueryResults:
+        ctx = self.under(variables)
+        # Chart and variable query names are Python's; a plan holds each under its own key.
+        keys = [plan_key(ctx.plan, ctx.board, name) or name for name in names]
         return execute(
-            self.ctx,
-            names,
+            ctx,
+            keys,
             variables or {},
             ledger=self.ledger,
             use_cache=use_cache,
@@ -136,7 +157,9 @@ class Run:
     def render_with_range_filters(
         self, query_name: str, variables: VariableValues | None
     ) -> Any:
-        return render_with_range_filters(self.ctx, query_name, variables)
+        ctx = self.under(variables)
+        key = plan_key(ctx.plan, ctx.board, query_name.removeprefix("queries."))
+        return render_with_range_filters(ctx, query_name if key is None else key)
 
     def base_column_formats(self, source: str | None) -> RawTableFormats:
         return base_column_formats(self.ctx, source)
@@ -150,7 +173,7 @@ class Run:
         self, names: list[str], variables: VariableValues | None = None
     ) -> Lookup:
         return lookup_names(
-            self.ctx, self.ledger, names, variables, resume_incremental=False
+            self.under(variables), self.ledger, names, resume_incremental=False
         )
 
     def run_misses(self, found: Lookup, max_workers: int) -> dict[str, Outcome]:

@@ -221,7 +221,7 @@ def _resolve_custom(
             requested_alias_palette=chart_style_context.requested_alias_palette,
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=chart_style_context.padding,
-            wrap_legend=False,  # a custom chart draws no color legend
+            wrap_columns=None,  # a custom chart draws no color legend
         ),
         **_shared_kwargs(normalized, display_text, local_context),
         chart_type="custom",

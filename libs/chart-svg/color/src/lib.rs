@@ -629,6 +629,26 @@ pub fn variant(color: &str, kind: &str) -> Result<String, String> {
     }
 }
 
+/// `color` moved toward `canvas` in OKLCH, hue held, until its WCAG contrast against the canvas
+/// is the color's own raised to `k`: a mark that keeps a set share of its bar's contrast, on
+/// light and dark canvases alike, and orders two colors as their bars order.
+pub fn recede(color: &str, canvas: &str, k: f64) -> Result<String, String> {
+    let (l, c, h) = hex_to_oklch(color)?;
+    let (l_canvas, _, _) = hex_to_oklch(canvas)?;
+    let target = wcag_contrast(color, canvas)?.powf(k);
+    let toward = |s: f64| oklch_to_hex(l + (l_canvas - l) * s, c * (1.0 - s), h);
+    let (mut lo, mut hi) = (0.0, 1.0);
+    for _ in 0..30 {
+        let mid = (lo + hi) / 2.0;
+        if wcag_contrast(&toward(mid)?, canvas)? > target {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    toward(lo)
+}
+
 /// `ink_canvas`: composite `layers` top-down (`layers[0]` on top) into one
 /// opaque hex. A layer that doesn't parse contributes nothing, like a fully
 /// transparent one. `Err` when the result is still not opaque — unreachable
@@ -782,6 +802,38 @@ mod tests {
         assert!(!is_light_canvas("#595959").unwrap());
         assert!(!is_light_canvas("#161616").unwrap());
         assert!(is_light_canvas("#FAF7F0").unwrap());
+    }
+
+    #[test]
+    fn recede_keeps_the_share_k_of_the_contrast_on_light_and_dark_canvases() {
+        for canvas in ["#ffffff", "#161616"] {
+            let bar = if canvas == "#ffffff" { "#3164a3" } else { "#779bc9" };
+            let bar_contrast = wcag_contrast(bar, canvas).unwrap();
+            for k in [0.25, 0.5, 0.75] {
+                let got = wcag_contrast(&recede(bar, canvas, k).unwrap(), canvas).unwrap();
+                let want = bar_contrast.powf(k);
+                assert!((got / want - 1.0).abs() < 0.01, "{canvas} k={k}: {got} against {want}");
+            }
+        }
+    }
+
+    #[test]
+    fn recede_holds_hue_and_runs_from_the_canvas_to_the_color() {
+        let (_, _, hue) = hex_to_oklch("#3164a3").unwrap();
+        let (_, _, receded_hue) = hex_to_oklch(&recede("#3164a3", "#ffffff", 0.5).unwrap()).unwrap();
+        assert!((hue - receded_hue).abs() < 3.0, "{hue} against {receded_hue}");
+        let faint = wcag_contrast(&recede("#3164a3", "#ffffff", 0.01).unwrap(), "#ffffff").unwrap();
+        assert!(faint < 1.05, "k near 0 approaches the canvas: {faint}");
+        let whole = wcag_contrast(&recede("#3164a3", "#ffffff", 1.0).unwrap(), "#ffffff").unwrap();
+        let bar = wcag_contrast("#3164a3", "#ffffff").unwrap();
+        assert!((whole / bar - 1.0).abs() < 0.01, "k = 1 keeps the color: {whole} against {bar}");
+    }
+
+    #[test]
+    fn recede_keeps_the_order_of_two_colors() {
+        let dark = recede("#1f3f6e", "#ffffff", 0.5).unwrap();
+        let light = recede("#779bc9", "#ffffff", 0.5).unwrap();
+        assert!(wcag_contrast(&dark, "#ffffff").unwrap() > wcag_contrast(&light, "#ffffff").unwrap());
     }
 
     #[test]

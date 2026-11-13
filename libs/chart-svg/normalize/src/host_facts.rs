@@ -54,7 +54,6 @@ pub struct HostQuery {
     pub kind: QueryKind,
     #[cfg_attr(feature = "schema", schemars(required, schema_with = "nullable_text"))]
     pub source: Option<String>,
-    pub ignore: Vec<String>,
     #[serde(flatten)]
     pub sql: Option<SqlFields>,
 }
@@ -391,7 +390,6 @@ impl Structure {
                     authored: !key.starts_with('@'),
                     kind,
                     source: text("source"),
-                    ignore: strings(spelled.get("ignore")),
                     sql: matches!(kind, QueryKind::Sql).then(|| SqlFields {
                         sql: text("sql").unwrap_or_default(),
                         setup_sql: text("setup_sql"),

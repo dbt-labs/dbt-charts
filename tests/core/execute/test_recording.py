@@ -54,7 +54,6 @@ def _build_executor(tmp_path: Path) -> tuple[object, Run, dict[str, object]]:
     executor = Run(
         result.board,
         build_exec_env(project),
-        query_registry=result.query_registry,
     )
     variables: dict[str, object] = {}
     resolved, _ = build_resolved_board(result.board, executor, variables)
@@ -180,7 +179,6 @@ def test_record_board_records_the_rows_resolve_saw_even_with_cache_off() -> None
     executor = Run(
         result.board,
         env=registry,
-        query_registry=result.query_registry,
         use_cache=False,
     )
     variables: dict[str, object] = {}

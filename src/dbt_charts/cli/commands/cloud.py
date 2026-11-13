@@ -60,6 +60,7 @@ from dbt_charts.cloud_client.client import (
     PICK_POLL_SECONDS,
     PICK_WAIT_SECONDS,
     CloudClient,
+    GitHubConnectBegun,
     client_from_config,
     discover_endpoints,
     poll_device_token,
@@ -89,6 +90,7 @@ from dbt_charts.cloud_client.context import (
     UNPARSEABLE_ORIGIN_PLACEHOLDER,
     CloudContext,
     GitCheckoutFacts,
+    gh_token,
     git_checkout_facts,
     git_remotes,
     repo_key,
@@ -109,6 +111,7 @@ from dbt_charts.cloud_client.contract import (
     AuthorizationServerMetadata,
     BoardList,
     BoardSummary,
+    CommentList,
     ConnectionAccessList,
     ConnectionList,
     DeleteResult,
@@ -328,6 +331,12 @@ cloud_app.add_typer(identity_app, name="identity")
 connection_app.add_typer(connection_access_app, name="access")
 cloud_app.add_typer(public_app, name="public")
 cloud_app.add_typer(audit_app, name="audit")
+comments_app = typer.Typer(
+    name="comments",
+    help="Read and leave comments on a board's text.",
+    no_args_is_help=True,
+)
+cloud_app.add_typer(comments_app, name="comments")
 
 
 # =============================================================================
@@ -1021,8 +1030,9 @@ def _pick_step_line(git_facts: GitCheckoutFacts) -> str | None:
         )
         if subcommand == "github":
             line += (
-                ", or pick it in the browser through the GitHub App: dct cloud"
-                " project connect github --start, then --wait"
+                ", or through the GitHub App, which verifies this repository"
+                " with your gh login or a browser authorization: dct cloud"
+                " project connect github"
             )
         return line
     key = repo_key(git_facts.origin)
@@ -2248,9 +2258,25 @@ def connect_github(
         str | None,
         typer.Option(
             "--git-url",
-            help="Connect by HTTPS URL with --token instead of the browser pick",
+            help="Connect by HTTPS URL with --token instead of the GitHub App",
         ),
     ] = None,
+    repo: Annotated[
+        str | None,
+        typer.Option(
+            "--repo",
+            metavar="OWNER/NAME",
+            help="The repository to connect (default: this checkout's origin)",
+        ),
+    ] = None,
+    no_gh: Annotated[
+        bool,
+        typer.Option(
+            "--no-gh",
+            envvar="DCT_NO_GH",
+            help="Do not use your gh login to verify the repository",
+        ),
+    ] = False,
     token: Annotated[
         str | None,
         typer.Option(
@@ -2265,7 +2291,7 @@ def connect_github(
     slug: ConnectSlugOption = None,
     timeout: Annotated[
         float,
-        typer.Option("--timeout", help="Seconds to wait for the browser repo pick"),
+        typer.Option("--timeout", help="Seconds to wait for the repository pick"),
     ] = PICK_WAIT_SECONDS,
     poll_interval: Annotated[
         float, typer.Option("--poll-interval", help="Seconds between pick checks")
@@ -2274,7 +2300,7 @@ def connect_github(
         bool,
         typer.Option(
             "--start",
-            help="Print the install/pick URL and exit without waiting for the pick",
+            help="Begin the connect and exit without waiting for it to finish",
         ),
     ] = False,
     wait: Annotated[
@@ -2289,17 +2315,20 @@ def connect_github(
 
     \b
     Two paths:
-      (default)       prints a URL, waits for you to install the GitHub App
-                      and pick the repo in the browser, then finishes here
+      (default)       connects --repo (default: this checkout's origin); with
+                      gh signed in to github.com it verifies the repo with
+                      your gh login and finishes here, otherwise it prints a
+                      URL where you authorize GitHub and install the App
       --git-url URL   fully headless, with --token (or DCT_GIT_TOKEN)
 
-    The browser pick is not bypassable: Cloud authorizes it from your own
-    GitHub account's list of repositories you administer.
+    Cloud connects only a repository your own GitHub account administers,
+    checked live with your GitHub token. --no-gh skips the gh login.
 
-    A script splits it: `--start` prints the install/pick URL and returns
-    immediately (persisting the pending connect); a later `--wait` blocks
-    for the pick `--start` began and finishes the project. Neither applies
-    to `--git-url`, which is already headless.
+    A script splits it: `--start` begins the connect and returns immediately
+    (persisting the pending connect), printing the URL only when a browser
+    step is still needed; a later `--wait` blocks until the connect is ready
+    and finishes the project. None of --repo, --no-gh, `--start`, `--wait`
+    applies to `--git-url`, which is already headless.
     """
     if start and wait:
         raise typer.BadParameter(
@@ -2310,6 +2339,17 @@ def connect_github(
             "--git-url has no browser pick to start or wait for",
             param_hint="--git-url",
         )
+    no_gh_source = ctx.get_parameter_source("no_gh")
+    no_gh_typed = (
+        no_gh and no_gh_source is not None and no_gh_source.name == "COMMANDLINE"
+    )
+    for flag, given in (("--repo", repo is not None), ("--no-gh", no_gh_typed)):
+        if given and (git_url or wait):
+            raise typer.BadParameter(
+                f"{flag} names the repository for a new connect, so it does not"
+                " apply to --git-url or --wait",
+                param_hint=flag,
+            )
     if poll_interval < MIN_POLL_INTERVAL_SECONDS:
         raise typer.BadParameter(
             f"must be at least {MIN_POLL_INTERVAL_SECONDS}s, got {poll_interval!r}",
@@ -2360,6 +2400,7 @@ def connect_github(
         return
     with _cloud(host, as_json) as (client, config):
         org_slug = _org(client, config, org, refuse_default=REFUSE_DEFAULT_CONNECT)
+        begun = _begin_github(client, org_slug, repo, no_gh)
         if start:
             save_pending_connect(
                 PendingConnect(
@@ -2371,19 +2412,29 @@ def connect_github(
                     root=root,
                 )
             )
-            url = client.connect_url(org_slug)
             if as_json:
-                print_json_result(ProjectConnectStarted(org=org_slug, url=url))
+                print_json_result(
+                    ProjectConnectStarted(
+                        org=org_slug, url=begun.url, picked=begun.picked
+                    )
+                )
                 return
-            # Bare stdout, no prose: agents capture this via `$(...)`.
-            typer.echo(url)
-            err_console.print(
-                "Next: dct cloud project connect github --wait to finish"
-                " connecting once you've picked the repo."
-            )
+            if begun.picked is None:
+                # Bare stdout, no prose: agents capture this via `$(...)`.
+                typer.echo(begun.url)
+                err_console.print(
+                    "Next: dct cloud project connect github --wait to finish"
+                    " connecting once you have authorized GitHub in the browser."
+                )
+            else:
+                err_console.print(
+                    f"Verified {escape(begun.picked)} with your gh login; no"
+                    " browser step is needed. Next: dct cloud project connect"
+                    " github --wait to finish connecting."
+                )
             return
         project = _connect_through_github(
-            client, org_slug, name, slug, trunk, root, timeout, poll_interval
+            client, org_slug, begun, name, slug, trunk, root, timeout, poll_interval
         )
     _report_connected(client.host, org_slug, project, None, as_json)
 
@@ -2615,9 +2666,43 @@ def _checkout_is(project: ProjectSummary, git_url: str | None, start: Path) -> b
     return bool(connected & {repo_key(remote) for remote in git_remotes(start)})
 
 
+def _begin_github(
+    client: CloudClient, org: str, repo: str | None, no_gh: bool
+) -> GitHubConnectBegun:
+    """Resolve the repository and gh token, begin the connect, and say on
+    stderr how it went. All fallback logic lives in the client."""
+    full_name = repo or _origin_github_repo()
+    token = None
+    if full_name is not None and not no_gh:
+        token = gh_token()
+        if token is not None:
+            err_console.print(f"Using your gh login to verify {escape(full_name)}.")
+    begun = client.begin_github_connect(org, full_name, token)
+    if full_name is None:
+        err_console.print(
+            "This checkout has no github.com origin, so you will choose the"
+            " repository in the browser. Pass --repo OWNER/NAME to name it here."
+        )
+    for note in begun.notes:
+        err_console.print(escape(note))
+    return begun
+
+
+def _origin_github_repo() -> str | None:
+    """owner/name of this checkout's github.com origin, if it has one."""
+    origin = git_checkout_facts(Path.cwd()).origin
+    if origin is None:
+        return None
+    known = _known_host_url(origin)
+    if known is None or known[0] != "github":
+        return None
+    return repo_key(origin).partition("/")[2]
+
+
 def _connect_through_github(
     client: CloudClient,
     org: str,
+    begun: GitHubConnectBegun,
     name: str | None,
     slug: str | None,
     trunk: str | None,
@@ -2625,11 +2710,15 @@ def _connect_through_github(
     timeout: float,
     poll_interval: float,
 ) -> ProjectSummary:
-    """Hand the repository pick to the browser, then resume from its outcome."""
+    """Send the user to the browser unless the repo is already verified, then
+    finish from the pick (which is already there when it was verified)."""
     # Progress, not result: on stderr so `--json` leaves stdout parseable.
-    err_console.print("Install the dbt charts GitHub App and pick a repository here:")
-    err_console.print(f"  {client.connect_url(org)}", soft_wrap=True)
-    err_console.print("Waiting for the pick…")
+    if begun.picked is None:
+        err_console.print(
+            "Authorize GitHub and install the dbt Charts GitHub App here:"
+        )
+        err_console.print(f"  {begun.url}", soft_wrap=True)
+        err_console.print("Waiting for GitHub authorization…")
     pick = client.wait_for_pick(org, timeout, poll_interval)
     return _finish_from_pick(client, org, name, slug, trunk, root, pick)
 
@@ -2887,6 +2976,224 @@ def boards(
         print_json_result(result)
         return
     _print_boards(result)
+
+
+# --- comments ---------------------------------------------------------------
+
+BoardOption = Annotated[
+    str, typer.Option("--board", help="Board path in the project, e.g. finance/revenue")
+]
+CommentBodyOption = Annotated[str, typer.Option("--body", help="Comment text")]
+CommentMentionOption = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--mention",
+        help=(
+            "Who the body mentions, once per person: user:<email> or team:<slug>. "
+            "The body needs their @Name too."
+        ),
+    ),
+]
+CommentReviewOption = Annotated[
+    str | None,
+    typer.Option("--review", help="A review's id: its threads, or post from its page"),
+]
+
+
+class CommentStatus(StrEnum):
+    OPEN = "open"
+    RESOLVED = "resolved"
+    ALL = "all"
+
+
+def _run_project(
+    host: str | None,
+    as_json: bool,
+    org: str | None,
+    project: str | None,
+    call: Callable[[CloudClient, str, str], M],
+    show: Callable[[M], None],
+) -> None:
+    """One project-scoped call: resolve org and project, call, print JSON or
+    ``show``."""
+    with _cloud(host, as_json) as (client, config):
+        context = _context(client, config, org, project)
+        result = call(client, context.org, context.project)
+    if as_json:
+        print_json_result(result)
+        return
+    show(result)
+
+
+def _comment_review(review: str | None) -> str | None:
+    if review == "":
+        raise typer.BadParameter("pass a review id.", param_hint="--review")
+    return review
+
+
+def _comment_owner(chart: str | None, block: str | None) -> str | None:
+    if chart and block:
+        raise typer.BadParameter("pass --chart or --block, not both.")
+    return chart or block
+
+
+@comments_app.command("list")
+def comments_list(
+    board: BoardOption,
+    chart: Annotated[
+        str | None, typer.Option("--chart", help="Only threads on this chart id")
+    ] = None,
+    block: Annotated[
+        str | None,
+        typer.Option("--block", help="Only threads on this board text block path"),
+    ] = None,
+    status: Annotated[
+        CommentStatus, typer.Option("--status", help="Which threads to list")
+    ] = CommentStatus.OPEN,
+    review: CommentReviewOption = None,
+    org: OrgOption = None,
+    project: ProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """List a board's comment threads, newest first."""
+    owner = _comment_owner(chart, block)
+    review = _comment_review(review)
+    _run_project(
+        host,
+        as_json,
+        org,
+        project,
+        lambda c, o, p: c.list_comments(o, p, board, status.value, owner, review),
+        _print_comments,
+    )
+
+
+@comments_app.command("add")
+def comments_add(
+    board: BoardOption,
+    body: CommentBodyOption,
+    chart: Annotated[
+        str | None, typer.Option("--chart", help="Chart id to comment on")
+    ] = None,
+    block: Annotated[
+        str | None, typer.Option("--block", help="Board text block path to comment on")
+    ] = None,
+    quote: Annotated[
+        str | None,
+        typer.Option(
+            "--quote",
+            help="Text to anchor to (default for --chart: the chart's title)",
+        ),
+    ] = None,
+    review: CommentReviewOption = None,
+    mention: CommentMentionOption = None,
+    org: OrgOption = None,
+    project: ProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Start a thread on a chart's or a text block's text."""
+    owner = _comment_owner(chart, block)
+    review = _comment_review(review)
+    if owner is None:
+        raise typer.BadParameter("pass --chart or --block.")
+    if block and quote is None:
+        raise typer.BadParameter("--block needs --quote.", param_hint="--quote")
+    _run_project(
+        host,
+        as_json,
+        org,
+        project,
+        lambda c, o, p: c.add_comment(
+            o, p, board, owner, body, quote, review, mention or []
+        ),
+        lambda thread: typer.echo(f"Started thread {thread.id}."),
+    )
+
+
+@comments_app.command("reply")
+def comments_reply(
+    thread: Annotated[str, typer.Argument(help="Thread id")],
+    board: BoardOption,
+    body: CommentBodyOption,
+    mention: CommentMentionOption = None,
+    org: OrgOption = None,
+    project: ProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Reply to a thread."""
+    _run_project(
+        host,
+        as_json,
+        org,
+        project,
+        lambda c, o, p: c.reply_comment(o, p, board, thread, body, mention or []),
+        lambda result: typer.echo(f"Replied to thread {result.id}."),
+    )
+
+
+@comments_app.command("edit")
+def comments_edit(
+    comment: Annotated[str, typer.Argument(help="Comment id (yours)")],
+    board: BoardOption,
+    body: CommentBodyOption,
+    mention: CommentMentionOption = None,
+    org: OrgOption = None,
+    project: ProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Change the text of a comment you wrote."""
+    _run_project(
+        host,
+        as_json,
+        org,
+        project,
+        lambda c, o, p: c.edit_comment(o, p, board, comment, body, mention or []),
+        lambda _: typer.echo(f"Edited comment {comment}."),
+    )
+
+
+@comments_app.command("resolve")
+def comments_resolve(
+    thread: Annotated[str, typer.Argument(help="Thread id")],
+    board: BoardOption,
+    org: OrgOption = None,
+    project: ProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Resolve a thread (its author, or a board editor)."""
+    _run_project(
+        host,
+        as_json,
+        org,
+        project,
+        lambda c, o, p: c.resolve_comment(o, p, board, thread),
+        lambda result: typer.echo(f"Resolved thread {result.id}."),
+    )
+
+
+@comments_app.command("reopen")
+def comments_reopen(
+    thread: Annotated[str, typer.Argument(help="Thread id")],
+    board: BoardOption,
+    org: OrgOption = None,
+    project: ProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Reopen a resolved thread (its author, or a board editor)."""
+    _run_project(
+        host,
+        as_json,
+        org,
+        project,
+        lambda c, o, p: c.reopen_comment(o, p, board, thread),
+        lambda result: typer.echo(f"Reopened thread {result.id}."),
+    )
 
 
 @cloud_app.command("connections")
@@ -3452,6 +3759,24 @@ def _print_member_access(result: MemberAccess) -> None:
     typer.echo(f"Boards they can open ({len(result.boards)}):")
     for board in result.boards:
         typer.echo(f"  {board.project}/{board.board}  {board.capability}")
+
+
+def _print_comments(result: CommentList) -> None:
+    if not result.threads:
+        typer.echo("No comments.")
+        return
+    for thread in result.threads:
+        state = f"resolved by {thread.resolved_by}" if thread.resolved_at else "open"
+        where = "detached" if thread.detached else thread.anchor.owner_label
+        typer.echo(f'{thread.id}  {state}  "{thread.anchor.quote}" in {where}')
+        for comment in [thread, *thread.replies]:
+            who = (
+                "Wizard"
+                if comment.author_kind == "wizard"
+                else comment.author or "deleted account"
+            )
+            typer.echo(f"  {who}: {comment.body}")
+        typer.echo("")
 
 
 def _print_teams(result: TeamList) -> None:

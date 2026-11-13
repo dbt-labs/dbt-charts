@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 
+use diagnostic::Diagnostic;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -64,7 +65,7 @@ pub struct MeasurePayload {
     pub sub_unit_specs: Option<std::collections::BTreeMap<String, String>>,
     /// The `str()` text of each tagged cell in `rows`; filled when parsed.
     #[serde(skip)]
-    pub cell_text: std::sync::Arc<::bind::rows::CellText>,
+    pub cell_text: std::sync::Arc<::column_types::CellText>,
 }
 
 impl<'de> Deserialize<'de> for MeasurePayload {
@@ -339,7 +340,7 @@ fn natural_width_in_scope(
         sub_unit_specs: payload.sub_unit_specs.as_ref(),
     })
     .map_err(|d| d.to_string())?;
-    natural_width(&chart, &payload.numeral_family, fonts)
+    natural_width(&chart, &payload.numeral_family, fonts).map_err(|d| d.to_string())
 }
 
 /// What a board can hug the table to: the narrowest it breaks no word at, and
@@ -348,7 +349,7 @@ pub(super) fn natural_width(
     chart: &Chart,
     numeral_family: &str,
     fonts: &FontBook,
-) -> Result<Option<IntrinsicWidth>, String> {
+) -> Result<Option<IntrinsicWidth>, Diagnostic> {
     let _formats =
         super::BoardFormats::enter(chart.formats.as_ref(), chart.sub_unit_specs.as_ref());
     let th = &chart.resolved.style.table;

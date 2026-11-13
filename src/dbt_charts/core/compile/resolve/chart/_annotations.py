@@ -23,9 +23,9 @@ import pydantic_core
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import resolve_format_parts
 from dbt_charts.core.compile.merge import merge_onto_base
+from dbt_charts.core.compile.models.aggregate import AggregateAnchor
 from dbt_charts.core.compile.models.chart.authored import MultiplesConfig
 from dbt_charts.core.compile.models.chart.authored._annotation import (
-    AggregateAnchor,
     Anchor,
     AnchorRange,
     AnchorScalar,
@@ -283,7 +283,7 @@ def annotation_chart(
     assert y_kind in ("quantitative", "nominal"), y_kind
     return AnnotationChart(
         chart_id=chart.id,
-        family=chart.type,
+        family="bar" if chart.type == "funnel" else chart.type,
         x_field=chart.x,
         x_kind=x_kind,
         y_kind=y_kind,

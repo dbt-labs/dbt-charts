@@ -4,7 +4,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ::bind::rows::{decode_cells, CellText};
+use ::bind::rows::decode_cells;
+use ::column_types::CellText;
 use column_types::{ColumnTypes, SharedRows};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};

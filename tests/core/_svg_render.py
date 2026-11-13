@@ -60,7 +60,6 @@ def render_board_svg_result(
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
         clock=pinned_clock,
     )
     return render(

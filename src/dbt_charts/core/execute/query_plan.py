@@ -55,6 +55,9 @@ class PlanVariables(TypedDict):
 
     query: dict[str, JsonValue]
     render: dict[str, JsonValue]
+    #: The preset id of each daterange variable whose value is a preset (its default or the
+    #: caller's), by name; fixed dates have no entry.
+    presets: dict[str, str]
 
 
 class PlanSources(TypedDict):
@@ -65,6 +68,23 @@ class PlanSources(TypedDict):
 
     project: dict[str, dict[str, JsonValue]]
     inline: dict[str, dict[str, JsonValue]]
+
+
+class ChartQueries(TypedDict):
+    """The plan keys of the queries a chart reads: its own (null for a chart that reads none) and
+    each layer's, in order (null for a layer that draws the chart's)."""
+
+    query: str | None
+    layers: list[str | None]
+
+
+class VariableQueries(TypedDict):
+    """The plan keys of a variable's `query:`, `options.query:` and `enabled:` probe query, each
+    null when it has none."""
+
+    query: str | None
+    options: str | None
+    enabled: str | None
 
 
 class QueryPlan(TypedDict):
@@ -79,6 +99,10 @@ class QueryPlan(TypedDict):
     #: The queries only hidden tabs read whose cache policy prefetches; empty unless the plan
     #: was scoped to the active tabs.
     prefetch: list[str]
+    #: By public chart id, for the charts the plan shows; keys are those of `queries`.
+    chart_queries: dict[str, ChartQueries]
+    #: By variable name, for the variables the plan shows; keys are those of `queries`.
+    variable_queries: dict[str, VariableQueries]
     queries: dict[str, PlannedQuery]
     variables: PlanVariables
     sources: PlanSources

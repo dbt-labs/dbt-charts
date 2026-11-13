@@ -52,7 +52,6 @@ def chart_error_codes(yaml: str) -> list[str]:
     executor = Run(
         board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     rendered = render(board, executor.ctx, executor.ledger, format="svg")
     return sorted({e.code for e in rendered.chart_errors})

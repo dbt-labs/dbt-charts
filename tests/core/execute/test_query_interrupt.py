@@ -22,6 +22,7 @@ from dbt_charts.core.execute.env import make_exec_env
 from dbt_charts.core.execute.query_result import QueryResult
 
 from ..._backend_runner import DuckDBRunner
+from ..._lookup import sql_entry
 
 _SLOW_SQL = (
     "SELECT count(*) AS n FROM range(100000000000) t(i) "
@@ -154,17 +155,16 @@ def test_an_interrupted_query_is_not_cached_as_a_failure() -> None:
     from dbt_charts.core.execute.lookup import cache_failure
 
     ctx = MagicMock()
-    query = _query("SELECT 1")
+    query = sql_entry("SELECT 1")
     with patch("dbt_charts.core.execute.lookup.cache_outcome") as cache_outcome:
         cache_failure(
             ctx,
             "q",
             query,
-            None,
             ("s", "q", "v"),
             QueryError.from_code(ERR_QUERY_INTERRUPTED),
         )
         cache_outcome.assert_not_called()
 
-        cache_failure(ctx, "q", query, None, ("s", "q", "v"), QueryError("rejected"))
+        cache_failure(ctx, "q", query, ("s", "q", "v"), QueryError("rejected"))
         cache_outcome.assert_called_once()

@@ -17,6 +17,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from dbt_charts.core.compile.models.source import (
+    DuckDBSourceConfig,
+    ResolvedSourceConfig,
+)
 from dbt_charts.core.diagnostics import WARN_AXIS_TITLE_TRUNCATED
 from dbt_charts.core.render.chart.text_truncation import (
     TextTruncation,
@@ -25,6 +29,10 @@ from dbt_charts.core.render.warnings import axis_title_truncated as detector
 from dbt_charts.core.render.warnings.base import WarningContext
 
 from ..._scripted_env import ScriptedBackend, scripted_env
+
+_EXAMPLES_DB: dict[str, ResolvedSourceConfig] = {
+    "examples_db": DuckDBSourceConfig(type="duckdb", path=":memory:")
+}
 from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
 
 # A title long enough to exceed two wrapped lines at a narrow extent.
@@ -174,7 +182,9 @@ def test_render_dashboard_fires_warning_for_truncated_axis_title(
     from dbt_charts.core.board import render_dashboard
     from dbt_charts.core.project import InMemoryBoard
 
-    registry = scripted_env(ScriptedBackend([{"month": "Jan", "revenue": 5}]))
+    registry = scripted_env(
+        ScriptedBackend([{"month": "Jan", "revenue": 5}]), named_sources=_EXAMPLES_DB
+    )
 
     project = local_project(tmp_path)
     long_label = (
@@ -293,7 +303,9 @@ def test_truncated_titles_warn_once_per_chart_and_field(
     from dbt_charts.core.diagnostics import WARN_CHART_TITLE_TRUNCATED
     from dbt_charts.core.project import InMemoryBoard
 
-    registry = scripted_env(ScriptedBackend([{"month": "Jan", "revenue": 5}]))
+    registry = scripted_env(
+        ScriptedBackend([{"month": "Jan", "revenue": 5}]), named_sources=_EXAMPLES_DB
+    )
 
     project = local_project(tmp_path)
     long_text = (

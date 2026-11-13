@@ -428,9 +428,10 @@ def test_a_suppressed_legend_is_charged_nothing() -> None:
     ]
 
     def build(hide_legend: bool) -> ResolvedBarChart:
-        patch: dict[str, object] = {"stack": "zero"}
+        # The 2-column wrap the yield boundary was measured on.
+        patch: dict[str, object] = {"stack": "zero", "legend": {"compact_columns": 2}}
         if hide_legend:
-            patch["legend"] = {"visible": False}
+            patch["legend"] = {"visible": False, "compact_columns": 2}
         chart = BarChart(
             id="probe",
             query=SqlQuery(sql="SELECT 1", source="t"),
@@ -454,6 +455,9 @@ def test_a_suppressed_legend_is_charged_nothing() -> None:
     )
 
 
+_OVERLAY_COLUMNS = 2
+
+
 def _colored_overlay(
     rows: list[dict[str, str | float]],
     *,
@@ -475,6 +479,9 @@ def _colored_overlay(
             [LineLayer(type="line", y="target", color=layer_color)]
             if with_layer
             else []
+        ),
+        style=BarChartStylePatch.model_validate(
+            {"legend": {"compact_columns": _OVERLAY_COLUMNS}}
         ),
     )
     resolved = resolve(chart, rows, _CTX, width=300.0)
@@ -507,9 +514,8 @@ def test_an_overlay_adds_an_entry_to_a_color_legend() -> None:
     # Four regions fill two rows; the overlay's entry starts a third.
     plain = _colored_overlay(rows, layer_color=None, with_layer=False)
     layered = _colored_overlay(rows, layer_color=None, with_layer=True)
-    legend = resolve_chart_style_context(get_theme_style()).legend
-    four_entries = legend_wrap_marginal_height_px(4, None, legend.compact_columns)
-    five_entries = legend_wrap_marginal_height_px(5, None, legend.compact_columns)
+    four_entries = legend_wrap_marginal_height_px(4, None, _OVERLAY_COLUMNS)
+    five_entries = legend_wrap_marginal_height_px(5, None, _OVERLAY_COLUMNS)
     assert (
         plain.estimated_plot_height_px - layered.estimated_plot_height_px
     ) == pytest.approx(five_entries - four_entries)

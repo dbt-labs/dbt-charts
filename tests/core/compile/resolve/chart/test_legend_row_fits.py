@@ -23,6 +23,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     cartesian_top_legend_entries,
     estimate_left_axis_reserve_px,
     legend_row_fits,
+    legend_wrap_columns,
     legend_wrap_fits_height_budget,
     legend_wrap_required_height_px,
     legend_wrapped_row_count,
@@ -104,6 +105,39 @@ class TestLegendRowChromeFromTheme:
         assert legend_row_fits(entries, 400.0, wide_swatch) is False
 
 
+_DEPARTMENTS = tuple(f"Department number {i:02d}" for i in range(22))
+
+
+class TestLegendWrapColumns:
+    def test_a_row_that_fits_does_not_wrap(self) -> None:
+        assert legend_wrap_columns(("Alpha", "Beta"), 400.0, _legend()) is None
+
+    def test_a_wider_card_takes_more_columns(self) -> None:
+        legend = _legend()
+        narrow = legend_wrap_columns(_DEPARTMENTS, 400.0, legend)
+        wide = legend_wrap_columns(_DEPARTMENTS, 800.0, legend)
+        assert narrow is not None and wide is not None
+        assert narrow < wide
+
+    def test_columns_never_exceed_compact_columns(self) -> None:
+        legend = _legend().model_copy(update={"compact_columns": 3})
+        assert legend_wrap_columns(_DEPARTMENTS, 5000.0, legend) is None
+        assert legend_wrap_columns(_DEPARTMENTS, 900.0, legend) == 3
+
+    def test_a_label_wider_than_the_card_still_gets_one_column(self) -> None:
+        assert legend_wrap_columns(_DEPARTMENTS, 20.0, _legend()) == 1
+
+    def test_the_fitted_grid_fits_the_width_and_one_more_column_does_not(
+        self,
+    ) -> None:
+        legend = _legend()
+        entries = ("Customer Solutions Group",) * 22
+        columns = legend_wrap_columns(entries, 700.0, legend)
+        assert columns is not None
+        assert legend_row_fits(entries[:columns], 700.0, legend) is True
+        assert legend_row_fits(entries[: columns + 1], 700.0, legend) is False
+
+
 class TestLegendWrappedRowCount:
     """Row-count arithmetic shared between the fallback ladder's rung-2 wrap
     check (``legend_wrap_fits_height_budget``) and bar.py's own
@@ -130,6 +164,10 @@ class TestLegendWrappedRowCount:
 
     def test_no_symbol_limit_uses_the_raw_count(self) -> None:
         assert legend_wrapped_row_count(9, None, 2) == 5
+
+    def test_a_legend_that_fits_one_row_is_one_row(self) -> None:
+        assert legend_wrapped_row_count(9, None, None) == 1
+        assert legend_wrapped_row_count(0, None, None) == 0
 
 
 class TestLegendWrapRequiredHeightPx:
@@ -170,6 +208,7 @@ def _budget(
     inputs -- no title/subtitle chrome, a representative card padding."""
     return legend_wrap_fits_height_budget(
         entries,
+        200.0,
         legend,
         plot_height,
         card_padding_px=16.0,

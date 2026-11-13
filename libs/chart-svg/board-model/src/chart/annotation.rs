@@ -69,7 +69,7 @@ string_enum!(
     SortOrder { Asc = "asc", Desc = "desc" }
 );
 
-/// A value computed over the plotted rows of the axis column.
+/// A value computed over a column's rows.
 #[derive(Debug, Clone, PartialEq, Model)]
 #[allow(clippy::duplicated_attributes)]
 #[model(
@@ -137,12 +137,12 @@ fn call_re() -> &'static Regex {
 }
 
 /// `name(arg)` as `(name, arg)`.
-fn call(text: &str) -> Option<(&str, &str)> {
+pub(crate) fn call(text: &str) -> Option<(&str, &str)> {
     let c = call_re().captures(text)?;
     Some((c.get(1)?.as_str(), c.get(2)?.as_str().trim()))
 }
 
-fn repr(s: &str) -> String {
+pub(crate) fn repr(s: &str) -> String {
     diagnostic::py_repr(&serde_json::Value::String(s.to_string()))
 }
 
@@ -159,7 +159,7 @@ fn num(v: f64) -> Result<Value, String> {
 }
 
 /// A call's mapping form, spanned at the string it came from.
-fn mapping(node: &Node, fields: Vec<(&str, Value)>) -> Node {
+pub(crate) fn mapping(node: &Node, fields: Vec<(&str, Value)>) -> Node {
     let map = fields
         .into_iter()
         .map(|(k, v)| {
@@ -176,31 +176,41 @@ fn mapping(node: &Node, fields: Vec<(&str, Value)>) -> Node {
     }
 }
 
-const ANCHOR_FUNCTIONS: &str = "min(), max(), avg(), median(), percentile(<0-100>), now(), current(day | week | month | quarter | year)";
+pub(crate) const AGGREGATE_FUNCTIONS: &str = "min(), max(), avg(), median(), percentile(<0-100>)";
+
+/// The aggregate `name(arg)` names, as its mapping form; `Ok(None)` when it names none.
+pub(crate) fn aggregate_named(name: &str, arg: &str) -> Result<Option<Vec<(&'static str, Value)>>, String> {
+    let name_value = Value::Str(name.to_string());
+    Ok(match name {
+        "min" | "max" | "avg" | "median" if arg.is_empty() => Some(vec![("fn", name_value)]),
+        "percentile" if !arg.is_empty() => {
+            let percent = number(arg, "percentile()")?;
+            if !(0.0..=100.0).contains(&percent) {
+                return Err(format!("function percentile() takes 0 to 100, got {arg}"));
+            }
+            Some(vec![("fn", name_value), ("percent", num(percent)?)])
+        }
+        _ => None,
+    })
+}
 
 /// `Ok(None)` is not a call: the string is a literal.
 fn anchor_call(text: &str) -> Result<Option<Vec<(&'static str, Value)>>, String> {
     let Some((name, arg)) = call(text) else {
         return Ok(None);
     };
+    if let Some(fields) = aggregate_named(name, arg)? {
+        return Ok(Some(fields));
+    }
     let name_value = |n: &str| Value::Str(n.to_string());
     Ok(Some(match name {
-        "min" | "max" | "avg" | "median" | "now" if arg.is_empty() => {
-            vec![("fn", name_value(name))]
-        }
-        "percentile" if !arg.is_empty() => {
-            let percent = number(arg, "percentile()")?;
-            if !(0.0..=100.0).contains(&percent) {
-                return Err(format!("function percentile() takes 0 to 100, got {arg}"));
-            }
-            vec![("fn", name_value(name)), ("percent", num(percent)?)]
-        }
+        "now" if arg.is_empty() => vec![("fn", name_value(name))],
         "current" if ClockUnit::VALUES.contains(&arg) => {
             vec![("fn", name_value(name)), ("unit", name_value(arg))]
         }
         _ => {
             return Err(format!(
-                "function {} is not an anchor function; anchors take {ANCHOR_FUNCTIONS}, with no nesting or arithmetic",
+                "function {} is not an anchor function; anchors take {AGGREGATE_FUNCTIONS}, now(), current(day | week | month | quarter | year), with no nesting or arithmetic",
                 repr(text.trim())
             ))
         }
@@ -366,7 +376,10 @@ union_leaf!(
         &::model_core::TypeExpr::Scalar(::model_core::Scalar::Float),
         &::model_core::TypeExpr::Either(
             &::model_core::TypeExpr::Scalar(::model_core::Scalar::Int),
-            &::model_core::TypeExpr::Scalar(::model_core::Scalar::Str),
+            &::model_core::TypeExpr::Either(
+                &::model_core::TypeExpr::Scalar(::model_core::Scalar::Date),
+                &::model_core::TypeExpr::Scalar(::model_core::Scalar::Str),
+            ),
         ),
     )
 );

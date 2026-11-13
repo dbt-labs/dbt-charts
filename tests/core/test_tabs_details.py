@@ -18,7 +18,7 @@ from ._board_utils import apply_static_layout
 from ._svg_render import PINNED_RENDER_TIME
 
 
-def _compile_and_build_executor(yaml_content, local_project):
+def _compile_and_build_executor(yaml_content, local_project, variables=None):
     from pathlib import Path
 
     from dbt_charts.core.execute.env import build_exec_env
@@ -31,7 +31,7 @@ def _compile_and_build_executor(yaml_content, local_project):
     executor = Run(
         board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
+        variables=variables,
     )
     return board, executor
 
@@ -924,12 +924,11 @@ class TestToggleLinkCarriesVariables:
     def test_daterange_preset_keeps_its_id(self, local_project):
         from dbt_charts.core.render.renderer import render
 
+        variables = {"span": "last_7_days"}
         board, executor = _compile_and_build_executor(
-            _DATERANGE_TAB_BOARD, local_project
+            _DATERANGE_TAB_BOARD, local_project, variables
         )
-        svg = render(
-            board, executor.ctx, executor.ledger, variables={"span": "last_7_days"}
-        ).output
+        svg = render(board, executor.ctx, executor.ledger, variables=variables).output
         assert _tab_link_values(svg)["span"] == "last_7_days"
 
     def test_multiselect_round_trips(self, local_project):
@@ -1127,7 +1126,6 @@ rows:
         executor = Run(
             board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg = render(board, executor.ctx, executor.ledger, format="svg").output

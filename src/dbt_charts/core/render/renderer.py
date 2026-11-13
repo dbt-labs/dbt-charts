@@ -24,7 +24,6 @@ Dependencies:
 import contextlib
 import logging
 import time
-from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -55,7 +54,6 @@ from dbt_charts.core.compile.template.daterange import (
 )
 from dbt_charts.core.compile.template.variables import (
     check_option_values,
-    daterange_preset_ids,
     normalize_render_values,
     parse_variable_json_strings,
     variable_value_is_absent,
@@ -65,11 +63,10 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.suppression import partition as _partition_warnings
 from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 from dbt_charts.core.execute.collect import (
-    collect_all_query_names,
     collect_layout_chart_query_names,
 )
 from dbt_charts.core.execute.lookup import Ledger, lookup_names
-from dbt_charts.core.execute.plan import ExecContext, get_query
+from dbt_charts.core.execute.plan import ExecContext
 from dbt_charts.core.execute.query_results import QueryResults, collect
 from dbt_charts.core.execute.run import Failed, run_misses
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
@@ -156,12 +153,6 @@ from dbt_charts.core.render.errors import (
 from dbt_charts.core.render.font_selection import collect_painted_italic_families
 from dbt_charts.core.render.layout_sizing import RenderCache, build_chart_datasets
 from dbt_charts.core.render.render_result import RenderResult
-from dbt_charts.core.render.restated_auto import (
-    ExtraQueries,
-    auto_restated_variable_warnings,
-    auto_restated_warnings,
-    plan_extra,
-)
 from dbt_charts.core.render.sizing import resolve_active_tab_index
 from dbt_charts.core.render.svg_utils import strip_pagination_chrome
 from dbt_charts.core.render.tab_scope import scope_tabs
@@ -189,7 +180,7 @@ _logger = logging.getLogger(__name__)
 # and ERR-CHART-PAINTED-NO-MARKS are detected the same way regardless of format.
 _DATA_FORMATS = frozenset({"json", "text", "text-data", "yaml", "data"})
 # Formats whose payload prints every tab, not just the one a tabs layout shows.
-_EVERY_TAB_FORMATS = _DATA_FORMATS | {"terminal"}
+EVERY_TAB_FORMATS = _DATA_FORMATS | {"terminal"}
 
 
 class DataFormatRenderer(Protocol):
@@ -348,8 +339,6 @@ def _collect_render_warnings(
     geometry_warnings: GeometryWarnings,
     series_label_truncations: dict[str, list[SeriesLabelTruncation]],
     axis_label_collisions: dict[str, AxisLabelCollision],
-    source_board: Board,
-    restated_check: bool,
 ) -> list[Diagnostic]:
     """Build WarningContext from cached query results and run all detectors.
 
@@ -419,7 +408,7 @@ def _collect_render_warnings(
     # migrator emits: one query per layer). chart_results holds only the base
     # query's rows, so a detector comparing series across layers has nowhere
     # else to read them. Every read here is of collected rows — the
-    # pre-execution pass walks `collect_all_query_names`, which descends into
+    # pre-execution pass runs the plan's queries, which include
     # layers, so every layout-reachable layer query has already run.
     layer_results: dict[str, dict[str, Rows]] = {}
     for chart_id in chart_results:
@@ -535,16 +524,6 @@ def _collect_render_warnings(
         variable_buttons_overflows=buttons_overflows,
     )
     warnings = run_all(ctx)
-    if restated_check:
-        warnings += auto_restated_warnings(
-            source_board,
-            {chart_id: width for chart_id, (_c, width, *_) in active_charts.items()},
-            results,
-            variables,
-        )
-        warnings += auto_restated_variable_warnings(
-            source_board, results, variables, ""
-        )
     return warnings
 
 
@@ -579,54 +558,25 @@ def _render_variables(
     return normalize_render_values(merged_variables, variable_registry, clock)
 
 
-def _prefetch_query_names(
-    board: Board, ctx: ExecContext, variables: VariableValues
-) -> frozenset[str]:
-    """Queries of the hidden tabs whose cache policy asks to be prefetched.
-
-    ``prefetch`` is resolved per query at compile time, so a query is warmed
-    only when its own policy has caching on and ``prefetch`` set. Names resolve
-    through the context: a nested board's own ``queries:`` are not keys of
-    ``board.queries``.
-    """
-    hidden = collect_all_query_names(board) - collect_all_query_names(
-        scope_tabs(board, variables)
-    )
-    return frozenset(name for name in hidden if get_query(ctx, name).cache.prefetch)
-
-
 def prefetch_tab_queries(
-    board: Board,
     ctx: ExecContext,
     ledger: Ledger,
-    variables: VariableValues,
+    names: list[str],
     max_workers: int | None = None,
-    builtin_variables: VariableValues | None = None,
 ) -> dict[str, Exception | None]:
     """Run the queries of the hidden tabs that a drawn render left cold.
 
-    A drawn render executes only the tabs it shows; this runs the queries of the
-    rest whose cache policy sets ``prefetch: true``, so the click that opens one
-    finds its rows in the result cache. Pass the variables and builtins the render
-    got — the queries must render to the same SQL to land on the same cache
-    keys. Cached queries are skipped, misses run in parallel through
-    ``run_misses`` with its per-query guards, and a failure is returned in the
-    per-query outcome rather than raised: the click re-runs that query and
-    reports it.
+    A drawn render executes only the tabs it shows; this runs *names*, the
+    queries of the rest whose cache policy sets ``prefetch: true`` (the active-tab
+    plan's ``prefetch``), so the click that opens one finds its rows in the result
+    cache. *ctx* holds a plan of every tab, since the active-tab plan omits them;
+    it carries the variables and built-ins the render got, so the queries render
+    to the same SQL and land on the same cache keys. Cached queries are skipped, misses run in
+    parallel through ``run_misses`` with its per-query guards, and a failure is
+    returned in the per-query outcome rather than raised: the click re-runs that
+    query and reports it.
     """
-    merged = _render_variables(
-        board,
-        parse_variable_json_strings(variables),
-        builtin_variables,
-        board.clock(ctx.rendered_at),
-    )
-    found = lookup_names(
-        ctx,
-        ledger,
-        _prefetch_query_names(board, ctx, merged),
-        merged,
-        resume_incremental=False,
-    )
+    found = lookup_names(ctx, ledger, names, resume_incremental=False)
     outcomes = run_misses(ctx, ledger, found, resolve_max_workers(max_workers))
     errors: dict[str, Exception | None] = {
         name: outcome.error if isinstance(outcome, Failed) else None
@@ -636,28 +586,6 @@ def prefetch_tab_queries(
         if exc is not None:
             _logger.warning("prefetch of query %r failed: %s", name, exc)
     return errors
-
-
-def _collect_extra(
-    ctx: ExecContext,
-    ledger: Ledger,
-    results: QueryResults,
-    extra: ExtraQueries,
-    max_workers: int,
-) -> QueryResults:
-    """*results* plus the restated checks' late queries, collected per variables.
-
-    The probe definitions live in an overlay registry on a derived context, so
-    the render's own context never sees them.
-    """
-    late = replace(ctx, query_registry={**ctx.query_registry, **extra.definitions})
-    for names, values in extra.calls:
-        found = lookup_names(late, ledger, names, values, resume_incremental=False)
-        outcomes = run_misses(late, ledger, found, max_workers)
-        results = results.with_collection(
-            collect(late, ledger, found, outcomes, values)
-        )
-    return results
 
 
 def render(
@@ -672,7 +600,6 @@ def render(
     warnings_ignore: frozenset[str] = frozenset(),
     max_rows_per_query: int = NO_ROW_CAP,
     strict_variables: bool = True,
-    restated_check: bool = False,
     **options: Any,
 ) -> RenderResult:
     overrides = variables or {}  # type-state: silent_fallback — None: no overrides
@@ -680,8 +607,6 @@ def render(
     injected_context = (
         frozenset() if builtin_variables is None else frozenset(builtin_variables)
     )
-    committed = {**board.variable_defaults, **overrides}
-    presets = daterange_preset_ids(committed, registry)
     with (
         regional_scope(
             board.regional.format_locale,
@@ -690,7 +615,7 @@ def render(
             board.regional.zone,
             language=board.regional.resolved_language,
         ),
-        daterange_presets(presets),
+        daterange_presets(ctx.plan["variables"]["presets"]),
         overridden_variables(frozenset(overrides)),
         context_variables(injected_context - registry.keys()),
         board_clock(board.clock(ctx.rendered_at)),
@@ -707,7 +632,6 @@ def render(
             warnings_ignore,
             max_rows_per_query,
             strict_variables,
-            restated_check,
             **options,
         )
 
@@ -724,7 +648,6 @@ def _render(
     warnings_ignore: frozenset[str],
     max_rows_per_query: int,
     strict_variables: bool,
-    restated_check: bool,
     **options: Any,  # type-state: explicit_any — render()'s own pass-through options
 ) -> RenderResult:
     """Render a compiled board.
@@ -750,9 +673,6 @@ def _render(
         warnings_ignore: Project-level warning codes to suppress. Callers resolve
             these before calling render() — typically via ``ProjectSession.warnings_ignore``
             or get_project_warnings_ignore(). Defaults to frozenset() (no suppression).
-        restated_check: Re-render each chart without its authored keys to find
-            ones that change nothing (WARN-RESTATED-*). It re-resolves a chart
-            once per authored key, so no surface turns it on.
         max_rows_per_query: Cap on rows embedded per chart in the data-bearing
             formats (json/text/yaml); each truncation is declared in the output
             (``rows_truncated`` record / comment header). Defaults to
@@ -827,18 +747,17 @@ def _render(
     # can reach a hidden tab's query. The formats that print every tab keep the
     # whole board. The width still hugs the whole board, so it never depends on
     # which tab is open.
-    prefetch_query_names: frozenset[str] = frozenset()
+    prefetch_query_names = frozenset(ctx.plan["prefetch"])
     whole_board = board
-    if format not in _EVERY_TAB_FORMATS:
+    if format not in EVERY_TAB_FORMATS:
         try:
-            prefetch_query_names = _prefetch_query_names(board, ctx, merged_variables)
             board = scope_tabs(board, merged_variables)
         except DbtChartsError as e:
             return RenderResult(
                 output=None,
                 board_error=e.to_diagnostic(),
             )
-    query_names = collect_all_query_names(board)
+    query_names = set(ctx.plan["queries"])
     tab_variables = _tab_variables(whole_board.layout)
     if strict_variables:
         # scope_tabs empties hidden tabs, but the registry still holds their
@@ -856,19 +775,9 @@ def _render(
     # Partition: hits are served from the memo or store, only misses go to the
     # pool, and a cached failure is replayed per chart. collect then folds
     # all three into the QueryResults render reads.
-    found = lookup_names(
-        ctx, ledger, query_names, merged_variables, resume_incremental=False
-    )
+    found = lookup_names(ctx, ledger, query_names, resume_incremental=False)
     outcomes = run_misses(ctx, ledger, found, resolved_max_workers)
     results = collect(ctx, ledger, found, outcomes, merged_variables)
-    if restated_check:
-        results = _collect_extra(
-            ctx,
-            ledger,
-            results,
-            plan_extra(board, merged_variables),
-            resolved_max_workers,
-        )
     results = with_link_schema(results, ctx, board, merged_variables)
     query_ms = (time.perf_counter() - query_started) * 1000
     # Option queries have run for the board's own controls, so their rows cost
@@ -1078,8 +987,6 @@ def _render(
             geometry_warnings,
             series_label_truncations,
             axis_label_collisions,
-            board,
-            restated_check,
         )
         return _partition_warnings(
             all_warnings,

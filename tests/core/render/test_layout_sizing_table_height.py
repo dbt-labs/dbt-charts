@@ -49,6 +49,9 @@ _DEFAULT_CONTEXT = resolve_chart_style_context(get_theme_style())
 _DEFAULT_ROW_H = int(_DEFAULT_RESOLVED.chart_defaults.table.row.height)  # 32
 
 
+_PAGES = ChartStylePatch.model_validate({"table": {"pagination": {"mode": "pages"}}})
+
+
 def _make_table_chart(
     style_patch: ChartStylePatch | None = None, row_role: str | None = None
 ) -> Chart:
@@ -490,7 +493,7 @@ class TestGrowBy2RuleOnSelfSizing:
             TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
         )
 
-        chart = _make_table_chart()
+        chart = _make_table_chart(_PAGES)
         height_23 = _call_provider(chart, _make_executor(23))
         height_20 = _call_provider(chart, _make_executor(20))
 
@@ -511,7 +514,7 @@ class TestGrowBy2RuleOnSelfSizing:
             TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
         )
 
-        chart = _make_table_chart()
+        chart = _make_table_chart(_PAGES)
         height_100 = _call_provider(chart, _make_executor(100))
         height_20 = _call_provider(chart, _make_executor(20))
 
@@ -530,7 +533,15 @@ class TestPastCapHeight:
     def _paginated_chart(self, page_rows: int) -> Chart:
         return _make_table_chart(
             ChartStylePatch.model_validate(
-                {"table": {"pagination": {"enabled": True, "page_rows": page_rows}}}
+                {
+                    "table": {
+                        "pagination": {
+                            "enabled": True,
+                            "mode": "pages",
+                            "page_rows": page_rows,
+                        }
+                    }
+                }
             )
         )
 
@@ -706,7 +717,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         board, _ = calculate_data_aware_layout(
             result.board, executor, {}, pre_resolved={}
@@ -777,7 +787,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         board, _ = calculate_data_aware_layout(
             result.board, executor, {}, pre_resolved={}
@@ -846,7 +855,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         board, _ = calculate_data_aware_layout(
             result.board, executor, {}, pre_resolved={}
@@ -924,7 +932,9 @@ class TestEngineShrinksASingleOversizedSlotToContent:
     @staticmethod
     def _chart() -> Chart:
         return _make_table_chart(
-            ChartStylePatch.model_validate({"table": {"pagination": {"page_rows": 9}}})
+            ChartStylePatch.model_validate(
+                {"table": {"pagination": {"mode": "pages", "page_rows": 9}}}
+            )
         )
 
     def test_single_row_oversized_slot_collapses_to_content(self):
@@ -987,7 +997,7 @@ class TestSizingProbeRecordsNoWarnings:
         patch = ChartStylePatch.model_validate(
             {
                 "table": {
-                    "pagination": {"page_rows": 2},
+                    "pagination": {"mode": "pages", "page_rows": 2},
                     "columns": {"col": {"width": 40}},
                     "wrap": False,
                 }

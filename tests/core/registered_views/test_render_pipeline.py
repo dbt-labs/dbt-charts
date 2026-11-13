@@ -223,7 +223,7 @@ class TestRenderRegisteredViewSourceTypeIsNotADialect:
             captured["resolve_dialect"] = resolve_dialect
             raise _StopAtExpand
 
-        monkeypatch.setattr(render_pipeline_mod, "expand_registered_view", spy)
+        monkeypatch.setattr(render_pipeline_mod, "render_registered_view_yaml", spy)
 
         with pytest.raises(_StopAtExpand):
             render_registered_view(
@@ -242,7 +242,7 @@ class TestRenderRegisteredViewResolvesSourceDialect:
     """Regression: a BigQuery-typed source must reach the expander with its own
     dialect, not the ANSI default — the root cause of the /data/ 404 on BigQuery
     projects. Stops the pipeline right after dialect resolution (no real BigQuery
-    connection needed) by spying on expand_registered_view and short-circuiting.
+    connection needed) by spying on render_registered_view_yaml and short-circuiting.
 
     Dialect resolution is lazy (a zero-arg resolver, not an already-resolved
     string, per TestRenderRegisteredViewSourceTypeIsNotADialect above). This
@@ -273,7 +273,7 @@ class TestRenderRegisteredViewResolvesSourceDialect:
             captured["resolve_dialect"] = resolve_dialect
             raise _StopAtExpand
 
-        monkeypatch.setattr(render_pipeline_mod, "expand_registered_view", spy)
+        monkeypatch.setattr(render_pipeline_mod, "render_registered_view_yaml", spy)
 
         with pytest.raises(_StopAtExpand):
             render_registered_view(

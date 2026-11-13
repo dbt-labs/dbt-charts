@@ -180,7 +180,7 @@ def test_the_warning_surfaces_from_render() -> None:
     )
     assert result.success and result.board is not None, result.errors
     registry = scripted_env(ScriptedBackend(_months(1, 2, 3, 6, 7)))
-    executor = Run(result.board, env=registry, query_registry=result.query_registry)
+    executor = Run(result.board, env=registry)
 
     rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
 

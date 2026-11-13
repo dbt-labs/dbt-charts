@@ -78,7 +78,6 @@ def _executor(
     return Run(
         result.board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
         clock=pinned_clock,
     )
 
@@ -434,7 +433,6 @@ charts:
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
     out = render(executor.board, executor.ctx, executor.ledger, format="svg")
     assert out.board_error is None, out.board_error
@@ -488,7 +486,6 @@ rows:
         executor = Run(
             board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=None,
         )
         resolved, _ = build_resolved_board(board, executor, {}, render_first=False)
         return next(i.width for i in resolved.layout.items if i.chart)
@@ -672,7 +669,6 @@ def test_imported_kpi_support_label_reads_the_source_files_query(
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
     resolved, _ = build_resolved_board(result.board, executor, {}, render_first=False)
     support = resolved.charts["c"].support
@@ -695,7 +691,6 @@ def test_imported_chart_title_reads_the_source_files_query(
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
     resolved, _ = build_resolved_board(result.board, executor, {}, render_first=False)
     assert resolved.charts["c"].title == "from source"
@@ -775,7 +770,6 @@ charts:
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
     out = render(executor.board, executor.ctx, executor.ledger, format="svg")
     assert out.board_error is None, out.board_error

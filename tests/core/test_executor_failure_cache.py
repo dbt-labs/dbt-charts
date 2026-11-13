@@ -22,6 +22,7 @@ from dbt_charts.core.execute import QueryError
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.lookup import Ledger, memo_key
+from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.text.time_zones import UTC as BOARD_UTC
@@ -65,7 +66,6 @@ def _make_executor(
     return Run(
         result.board,
         env=scripted_env(ScriptedBackend()),
-        query_registry=result.query_registry,
         result_cache=result_cache,
     )
 
@@ -139,6 +139,7 @@ class TestCachedFailureKeepsItsCode:
                 ERR_DBT_REF_UNKNOWN_NODE,
                 ref_name="ordrs",
                 available=["orders", "customers"],
+                why="",
             )
             fresh = _make_executor(
                 routes, result_cache=cache, adapter_result=_failed_result(error)
@@ -222,7 +223,6 @@ class TestDbtChartsErrorNotCached:
             executor = Run(
                 result.board,
                 env=scripted_env(ScriptedBackend()),
-                query_registry=result.query_registry,
                 result_cache=cache,
             )
 
@@ -348,15 +348,14 @@ class TestInMemoryErrorShortCircuitsResultCache:
         executor = _make_executor(routes, result_cache=result_cache)
 
         # Simulate: query succeeded, result is in _cache…
-        query = executor.board.queries["good_query"]
-        cache_key = compute_cache_key(
-            query, None, executor.board.sources, time_zone=BOARD_UTC
-        )
+        [planned] = plan(executor.ctx, ["good_query"])
         valid_rows = [{"name": "acme-marker-001"}]
         # The memo is keyed by content *plus* the asking query's policy, so seed
         # it through the production key builder — a raw content key would land in
         # a slot execute_query never reads.
-        executor.ledger.memo[memo_key(query, cache_key)] = rows_result(valid_rows)
+        executor.ledger.memo[memo_key(planned.entry, planned.cache_key)] = rows_result(
+            valid_rows
+        )
 
         # …but the persistent write-through failed and stored an error.
         executor.ledger.errors["good_query"] = RuntimeError("FK constraint violation")

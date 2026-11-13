@@ -355,7 +355,6 @@ rows:
     executor = Run(
         board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
     from dbt_charts.core.render.board_resolve import (
         build_resolved_board_static as resolve_board,
@@ -404,7 +403,6 @@ rows:
     executor = Run(
         board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
     from dbt_charts.core.render.board_resolve import (
         build_resolved_board_static as resolve_board,

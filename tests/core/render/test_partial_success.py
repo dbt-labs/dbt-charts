@@ -59,6 +59,7 @@ from dbt_charts.core.render.warnings.pie_dominant_segment import (
 )
 
 from ..._lookup import render_via
+from ..._plans import plan_of
 from ..._results import rows_result
 from ..._run import Run
 from .._svg_render import PINNED_RENDER_TIME
@@ -93,6 +94,27 @@ cols:
   - good
   - bad
 """
+
+
+def _planning_env() -> MagicMock:
+    """An env that only plans: render_dashboard reads its registered sources to plan."""
+    from dbt_charts.core.compile.config import ProjectSourcesConfig
+    from dbt_charts.core.execute.env import ExecEnv
+
+    env = MagicMock(spec=ExecEnv)
+    env.sources = MagicMock()
+    env.sources.runtime_config.return_value = ProjectSourcesConfig(
+        sources={
+            name: {"type": "duckdb", "path": ":memory:"}
+            for name in ("test", "analytics", "db")
+        }
+    )
+    env.project = MagicMock()
+    env.project.declared_sources = ProjectSourcesConfig()
+    env.backends = MagicMock()
+    env.backends.serves.return_value = False
+    env.release_thread = lambda: None
+    return env
 
 
 def _compile_two_chart_board():
@@ -528,13 +550,10 @@ def test_render_dashboard_chart_errors_populated(
     from unittest.mock import patch
 
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.render.render_result import RenderResult
 
     # Fake exec env
-    mock_registry = MagicMock(spec=ExecEnv)
-    mock_registry.sources = MagicMock()
-    mock_registry.sources.all.return_value = {}
+    mock_registry = _planning_env()
 
     yaml_content = _TWO_CHART_YAML
 
@@ -577,10 +596,10 @@ def test_render_dashboard_chart_error_gets_range_from_compile_source_map(
     """
     from dbt_charts.core.board import render_dashboard
     from dbt_charts.core.compile.compiler import compile as compile_fn
-    from dbt_charts.core.execute.env import ExecEnv
+    from dbt_charts.core.project import InMemoryBoard
     from dbt_charts.core.render.render_result import RenderResult
 
-    mock_registry = MagicMock(spec=ExecEnv)
+    mock_registry = _planning_env()
 
     compile_result = compile_fn(_TWO_CHART_YAML, file="board.yaml")
     assert compile_result.success, compile_result.errors
@@ -599,6 +618,7 @@ def test_render_dashboard_chart_error_gets_range_from_compile_source_map(
     ):
         result = render_dashboard(
             compile_result=compile_result,
+            board=InMemoryBoard(_TWO_CHART_YAML, path=None),
             env=mock_registry,
             format="json",
             project=local_project(tmp_path),
@@ -628,11 +648,10 @@ def test_render_dashboard_status_ok_for_clean_render(
 ):
     """A clean render (no chart_errors) reports status == 'ok'."""
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
     from dbt_charts.core.render.render_result import RenderResult
 
-    mock_registry = MagicMock(spec=ExecEnv)
+    mock_registry = _planning_env()
     render_result = RenderResult(
         output='{"id": "test", "title": "Two Charts", "items": []}',
     )
@@ -660,12 +679,9 @@ def test_render_dashboard_status_failed_when_compile_fails(
     """A board that fails to compile reports status == 'failed', never
     'partial' or 'ok' — no output was produced."""
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
 
-    mock_registry = MagicMock(spec=ExecEnv)
-    mock_registry.sources = MagicMock()
-    mock_registry.sources.all.return_value = {}
+    mock_registry = _planning_env()
     project = local_project(tmp_path)
 
     result = render_dashboard(
@@ -691,11 +707,10 @@ def test_render_dashboard_board_error_preserves_walked_data_payload(
     this test, render_dashboard's board_error branch dropped it on the floor.
     """
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
     from dbt_charts.core.render.render_result import RenderResult
 
-    mock_registry = MagicMock(spec=ExecEnv)
+    mock_registry = _planning_env()
     wrapped = RenderError.from_code(ERR_INTERNAL, message="draw exploded")
     render_result = RenderResult(
         output='{"id": "test", "title": "Two Charts", "items": []}',
@@ -782,12 +797,9 @@ def test_render_dashboard_survives_build_resolved_board_chart_data_error(
     pins the public-API envelope contract.
     """
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
 
-    mock_registry = MagicMock(spec=ExecEnv)
-    mock_registry.sources = MagicMock()
-    mock_registry.sources.all.return_value = {}
+    mock_registry = _planning_env()
     project = local_project(tmp_path)
 
     with (
@@ -935,7 +947,11 @@ def _resolve_stage_executor(rows_by_query: dict[str, list[dict[str, object]]]):
     Unlike ``_executor_good_bad``, nothing here raises: the failure must come
     out of chart *resolution*, which is what the sizing pass runs.
     """
-    mock = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
+    mock = MagicMock(
+        spec=QueryResults,
+        board=SimpleNamespace(links=BoardLinks()),
+        plan=plan_of({}),
+    )
     mock.execute_query.side_effect = lambda name, variables=None, **_kw: rows_by_query[
         name
     ]
@@ -1319,8 +1335,8 @@ def _real_executor_with_failing_query(
 ):
     """A real Executor and adapters, on disk — 'q_bad' fails via ``make_error()``.
 
-    Patches ``resolve_query_references`` (the SQL-composition step inside
-    ``execute_query``, Step 4) to raise for 'q_bad' and delegate to the real
+    Patches ``run_planned`` (the warehouse run of a planned query inside
+    ``execute_miss``) to raise for 'q_bad' and delegate to the real
     implementation for every other query. Returns ``(board, executor,
     patch_fn)`` — apply ``patch_fn`` via ``patch.object`` at each call site so
     every ``execute_query`` invocation, across threads, sees the same failure.
@@ -1341,15 +1357,14 @@ def _real_executor_with_failing_query(
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
 
-    real_resolve_refs = _run_mod.resolve_query_references
+    real_run_planned = _run_mod.run_planned
 
-    def _boom(query, *, all_queries, query_name=None):
-        if query_name == "q_bad":
+    def _boom(env, plan, name, **kwargs):
+        if name == "q_bad":
             raise make_error()
-        return real_resolve_refs(query, all_queries=all_queries, query_name=query_name)
+        return real_run_planned(env, plan, name, **kwargs)
 
     return result.board, executor, _boom
 
@@ -1369,21 +1384,23 @@ def test_query_execution_failure_is_recorded_at_resolve_not_swallowed(
     """
     from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
     from dbt_charts.core.execute import run as _run_mod
-    from dbt_charts.core.execute.collect import collect_all_query_names
 
     board, executor, _boom = _real_executor_with_failing_query(
         tmp_path, lambda: JinjaError("simulated bad template", "{{ boom }}")
     )
 
-    found = executor.lookup(collect_all_query_names(board), {})
-    with patch.object(_run_mod, "resolve_query_references", side_effect=_boom):
+    found = executor.lookup(["q_good", "q_bad"], {})
+    with patch.object(_run_mod, "run_planned", side_effect=_boom):
         executor.run_misses(found, 8)
 
     assert "q_bad" in executor.ledger.errors
-    assert isinstance(executor.ledger.errors["q_bad"], JinjaError)
+    stored = executor.ledger.errors["q_bad"]
+    assert isinstance(stored, QueryError)
+    assert isinstance(stored.__cause__, JinjaError)
+    assert stored.code == stored.__cause__.code
 
     resolve_errors: dict[str, ChartResolveFailure] = {}
-    with patch.object(_run_mod, "resolve_query_references", side_effect=_boom):
+    with patch.object(_run_mod, "run_planned", side_effect=_boom):
         resolved, _cache = build_resolved_board(
             board, executor, {}, resolve_errors=resolve_errors
         )
@@ -1411,7 +1428,7 @@ def test_inactive_tab_query_failure_is_recorded_not_swallowed(tmp_path: Path) ->
     )
 
     resolve_errors: dict[str, ChartResolveFailure] = {}
-    with patch.object(_run_mod, "resolve_query_references", side_effect=_boom):
+    with patch.object(_run_mod, "run_planned", side_effect=_boom):
         resolved, _cache = build_resolved_board(
             board, executor, {}, resolve_errors=resolve_errors
         )
@@ -1462,7 +1479,7 @@ def test_category_color_planning_isolates_a_fresh_non_execution_error(
     )
 
     resolve_errors: dict[str, ChartResolveFailure] = {}
-    with patch.object(_run_mod, "resolve_query_references", side_effect=_boom):
+    with patch.object(_run_mod, "run_planned", side_effect=_boom):
         resolved, _cache = build_resolved_board(
             board, executor, {}, resolve_errors=resolve_errors
         )
@@ -1492,7 +1509,7 @@ def test_emit_board_artifact_reports_failure_for_a_query_error(
     _board, _executor, _boom = _real_executor_with_failing_query(tmp_path, _make_error)
     project = FilesystemProject(tmp_path)
 
-    with patch.object(_run_mod, "resolve_query_references", side_effect=_boom):
+    with patch.object(_run_mod, "run_planned", side_effect=_boom):
         result = emit_board_artifact(
             tmp_path / "charts" / "board.yml",
             tmp_path / "out" / "board.artifact.json",
@@ -1540,7 +1557,6 @@ def test_missing_required_variables_stays_board_fatal(
     per-chart isolation inside the sizing pass should soften it into a tile.
     """
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
 
     project = local_project(tmp_path)
@@ -1553,7 +1569,7 @@ def test_missing_required_variables_stays_board_fatal(
             board=InMemoryBoard(
                 _REQUIRED_VARIABLE_YAML, path=project.path("charts/_t.yml")
             ),
-            env=MagicMock(spec=ExecEnv),
+            env=_planning_env(),
             format="json",
             project=project,
             result_cache=None,
@@ -1569,7 +1585,6 @@ def test_executor_construction_failure_stays_board_fatal(
 ) -> None:
     """An executor that cannot be built is fatal — there is nothing to isolate."""
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
 
     project = local_project(tmp_path)
@@ -1582,7 +1597,7 @@ def test_executor_construction_failure_stays_board_fatal(
             board=InMemoryBoard(
                 _HEALTHY_PLUS_PIE_YAML, path=project.path("charts/_t.yml")
             ),
-            env=MagicMock(spec=ExecEnv),
+            env=_planning_env(),
             format="json",
             project=project,
             result_cache=None,
@@ -1871,11 +1886,10 @@ def test_render_dashboard_emits_structural_lint_warning(
     runs on result.warnings inside validate_compiled_queries.
     """
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
     from dbt_charts.core.render.render_result import RenderResult
 
-    mock_registry = MagicMock(spec=ExecEnv)
+    mock_registry = _planning_env()
     render_result = RenderResult(
         output='{"id": "test", "title": "Cartesian Board", "items": []}'
     )
@@ -1912,11 +1926,10 @@ def test_render_dashboard_dct_ignore_moves_lint_to_suppressed(
 ):
     """A ``-- dct:ignore`` comment suppresses the lint warning into suppressed_warnings."""
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.execute.env import ExecEnv
     from dbt_charts.core.project import InMemoryBoard
     from dbt_charts.core.render.render_result import RenderResult
 
-    mock_registry = MagicMock(spec=ExecEnv)
+    mock_registry = _planning_env()
     render_result = RenderResult(
         output='{"id": "test", "title": "Cartesian Board", "items": []}'
     )
@@ -2033,7 +2046,6 @@ def test_reversed_spark_bar_is_isolated_to_its_own_card(
     executor = Run(
         result.board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
 
     render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
@@ -2116,7 +2128,6 @@ def test_spark_bar_numeric_verdict_is_independent_of_max_bars(
     executor = Run(
         result.board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
 
     render_result = render(result.board, executor.ctx, executor.ledger, format="svg")

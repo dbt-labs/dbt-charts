@@ -22,21 +22,22 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict
 from pydantic.json_schema import JsonSchemaValue
 
+from dbt_charts import _engine
 from dbt_charts.agent_api._paths import resolve_board_or_error
+from dbt_charts.core.board import plan_for_board
 from dbt_charts.core.compile import compile_file
+from dbt_charts.core.compile.engine import refusal_diagnostics
 from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
 from dbt_charts.core.compile.schema.renderers.board_resolved import (
     render_board_resolved_schema,
 )
 from dbt_charts.core.compile.template.variables import (
-    check_variable_overrides,
     normalize_render_values,
 )
 from dbt_charts.core.diagnostics import ERR_FILE_NOT_FOUND, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.collect import collect_all_query_names
-from dbt_charts.core.execute.plan import make_context
+from dbt_charts.core.execute.plan import make_context, utc_now
 from dbt_charts.core.execute.query_results import execute
 from dbt_charts.core.execute.recording import load_board_recording, record_board
 from dbt_charts.core.project import board_identity
@@ -116,15 +117,29 @@ def emit_board_artifact(
     board = compile_result.board
     assert board is not None  # compile_result.success guarantees this
 
+    assert located.path is not None  # resolved from a path, so it has one
     try:
-        check_variable_overrides(board.variable_registry or {}, variables or {})
+        plan = plan_for_board(
+            located,
+            project,
+            variables,
+            None,
+            utc_now(),
+            strict=True,
+            active_tab_only=False,
+            all_queries=True,
+        )
+    except _engine.CompileError as refusal:
+        return EmitBoardArtifactResult(
+            success=False,
+            errors=refusal_diagnostics(refusal, located.path.relpath),
+        )
     except ExecutionError as exc:
         return EmitBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])
-    assert located.path is not None  # resolved from a path, so it has one
     ctx = make_context(
         board,
+        plan,
         env,
-        query_registry=compile_result.query_registry,
         use_cache=use_cache,
         result_cache=result_cache,
         board_slug=board_identity(located.path.relpath),
@@ -151,7 +166,7 @@ def emit_board_artifact(
         # Every query the resolve reads, and every one the recording keeps.
         results = execute(
             ctx,
-            collect_all_query_names(board) | board.queries.keys(),
+            plan["queries"],
             merged_variables,
         )
         results = with_link_schema(results, ctx, board, merged_variables)

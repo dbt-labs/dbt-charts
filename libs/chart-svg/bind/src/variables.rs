@@ -15,7 +15,9 @@
 use board_model::board::BoardBody;
 use board_model::style::style::Style;
 use board_model::unit::Number;
-use board_model::variable::{Enabled, InputType, StaticOptions, Variable};
+use board_model::ids::QueryId;
+use board_model::variable::{refine_options, Enabled, InputType, OptionsQuery, StaticOptions, Variable};
+use std::collections::BTreeMap;
 use board_model::variable_value::{Atom, VariableValue};
 use d3rs::py_float::float_repr;
 use diagnostic::{diag, refuse, Diagnostic};
@@ -146,12 +148,12 @@ pub struct Controls {
 
 /// Settles every visible variable of `body` over the values `run` resolved. `style` is the
 /// body's total style.
-pub fn controls(body: &BoardBody, run: &RunResult, style: &Style) -> Result<Controls, Diagnostic> {
+pub fn controls(body: &BoardBody, run: &RunResult, style: &Style, queries: &BTreeMap<String, QueryId>) -> Result<Controls, Diagnostic> {
     let list = body
         .variables
         .iter()
         .filter(|(_, variable)| variable.visible)
-        .map(|(name, variable)| control(name, variable, run, style))
+        .map(|(name, variable)| control(name, variable, run, style, queries))
         .collect::<Result<Vec<_>, _>>()?;
     // `render_variables_strip_svg`: any control's name, or any legend view, among the caller's.
     let reset_enabled = list.iter().any(|c| run.overridden.contains(&c.name))
@@ -170,6 +172,7 @@ fn control(
     variable: &Variable,
     run: &RunResult,
     style: &Style,
+    queries: &BTreeMap<String, QueryId>,
 ) -> Result<Control, Diagnostic> {
     let input = match &variable.input {
         Engine::Value(input) => *input,
@@ -280,6 +283,8 @@ fn control(
                 Some(Atom::Date(_)) => true,
                 None => false,
             };
+            let word = if control.checked { "controls.yes" } else { "controls.no" };
+            control.value = tr(word, None, &[]).map_err(diag::err_internal)?;
         }
         Widget::Slider => {
             let defaults = &style.variables.input.range;
@@ -313,26 +318,12 @@ fn control(
             };
         }
         Widget::Select => {
-            if variable
-                .options
-                .as_ref()
-                .and_then(|o| o.r#static.as_ref())
-                .is_none_or(|options| match options {
-                    StaticOptions::Strings(v) => v.is_empty(),
-                    StaticOptions::Numbers(v) => v.is_empty(),
-                })
-            {
-                let queried = variable.query.is_some()
-                    || variable.column.is_some()
-                    || variable
-                        .options
-                        .as_ref()
-                        .is_some_and(|o| o.query.is_some() || o.column.is_some());
-                return Err(Diagnostic::refused(if queried {
-                    refuse!("a select whose options come from a query is not supported")
-                } else {
-                    refuse!("a select with no static options is not supported")
-                }));
+            let statics = variable.options.as_ref().and_then(|o| o.r#static.as_ref()).is_some_and(|options| match options {
+                StaticOptions::Strings(v) => !v.is_empty(),
+                StaticOptions::Numbers(v) => !v.is_empty(),
+            });
+            if !statics {
+                check_options(name, variable, run, queries)?;
             }
             let all = unset_label("controls.all")?;
             control.value = if blank {
@@ -359,6 +350,78 @@ fn control(
         }
     }
     Ok(control)
+}
+
+/// `match_column` (`compile/column_match.py`): the column `wanted` names, by exact spelling, else
+/// by case-folded spelling, which two columns may not share.
+fn match_column<'a>(wanted: &str, columns: &[&'a String], at: &str) -> Result<Option<&'a str>, Diagnostic> {
+    if let Some(exact) = columns.iter().find(|column| column.as_str() == wanted) {
+        return Ok(Some(exact.as_str()));
+    }
+    let folded = wanted.to_lowercase();
+    let matches: Vec<&str> = columns.iter().map(|column| column.as_str()).filter(|column| column.to_lowercase() == folded).collect();
+    match matches.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(one)),
+        many => Err(diag::err_column_ref_ambiguous(at.to_string(), wanted.to_string(), many.iter().map(|m| format!("{m:?}")).collect::<Vec<_>>().join(", "))),
+    }
+}
+
+/// Checks a select whose options a query answers, as `resolve_options` reads them: the first of the
+/// `value`, `label`, `name` and `id` columns the rows have (`_option_value_key`), else the first
+/// column, each cell as Python's `str` spells it, repeats dropped. The band never prints the options,
+/// so only what they would do to the control is kept: options that would turn it into another input
+/// (dates, booleans, a numeric range: `refine_options`) are refused, since an authored select and a
+/// detected one are no longer told apart.
+fn check_options(name: &str, variable: &Variable, run: &RunResult, queries: &BTreeMap<String, QueryId>) -> Result<(), Diagnostic> {
+    let Some(OptionsQuery::Name(query)) = variable.options.as_ref().and_then(|o| o.query.as_ref()) else {
+        let queried = variable.query.is_some() || variable.column.is_some() || variable.options.as_ref().is_some_and(|o| o.column.is_some());
+        return Err(Diagnostic::refused(if queried {
+            refuse!("a select whose options come from a query is not supported")
+        } else {
+            refuse!("a select with no static options is not supported")
+        }));
+    };
+    let key = query.as_str().strip_prefix("queries.").unwrap_or(query.as_str());
+    let id = queries.get(key).ok_or_else(|| diag::err_internal(format!("the options query {key} of variable {name} is not one of the board's")))?;
+    let dataset = run.datasets.get(id).ok_or_else(|| diag::err_engine_needs_data(id.to_string()))?;
+    let Some(first) = dataset.rows.first() else {
+        return Ok(());
+    };
+    let columns: Vec<&String> = first.keys().collect();
+    let at = format!("options query {key:?}");
+    let mut column = None;
+    for wanted in ["value", "label", "name", "id"] {
+        if let Some(found) = match_column(wanted, &columns, &at)? {
+            column = Some(found);
+            break;
+        }
+    }
+    let column = column
+        .or_else(|| columns.first().map(|first| first.as_str()))
+        .ok_or_else(|| diag::err_internal(format!("the options query {key} of variable {name} returned a row with no columns")))?;
+    let mut values: Vec<String> = Vec::new();
+    for row in dataset.rows.iter() {
+        let text = match row.get(column) {
+            None | Some(serde_json::Value::Null) => continue,
+            Some(serde_json::Value::String(text)) => text.clone(),
+            Some(serde_json::Value::Number(n)) => match (n.as_i64(), n.as_u64(), n.as_f64()) {
+                (Some(i), ..) => i.to_string(),
+                (None, Some(u), _) => u.to_string(),
+                (None, None, Some(f)) => float_repr(f),
+                (None, None, None) => return Err(diag::err_internal(format!("the option {n} is not a number"))),
+            },
+            Some(serde_json::Value::Bool(b)) => text_of(&Atom::Bool(*b)),
+            Some(_) => return Err(Diagnostic::refused(refuse!("a select option that is not a plain value is not supported"))),
+        };
+        if !values.contains(&text) {
+            values.push(text);
+        }
+    }
+    if refine_options(&values).is_some() {
+        return Err(Diagnostic::refused(refuse!("a select whose options would make it another input is not supported")));
+    }
+    Ok(())
 }
 
 fn not_modeled(input: &str) -> Diagnostic {
@@ -401,4 +464,17 @@ fn date_label(iso: &str) -> Result<String, Diagnostic> {
         ],
     )
     .map_err(diag::err_internal)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn match_column_prefers_the_exact_spelling_and_refuses_two_folded_matches() {
+        let (lower, upper, other) = ("value".to_string(), "VALUE".to_string(), "name".to_string());
+        assert_eq!(super::match_column("value", &[&upper, &lower], "q").unwrap(), Some("value"));
+        assert_eq!(super::match_column("name", &[&upper, &other], "q").unwrap(), Some("name"));
+        assert_eq!(super::match_column("id", &[&upper, &other], "q").unwrap(), None);
+        let err = super::match_column("Value", &[&upper, &lower], "options query \"q\"").unwrap_err();
+        assert_eq!(err.code, "ERR-COLUMN-REF-AMBIGUOUS");
+    }
 }

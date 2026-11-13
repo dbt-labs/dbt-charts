@@ -62,6 +62,7 @@
   "controls.selection_summary": "({n}) {first}",
   "controls.show_all": "Vis alle",
   "controls.show_only_selected": "Vis kun valgte ({n})",
+  "controls.options_truncated": "Viser {shown} af {total}. Søg for at finde flere.",
   "controls.sort": "Sortér",
   "controls.sort_count_ascending": "Sortér efter antal, lav → høj",
   "controls.sort_count_descending": "Sortér efter antal, høj → lav",

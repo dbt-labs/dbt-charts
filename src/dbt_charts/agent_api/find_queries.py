@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from dbt_charts import _engine
 from dbt_charts.agent_api.describe import VariableDescription, describe_variables
 from dbt_charts.agent_api.query import BoardFailure, load_board
 from dbt_charts.agent_api.search import (
@@ -17,6 +18,8 @@ from dbt_charts.agent_api.search import (
     brief as _brief,
     search_boards_hits,
 )
+from dbt_charts.core.board import plan_for_board
+from dbt_charts.core.compile.engine import refusal_diagnostics
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, SqlQuery
 from dbt_charts.core.constants.find_queries import (
     CACHED_WINDOW_DAYS,
@@ -33,12 +36,8 @@ from dbt_charts.core.execute.cache_backend import (
 )
 from dbt_charts.core.execute.duckdb_cache import compute_relevant_variables
 from dbt_charts.core.execute.env import ExecEnv
-from dbt_charts.core.execute.plan import (
-    make_context,
-    merge_board_variables,
-    plan,
-    utc_now,
-)
+from dbt_charts.core.execute.plan import make_context, plan, utc_now
+from dbt_charts.core.execute.plan_reader import plan_variables
 from dbt_charts.core.project import Project, board_identity
 from dbt_charts.core.validate import normalize_data_for_json
 
@@ -270,7 +269,23 @@ def _board_answer(
         return BoardAnswer(**shown, variables=[], queries=[], errors=loaded.errors)
     board = loaded.board
     now = datetime.now(UTC)
-    defaults = merge_board_variables(board, {}, board.clock(utc_now()))
+    try:
+        board_plan = plan_for_board(
+            loaded.board_file,
+            project,
+            {},
+            None,
+            utc_now(),
+            strict=True,
+            active_tab_only=False,
+            all_queries=True,
+        )
+    except _engine.CompileError as refusal:
+        errors = [d.message for d in refusal_diagnostics(refusal, hit.file_path)]
+        return BoardAnswer(**shown, variables=[], queries=[], errors=errors)
+    except ExecutionError as exc:
+        return BoardAnswer(**shown, variables=[], queries=[], errors=[str(exc)])
+    defaults = plan_variables(board_plan)
     slug = board_identity(hit.file_path)
     # Synthetic queries (`_inline_query_*`, `_var_options_*`) have no
     # `{{ queries.<name> }}` form, so SQL could not reach them.
@@ -278,11 +293,14 @@ def _board_answer(
     # With no cache there are no entries, so no key to match them against.
     current: dict[str, tuple[str, str]] = {}
     if cache is not None:
-        ctx = make_context(board, env, query_registry=loaded.query_registry)
+        ctx = make_context(board, board_plan, env)
         try:
+            # A query nothing places or reads, a values one, is not in the plan and has no key.
             current = {
                 planned.name: cache.listed_key(planned.cache_key)[:2]
-                for planned in plan(ctx, [name for name, _ in named])
+                for planned in plan(
+                    ctx, [name for name, _ in named if name in board_plan["queries"]]
+                )
             }
         except ExecutionError as exc:
             return BoardAnswer(**shown, variables=[], queries=[], errors=[str(exc)])

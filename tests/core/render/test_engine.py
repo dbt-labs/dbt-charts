@@ -673,7 +673,7 @@ def test_table_pagination_reads_the_variables_the_seam_forwards() -> None:
     table = {
         "type": "table",
         "query": "q",
-        "style": {"pagination": {"enabled": True, "page_rows": 5}},
+        "style": {"pagination": {"enabled": True, "mode": "pages", "page_rows": 5}},
     }
     page_1, _ = _native(table, rows, width=400.0, height=0.0)
     page_2, _ = _native(table, rows, width=400.0, height=0.0, variables={"c1_page": 2})
@@ -866,7 +866,11 @@ _SQUEEZE_ROWS = [{"service": f"svc_{i}", "cost": i * 100} for i in range(1, 5)]
 
 
 def test_table_page_squeeze_lands_in_its_sink() -> None:
-    table = {"type": "table", "query": "q", "style": {"pagination": {"enabled": True}}}
+    table = {
+        "type": "table",
+        "query": "q",
+        "style": {"pagination": {"enabled": True, "mode": "pages"}},
+    }
     with _sinks() as sinks:
         _native(table, _SQUEEZE_ROWS, width=600.0, height=100.0)
     assert sinks.squeezes == {
@@ -928,7 +932,7 @@ def test_table_header_extra_wrap_lands_in_the_geometry_sink() -> None:
 _CAPPED_TABLE = {
     "type": "table",
     "query": "q",
-    "style": {"pagination": {"enabled": True, "page_rows": 5}},
+    "style": {"pagination": {"enabled": True, "mode": "pages", "page_rows": 5}},
 }
 _CAPPED_ROWS = [{"name": f"row_{i}"} for i in range(125)]
 

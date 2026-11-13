@@ -49,7 +49,6 @@ rows:
         # Create executor with SQL adapter
         executor = Run(
             result.board,
-            query_registry=result.query_registry,
             env=build_exec_env(local_project(tmp_path)),
         )
 
@@ -89,7 +88,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         # Execute with default variable
@@ -136,7 +134,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg_output = render(
@@ -205,7 +202,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         data = executor.execute_query("test_query", use_cache=False)

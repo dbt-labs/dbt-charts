@@ -57,7 +57,6 @@ def _table_warnings(yaml_text: str) -> list[Diagnostic]:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     output = render(result.board, executor.ctx, executor.ledger, format="svg")
     return [w for w in output.warnings if w.code.startswith("WARN-TABLE")]

@@ -167,7 +167,8 @@ pub fn bind_pie(id: &ChartId, chart: &PieChart, donut: bool, board: &Board, run:
     let labels = &style.marks.slice.labels;
     let vote: Vec<f64> = thetas.iter().copied().chain([py_float_sum(&thetas)]).collect();
     let board_tooltip = AuthoredFormat::named(placed.style.charts.tooltip.format.as_str());
-    let formats = Formats::new(None);
+    let aliases = crate::formats::aliases(&placed.style.formats);
+    let formats = Formats::new(Some(&aliases));
     let tooltip = column_format(Kind::Number, Tiers { board: Some(&board_tooltip), ..Tiers::default() }, formats, None, None, &vote)?;
     let locale = active_number_locale();
     let template = match &labels.template {
@@ -210,7 +211,7 @@ pub fn bind_pie(id: &ChartId, chart: &PieChart, donut: bool, board: &Board, run:
 }
 
 /// The hole a pie draws: a donut reads `charts.donut` over `charts.pie`, which for any leaf but
-/// the hole is the pie's own board tier (`pie_reaches_donut` copies it in); a donut whose patch
+/// the hole is the pie's own board tier (`family_reaches_recipe` copies it in); a donut whose patch
 /// sets any other leaf is refused.
 fn effective_inner_radius(placed: &Placed, donut: bool) -> Result<f64, Diagnostic> {
     let pie = placed.style.charts.pie.inner_radius.get();
@@ -342,7 +343,8 @@ fn center(
         Some(FormatSpec::Block(_)) => return Err(format_block()),
         None => None,
     };
-    let format = column_format(Kind::Number, Tiers { board: authored.as_ref(), ..Tiers::default() }, Formats::new(None), Some("integer"), None, vote)?;
+    let aliases = crate::formats::aliases(&placed.style.formats);
+    let format = column_format(Kind::Number, Tiers { board: authored.as_ref(), ..Tiers::default() }, Formats::new(Some(&aliases)), Some("integer"), None, vote)?;
     let label = display_text::slug_to_text(theta).map_err(diag::err_internal)?;
     let total_word = display_text::language::tr("pie.total_word", None, &[]).map_err(diag::err_internal)?;
     let caption = if label.to_lowercase().contains(&total_word.to_lowercase()) {

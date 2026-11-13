@@ -33,7 +33,7 @@ For no border, omit `border`; `border: none` is rejected.
 - `text` (mapping): Markdown and plain text content style
 - `footer` (mapping): Page footer chrome visibility
 - `charts` (mapping): Root of all chart-type styles and shared chart configuration
-Also exist: `box_shadow`, `opacity`, `placeholder`, `annotations`, `layout`, `variables`, `timestamp`, `tones`, `roles`, `padding`, `margin`, `gap`.
+Also exist: `box_shadow`, `opacity`, `placeholder`, `comments`, `annotations`, `layout`, `variables`, `timestamp`, `tones`, `roles`, `padding`, `margin`, `gap`.
 
 `style.frame`:
 - `max_width` (number): Widest a board without an exact width may grow, in pixels
@@ -81,7 +81,7 @@ Also exist: `sign_placement`, `repeat`.
 - `default_table_height` (number): Placeholder table height in pixels
 - `marks` (mapping): Global mark defaults (tier-1 of the marks cascade)
 - `font` (mapping): Chart-level font overrides
-Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`, `min_height`, `max_height`, `color`, `title`, `hover_emphasis`, `dashes`, `label_usable_ratio`, `axis`, `axis_x`, `axis_y`, `axis_quantitative`, `axis_band`, `view`, `bar`, `line`, `area`, `scatter`, `histogram`, `heatmap`, `geoshape`, `point_map`, `pie`, `donut`, `series_label`, `kpi`, `table`, `spark_bar`, `support_table`, `callout`.
+Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`, `min_height`, `max_height`, `color`, `title`, `hover_emphasis`, `dashes`, `label_usable_ratio`, `axis`, `axis_x`, `axis_y`, `axis_quantitative`, `axis_band`, `view`, `bar`, `funnel`, `line`, `area`, `scatter`, `histogram`, `heatmap`, `geoshape`, `point_map`, `pie`, `donut`, `series_label`, `kpi`, `table`, `spark_bar`, `support_table`, `callout`.
 
 `style.charts.bar, a bar chart's style`:
 - `background`: Chart-local background color override; None inherits from theme
@@ -131,14 +131,14 @@ Also exist: `log`, `pow`, `symlog`.
 - `border` (text|{radius, color, width, dash_array, line_cap, dash_offset}): Bar border style (color/width also serve as the bar stroke)
 - `labels` (mapping): Value label style for bar marks
 - `total_label` ({visible, format, dx, dy, font: {}}): Stack total label style
-Also exist: `color`, `padding`, `size`, `gap`, `min_size`, `max_size`, `opacity`.
+Also exist: `color`, `padding`, `size`, `gap`, `min_size`, `max_size`, `opacity`, `ribbons`.
 
 `marks.bar.labels`:
-- `visible` (bool|last): Show numeric value labels on every mark or on listed anchors
+- `visible` (bool|auto|last): Show numeric value labels on every mark or on listed anchors
 - `format` (name|text|{spec, prefix, suffix, notation, sign_placement, repeat}): Value label format: a name or d3 spec. Without one it takes the axis format, also when `field` names another column
 - `position` (above|top|middle|middle_aligned|bottom): Label position: `above` (past the bar's end, outside), `top` (inside the end), `middle`, `middle_aligned` (all at one height), `bottom` (inside the start)
 - `field`: Column whose text labels each mark; `''` where unlabeled, never NULL. Default: the y column
-Also exist: `dx`, `dy`, `font`, `stacked`.
+Also exist: `dx`, `dy`, `font`, `stacked`, `template`.
 
 `marks.line`:
 - `stroke` ({color, width, cap, join, dasharray}): Line stroke style

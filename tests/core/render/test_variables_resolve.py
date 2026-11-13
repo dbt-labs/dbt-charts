@@ -11,6 +11,7 @@ both read the answer.
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from dbt_charts.core.compile.models.variable.authored import (
     VariableOptions,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_style
+from dbt_charts.core.execute import plan as execute_plan
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 from dbt_charts.core.render.variables_resolve import (
@@ -484,7 +486,6 @@ def _render_strict(yaml_content: str) -> str:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     rendered = render(
         result.board, executor.ctx, executor.ledger, variables={"metric": "strict"}
@@ -521,13 +522,16 @@ charts:
 """
 
 
+_RENDERED_AT = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
+
+
 def _render_with(yaml_content: str, variables: dict[str, Any]) -> str:
     result = compile(yaml_content)
     assert result.success and result.board is not None, result.errors
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
+        clock=lambda: _RENDERED_AT,
     )
     rendered = render(result.board, executor.ctx, executor.ledger, variables=variables)
     assert rendered.board_error is None, rendered.board_error
@@ -594,6 +598,31 @@ def _value_axis(svg: str) -> tuple[str, list[str]]:
     assert description is not None, axis[:300]
     labels = re.findall(r"<text[^>]*>([^<]*)</text>", axis)
     return description.group(0), labels
+
+
+class _TickingDatetime(datetime):
+    """The wall clock, moving a minute (and a second) on every read."""
+
+    reads = 0
+
+    @classmethod
+    def now(cls, tz: Any = None) -> datetime:
+        cls.reads += 1
+        return datetime(2026, 11, 12, 22, 26, tzinfo=UTC) + timedelta(
+            seconds=61 * cls.reads
+        )
+
+
+def test_a_helper_render_does_not_depend_on_the_wall_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two renders of one board are the same bytes however the clock moves
+    between them: a minute boundary crossed mid-test must not change the
+    board's "data as of" stamp."""
+    monkeypatch.setattr(execute_plan, "datetime", _TickingDatetime)
+    board = _zoom_board("bar", ("EMEA",))
+
+    assert _render_with(board, {}) == _render_with(board, {})
 
 
 @pytest.mark.parametrize("chart_type", ["bar", "line"])

@@ -504,23 +504,30 @@ def _links_under(paths: list[str]) -> InheritGraph:
     }
 
 
-def _pie_reaches_donut(
+def _family_reaches_recipe(
     patch: Any,  # type-state: explicit_any — heterogeneous cascade patch fragment
-) -> Any:  # type-state: explicit_any — the same patch, donut layered
-    """Layer a patch's ``charts.pie`` under its ``charts.donut``.
+) -> Any:  # type-state: explicit_any — the same patch, recipes layered
+    """Layer a patch's ``charts.pie`` under its ``charts.donut``, and its
+    ``charts.bar`` under its ``charts.funnel``.
 
-    A layer's pie style reaches donuts, and its own donut style wins over it,
-    so a board's pie beats the theme's donut default.
+    A layer's family style reaches that family's recipe, and its own recipe
+    style wins over it, so a board's pie beats the theme's donut default and a
+    board's bar beats the theme's funnel recipe.
     """
     charts = patch.charts
-    if charts is None or charts.pie is None:
+    if charts is None:
         return patch
-    donut = (
-        charts.pie if charts.donut is None else merge_patches(charts.pie, charts.donut)
-    )
-    return patch.model_copy(
-        update={"charts": charts.model_copy(update={"donut": donut})}
-    )
+    update = {
+        recipe: family if own is None else merge_patches(family, own)
+        for recipe, family, own in (
+            ("donut", charts.pie, charts.donut),
+            ("funnel", charts.bar, charts.funnel),
+        )
+        if family is not None
+    }
+    if not update:
+        return patch
+    return patch.model_copy(update={"charts": charts.model_copy(update=update)})
 
 
 def merge_style(base: Style, patch: StylePatch | None = None) -> Style:
@@ -537,7 +544,7 @@ def merge_style(base: Style, patch: StylePatch | None = None) -> Style:
     """
     if patch is None:
         return base
-    resolved_patch = _pie_reaches_donut(_resolve_tokens_on_patch(patch, base))
+    resolved_patch = _family_reaches_recipe(_resolve_tokens_on_patch(patch, base))
     remainder, held_patch, held = defer_base_none_children(
         base, resolved_patch, "Style"
     )
@@ -691,7 +698,7 @@ def concrete_family_defaults(
     from dbt_charts.core.compile.support_table import bake_neutral_ink  # noqa: PLC0415
 
     def table(style: SupportTableStyle) -> SupportTableStyle:
-        return bake_neutral_ink(style)[0]
+        return bake_neutral_ink(style, None)[0]
 
     def family_table(style: SupportTableStylePatch | None) -> SupportTableStyle | None:
         return None if style is None else table(style)

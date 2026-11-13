@@ -129,8 +129,10 @@ pub use tooltip::TooltipField;
 pub enum Chart {
     Scatter(ScatterChart),
     Bar(BarChart),
-    /// Read as `BarChart`, the model Python's `type: bar | histogram` shares.
+    /// Read as `BarChart`, the model Python's `type: bar | histogram | funnel` shares.
     Histogram(BarChart),
+    /// Read as `BarChart` too: Python normalizes a funnel to a centered horizontal bar.
+    Funnel(BarChart),
     Line(LineChart),
     Area(AreaChart),
     Callout(CalloutChart),
@@ -155,7 +157,9 @@ impl ChartAuthored {
     pub fn query_mut(&mut self) -> Option<&mut model_core::Tri<ChartQuery>> {
         Some(match self {
             Self::Scatter(c) => &mut c.cartesian.shared.base.query,
-            Self::Bar(c) | Self::Histogram(c) => &mut c.cartesian.shared.base.query,
+            Self::Bar(c) | Self::Histogram(c) | Self::Funnel(c) => {
+                &mut c.cartesian.shared.base.query
+            }
             Self::Line(c) => &mut c.cartesian.shared.base.query,
             Self::Area(c) => &mut c.cartesian.shared.base.query,
             Self::Heatmap(c) => &mut c.cartesian.shared.base.query,
@@ -177,7 +181,7 @@ impl ChartAuthored {
     pub fn id_text(&self) -> &model_core::Tri<DisplayText> {
         match self {
             Self::Scatter(c) => &c.cartesian.shared.title,
-            Self::Bar(c) | Self::Histogram(c) => &c.cartesian.shared.title,
+            Self::Bar(c) | Self::Histogram(c) | Self::Funnel(c) => &c.cartesian.shared.title,
             Self::Line(c) => &c.cartesian.shared.title,
             Self::Area(c) => &c.cartesian.shared.title,
             Self::Heatmap(c) => &c.cartesian.shared.title,
@@ -199,7 +203,7 @@ impl ChartAuthored {
     pub fn layer_queries_mut(&mut self) -> Vec<&mut model_core::Tri<LayerQuery>> {
         let layers = match self {
             Self::Scatter(c) => &mut c.layers,
-            Self::Bar(c) | Self::Histogram(c) => &mut c.layers,
+            Self::Bar(c) | Self::Histogram(c) | Self::Funnel(c) => &mut c.layers,
             Self::Line(c) => &mut c.layers,
             Self::Area(c) => &mut c.layers,
             _ => return Vec::new(),
@@ -224,6 +228,7 @@ impl ChartAuthored {
             Self::Scatter(_) => "scatter",
             Self::Bar(_) => "bar",
             Self::Histogram(_) => "histogram",
+            Self::Funnel(_) => "funnel",
             Self::Line(_) => "line",
             Self::Area(_) => "area",
             Self::Callout(_) => "callout",
@@ -247,7 +252,7 @@ impl ChartAuthored {
     pub fn base(&self) -> Option<&ChartBaseAuthored> {
         Some(match self {
             Self::Scatter(c) => &c.cartesian.shared.base,
-            Self::Bar(c) | Self::Histogram(c) => &c.cartesian.shared.base,
+            Self::Bar(c) | Self::Histogram(c) | Self::Funnel(c) => &c.cartesian.shared.base,
             Self::Line(c) => &c.cartesian.shared.base,
             Self::Area(c) => &c.cartesian.shared.base,
             Self::Heatmap(c) => &c.cartesian.shared.base,
@@ -293,8 +298,14 @@ impl ChartAuthored {
 }
 
 impl ChartAuthored {
-    /// The hoisted queries the chart reads: its own and each layer's.
-    pub fn hoisted_queries(&self) -> Vec<crate::ids::QueryId> {
+    /// The hoisted query of the chart itself, and of each layer in order (`None` for a layer with
+    /// no query of its own, which draws the chart's).
+    pub fn query_slots(
+        &self,
+    ) -> (
+        Option<crate::ids::QueryId>,
+        Vec<Option<crate::ids::QueryId>>,
+    ) {
         let mut chart = self.clone();
         let own = chart.query_mut().and_then(|q| match q {
             model_core::Tri::Value(ChartQuery::Hoisted(id)) => Some(id.clone()),
@@ -303,11 +314,20 @@ impl ChartAuthored {
         let layers = chart
             .layer_queries_mut()
             .into_iter()
-            .filter_map(|q| match q {
+            .map(|q| match q {
                 model_core::Tri::Value(LayerQuery::Hoisted(id)) => Some(id.clone()),
                 _ => None,
-            });
-        own.into_iter().chain(layers).collect()
+            })
+            .collect();
+        (own, layers)
+    }
+
+    /// The hoisted queries the chart reads: its own and each layer's.
+    pub fn hoisted_queries(&self) -> Vec<crate::ids::QueryId> {
+        let (own, layers) = self.query_slots();
+        own.into_iter()
+            .chain(layers.into_iter().flatten())
+            .collect()
     }
 }
 
@@ -316,7 +336,7 @@ impl ChartAuthored {
     pub fn shared(&self) -> Option<&SharedChartFieldsAuthored> {
         Some(match self {
             Self::Scatter(c) => &c.cartesian.shared,
-            Self::Bar(c) | Self::Histogram(c) => &c.cartesian.shared,
+            Self::Bar(c) | Self::Histogram(c) | Self::Funnel(c) => &c.cartesian.shared,
             Self::Line(c) => &c.cartesian.shared,
             Self::Area(c) => &c.cartesian.shared,
             Self::Heatmap(c) => &c.cartesian.shared,
@@ -368,7 +388,7 @@ impl ChartAuthored {
         };
         let layers = match self {
             Self::Scatter(c) => &c.layers,
-            Self::Bar(c) => &c.layers,
+            Self::Bar(c) | Self::Funnel(c) => &c.layers,
             Self::Line(c) => &c.layers,
             Self::Area(c) => &c.layers,
             _ => return out,
@@ -387,8 +407,8 @@ impl ChartAuthored {
 }
 
 /// Declares, once, which `style.charts.<slot>` each chart variant's own `style:` folds into (Python's
-/// `_AUTHORED_FAMILY_TO_MONOLITHIC_KEY`: a histogram reads the bar slot, a donut the pie slot, a
-/// `map` the geoshape slot and a `bubble_map` the point-map slot) and builds from it
+/// `_AUTHORED_FAMILY_TO_MONOLITHIC_KEY`: a histogram and a funnel read the bar slot, a donut the
+/// pie slot, a `map` the geoshape slot and a `bubble_map` the point-map slot) and builds from it
 /// [`ChartAuthored::style_overlay`].
 macro_rules! family_slots {
     ($($variant:ident $(| $alias:ident)* => $slot:ident),* $(,)?) => {
@@ -455,7 +475,7 @@ macro_rules! family_slots {
 
 family_slots! {
     Scatter => scatter,
-    Bar | Histogram => bar,
+    Bar | Histogram | Funnel => bar,
     Line => line,
     Area => area,
     Callout => callout,

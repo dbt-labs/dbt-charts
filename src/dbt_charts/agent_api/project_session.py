@@ -436,6 +436,7 @@ class ProjectSession:
             vars=vars,
             limit=limit,
             env=self.env,
+            cache=self.cache,
         )
 
     def execute_query(
@@ -527,6 +528,7 @@ class ProjectSession:
         board: BoardFile | None = None,
         *,
         chart: str | None = None,
+        only_charts: list[str] | None = None,
         variables: dict[str, Any] | None = None,
         format: RenderFormat = "json",
         use_cache: bool = True,
@@ -563,6 +565,7 @@ class ProjectSession:
         return _core_board.render_dashboard(
             board=board,
             chart=chart,
+            only_charts=only_charts,
             variables=variables,
             env=self.env,
             project=self.project,

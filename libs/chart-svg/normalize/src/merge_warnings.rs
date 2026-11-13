@@ -205,7 +205,9 @@ struct ThemeLeaves {
 fn theme_leaves(name: &str) -> Result<std::sync::Arc<ThemeLeaves>, RestatedError> {
     static CACHE: std::sync::Mutex<BTreeMap<String, std::sync::Arc<ThemeLeaves>>> =
         std::sync::Mutex::new(BTreeMap::new());
-    let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut cache = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(found) = cache.get(name) {
         return Ok(found.clone());
     }
@@ -255,7 +257,12 @@ pub(crate) fn restated(
             diagnostic: diag::warn_restated_style("extends", below, source)
                 .with_sink_param(
                     "why",
-                    if meta_themes > 0 { "meta.yml theme" } else { "default theme" }.into(),
+                    if meta_themes > 0 {
+                        "meta.yml theme"
+                    } else {
+                        "default theme"
+                    }
+                    .into(),
                 )
                 .at_path(ModelPath(vec!["extends".to_string()])),
         });
@@ -289,8 +296,8 @@ pub(crate) fn restated(
             continue;
         }
         // A value no layer sets is a model default, not an inherited one.
-        let sets = layer_sets
-            .get_or_insert_with(|| layers.iter().map(|(_, p)| value_paths(p)).collect());
+        let sets =
+            layer_sets.get_or_insert_with(|| layers.iter().map(|(_, p)| value_paths(p)).collect());
         let mut why = "inherited";
         let label = layers
             .iter()

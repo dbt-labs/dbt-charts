@@ -180,8 +180,8 @@ _TOOL_GUIDANCE = """## Tool Use
   separate link to fetch.
 - If a tool returns an error, explain it clearly and fix it — do not proceed on
   assumptions or hide it.
-- If the user asks for a chart shape dbt charts has no chart family for (funnel,
-  gauge, sunburst, chord, and others — check `get_skill(name="chart")` when
+- If the user asks for a chart shape dbt charts has no chart family for (gauge,
+  sunburst, chord, and others — check `get_skill(name="chart")` when
   unsure), never silently build a different shape and label it with the
   requested name. Say plainly that dbt charts can't draw that shape, name what
   you built instead, and let the user decide whether to proceed. An honest

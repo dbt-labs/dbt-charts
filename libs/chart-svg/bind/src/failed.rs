@@ -3,7 +3,14 @@
 //! and the link words. A code whose hint generator is not ported and that carries none is
 //! refused by name.
 
+use board_model::chart::Chart;
+use board_model::facet::DisplayText;
+use board_model::style::charts::ChartsStyle;
+use board_model::style::style::Style;
+use board_model::variable_value::VariableValue;
+use model_core::{Patch, Tri};
 use diagnostic::{codes, refuse, Diagnostic, Level};
+use indexmap::IndexMap;
 use serde_json::{json, Value};
 
 use crate::bound::Failure;
@@ -108,4 +115,64 @@ pub fn checked_href(href: &str) -> Result<(), Diagnostic> {
         &codes::ERR_LINK_SCHEME_UNSAFE_AT_RENDER,
         [("href", json!(href)), ("scheme", json!(scheme))],
     ))
+}
+
+/// A failed chart's authored title (a KPI's label, a callout's title), filled from the board's
+/// variables alone as production fills it (`title_band.py::failed_title_text`): none when it has
+/// none, and none when filling it fails (it reads a query result), because the card reports the
+/// failure and raw template text is never drawn. A construct the engine does not fill stays the
+/// chart's refusal, as a healthy chart's title does.
+pub fn title(chart: &Chart, variables: &IndexMap<String, VariableValue>) -> Result<Option<String>, Diagnostic> {
+    let authored = match chart {
+        Chart::Kpi(kpi) => kpi.label.as_ref().map(DisplayText::as_str),
+        Chart::Callout(callout) => callout.title.as_ref().map(DisplayText::as_str),
+        Chart::Table(table) => table.shared.title.as_ref().map(DisplayText::as_str),
+        Chart::Pie(pie) | Chart::Donut(pie) => pie.radial.shared.title.as_ref().map(DisplayText::as_str),
+        Chart::Scatter(scatter) => scatter.cartesian.shared.title.as_ref().map(DisplayText::as_str),
+        Chart::Bar(bar) | Chart::Histogram(bar) => bar.cartesian.shared.title.as_ref().map(DisplayText::as_str),
+        Chart::Line(line) => line.cartesian.shared.title.as_ref().map(DisplayText::as_str),
+        Chart::SparkBar(spark) => spark.shared.title.as_ref().map(DisplayText::as_str),
+        _ => None,
+    };
+    let Some(text) = authored.filter(|text| !text.is_empty()) else { return Ok(None) };
+    match crate::display_text::render_text(text, variables, &IndexMap::new(), &IndexMap::new()) {
+        Ok(filled) => Ok(Some(filled).filter(|filled| !filled.is_empty())),
+        Err(refusal) if refusal.code == codes::ERR_ENGINE_REFUSED.id => Err(refusal),
+        Err(_) => Ok(None),
+    }
+}
+
+/// A failed chart draws its title in the board's tier font, which is what production draws unless its family
+/// sets a title leaf (`own_title_fonts`); that face is not walked here, so a title leaf set at the family, in
+/// the chart's own `style:` or the scope, is refused by name.
+pub fn refuse_title_style(chart: &Chart, own: &Patch<Style>, charts: &ChartsStyle) -> Result<(), Diagnostic> {
+    let family = match chart {
+        Chart::Table(_) => {
+            !matches!(own.charts.table.titled.title, Tri::Unset) || charts.table.titled.title.is_some()
+        }
+        Chart::Pie(_) => !matches!(own.charts.pie.titled.title, Tri::Unset) || charts.pie.titled.title.is_some(),
+        Chart::Donut(_) => {
+            !matches!(own.charts.pie.titled.title, Tri::Unset)
+                || charts.pie.titled.title.is_some()
+                || matches!(own.charts.donut.as_ref(), Tri::Value(d) if !matches!(d.titled.title, Tri::Unset))
+                || charts.donut.as_ref().is_some_and(|d| !matches!(d.titled.title, Tri::Unset))
+        }
+        Chart::Bar(_) => {
+            !matches!(own.charts.bar.cartesian.titled.title, Tri::Unset) || charts.bar.cartesian.titled.title.is_some()
+        }
+        Chart::Histogram(_) => {
+            !matches!(own.charts.bar.cartesian.titled.title, Tri::Unset) || charts.histogram.cartesian.titled.title.is_some()
+        }
+        Chart::Line(_) => {
+            !matches!(own.charts.line.cartesian.titled.title, Tri::Unset) || charts.line.cartesian.titled.title.is_some()
+        }
+        Chart::Scatter(_) => {
+            !matches!(own.charts.scatter.cartesian.titled.title, Tri::Unset) || charts.scatter.cartesian.titled.title.is_some()
+        }
+        _ => false,
+    };
+    if family {
+        return Err(Diagnostic::refused(refuse!("a failed chart whose own or family style sets its title is not supported")));
+    }
+    Ok(())
 }

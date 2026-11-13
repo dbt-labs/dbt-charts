@@ -3,15 +3,16 @@
 
 use board_model::chart::layer::CartesianLayerAuthored as L;
 use board_model::chart::ChartAuthored as C;
+use board_model::rule::Auto;
 use board_model::style::marks::LabelVisible;
 use diagnostic::{diag, Diagnostic};
-use model_core::Tri;
+use model_core::{Engine, Tri};
 
 /// The first of line, point and bar labels (in that order) naming anchors, as its path under `style`.
-fn first(slots: [(&'static str, &Option<LabelVisible>); 3]) -> Option<&'static str> {
+fn first(slots: [(&'static str, &Option<Engine<LabelVisible, Auto>>); 3]) -> Option<&'static str> {
     slots
         .into_iter()
-        .find(|(_, v)| v.as_ref().is_some_and(|v| !v.anchors().is_empty()))
+        .find(|(_, v)| matches!(v, Some(Engine::Value(v)) if !v.anchors().is_empty()))
         .map(|(path, _)| path)
 }
 

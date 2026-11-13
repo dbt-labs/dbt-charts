@@ -706,13 +706,15 @@ charts:
       # bar/area families also accept style.orientation and style.stack
 ```
 
-### Chart types (17 authorable)
+### Chart types (18 authorable)
 
 Set `type:` to one of:
 
 **Basic** (one mark per chart) -- `bar`, `line`, `area`, `scatter`, `pie`, `donut`, `kpi`, `table`.
 
 **Statistical** -- `histogram`, `heatmap`.
+
+**Ordered stages** -- `funnel`: one row per stage, `x:` the stage and `y:` its count, ordered with `sort.by:` on a stage-order column. It draws a centered horizontal bar with ribbons joining each stage to the next and no value axis, by the theme's `style.charts.funnel` recipe over `style.charts.bar` (as `charts.donut` sits over `charts.pie`); a board's `charts.funnel` restyles every funnel, and a chart's own `style.stack` or `style.marks.bar.ribbons.visible` wins, and a vertical `style.orientation` is refused (use `type: bar` with `style.stack: center`). Bars are labeled with their value and ribbons with the percent lost since the stage before. `style.marks.bar.labels.template` and `style.marks.bar.ribbons.labels.template` (`visible`, `template`) rewrite them with `value`, `percent` (a bar's share of the first stage; a ribbon's change over the stage before, negative for a loss) and the row's columns, e.g. `{{ value | format(',d') }} ({{ percent | format('.0%') }})`; the secondary value goes in parens, so a format with the `(` sign flag beside it is refused. Ribbon labels are for funnels only. With a `support_table:` both labels default off. Count the same entities through every stage (a cohort), so counts never rise; a snapshot of what sits in each stage now can grow from one stage to the next, so check, say which kind the chart shows, and never clamp. If entities can skip a stage, a funnel misstates the flow: say so. A centered funnel warns `WARN-BAR-CENTERED-NO-BASELINE`, as every centered bar does.
 
 **Geographic** -- `geoshape`, `map`, `point_map`, `bubble_map`.
 
@@ -726,7 +728,7 @@ Set `type:` to one of:
 
 Note: `donut` is an internal alias for `pie` -- `donut` is accepted but normalizes to `pie` internally. `auto` is an internal sentinel (not authored). `boxplot`, `errorbar`, and `errorband` are Vega-Lite mark types that are not in the authorable surface.
 
-Type aliases: `scatter` uses a circle mark, `heatmap` uses rect, `pie`/`donut` use arc, `histogram` uses bar with binning, `map` maps to geoshape.
+Type aliases: `scatter` uses a circle mark, `heatmap` uses rect, `pie`/`donut` use arc, `histogram` uses bar with binning, `funnel` uses a centered horizontal bar, `map` maps to geoshape.
 
 ### Named shapes that have no `type:`
 
@@ -760,9 +762,11 @@ resolve to the same recipe, and the same error names the recipe if you guess a `
 | waterfall, bridge chart | type: bar with y_start and y from a running total the query computes over one row per step (SUM(delta) OVER (ORDER BY ord) - delta and SUM(delta) OVER (ORDER BY ord), ord unique per step; the opening and closing totals are rows starting at 0), color: on the query's own direction column pinned with board category_colors, style.overlap: full so each step's bar fills its band instead of splitting into a grouped slot, and style.orientation: vertical |
 | candlestick, ohlc, stock chart | type: bar with y_start: low and y: high as a thin wick, plus a layers: bar with y_start: open and y: close as the body. Same-color convention: color: on the query's session column on both the base bar and the body layer, with style.marks.bar.border.width: 0 to drop the knockout outline and border.radius: 0 for square candles. Ink-outline convention: no color: on the base bar (an ink palette slot), color: on the body layer alone, and style.marks.bar.border in ink |
 | gantt | type: bar with a date y and a date y_start, style.orientation: horizontal so time runs left to right, keeping the query's row order rather than the usual value-descending default |
+| left-aligned funnel, conversion bars | type: bar in stage order (sort.by: a stage-order column) with style.orientation: horizontal; every bar starts at zero, so the steps down compare exactly. Put the query's share of start and step loss in a support_table |
+| ribbons between bars, series lines | style.marks.bar.ribbons.visible: true on a single-series or stacked bar (zero, normalize, center) whose categories are ordered; each ribbon joins a bar or segment to the same series in the next category. Grouped bars refuse it |
 
 Shapes with no built-in type — naming them is the half a recipe cannot cover. When the user asks for one of these by name, draw it with `type: custom`; never substitute one for a built-in chart the user did not ask to replace:
-`alluvial`, `funnel`, `gauge`, `marimekko`, `radar`, `sankey`, `spider`, `violin`.
+`alluvial`, `gauge`, `marimekko`, `radar`, `sankey`, `spider`, `violin`.
 
 `chord`, `network`, `sunburst`, `treemap` and `word cloud` are not supported: no built-in type draws them, and a custom template cannot compute their layouts. Say so instead of approximating one.
 
@@ -1052,7 +1056,7 @@ style:
     freeze: 1                            # leading visible columns pinned while scrolling (needs overflow: scroll)
   pagination:
     page_rows: 20                        # rows per page, or rows in view with mode: scroll
-    mode: pages                          # pages (default): pager below | scroll: vertical scroll, header pinned
+    mode: scroll                         # scroll (default): vertical scroll, header pinned | pages: pager below
   columns:
     order_id:
       visible: false                     # hide; values stay usable in link: templates
@@ -1195,7 +1199,7 @@ options:
 
 Channels use the built-in channel names (`x`, `y`, `color`, `size`, `shape`,
 `theta`, `value`) and are set at the chart root, like any chart; pick the one
-that matches the role (a funnel's stage is `x`, its count `y`; a waffle's parts
+that matches the role (a stage is `x`, its count `y`; a waffle's parts
 are `color` and `theta`, as on a pie). `multiple: true` allows a list of columns
 and always passes a list. Option types: `column`, `columns`, `string`, `number`,
 `integer`, `boolean`, `color`. A channel or option with no `default` is
@@ -1355,6 +1359,8 @@ charts:
 ```
 
 Predicates (exactly one per rule): `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `between` (`[low, high]`), `in` (non-empty list), `is_null` (bool), `default` (`true` only — terminal fallback).
+
+Aggregate operands: `lt`/`lte`/`gt`/`gte` and `between` bounds take `min()`, `max()`, `avg()`, `median()` or `percentile(<0-100>)`; `eq`/`ne` take `min()` or `max()`. Computed over the rule's column across every row (not per series or panel). Refused on KPI and pivot tables.
 
 Style outputs (at least one per rule): `background`, `font` (`color`/`weight`/`style`/`decoration`), `glyph` with optional `glyph_color` or `tone`. A rule cannot set `align`, `font.size` or any other table setting, and `conditional` is refused under `style.charts.table` and in `column_defaults`: it belongs to one column of one chart. A column with `visible: false` cannot take rules.
 

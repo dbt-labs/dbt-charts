@@ -1,9 +1,7 @@
 """Plan stage: the one place a query's variables, route and cache key are decided."""
 
 from collections.abc import Callable
-from dataclasses import replace
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,6 +15,7 @@ from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.text.time_zones import UTC
 
 from ..._run import Run
+from ..._scripted_env import ScriptedBackend, scripted_env
 
 _BOARD = """\
 title: T
@@ -33,6 +32,9 @@ queries:
     source: db
   from_file:
     sql: SELECT * FROM sales
+    source: sales
+  from_file_cached:
+    sql: SELECT * FROM {{ queries.base.cache }}
     source: sales
   uncached:
     sql: SELECT 1 AS n
@@ -64,7 +66,6 @@ def _executor(
     return Run(
         compiled.board,
         env=build_exec_env(local_project(tmp_path)),
-        query_registry=compiled.query_registry,
         result_cache=cache,
         use_cache=use_cache,
     )
@@ -89,12 +90,13 @@ def test_plan_merges_board_defaults_and_strips_the_prefix(
 ) -> None:
     executor = _executor(tmp_path, local_project)
 
-    [planned] = plan(executor.ctx, ["queries.base"], {"region": "east"})
+    east = executor.under({"region": "east"})
+    [planned] = plan(east, ["queries.base"])
     [defaulted] = plan(executor.ctx, ["base"])
 
     assert planned.name == "base"
-    assert planned.variables["region"] == "east"
-    assert defaulted.variables["region"] == "west"
+    assert east.variables["region"] == "east"
+    assert executor.ctx.variables["region"] == "west"
     assert planned.cache_key != defaulted.cache_key
 
 
@@ -122,7 +124,7 @@ def test_lookup_and_run_share_the_planned_cache_key_for_a_store_write_and_hit(
 ) -> None:
     cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
     writer = _executor(tmp_path, local_project, cache)
-    [planned] = plan(writer.ctx, ["base"], {"region": "east"})
+    [planned] = plan(writer.under({"region": "east"}), ["base"])
 
     found = writer.lookup(["base"], {"region": "east"})
     writer.run_misses(found, 2)
@@ -138,13 +140,8 @@ def test_a_query_on_a_file_source_is_never_tailable_whatever_its_route(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
     executor = _executor(tmp_path, local_project, TrivialDuckDBCache())
-    query = executor.ctx.board.queries["from_file"]
-    composed = query.model_copy(
-        update={"sql": "SELECT * FROM {{ queries.base.cache }}"}
-    )
-    ctx = replace(executor.ctx, query_registry={"from_file_cached": composed})
 
-    [planned] = plan(ctx, ["from_file_cached"])
+    [planned] = plan(executor.ctx, ["from_file_cached"])
 
     assert planned.upstreams
     assert not planned.tailable
@@ -161,12 +158,13 @@ def test_planned_cache_key_is_the_content_key_over_a_mocked_registry() -> None:
     assert board is not None, compiled.errors
     executor = Run(
         board,
-        env=MagicMock(),
-        query_registry=compiled.query_registry,
+        env=scripted_env(ScriptedBackend()),
     )
 
     [planned] = plan(executor.ctx, ["q"])
 
     assert planned.cache_key == compute_cache_key(
-        board.queries["q"], board_sources=board.sources, time_zone=UTC
+        board.queries["q"],
+        board_sources={"memory": {"type": "duckdb", "path": ":memory:"}},
+        time_zone=UTC,
     )

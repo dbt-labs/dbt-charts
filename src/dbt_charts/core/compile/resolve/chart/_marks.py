@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from dbt_charts.core.compile.format import (
     column_format,
     declared_column_format,
+    inferred_number_format,
     resolve_label_format,
 )
 from dbt_charts.core.compile.models.primitives import (
@@ -39,6 +40,7 @@ from dbt_charts.core.compile.models.style.theme import (
 )
 from dbt_charts.core.compile.resolve.style.chart_context import CartesianFamilyChart
 from dbt_charts.core.compile.resolve.style.inherit_resolver import settled
+from dbt_charts.core.text.format_d3 import is_d3_si_spec
 
 __all__ = [
     "_apply_line_width",
@@ -157,6 +159,34 @@ def _label_format_fallback(
         return _with_label_format(labels, resolved_cls, resolved), is_house
     return _with_label_format(labels, resolved_cls, axis_format), (
         axis_format is not None and axis_house_default
+    )
+
+
+def callout_label_format(
+    labels: _AuthoredLabelsT,
+    resolved_cls: type[_ResolvedLabelsT],
+    formats: FormatTable | None,
+    query_formats: Mapping[str, str] | None,
+    column: str,
+    rows: Sequence[Mapping[str, Any]],  # type-state: explicit_any — warehouse rows
+) -> tuple[_ResolvedLabelsT, bool]:
+    """``labels`` resolved as a callout: a datum beside its mark, never the ruler's format.
+
+    The label's own format, then the column's declared one, then the type default
+    (an integer column prints whole), then the board's default for the kind.
+    """
+    cells = [row.get(column) for row in rows]
+    fmt = column_format(
+        "number",
+        formats,
+        labels.format,
+        query_formats=query_formats,
+        columns=column,
+        inferred=inferred_number_format(column, cells),
+        values=[c for c in cells if c is not None],
+    )
+    return _with_label_format(labels, resolved_cls, fmt), (
+        fmt.is_house and is_d3_si_spec(fmt.spec)
     )
 
 

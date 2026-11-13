@@ -6,8 +6,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from dbt_charts.core.compile.models.cache import CachePolicy
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.cache_backend import (
     CachedQueryFailure,
@@ -18,14 +16,15 @@ from dbt_charts.core.execute.cache_backend import (
     TruncationInfo,
 )
 from dbt_charts.core.execute.lookup import limit_rows, lookup, memo_key
-from dbt_charts.core.execute.plan import PlannedQuery
+from dbt_charts.core.execute.plan import QueryRun
+from dbt_charts.core.execute.query_plan import PlannedCache, PlannedSqlQuery
 
-from ..._lookup import planned_query
+from ..._lookup import planned_query, sql_entry
 from ..._results import rows_result
 
 KEY = ("s", "q", "v")
 WRITTEN = datetime(2026, 1, 1, tzinfo=UTC)
-POLICY = CachePolicy(enabled=True, ttl="1h")
+POLICY: PlannedCache = {"enabled": True, "ttl": "1h", "prefetch": False}
 
 
 def FakeCache(outcome: CacheOutcome | None) -> Mock:
@@ -34,13 +33,15 @@ def FakeCache(outcome: CacheOutcome | None) -> Mock:
     return cache
 
 
-def _query(incremental: str | None = None, cache: CachePolicy = POLICY) -> SqlQuery:
-    return SqlQuery(sql="SELECT 1", source="db", cache=cache, incremental=incremental)
+def _query(
+    incremental: str | None = None, cache: PlannedCache = POLICY
+) -> PlannedSqlQuery:
+    return sql_entry("SELECT 1", source="db", cache=cache, incremental=incremental)
 
 
 def _probe(
-    query: SqlQuery, use_store: bool = True, tailable: bool = True
-) -> PlannedQuery:
+    query: PlannedSqlQuery, use_store: bool = True, tailable: bool = True
+) -> QueryRun:
     return planned_query("q", query, KEY, use_store, tailable=tailable)
 
 
@@ -50,7 +51,7 @@ def _hit(rows: list[dict[str, Any]]) -> CacheHit:
 
 
 def _run(
-    probe: PlannedQuery,
+    probe: QueryRun,
     cache: Mock | None = None,
     memo: dict[tuple[str, str, str, str], ResultRows] | None = None,
     errors: dict[str, Exception] | None = None,
@@ -95,7 +96,7 @@ def test_no_store_reads_only_the_memo() -> None:
     cache = FakeCache(_hit([{"a": 1}]))
     found = _run(_probe(_query(), use_store=False), cache)
     assert [m.name for m in found.misses] == ["q"] and not cache.get.called
-    disabled = _query(cache=CachePolicy(enabled=False))
+    disabled = _query(cache={"enabled": False, "ttl": None, "prefetch": False})
     assert _run(_probe(disabled), cache).misses and not cache.get.called
 
 

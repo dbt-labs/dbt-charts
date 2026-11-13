@@ -524,7 +524,6 @@ charts:
         executor = Run(
             board,
             env=build_exec_env(_project_with_duckdb_source(local_project)),
-            query_registry=result.query_registry,
         )
         with patch.object(layout_sizing_mod, "calculate_data_aware_layout", spy_calc):
             render(board, executor.ctx, executor.ledger, format="svg")
@@ -570,7 +569,6 @@ charts:
         executor = Run(
             board,
             env=build_exec_env(_project_with_duckdb_source(local_project)),
-            query_registry=result.query_registry,
         )
         svg = render(board, executor.ctx, executor.ledger, format="svg").output
 

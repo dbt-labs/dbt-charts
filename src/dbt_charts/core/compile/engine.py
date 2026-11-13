@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from string import Formatter
 from typing import TypedDict
 
 from dbt_charts import _engine
+from dbt_charts._docs_site import DEFAULT_DOCS_SITE_URL, docs_site_url
 from dbt_charts.core.compile import sql_analysis
 from dbt_charts.core.compile.config import (
     ProjectSourcesConfig,
@@ -18,8 +20,25 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.cache import CachePatch
-from dbt_charts.core.compile.models.source import source_cache_layer
+from dbt_charts.core.compile.models.source import (
+    authored_time_zone,
+    parse_source_config,
+    source_cache_layer,
+)
 from dbt_charts.core.compile.sql_analysis import Registry, Wire
+from dbt_charts.core.diagnostics import (
+    ERR_UNRESOLVED_REFERENCE,
+    REGISTRY,
+    WARN_RESTATED_FORMAT,
+    WARN_RESTATED_INFERRED,
+    WARN_RESTATED_STYLE,
+    Diagnostic,
+    SourceRange,
+    WarningCode,
+)
+from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.diagnostic import RelatedLocation
+from dbt_charts.core.diagnostics.registry import ErrorCode
 
 # tach-ignore(compile->project: the host adapter reads a Project and compiles one of its files)
 from dbt_charts.core.project import Project, ProjectPath
@@ -74,6 +93,26 @@ def cache_wire(layer: CachePatch | None) -> _engine.CacheLayer:
     return (layer.enabled, layer.ttl, layer.prefetch)
 
 
+def _source_zones(declared: ProjectSourcesConfig) -> dict[str, tuple[str, str | None]]:
+    """Each typed source's `(type, authored time zone)`, for the engine's time-zone warnings.
+
+    The engine decides which types run a session in the board's zone, so a declaration with a
+    `type` is listed. Its zone is read from the parsed source (templates rendered); a source
+    that does not parse has none, and is reported where it is used.
+    """
+    zones: dict[str, tuple[str, str | None]] = {}
+    for name, authored in declared.sources.items():
+        kind = authored.get("type")
+        if not isinstance(kind, str):
+            continue
+        try:
+            zone = authored_time_zone(parse_source_config(dict(authored)))
+        except ValueError:
+            zone = None
+        zones[name] = (kind, zone)
+    return zones
+
+
 def engine_compile(
     path: ProjectPath | None,
     named: bool = False,
@@ -81,6 +120,7 @@ def engine_compile(
     project: Project | None = None,
     synthetic_sources: RawSources | None = None,
     sources: ProjectSourcesConfig | None = None,
+    anchor: str | None = None,
 ) -> _engine.CompiledBoard:
     """*path*'s board compiled in Rust, against the project's declared sources and cache layers.
 
@@ -94,8 +134,8 @@ def engine_compile(
     means no override: the board is read from the project.
 
     *path* `None` is a board with no project location (as `BoardFile.path` is None): no
-    `meta.yml` cascade, no relative reference (a ref is refused as having no project location),
-    and no file name in errors. Its text is *content*, and the *project* (whose sources and cache
+    `meta.yml` cascade and no file name in errors; a relative reference resolves from *anchor*, a
+    project directory, and is refused as having no project location when there is none. Its text is *content*, and the *project* (whose sources and cache
     layers it compiles against) is then given too, since no path names it. Either missing is a
     `ValueError`; so is a *project* beside a *path*, which names its own.
 
@@ -146,10 +186,92 @@ def engine_compile(
             for name in registry
         },
         implicit_source=declared.implicit_source,
+        zones=_source_zones(declared),
         sql=_Analyzer(registry),
         named=named,
         text=content if path is None else None,
+        anchor=anchor if path is None else None,
     )
+
+
+_RESTATED_CODES = (WARN_RESTATED_STYLE, WARN_RESTATED_INFERRED, WARN_RESTATED_FORMAT)
+
+
+def wire_diagnostic(wire: _engine.CompileDiagnostic) -> Diagnostic:
+    """An engine finding as the `Diagnostic` `ValidateResult` carries.
+
+    The engine ships `code`, `params` and where the finding sits; the registered template
+    words it. An error keeps its `params` as `fields`, bar the foreign `detail` text (what
+    `DbtChartsError` does); a warning keeps the params its message does not print.
+    """
+    code = REGISTRY.get(wire["code"])  # raises KeyError for an unregistered code
+    params = wire["params"]
+    hint = wire.get("hint")
+    if hint is not None:
+        # The engine reads no environment, so its docs link is the shipped default.
+        hint = hint.replace(DEFAULT_DOCS_SITE_URL, docs_site_url())
+    elif code.hint_generator is not None:
+        hint = code.hint_generator(**params)
+    located = {
+        "path": wire.get("path"),
+        "range": SourceRange.model_validate(wire["range"]) if "range" in wire else None,
+        "related": tuple(RelatedLocation.model_validate(r) for r in wire["related"]),
+        "hint": hint,
+    }
+    if isinstance(code, ErrorCode):
+        # `detail` is foreign text: it rides `Diagnostic.detail`, never `fields`.
+        detail = params.get("detail")
+        fields = {k: v for k, v in params.items() if k != "detail"}
+        error = DbtChartsError.from_code(code, detail=detail, **fields)
+        # A code built with a `field_path` param, not located by the engine, still names it.
+        located["path"] = located["path"] or error.field_path or None
+        if code is ERR_UNRESOLVED_REFERENCE and "context" in fields:
+            # `fields` holds the bare place; only the message's `{context}` carries " in ".
+            fields["context"] = fields["context"].removeprefix(" in ")
+        return Diagnostic.from_code(
+            code,
+            message=str(error),
+            fix=code.fix_template,
+            query=fields.get("query_name"),
+            fields=fields,
+            detail=detail,
+            **located,
+        )
+    if not isinstance(code, WarningCode):
+        raise TypeError(
+            f"engine reported a code that is neither error nor warning: {wire['code']}"
+        )
+    # A warning's `fields` are the params its message does not print, except a restated-key
+    # warning, whose `value`, `source` and `why` the CLI prints from them.
+    printed = {
+        name for _, name, _, _ in Formatter().parse(code.message_template) if name
+    }
+    restated = code in _RESTATED_CODES
+    return Diagnostic.from_code(
+        code,
+        message=code.message_template.format(**params),
+        fix=code.fix_template.format(**params),
+        query=params.get("query_name"),
+        fields={
+            k: v
+            for k, v in params.items()
+            if (k not in printed or (restated and k != "path"))
+        },
+        **located,
+    )
+
+
+def refusal_diagnostics(
+    refusal: _engine.CompileError, relpath: str | None = None
+) -> list[Diagnostic]:
+    """The engine's coded refusals as diagnostics (never empty: an uncoded one is a bug),
+    located in the board *relpath* when given."""
+    if not refusal.diagnostics:
+        raise ValueError(f"engine refused without a coded diagnostic: {refusal}")
+    found = [wire_diagnostic(wire) for wire in refusal.diagnostics]
+    if relpath is None:
+        return found
+    return [diagnostic.model_copy(update={"file": relpath}) for diagnostic in found]
 
 
 class QueryFact(TypedDict):

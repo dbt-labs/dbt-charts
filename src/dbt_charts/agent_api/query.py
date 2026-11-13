@@ -7,11 +7,13 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from dbt_charts import _engine
 from dbt_charts.agent_api._paths import (
     resolution_error_diagnostic,
     resolve_board_path,
 )
 from dbt_charts.core.compile import compile_file
+from dbt_charts.core.compile.engine import refusal_diagnostics
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, SqlQuery
 from dbt_charts.core.compile.models.source import ResolvedSourceConfig
@@ -23,7 +25,6 @@ from dbt_charts.core.compile.sql_guard import (
 )
 from dbt_charts.core.compile.template.daterange import board_clock
 from dbt_charts.core.compile.template.variables import (
-    check_variable_overrides,
     variables_from_query_pairs as variables_from_query_pairs,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -37,14 +38,17 @@ from dbt_charts.core.diagnostics.codes_execute import (
 from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
 from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.execute.cache_backend import QueryResultCache
 from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.plan_names import plan_key
 from dbt_charts.core.execute.plan_sources import resolve_source_config
+from dbt_charts.core.execute.query_plan import QueryPlan
 from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME
 from dbt_charts.core.execute.sql_translate import engine_dialect
 from dbt_charts.core.inspect.query_validator import QueryDiagnostic, validate_query
-from dbt_charts.core.project import InMemoryBoard, Project
+from dbt_charts.core.project import BoardFile, InMemoryBoard, Project
 from dbt_charts.core.validate import normalize_data_for_json
 
 MAX_QUERY_LIMIT = 1000
@@ -119,6 +123,8 @@ class BoardFailure:
 @dataclass(frozen=True)
 class LoadedBoard:
     path: PurePosixPath
+    # What the engine compiles and plans from.
+    board_file: BoardFile
     board: Board
     query_registry: dict[str, AnyQuery]
     default_source: str | None
@@ -160,6 +166,7 @@ def load_board(path: Path, project: Project) -> LoadedBoard | BoardFailure:
     assert board is not None  # compile_result.success guarantees this
     return LoadedBoard(
         display,
+        board_file,
         board,
         compile_result.query_registry,
         compile_result.default_source,
@@ -259,13 +266,20 @@ def lookup_board_query_sql(
     need the rendered SQL text without executing it against a warehouse — the
     manifest is a file read, so this opens no connection.
     """
+    from dbt_charts.core.board import plan_for_board
     from dbt_charts.core.compile.errors import JinjaError
     from dbt_charts.core.compile.template.parameterized import (
         render_parameterized_with_queries,
     )
     from dbt_charts.core.dbt_ref_check import named_source_target_path
     from dbt_charts.core.execute.dbt_utils import DbtRefResolver
-    from dbt_charts.core.execute.plan import resolve_query_references
+    from dbt_charts.core.execute.plan import utc_now
+    from dbt_charts.core.execute.plan_reader import (
+        board_clock as planned_clock,
+        expanded_sql,
+        plan_variables,
+        reachable,
+    )
 
     loaded = _load_board_query(name, path, project)
     if isinstance(loaded, BoardFailure):
@@ -291,11 +305,7 @@ def lookup_board_query_sql(
     # preview then falls to the default dialect's spelling rather than refusing.
     from dbt_charts.core.compile.models.source import is_file_source
     from dbt_charts.core.dialects import get_dialect
-    from dbt_charts.core.execute.plan import (
-        CACHE_REF_JINJA_RE,
-        merge_board_variables,
-        utc_now,
-    )
+    from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE
     from dbt_charts.core.execute.sql_literals import (
         INLINE_PLACEHOLDERS,
         inline_params_for_dialect,
@@ -309,23 +319,54 @@ def lookup_board_query_sql(
     target_path = named_source_target_path(
         query.source, board.sources, project.sources.sources
     )
-    clock = board.clock(utc_now())
+    try:
+        plan = plan_for_board(
+            loaded.board_file,
+            project,
+            vars,
+            None,
+            utc_now(),
+            strict=True,
+            active_tab_only=False,
+            all_queries=True,
+        )
+    except _engine.CompileError as refusal:
+        diagnostics = refusal_diagnostics(refusal, str(loaded.path))
+        return BoardQueryLookupResult(
+            success=False,
+            errors=[d.message for d in diagnostics],
+            error_code=diagnostics[0].code,
+        )
+    except ExecutionError as exc:
+        return BoardQueryLookupResult(
+            success=False, errors=[str(exc)], error_code=error_code_of(exc)
+        )
+    try:
+        key = plan_key(plan, board, name)
+    except ExecutionError as exc:
+        return BoardQueryLookupResult(
+            success=False, errors=[str(exc)], error_code=error_code_of(exc)
+        )
+    if key is None:
+        available = sorted(loaded.all_queries)
+        return BoardQueryLookupResult(
+            success=False,
+            errors=[_query_not_found(loaded.path, name, available)],
+            error_code=ERR_BOARD_QUERY_NOT_FOUND.code,
+            available_queries=available,
+        )
+    registry = reachable(plan, key)
     try:
         source_type = source_sql_dialect(query.source, project, board.sources, name)
         warehouse = get_dialect(source_type) if source_type else None
-        with board_clock(clock):
-            merged_vars = merge_board_variables(board, vars or {}, clock)
+        with board_clock(planned_clock(plan)):
+            merged_vars = plan_variables(plan)
             # {{ queries.X }} is expanded to text first, recursively, exactly as the
             # render/serve path does (the plan stage) — don't move
             # this after the two resolve calls below; it's what lets a template
             # left inside X's own SQL (a plain variable, `filter()`, a literal) reach
             # the single variable render instead of never.
-            expanded_query = resolve_query_references(
-                query,
-                all_queries=loaded.all_queries,
-                query_name=name,
-            )
-            assert isinstance(expanded_query, SqlQuery)
+            expanded = expanded_sql(plan, key)
             if query.dialect is not None:
                 # Resolved the way execution resolves it, so the preview agrees with
                 # what runs for file and dbt_profile sources.
@@ -354,11 +395,11 @@ def lookup_board_query_sql(
                             "the SQL in duckdb",
                         )
                     translated_sql, translated_params = render_in_dialect(
-                        expanded_query.sql,
+                        expanded,
                         query.dialect,
                         engine,
                         merged_vars,
-                        loaded.all_queries,
+                        registry,
                         not query.lenient_variables,
                         dbt_refs,
                         target_path,
@@ -375,14 +416,14 @@ def lookup_board_query_sql(
                         source=query.source,
                         dialect=engine,
                     )
-            resolved_sql, _relations = dbt_refs.resolve(expanded_query.sql, target_path)
+            resolved_sql, _relations = dbt_refs.resolve(expanded, target_path)
             # A source whose warehouse is only knowable at execute previews in the
             # default dialect's spelling rather than refusing.
             spelling = warehouse if warehouse is not None else get_dialect("postgres")
             rendered = render_parameterized_with_queries(
                 resolved_sql,
                 merged_vars,
-                queries=loaded.all_queries,
+                queries=registry,
                 dialect=INLINE_PLACEHOLDERS,
                 strict=not query.lenient_variables,
                 warehouse=spelling,
@@ -716,23 +757,32 @@ def _fail(
 
 def _run_over_memory_cache(
     board: Board,
+    plan: QueryPlan,
     env: ExecEnv,
-    queries: dict[str, AnyQuery],
     name: str,
-    variables: dict[str, Any],
+    limit: int,
+    cache: QueryResultCache | None,
 ) -> QueryResult:
-    """Run *name* with its ``{{ queries.X.cache }}`` upstreams in a throwaway cache."""
+    """Run *name* with its ``{{ queries.X.cache }}`` upstreams over *cache*.
+
+    ``None`` means a throwaway in-memory cache, closed on return; a caller's
+    cache is left open for it to close.
+    """
     from dbt_charts.agent_api.cache import open_cache
     from dbt_charts.core.execute.plan import make_context
+    from dbt_charts.core.execute.plan_reader import plan_variables
     from dbt_charts.core.execute.query_results import execute
 
-    cache = open_cache(None)
+    result_cache = open_cache(None) if cache is None else cache
     try:
-        ctx = make_context(board, env, query_registry=queries, result_cache=cache)
+        # The sample limit bounds *name* alone: a shared cache holds each upstream whole.
+        ctx = make_context(board, plan, env, result_cache=result_cache)
+        variables = plan_variables(plan)
         held = execute(ctx, [name], variables).execute_query_result(name, variables)
     finally:
-        cache.close()
-    return QueryResult(data=held.rows, schema=held.schema)
+        if cache is None:
+            result_cache.close()
+    return QueryResult(data=held.rows[:limit], schema=held.schema)
 
 
 def query_board(
@@ -743,19 +793,24 @@ def query_board(
     limit: int = 20,
     *,
     env: ExecEnv,
+    cache: QueryResultCache | None = None,
 ) -> QueryBoardResult:
     """Run one named query from a compiled board and return its sample rows.
 
-    No result cache is attached, so the persistent store is never read or
-    written. A query composing another's rows through ``{{ queries.X.cache }}``
-    runs X once against an in-memory cache, discarded on return.
+    The project's persistent store is never read or written. A query composing
+    another's rows through ``{{ queries.X.cache }}`` runs X once against *cache*
+    when the caller passes one (callers sharing it share X's rows), else against
+    an in-memory cache discarded on return.
     """
-    from dbt_charts.core.execute.plan import (
-        CACHE_REF_JINJA_RE,
-        merge_board_variables,
-        resolve_query_references,
-        utc_now,
+    from dbt_charts.core.board import plan_for_board
+    from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE, utc_now
+    from dbt_charts.core.execute.plan_reader import (
+        board_clock as planned_clock,
+        expanded_sql,
+        resolve_planned_source,
     )
+    from dbt_charts.core.execute.query_result import resolve_effective_row_limit
+    from dbt_charts.core.execute.run import run_planned
 
     limit = min(limit, MAX_QUERY_LIMIT)
 
@@ -768,54 +823,66 @@ def query_board(
             loaded.error_code,
             loaded.available,
         )
-    board, resolved_display = loaded.board, loaded.path
+    resolved_display = loaded.path
 
-    clock = board.clock(utc_now())
     try:
-        check_variable_overrides(board.variable_registry or {}, vars or {})
-        merged_vars = merge_board_variables(board, vars or {}, clock)
+        plan = plan_for_board(
+            loaded.board_file,
+            project,
+            vars,
+            None,
+            utc_now(),
+            strict=True,
+            active_tab_only=False,
+            all_queries=True,
+        )
+    except _engine.CompileError as refusal:
+        diagnostics = refusal_diagnostics(refusal, str(resolved_display))
+        return _fail(
+            name,
+            resolved_display,
+            [d.message for d in diagnostics],
+            diagnostics[0].code,
+        )
     except ExecutionError as exc:
         return _fail(name, resolved_display, [str(exc)], error_code_of(exc))
 
-    query = loaded.all_queries[name].model_copy(update={"limit": limit + 1})
-    sql = query.sql if isinstance(query, SqlQuery) else None
+    try:
+        key = plan_key(plan, loaded.board, name)
+    except ExecutionError as exc:
+        return _fail(name, resolved_display, [str(exc)], error_code_of(exc))
+    if key is None:
+        available = sorted(loaded.all_queries)
+        return _fail(
+            name,
+            resolved_display,
+            [_query_not_found(resolved_display, name, available)],
+            ERR_BOARD_QUERY_NOT_FOUND.code,
+            available,
+        )
+    entry = plan["queries"][key]
+    query = loaded.all_queries[name]
+    sql = expanded_sql(plan, key) if entry["type"] == "sql" else None
     noted = query.notes
     composes_cache = sql is not None and CACHE_REF_JINJA_RE.search(sql) is not None
 
-    # A SQL query against a file source runs through run_query's
+    # A SQL query against a file source runs through run_planned's
     # own materializer dispatch (or its refusal, when no materializer is
     # configured for this registry) and surfaces through exec_result.error
     # below — one dispatch point, not a second copy here.
-    limited = query
     try:
-        if isinstance(query, SqlQuery):
-            # `compose` inlines {{ queries.X }} in a
-            # single non-recursive Jinja pass — don't remove this call as
-            # redundant with it. Expand refs to text first, exactly as the
-            # render/serve path does (the plan stage), so
-            # composition below sees one flat template with nothing left to
-            # inline.
-            query = resolve_query_references(
-                query,
-                all_queries=loaded.all_queries,
-                query_name=name,
-            )
-        with board_clock(clock):
+        with board_clock(planned_clock(plan)):
             if composes_cache:
                 exec_result = _run_over_memory_cache(
-                    board,
-                    env,
-                    {**loaded.all_queries, name: limited},
-                    name,
-                    merged_vars,
+                    loaded.board, plan, env, key, limit + 1, cache
                 )
             else:
-                exec_result = run_query(
+                exec_result = run_planned(
                     env,
-                    query,
-                    variables=merged_vars,
-                    board=board,
-                    query_name=name,
+                    plan,
+                    key,
+                    source_config=resolve_planned_source(plan, key, env),
+                    row_limit=resolve_effective_row_limit(limit + 1),
                 )
     except Exception as e:  # noqa: BLE001
         return _fail(

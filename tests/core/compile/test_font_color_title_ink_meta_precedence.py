@@ -16,6 +16,7 @@ from dbt_charts.core.compile.config import reset_config
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 
+from ..._compile import remember
 from ..._run import Run
 
 _HEADING_FILL_RE = re.compile(r"\.md-[0-9a-f]{8}-heading\s*\{[^}]*fill:\s*([^;\s}]+)")
@@ -51,10 +52,11 @@ def _render_board_file(
     result = compile_file(board_file, apply_meta=True)
     assert result.success, result.errors
     assert result.board is not None
+    # compile_file bypasses the recorder; Run plans the board from its text.
+    remember(result.board, board_file.content, board_file.path.parent)
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
     output = render(result.board, executor.ctx, executor.ledger, format="svg").output
     assert isinstance(output, str)

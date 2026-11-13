@@ -4,6 +4,7 @@ These tests verify the executor works correctly with the new architecture.
 """
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,9 +14,10 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.execute import ExecutionError, QueryError
 from dbt_charts.core.execute.env import build_exec_env
-from dbt_charts.core.execute.plan import make_context
+from dbt_charts.core.execute.plan import get_query, make_context
 from dbt_charts.core.text.time_zones import UTC
 
+from ..._compile import plan_of
 from ..._run import Run
 from ..._scripted_env import ScriptedBackend, scripted_env
 
@@ -46,7 +48,7 @@ rows:
 """
         )
         with pytest.raises(TypeError, match="env"):
-            make_context(result.board, query_registry=result.query_registry)  # type: ignore[call-arg]
+            make_context(result.board)  # type: ignore[call-arg]
 
     def test_executor_query_lookup(self):
         """Test executor resolves queries via execute_query with a mock adapter."""
@@ -73,7 +75,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         data = executor.execute_query("my_query", use_cache=False)
@@ -106,7 +107,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         # Both forms should work in execute_query (which strips the prefix)
@@ -148,7 +148,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         data = executor.execute_query("users")
@@ -184,7 +183,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         chart = result.board.charts["revenue"]
@@ -222,7 +220,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         # Execute twice
@@ -261,7 +258,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         executor.execute_query("data", use_cache=False)
@@ -296,7 +292,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         with pytest.raises(ExecutionError):
@@ -327,7 +322,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         with pytest.raises(QueryError):
@@ -366,7 +360,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         executor.execute_query("users", variables={"status": "inactive"})
@@ -416,12 +409,16 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
         executor.execute_query("my_query")
 
-        query = result.board.queries["my_query"]
-        content_key = compute_cache_key(query, {}, result.board.sources, time_zone=UTC)
+        query = get_query(executor.ctx, "my_query")
+        content_key = compute_cache_key(
+            result.board.queries["my_query"],
+            {},
+            executor.ctx.plan["sources"]["project"],
+            time_zone=UTC,
+        )
         # The memo key is the content key plus the asking query's resolved
         # policy: freshness is per-reader, and the slot is warmed from the
         # shared persistent entry, so keying it on content alone would let one
@@ -466,21 +463,20 @@ rows:
             "source_b": [{"v": "from_b"}],
         }
         sources = {
-            name: DuckDBSourceConfig(type="duckdb", path=f"{name}.duckdb")
+            name: DuckDBSourceConfig(type="duckdb", path=":memory:", schema=name)
             for name in rows_by_source
         }
-        rows_by_path = {
-            config.path: rows_by_source[name] for name, config in sources.items()
+        rows_by_schema = {
+            config.schema_: rows_by_source[name] for name, config in sources.items()
         }
         mock_registry_backend = ScriptedBackend(
-            side_effect=lambda source, _query: rows_by_path[source.path]
+            side_effect=lambda source, _query: rows_by_schema[source.schema_]
         )
         mock_registry = scripted_env(mock_registry_backend, named_sources=sources)
 
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         assert executor.execute_query("q_a") == rows_by_source["source_a"]
@@ -523,7 +519,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         # First call with region=North, unused_var=A
@@ -571,21 +566,25 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         # First call
         executor.execute_query("sales", variables={"region": "North"})
 
-        # "Modify" the query SQL in-place (simulating a hot reload)
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
-
-        modified_query = SqlQuery(
-            sql="SELECT * FROM sales_v2 WHERE region = '{{ region }}'",
-            source="test_profile",
-            variable_dependencies={"region"},
+        # Hot reload: the same render now plans the edited text.
+        edited = compile(yaml_content.replace("FROM sales ", "FROM sales_v2 ")).board
+        assert edited is not None
+        executor.ctx = replace(
+            executor.ctx,
+            board=edited,
+            plan=plan_of(
+                edited,
+                executor.ctx.env,
+                executor.rendered_at,
+                {"region": "North"},
+                all_queries=True,
+            ),
         )
-        executor.board.queries["sales"] = modified_query
 
         # Second call - should NOT use cache because SQL changed
         executor.execute_query("sales", variables={"region": "North"})
@@ -633,7 +632,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         executor.execute_query("style")
@@ -672,7 +670,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         executor.execute_query("wrapper")
@@ -681,29 +678,23 @@ rows:
         assert "SELECT * FROM orders" in executed_query.sql
         assert "{{ queries." not in executed_query.sql
 
-    def test_circular_dependency_raises_error(self):
-        """Circular query dependencies should raise a clear error at execution."""
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
-
-        from .._board_utils import make_test_board
-
-        # Build board manually — compile() catches cycles before we get here
-        queries = {
-            "a": SqlQuery(sql="SELECT * FROM {{ queries.b }}", source="test"),
-            "b": SqlQuery(sql="SELECT * FROM {{ queries.a }}", source="test"),
-        }
-        board = make_test_board(
-            id="test",
-            title="Test Circular",
-            queries=queries,
-            charts={},
-            variable_defaults={},
+    def test_circular_dependency_is_refused_before_any_query_runs(self):
+        """A circular reference never reaches execute: the engine refuses the board."""
+        result = compile(
+            """
+title: Test Circular
+queries:
+  a:
+    sql: SELECT * FROM {{ queries.b }}
+    source: test
+  b:
+    sql: SELECT * FROM {{ queries.a }}
+    source: test
+"""
         )
 
-        executor = Run(board, env=scripted_env(ScriptedBackend()))
-
-        with pytest.raises(Exception, match="[Cc]ircular"):
-            executor.execute_query("a")
+        assert result.board is None
+        assert "Circular query dependency detected: a -> b -> a" in str(result.errors)
 
 
 class TestExecutionIdentityMemo:
@@ -747,7 +738,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
             use_cache=False,
         )
 
@@ -772,7 +762,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
             use_cache=False,
         )
 

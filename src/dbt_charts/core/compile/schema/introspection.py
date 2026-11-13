@@ -528,7 +528,7 @@ def _tuple_item_reprs(
     return None
 
 
-_PRIMITIVE_NAMES = frozenset({"str", "int", "float", "bool"})
+_PRIMITIVE_NAMES = frozenset({"str", "int", "float", "bool", "date", "datetime"})
 
 
 def _default_repr(field_info: FieldInfo) -> str | None:

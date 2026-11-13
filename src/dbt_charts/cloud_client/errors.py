@@ -137,6 +137,7 @@ class UnexpectedResponse(CloudError):
         *,
         skew: SkewDirection | None = None,
     ) -> None:
+        self.status_code = status_code
         if skew is SkewDirection.CLOUD_OLDER:
             what = (
                 "JSON that does not match this dct's Cloud contract — this"
@@ -171,6 +172,17 @@ class ApiFailed(CloudError):
 
     def as_api_error(self) -> ApiError:
         return self.api_error
+
+
+class CloudTooOld(CloudError):
+    """The deployment has no route for a call this dct makes: a 404 or 405 that
+    is not the API's own error body. A real missing org or project answers in
+    that body, so this is the deployment predating the endpoint."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.UNAVAILABLE
+
+    def __init__(self, host: str, path: str) -> None:
+        super().__init__(f"{host} has no {path}: it predates this call.")
 
 
 class PickTimedOut(CloudError):

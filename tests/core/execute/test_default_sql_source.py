@@ -4,6 +4,7 @@ default source, chosen once by what the SQL contains."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import duckdb
@@ -22,6 +23,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.execute.env import ExecEnv, close_env, make_exec_env
 from dbt_charts.core.execute.plan import resolve_source
+from dbt_charts.core.execute.plan_reader import with_adhoc_query
 from dbt_charts.core.execute.plan_sources import resolve_query_source
 from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.execute.source_resolver import DbtContext
@@ -125,12 +127,9 @@ def test_the_executor_chooses_the_source_on_the_expanded_sql(
     compiled = compile_board(
         yaml.dump(
             {
-                "source": "unknown",
-                "queries": {
-                    "base": "select * from {{ ref('orders') }}",
-                    "agg": "select * from ({{ queries.base }}) t",
-                },
-                "charts": {"c": {"query": "agg", "type": "table"}},
+                "source": "wh",
+                "queries": {"base": "select * from {{ ref('orders') }}"},
+                "charts": {"c": {"query": "base", "type": "table"}},
             }
         )
     )
@@ -138,10 +137,18 @@ def test_the_executor_chooses_the_source_on_the_expanded_sql(
     executor = Run(
         compiled.board,
         env=registry,
-        query_registry=compiled.query_registry,
     )
+    # The engine refuses a board naming an undeclared source, so the plan that
+    # defers to the project is built here: SQL with no Jinja of its own over the
+    # board's query that has some, naming a source the plan does not declare.
+    adhoc = with_adhoc_query(
+        executor.ctx.plan, "agg", "select * from ({{ queries.base }}) t", "wh"
+    )
+    adhoc["queries"]["agg"]["source"] = "unknown"
+    adhoc["sources"]["project"].clear()
+    ctx = replace(executor.ctx, plan=adhoc)
 
-    resolved = resolve_source(executor.ctx, compiled.query_registry["agg"], "agg")
+    resolved = resolve_source(ctx, "agg")
 
     assert isinstance(resolved, DbtTargetSourceConfig)
     assert resolved.type == "duckdb"

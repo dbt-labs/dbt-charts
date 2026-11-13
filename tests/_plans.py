@@ -1,6 +1,7 @@
 """A hand-built ``QueryPlan``, the wire shape ``_engine.plan`` returns, for tests that read one."""
 
 from dbt_charts.core.execute.query_plan import (
+    ChartQueries,
     JsonValue,
     PlannedCache,
     PlannedQuery,
@@ -39,6 +40,7 @@ def plan_of(
     variables: dict[str, JsonValue] | None = None,
     project: dict[str, dict[str, JsonValue]] | None = None,
     inline: dict[str, dict[str, JsonValue]] | None = None,
+    chart_queries: dict[str, ChartQueries] | None = None,
 ) -> QueryPlan:
     return {
         "version": 1,
@@ -48,7 +50,9 @@ def plan_of(
         "week_start": 1,
         "fiscal_year_start_month": 1,
         "prefetch": [],
+        "chart_queries": chart_queries or {},
+        "variable_queries": {},
         "queries": queries,
-        "variables": {"query": variables or {}, "render": {}},
+        "variables": {"query": variables or {}, "render": {}, "presets": {}},
         "sources": {"project": project or {}, "inline": inline or {}},
     }

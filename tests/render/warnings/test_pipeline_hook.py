@@ -44,7 +44,7 @@ def _make_executor(board, query_registry, rows=None):
     mock_registry = scripted_env(
         ScriptedBackend(rows if rows is not None else [{"category": "a", "value": 1}])
     )
-    return Run(board, env=mock_registry, query_registry=query_registry)
+    return Run(board, env=mock_registry)
 
 
 def test_render_result_has_render_warnings_field_empty_by_default() -> None:
@@ -149,7 +149,6 @@ def test_failed_query_chart_omitted_from_chart_results(
     failing_executor = Run(
         result.board,
         env=mock_registry,
-        query_registry=result.query_registry,
     )
 
     captured_ctx: list[WarningContext] = []

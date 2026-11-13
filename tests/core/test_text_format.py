@@ -68,7 +68,6 @@ def _make_compiled_executor(compile_result: CompileResult, data: list[dict]) -> 
     return Run(
         compile_result.board,
         env=mock_registry,
-        query_registry=compile_result.query_registry,
     )
 
 
@@ -720,7 +719,8 @@ rows:
         nothing about the cap, so no warning is raised for it."""
         data = [{"account": f"Acct{i}", "total": i} for i in range(1200)]
         chart = make_chart(
-            "table", style={"pagination": {"enabled": True, "page_rows": 5}}
+            "table",
+            style={"pagination": {"enabled": True, "mode": "pages", "page_rows": 5}},
         )
         board = _make_board([chart])
         executor = _make_executor(data)
@@ -739,7 +739,8 @@ rows:
     ):
         data = [{"account": f"Acct{i}", "revenue": i} for i in range(60)]
         chart = make_chart(
-            "table", style={"pagination": {"enabled": True, "page_rows": 5}}
+            "table",
+            style={"pagination": {"enabled": True, "mode": "pages", "page_rows": 5}},
         )
         board = _make_board([chart])
         executor = _make_executor(data)
@@ -1235,7 +1236,6 @@ rows:
         executor = Run(
             result.board,
             env=mock_registry,
-            query_registry=result.query_registry,
         )
 
         render_result = render_run(result.board, executor, format="text")
@@ -1617,6 +1617,7 @@ charts:
     style:
       pagination:
         enabled: true
+        mode: pages
         page_rows: 20
 rows:
   - t

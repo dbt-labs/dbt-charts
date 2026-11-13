@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use board_model::board::{items, Board as SourceBoard, BoardBody, LayoutItem};
 use board_model::facet::FontWeightValue;
+use board_model::primitives::LinkOpen;
 use board_model::rule::Auto;
 use board_model::style::axis::TextAlign;
 use model_core::Engine;
@@ -155,6 +156,14 @@ impl Board {
     pub fn charts(&self) -> &IndexMap<ItemId, Chart> {
         &self.charts
     }
+
+    /// The chart placed at `at` becomes the failure `failure`, as a chart the engine refuses to bind
+    /// is: the rest of the board still draws. A placement the board does not draw is the caller's bug.
+    pub fn fail(&mut self, at: &ItemId, failure: Failure) -> Result<(), Invalid> {
+        let chart = self.charts.get_mut(at).ok_or_else(|| Invalid::DrawnUnbound(at.clone()))?;
+        *chart = Chart { title: None, subtitle: None, frame: None, family: Err(failure) };
+        Ok(())
+    }
 }
 
 /// What a board draws, as facts over its board-model layout: the items whose `visible:`
@@ -226,6 +235,8 @@ impl DrawnSet {
 /// A chart as bound: the title text and frame facts its drawn body sits in.
 #[derive(Debug)]
 pub struct Chart {
+    /// The authored title as drawn; a failed chart's is filled from the variables alone
+    /// ([`crate::failed::title`]).
     pub title: Option<String>,
     pub subtitle: Option<String>,
     /// `Some` for a [`Family::Cartesian`], `None` otherwise: the error card draws
@@ -262,7 +273,7 @@ pub struct Sizing {
 pub enum Family {
     /// bar, line, area, scatter, histogram, heatmap.
     Cartesian(Cartesian),
-    Kpi(Kpi),
+    Kpi(Box<Kpi>),
     Table(Table),
     Pie(Pie),
     SparkBar(SparkBar),
@@ -286,8 +297,13 @@ pub struct Kpi {
     pub glyph: String,
     /// The glyph is the one a `good` sign draws, which takes the arrow face rather than the glyph's.
     pub arrow: bool,
-    /// The ink of the whole headline run (glyph, prefix, number, suffix) when a `good` sign has a tone.
+    /// The ink of the whole headline run (glyph, prefix, number, suffix): a matched rule's value color,
+    /// else the tone a `good` sign gives it.
     pub ink: Option<String>,
+    /// The weight a matched rule gives the value slot, and the color and weight it gives the label.
+    pub value_weight: Option<FontWeightValue>,
+    pub label_color: Option<String>,
+    pub label_weight: Option<FontWeightValue>,
     /// The sign and currency symbol ahead of the number, set in the affix face; empty for none.
     pub prefix: String,
     /// The number, its sign included when there is no prefix for it to move to.
@@ -297,7 +313,16 @@ pub struct Kpi {
     pub suffix: String,
     /// The label text; an empty label is `None`.
     pub label: Option<String>,
+    /// The label as authored and filled, before the slot's case transform: what the card's wrapper names the chart.
+    pub title: Option<String>,
     pub support: Option<KpiSupport>,
+    /// The card's own `style.background` color, when it differs from the board's: painted over the
+    /// card and the padding around it.
+    pub fill: Option<String>,
+    /// Where a click on the card goes.
+    pub link: Option<Href>,
+    /// How the card's `link` opens; the implied text link always opens as a page.
+    pub link_open: LinkOpen,
 }
 
 /// A KPI's support row: a glyph, the support value as one string, and an explainer, each with the

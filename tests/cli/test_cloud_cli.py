@@ -49,6 +49,7 @@ from dbt_charts.cloud_client.contract import (
     ActionResult,
     ApiError,
     BoardList,
+    CommentThread,
     ConnectionList,
     ConnectionTestResult,
     DeviceLoginStarted,
@@ -73,6 +74,9 @@ from dbt_charts.cloud_client.contract import (
 # Rich sizes tables from the host terminal; tests that parse table text must
 # not depend on who runs them.
 runner = CliRunner(env={"COLUMNS": "80"})
+
+# The `api` fixture stubs this out so no test reads the real checkout.
+origin_github_repo = cloud_cmd._origin_github_repo
 
 Route = tuple[str, str]
 
@@ -233,6 +237,9 @@ def api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeApi:
 
     monkeypatch.setattr(cloud_cmd, "client_from_config", factory)
     monkeypatch.setattr(cloud_cmd, "git_remotes", _remotes())
+    # Neither the real checkout's origin nor the real `gh` login may reach a test.
+    monkeypatch.setattr(cloud_cmd, "_origin_github_repo", lambda: None)
+    monkeypatch.setattr(cloud_cmd, "gh_token", lambda: None)
     # login/logout's OAuth calls aren't under /api and don't hold a token yet
     # -- they get the same fake transport through their own seam, and never
     # sleep between polls.
@@ -321,7 +328,7 @@ TOKEN_RESPONSE: dict[str, object] = {
     "refresh_token": "new-refresh-xyz",
     "token_type": "Bearer",
     "expires_in": 3600,
-    "scope": "dashboards:read orgs:admin projects:admin connections:admin",
+    "scope": "dashboards:read orgs:admin projects:admin connections:admin comments:read comments:write",
 }
 
 
@@ -5774,6 +5781,18 @@ class TestAccessRead:
             "public": "true",
         }
 
+    @pytest.mark.parametrize("verb", ["list", "add"])
+    def test_an_empty_review_is_a_usage_error(self, api: FakeApi, verb: str) -> None:
+        extra = ["--chart", "rev", "--body", "Hi"] if verb == "add" else []
+
+        result = runner.invoke(
+            app, ["cloud", "comments", verb, *_SCOPE, *extra, "--review", ""]
+        )
+
+        assert result.exit_code == 2, out(result)
+        assert "--review" in out(result)
+        assert not api.requests
+
     def test_list_json_is_the_contract_model(self, api: FakeApi) -> None:
         api.add(
             "GET",
@@ -6564,3 +6583,526 @@ class TestProjectSettings:
 
         assert result.exit_code == 0, out(result)
         assert api.body("POST", SETTINGS_PATH) == {"extra_skill_paths": []}
+
+
+class TestProjectConnectGithubNamesTheRepo:
+    """`connect github` names the checkout's repo itself, so a gh login (or a
+    signed intent) replaces the browser's repo list."""
+
+    PICK = TestProjectConnectStartWait.PICK
+    PICK_PATH = "/api/orgs/acme-data/github/pick"
+    START_PATH = "/api/orgs/acme-data/github/connect"
+    FROM_PICK = "/api/orgs/acme-data/projects/from-pick"
+    PLAIN_URL = "https://cloud.example/acme-data/github/connect/?landing=terminal"
+    INTENT_URL = f"{PLAIN_URL}&intent=signed"
+
+    @pytest.fixture
+    def gh_runs(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        """A signed-in gh whose invocations are recorded."""
+        runs: list[str] = []
+
+        def token() -> str:
+            runs.append("gh auth token")
+            return "gho_secret"
+
+        monkeypatch.setattr(cloud_cmd, "gh_token", token)
+        monkeypatch.setattr(cloud_cmd, "_origin_github_repo", lambda: "acme/analytics")
+        return runs
+
+    def _proven(self, api: FakeApi) -> None:
+        api.add("POST", self.PICK_PATH, self.PICK, status=201)
+        api.add("GET", self.PICK_PATH, self.PICK)
+        api.add("POST", self.FROM_PICK, _project(), status=201)
+
+    def _refused(self, api: FakeApi) -> None:
+        api.add(
+            "POST",
+            self.PICK_PATH,
+            {"code": "validation_failed", "message": "Not an admin of it."},
+            status=422,
+        )
+        api.add(
+            "POST",
+            self.START_PATH,
+            {"org": "acme-data", "url": self.INTENT_URL, "picked": None},
+        )
+
+    def test_gh_proves_the_checkouts_repo_with_no_url_printed(
+        self, api: FakeApi, gh_runs: list[str]
+    ) -> None:
+        self._proven(api)
+
+        result = runner.invoke(app, _connect("github"))
+
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", self.PICK_PATH) == {
+            "full_name": "acme/analytics",
+            "github_token": "gho_secret",
+        }
+        assert "Using your gh login to verify acme/analytics" in result.stderr
+        assert "/github/connect/" not in out(result)
+        assert api.body("POST", self.FROM_PICK)["slug"] == "analytics"
+
+    def test_a_refused_proof_prints_the_reason_and_the_intent_url_then_finishes(
+        self, api: FakeApi, gh_runs: list[str]
+    ) -> None:
+        self._refused(api)
+        api.add("GET", self.PICK_PATH, self.PICK)
+        api.add("POST", self.FROM_PICK, _project(), status=201)
+
+        result = runner.invoke(app, _connect("github"))
+
+        assert result.exit_code == 0, out(result)
+        assert "Not an admin of it." in result.stderr
+        assert self.INTENT_URL in result.stderr
+        assert api.body("POST", self.START_PATH) == {"full_name": "acme/analytics"}
+
+    def test_without_gh_the_intent_url_carries_the_repo(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cloud_cmd, "_origin_github_repo", lambda: "acme/analytics")
+        api.add(
+            "POST",
+            self.START_PATH,
+            {"org": "acme-data", "url": self.INTENT_URL, "picked": None},
+        )
+        api.add("GET", self.PICK_PATH, self.PICK)
+        api.add("POST", self.FROM_PICK, _project(), status=201)
+
+        result = runner.invoke(app, _connect("github"))
+
+        assert result.exit_code == 0, out(result)
+        assert self.INTENT_URL in result.stderr
+
+    def test_no_origin_and_no_repo_is_the_plain_url(self, api: FakeApi) -> None:
+        api.add("GET", self.PICK_PATH, self.PICK)
+        api.add("POST", self.FROM_PICK, _project(), status=201)
+
+        result = runner.invoke(app, _connect("github"))
+
+        assert result.exit_code == 0, out(result)
+        assert self.PLAIN_URL in result.stderr
+        assert "--repo OWNER/NAME" in result.stderr
+        assert [path for _m, path, _b in api.calls] == [self.PICK_PATH, self.FROM_PICK]
+
+    @pytest.mark.parametrize(
+        ("origin", "expected"),
+        [
+            ("git@github.com:Acme/analytics.git", "acme/analytics"),
+            ("https://tok@github.com/acme/analytics.git", "acme/analytics"),
+            ("https://gitlab.com/acme/analytics.git", None),
+            (None, None),
+        ],
+    )
+    def test_the_repo_comes_from_a_github_origin_only(
+        self, monkeypatch: pytest.MonkeyPatch, origin: str | None, expected: str | None
+    ) -> None:
+        monkeypatch.setattr(cloud_cmd, "git_checkout_facts", _git_facts(origin=origin))
+
+        assert origin_github_repo() == expected
+
+    def test_repo_overrides_the_origin(self, api: FakeApi, gh_runs: list[str]) -> None:
+        api.add(
+            "POST", self.PICK_PATH, {**self.PICK, "full_name": "acme/other"}, status=201
+        )
+        api.add("GET", self.PICK_PATH, {**self.PICK, "full_name": "acme/other"})
+        api.add("POST", self.FROM_PICK, _project(), status=201)
+
+        result = runner.invoke(app, _connect("github", "--repo", "acme/other"))
+
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", self.PICK_PATH)["full_name"] == "acme/other"
+
+    def test_no_gh_never_runs_gh(self, api: FakeApi, gh_runs: list[str]) -> None:
+        self._refused(api)
+        api.add("GET", self.PICK_PATH, self.PICK)
+        api.add("POST", self.FROM_PICK, _project(), status=201)
+
+        result = runner.invoke(app, _connect("github", "--no-gh"))
+
+        assert result.exit_code == 0, out(result)
+        assert gh_runs == []
+        assert [path for _m, path, _b in api.calls][0] == self.START_PATH
+
+    def test_dct_no_gh_env_opts_out_once(
+        self, api: FakeApi, gh_runs: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DCT_NO_GH", "1")
+        self._refused(api)
+        api.add("GET", self.PICK_PATH, self.PICK)
+        api.add("POST", self.FROM_PICK, _project(), status=201)
+
+        result = runner.invoke(app, _connect("github"))
+
+        assert result.exit_code == 0, out(result)
+        assert gh_runs == []
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            ["--repo", "acme/analytics", "--git-url", GIT_URL, "--token", "t"],
+            ["--repo", "acme/analytics", "--wait"],
+            ["--no-gh", "--wait"],
+            ["--no-gh", "--git-url", GIT_URL, "--token", "t"],
+        ],
+    )
+    def test_repo_and_no_gh_refuse_git_url_and_wait(
+        self, api: FakeApi, extra: list[str]
+    ) -> None:
+        result = runner.invoke(app, _connect("github", *extra))
+
+        assert result.exit_code != 0
+        assert "does not apply to --git-url or --wait" in out(result)
+        assert api.calls == []
+
+    def test_start_with_a_proof_saves_pending_and_prints_nothing_on_stdout(
+        self, api: FakeApi, gh_runs: list[str]
+    ) -> None:
+        self._proven(api)
+
+        result = runner.invoke(app, _connect("github", "--start"))
+
+        assert result.exit_code == 0, out(result)
+        assert result.stdout == ""
+        assert "Verified acme/analytics with your gh login" in result.stderr
+        assert "--wait" in result.stderr
+        assert read_pending_connect() is not None
+
+    def test_start_json_pins_url_as_a_string_with_picked_set_or_null(
+        self, api: FakeApi, gh_runs: list[str]
+    ) -> None:
+        self._proven(api)
+        proven = runner.invoke(app, _connect("github", "--start", "--json"))
+        assert proven.exit_code == 0, out(proven)
+        assert json.loads(proven.stdout) == {
+            "org": "acme-data",
+            "url": self.PLAIN_URL,
+            "picked": "acme/analytics",
+        }
+
+        api.routes.clear()
+        self._refused(api)
+        refused = runner.invoke(app, _connect("github", "--start", "--json"))
+        assert refused.exit_code == 0, out(refused)
+        assert json.loads(refused.stdout) == {
+            "org": "acme-data",
+            "url": self.INTENT_URL,
+            "picked": None,
+        }
+
+    def test_start_without_a_proof_prints_the_url_on_stdout(
+        self, api: FakeApi, gh_runs: list[str]
+    ) -> None:
+        self._refused(api)
+
+        result = runner.invoke(app, _connect("github", "--start"))
+
+        assert result.exit_code == 0, out(result)
+        assert result.stdout.strip() == self.INTENT_URL
+        assert read_pending_connect() is not None
+
+    def test_wait_finishes_a_proven_start_at_once(
+        self, api: FakeApi, gh_runs: list[str]
+    ) -> None:
+        self._proven(api)
+        assert runner.invoke(app, _connect("github", "--start")).exit_code == 0
+
+        result = runner.invoke(app, ["cloud", "project", "connect", "github", "--wait"])
+
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", self.FROM_PICK)["slug"] == "analytics"
+        assert read_pending_connect() is None
+
+    def test_an_old_deployment_says_so_and_uses_the_plain_url(
+        self, api: FakeApi, gh_runs: list[str]
+    ) -> None:
+        api.routes[("POST", self.PICK_PATH)] = [httpx.Response(404, text="nope")]
+        api.routes[("POST", self.START_PATH)] = [httpx.Response(404, text="nope")]
+        api.add("GET", self.PICK_PATH, self.PICK)
+        api.add("POST", self.FROM_PICK, _project(), status=201)
+
+        result = runner.invoke(app, _connect("github"))
+
+        assert result.exit_code == 0, out(result)
+        assert "predates" in result.stderr
+        assert self.PLAIN_URL in result.stderr
+
+
+_COMMENTS = "/api/orgs/acme-data/projects/analytics/boards/finance/revenue/comments"
+_SCOPE = ["--org", "acme-data", "--project", "analytics", "--board", "finance/revenue"]
+
+
+def _thread(
+    id: str = "c-1", resolved: bool = False, replies: int = 0
+) -> dict[str, object]:
+    return {
+        "id": id,
+        "author": "sam@example.com",
+        "author_kind": "member",
+        "body": "Is this right?",
+        "created_at": "2026-11-08T10:00:00Z",
+        "edited_at": None,
+        "board": "finance/revenue",
+        "anchor": {
+            "owner": "rev",
+            "owner_label": "Revenue by month",
+            "quote": "by month",
+        },
+        "detached": False,
+        "variables": {},
+        "branch": "main",
+        "review": None,
+        "resolved_at": "2026-11-08T11:00:00Z" if resolved else None,
+        "resolved_by": "sam@example.com" if resolved else None,
+        "replies": [
+            {
+                "id": f"r-{n}",
+                "author": "kim@example.com",
+                "author_kind": "member",
+                "body": f"Reply {n}",
+                "created_at": "2026-11-08T10:30:00Z",
+                "edited_at": None,
+            }
+            for n in range(replies)
+        ],
+    }
+
+
+class TestComments:
+    def test_list_prints_threads_with_their_replies(self, api: FakeApi) -> None:
+        api.add("GET", _COMMENTS, {"threads": [_thread(replies=1)]})
+
+        result = runner.invoke(app, ["cloud", "comments", "list", *_SCOPE])
+
+        assert result.exit_code == 0, out(result)
+        assert "c-1" in out(result)
+        assert "by month" in out(result)
+        assert "Is this right?" in out(result)
+        assert "Reply 0" in out(result)
+        request = api.requests[-1]
+        assert dict(request.url.params) == {"status": "open"}
+
+    def test_list_names_a_wizard_reply_as_wizard(self, api: FakeApi) -> None:
+        thread = _thread(replies=1)
+        replies = thread["replies"]
+        assert isinstance(replies, list)
+        replies[0] |= {"author": None, "author_kind": "wizard", "body": "It fell."}
+        api.add("GET", _COMMENTS, {"threads": [thread]})
+
+        result = runner.invoke(app, ["cloud", "comments", "list", *_SCOPE])
+
+        assert result.exit_code == 0, out(result)
+        assert "Wizard: It fell." in out(result)
+        assert "deleted account" not in out(result)
+
+    def test_list_filters_by_chart_and_status(self, api: FakeApi) -> None:
+        api.add("GET", _COMMENTS, {"threads": []})
+
+        result = runner.invoke(
+            app,
+            ["cloud", "comments", "list", *_SCOPE, "--chart", "rev", "--status", "all"],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert dict(api.requests[-1].url.params) == {"status": "all", "owner": "rev"}
+        assert "No comments" in out(result)
+
+    def test_list_and_add_take_a_review(self, api: FakeApi) -> None:
+        api.add("GET", _COMMENTS, {"threads": []})
+        api.add("POST", _COMMENTS, _thread(), status=201)
+
+        listed = runner.invoke(
+            app, ["cloud", "comments", "list", *_SCOPE, "--review", "r-9"]
+        )
+        added = runner.invoke(
+            app,
+            [
+                "cloud", "comments", "add", *_SCOPE,
+                "--chart", "rev", "--body", "Hi", "--review", "r-9",
+            ],
+        )  # fmt: skip
+
+        assert listed.exit_code == 0, out(listed)
+        assert added.exit_code == 0, out(added)
+        assert dict(api.requests[0].url.params) == {"status": "open", "review": "r-9"}
+        assert api.body("POST", _COMMENTS) == {
+            "owner": "rev",
+            "body": "Hi",
+            "review": "r-9",
+        }
+
+    def test_list_json_is_the_contract_model(self, api: FakeApi) -> None:
+        api.add("GET", _COMMENTS, {"threads": [_thread(resolved=True)]})
+
+        result = runner.invoke(app, ["cloud", "comments", "list", *_SCOPE, "--json"])
+
+        assert result.exit_code == 0, out(result)
+        thread = json.loads(result.stdout)["threads"][0]
+        assert set(thread) == set(CommentThread.model_fields)
+        assert thread["resolved_by"] == "sam@example.com"
+
+    def test_add_posts_a_chart_thread_with_the_quote(self, api: FakeApi) -> None:
+        api.add("POST", _COMMENTS, _thread(), status=201)
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud", "comments", "add", *_SCOPE,
+                "--chart", "rev", "--quote", "by month", "--body", "Is this right?",
+            ],
+        )  # fmt: skip
+
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", _COMMENTS) == {
+            "owner": "rev",
+            "quote": "by month",
+            "body": "Is this right?",
+        }
+        assert "c-1" in out(result)
+
+    def test_mentions_ride_along_on_add_reply_and_edit(self, api: FakeApi) -> None:
+        api.add("POST", _COMMENTS, _thread(), status=201)
+        api.add("POST", _COMMENTS + "/c-1/replies", _thread(), status=201)
+        api.add("PATCH", _COMMENTS + "/c-1", _thread())
+        who = ["--mention", "user:vera@example.com", "--mention", "team:finance"]
+
+        added = runner.invoke(
+            app,
+            [
+                "cloud",
+                "comments",
+                "add",
+                *_SCOPE,
+                "--chart",
+                "rev",
+                "--body",
+                "Hi",
+                *who,
+            ],
+        )
+        replied = runner.invoke(
+            app, ["cloud", "comments", "reply", "c-1", *_SCOPE, "--body", "Yo", *who]
+        )
+        edited = runner.invoke(
+            app, ["cloud", "comments", "edit", "c-1", *_SCOPE, "--body", "Ok", *who]
+        )
+
+        assert added.exit_code == replied.exit_code == edited.exit_code == 0
+        mentions = ["user:vera@example.com", "team:finance"]
+        assert api.body("POST", _COMMENTS)["mentions"] == mentions
+        assert api.body("POST", _COMMENTS + "/c-1/replies")["mentions"] == mentions
+        assert api.body("PATCH", _COMMENTS + "/c-1")["mentions"] == mentions
+
+    def test_add_chart_without_a_quote_sends_none_so_the_title_anchors(
+        self, api: FakeApi
+    ) -> None:
+        api.add("POST", _COMMENTS, _thread(), status=201)
+
+        result = runner.invoke(
+            app,
+            ["cloud", "comments", "add", *_SCOPE, "--chart", "rev", "--body", "Hi"],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", _COMMENTS) == {"owner": "rev", "body": "Hi"}
+
+    def test_add_a_block_thread_uses_its_path_as_the_owner(self, api: FakeApi) -> None:
+        api.add("POST", _COMMENTS, _thread(), status=201)
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud", "comments", "add", *_SCOPE,
+                "--block", "text", "--quote", "Body", "--body", "Hi",
+            ],
+        )  # fmt: skip
+
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", _COMMENTS)["owner"] == "text"
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--body", "Hi"],
+            ["--chart", "rev", "--block", "text", "--quote", "x", "--body", "Hi"],
+            ["--block", "text", "--body", "Hi"],
+        ],
+        ids=["no-owner", "both-owners", "block-without-quote"],
+    )
+    def test_add_with_an_unusable_owner_is_a_usage_error(
+        self, api: FakeApi, args: list[str]
+    ) -> None:
+        result = runner.invoke(app, ["cloud", "comments", "add", *_SCOPE, *args])
+
+        assert result.exit_code == 2, out(result)
+        assert api.calls == []
+
+    def test_a_rejected_quote_prints_the_servers_message_and_exits_1(
+        self, api: FakeApi
+    ) -> None:
+        api.add(
+            "POST",
+            _COMMENTS,
+            {
+                "code": "comment_rejected",
+                "message": "The comment was rejected.",
+                "field_errors": {"quote": ["quote not found in Revenue by month"]},
+            },
+            status=422,
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud", "comments", "add", *_SCOPE,
+                "--chart", "rev", "--quote", "Jan", "--body", "Hi",
+            ],
+        )  # fmt: skip
+
+        assert result.exit_code == 1
+        assert "quote not found in Revenue by month" in out(result)
+
+    @pytest.mark.parametrize(
+        ("verb", "method", "suffix", "extra", "payload"),
+        [
+            ("reply", "POST", "/c-1/replies", ["--body", "Yes"], {"body": "Yes"}),
+            ("edit", "PATCH", "/c-1", ["--body", "Yes!"], {"body": "Yes!"}),
+            ("resolve", "POST", "/c-1/resolve", [], {}),
+            ("reopen", "POST", "/c-1/reopen", [], {}),
+        ],
+    )
+    def test_thread_verbs_make_one_call_and_print_json_when_asked(
+        self,
+        api: FakeApi,
+        verb: str,
+        method: str,
+        suffix: str,
+        extra: list[str],
+        payload: dict[str, object],
+    ) -> None:
+        api.add(method, _COMMENTS + suffix, _thread())
+
+        result = runner.invoke(
+            app, ["cloud", "comments", verb, "c-1", *_SCOPE, *extra, "--json"]
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert api.calls == [(method, _COMMENTS + suffix, payload)]
+        assert json.loads(result.stdout)["id"] == "c-1"
+
+    def test_a_refusal_to_resolve_exits_1_with_the_rule(self, api: FakeApi) -> None:
+        api.add(
+            "POST",
+            _COMMENTS + "/c-1/resolve",
+            {
+                "code": "comment_rejected",
+                "message": "Only the author or an editor can resolve this thread.",
+                "field_errors": {},
+            },
+            status=422,
+        )
+
+        result = runner.invoke(app, ["cloud", "comments", "resolve", "c-1", *_SCOPE])
+
+        assert result.exit_code == 1
+        assert "Only the author or an editor" in out(result)

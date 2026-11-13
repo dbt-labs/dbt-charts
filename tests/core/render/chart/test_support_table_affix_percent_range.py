@@ -50,7 +50,6 @@ def test_affixed_percent_support_table_entry_rejects_0_100_shaped_value() -> Non
     executor = Run(
         compiled.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=compiled.query_registry,
     )
     result = render(
         compiled.board, executor.ctx, executor.ledger, format="svg", controls=False

@@ -21,7 +21,7 @@ use crate::common::slug_to_display;
 use diagnostic::Diagnostic;
 use crate::families::support_table_strip::{
     build_cells, divider_line, entry_lines, label_font_resolved, link_cells, row_height,
-    validate_against_data, CellAria, ComposedCell, EntryLines, SupportTableConfig, SupportTableStyle,
+    validate_against_data, CellAria, CellValue, ComposedCell, EntryLines, SupportTableConfig, SupportTableStyle,
 };
 use scene::{Attrs, Node, Role};
 use measure::FontBook;
@@ -74,6 +74,9 @@ pub struct Column {
     pub cell_series: Vec<(String, Option<String>, usize)>,
     /// How many times each cell paints: once per measure on a wide chart.
     pub copies: usize,
+    /// A funnel's ribbon rows: the change from one stage to the next, `x` the
+    /// midpoint between the two stages' band centers. Empty elsewhere.
+    pub ribbon_cells: Vec<ComposedCell>,
 }
 
 #[derive(Debug)]
@@ -88,6 +91,8 @@ pub struct ColumnBlock {
     pub numeral_family: String,
     pub cell_ink: String,
     pub label_ink: String,
+    /// The ink a ribbon row paints in: the style's secondary text color.
+    pub ribbon_ink: String,
 }
 
 /// `_column_block_plot_gutter`: the column's own trailing padding plus the
@@ -123,6 +128,8 @@ pub fn warn_block_share(chart_id: &str, block_width: f64, plot_width: f64, share
 /// uniform cell ink. Every cell ends at its column's right edge. `sub_offsets` is set for a
 /// grouped bar: its `per_series` entry paints ONE column, a cell per series
 /// on that series' sub-band, `sub_offsets[i]` past the category's band center.
+/// `ribbon_rows` adds a funnel's rows between consecutive stages to every plain
+/// column: the change from the stage above.
 #[allow(clippy::too_many_arguments)]
 pub fn build_block(
     config: &SupportTableConfig,
@@ -140,6 +147,7 @@ pub fn build_block(
     series_ink: Option<&[String]>,
     sub_offsets: Option<&[f64]>,
     links: Option<&HashMap<(String, String), String>>,
+    ribbon_rows: bool,
 ) -> Result<ColumnBlock, Diagnostic> {
     if domain.len() != centers.len() {
         return Err("support_table: domain/centers length mismatch".into());
@@ -161,7 +169,7 @@ pub fn build_block(
 
     let mut columns: Vec<Column> = Vec::new();
     for entry in &config.entries {
-        let resolved = entry_lines(entry, rows, cat_field, domain, color_field, series_order)?;
+        let resolved = entry_lines(entry, rows, cat_field, domain, color_field, series_order, ribbon_rows)?;
         if entry.per_series.is_some() && series_ink.is_some_and(|ink| ink.len() != series_order.len()) {
             return Err("support_table: internal error — series_ink/series_order length mismatch".into());
         }
@@ -186,7 +194,7 @@ pub fn build_block(
             vec![label_of(&entry.label, &entry.source)?]
         };
         let headers: Vec<String> = headers.iter().map(|header| resolved.labeled(header)).collect();
-        let EntryLines { spec, lines, numerals, nums } = resolved;
+        let EntryLines { spec, lines, numerals, nums, ribbons } = resolved;
 
         // The widest digits any of the entry's columns could paint.
         let mut digits_w = 0.0_f64;
@@ -236,12 +244,19 @@ pub fn build_block(
                 cells,
                 cell_series,
                 copies: 1,
+                ribbon_cells: Vec::new(),
             });
             continue;
         }
         for (i, header) in headers.into_iter().enumerate() {
+            // The ribbon values trail the stages so the first stage stays the row's anchor.
+            let ribbon_centers: Vec<f64> = if ribbons.is_empty() { Vec::new() } else { centers.windows(2).map(|pair| (pair[0] + pair[1]) / 2.0).collect() };
+            let values: Vec<Option<CellValue>> = lines[i].iter().chain(&ribbons).cloned().collect();
+            let positions: Vec<f64> = centers.iter().chain(&ribbon_centers).copied().collect();
             let (mut cells, _bare_w) =
-                build_cells(&lines[i], centers, &numerals, spec, fonts, numeral_family, font_size)?;
+                build_cells(&values, &positions, &numerals, spec, fonts, numeral_family, font_size)?;
+            let ribbon_cells: Vec<ComposedCell> =
+                cells.split_off(centers.len()).into_iter().zip(&ribbons).filter(|(_, change)| change.is_some()).map(|(cell, _)| cell).collect();
             link_cells(&mut cells, entry, domain, links);
             let header_shaped = fonts.measure_shaped(&header, label_family, label_size)?;
             columns.push(Column {
@@ -254,6 +269,7 @@ pub fn build_block(
                 cells,
                 cell_series: Vec::new(),
                 copies: if entry.per_series.is_some() { 1 } else { config.cell_copies() },
+                ribbon_cells,
             });
         }
     }
@@ -265,6 +281,7 @@ pub fn build_block(
         numeral_family: numeral_family.to_string(),
         cell_ink,
         label_ink,
+        ribbon_ink: style.ribbon_color.clone(),
     })
 }
 
@@ -284,7 +301,7 @@ impl ColumnBlock {
     /// Move every cell to its band center at a plot `y_scale` times the height
     /// the block was built against.
     pub fn rescale(&mut self, y_scale: f64) {
-        for cell in self.columns.iter_mut().flat_map(|c| c.cells.iter_mut()) {
+        for cell in self.columns.iter_mut().flat_map(|c| c.cells.iter_mut().chain(c.ribbon_cells.iter_mut())) {
             cell.x *= y_scale;
         }
     }
@@ -325,7 +342,7 @@ impl ColumnBlock {
         let header_y = -row_height(style) / 2.0;
         for (col, edge) in self.columns.iter().zip(self.right_edges(plot_w)) {
             b.union(&vega_fit::text_ink(edge, header_y, col.header_w, label_size, "right", "middle"));
-            for cell in &col.cells {
+            for cell in col.cells.iter().chain(&col.ribbon_cells) {
                 b.union(&vega_fit::text_ink(edge, cell.x * y_scale, cell.w, font_size, "right", "middle"));
             }
         }
@@ -381,6 +398,26 @@ impl ColumnBlock {
                     cells.push(crate::href::linked(anchor, text));
                 }
             }
+            for cell in &col.ribbon_cells {
+                let y = origin_y + cell.x + cell_shift;
+                for _ in 0..col.copies {
+                    cells.push(crate::href::linked(
+                        None,
+                        Node::text(
+                            Role::Label,
+                            (origin_x + edge, y),
+                            crate::contract::cell_label_attrs(&cell.aria)?
+                                .set("text-anchor", "end")
+                                .vega("font-family", paint.as_str())
+                                .num("font-size", font_size)
+                                .quick_some("font-style", style.font.style.as_deref())
+                                .set("font-weight", cell_weight.clone())
+                                .set("fill", self.ribbon_ink.as_str()),
+                            cell.text.as_str(),
+                        ),
+                    ));
+                }
+            }
             out.push(::layout::contract::mark_group("text", "strip", cells)?);
             if style.row.divider.visible && i < last {
                 // `_column_rule_layer`: every column right-aligns AT its edge,
@@ -425,6 +462,7 @@ mod tests {
             "padding_top": 8.0,
             "padding_bottom": 4.0,
             "label_max_lines": 2,
+            "ribbon_color": "#999999",
             "position": "left",
         })
     }
@@ -474,7 +512,7 @@ mod tests {
             6.0,
             None,
             &[],
-            None, None, None)
+            None, None, None, false)
     }
 
     /// `_column_block_plot_gutter`: the column's own trailing padding plus the
@@ -489,7 +527,7 @@ mod tests {
     /// authored order; right block starts `gutter` past the plot.
     #[test]
     fn right_edges_run_left_to_right_on_both_sides() {
-        let col = |width: f64| Column { header: String::new(), header_w: 0.0, width, ink: None, header_ink: None, series: None, cells: vec![], cell_series: vec![], copies: 1 };
+        let col = |width: f64| Column { header: String::new(), header_w: 0.0, width, ink: None, header_ink: None, series: None, cells: vec![], cell_series: vec![], copies: 1, ribbon_cells: vec![] };
         let mut block = ColumnBlock {
             columns: vec![col(50.0), col(30.0)],
             side: Side::Left,
@@ -498,6 +536,7 @@ mod tests {
             numeral_family: String::new(),
             cell_ink: String::new(),
             label_ink: String::new(),
+            ribbon_ink: String::new(),
         };
         assert_eq!(block.footprint(), 92.0);
         assert_eq!(block.right_edges(400.0), vec![-42.0, -12.0]);
@@ -631,7 +670,7 @@ mod tests {
         let ink: Vec<String> = vec!["#111111".into(), "#222222".into()];
         let block = build_block(
             &config, &rows, "cat", &dom, &[10.0, 30.0], &fonts, &style(), crate::common::TAB_FONT, Side::Left, 6.0,
-            Some("series"), &series, Some(&ink), None, None)
+            Some("series"), &series, Some(&ink), None, None, false)
         .unwrap();
         assert_eq!(block.columns.len(), 2);
         assert_eq!(block.columns[0].header, "Online");
@@ -691,7 +730,7 @@ mod tests {
                 .collect();
             let dom: Vec<String> = vec!["A".into(), "B".into()];
             build_block(
-                &config, &rows, "cat", &dom, &[10.0, 30.0], &test_fonts(), &style(), crate::common::TAB_FONT, Side::Left, 6.0, None, &[], None, None, None)
+                &config, &rows, "cat", &dom, &[10.0, 30.0], &test_fonts(), &style(), crate::common::TAB_FONT, Side::Left, 6.0, None, &[], None, None, None, false)
             .unwrap()
         };
         let text = block(["n/a", "ok"]);
@@ -711,7 +750,7 @@ mod tests {
         let err = build_block(
             &config, &rows, "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style(),
             crate::common::TAB_FONT,
-            Side::Left, 6.0, None, &[], None, None, None)
+            Side::Left, 6.0, None, &[], None, None, None, false)
         .unwrap_err();
         assert!(err.contains("ambiguous"), "{err}");
     }
@@ -796,7 +835,7 @@ mod tests {
             let err = build_block(
                 &config, &rows(), "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style,
                 crate::common::TAB_FONT,
-                Side::Left, 6.0, None, &[], None, None, None)
+                Side::Left, 6.0, None, &[], None, None, None, false)
             .unwrap_err();
             assert!(err.contains(needle), "{err}");
         }
@@ -806,9 +845,64 @@ mod tests {
         let err = build_block(
             &config, &rows(), "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style,
             crate::common::TAB_FONT,
-            Side::Left, 6.0, None, &[], None, None, None)
+            Side::Left, 6.0, None, &[], None, None, None, false)
         .unwrap_err();
         assert!(err.contains("label.font.color"), "{err}");
+    }
+
+    fn funnel_block(entries: serde_json::Value, ribbon_rows: bool) -> Result<ColumnBlock, Diagnostic> {
+        let config = parse_config(&serde_json::json!({ "entries": entries }), "bar").unwrap();
+        let rows: Vec<serde_json::Map<String, Value>> = [("A", 200.0), ("B", 100.0), ("C", 50.0)]
+            .iter()
+            .map(|(c, n)| serde_json::from_value(serde_json::json!({"cat": c, "n": n})).unwrap())
+            .collect();
+        build_block(
+            &config, &rows, "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style(), crate::common::TAB_FONT,
+            Side::Left, 6.0, None, &[], None, None, None, ribbon_rows,
+        )
+    }
+
+    fn texts(cells: &[ComposedCell]) -> Vec<&str> {
+        cells.iter().map(|c| c.text.as_str()).collect()
+    }
+
+    #[test]
+    fn a_funnel_column_adds_the_change_between_stages_midway_between_their_rows() {
+        let block = funnel_block(serde_json::json!([{"source": "n", "format": ",d"}]), true).unwrap();
+        let column = &block.columns[0];
+        assert_eq!(texts(&column.cells), ["200", "100", "50"]);
+        assert_eq!(texts(&column.ribbon_cells), ["\u{2212}100", "\u{2212}50"]);
+        assert_eq!(column.ribbon_cells.iter().map(|c| c.x).collect::<Vec<_>>(), [20.0, 40.0]);
+    }
+
+    #[test]
+    fn a_percent_column_is_a_share_of_the_first_stage_and_its_change_a_share_of_the_previous_its_unit_in_the_header() {
+        let block = funnel_block(serde_json::json!([{"percent": "n", "format": ".0%"}]), true).unwrap();
+        let column = &block.columns[0];
+        assert!(column.header.ends_with('%'), "{}", column.header);
+        assert_eq!(texts(&column.cells), ["100", "50", "25"]);
+        assert_eq!(texts(&column.ribbon_cells), ["\u{2212}50", "\u{2212}50"]);
+    }
+
+    #[test]
+    fn an_aggregate_column_has_no_ribbon_rows() {
+        let block = funnel_block(serde_json::json!([{"aggregate": "sum", "source": "n", "format": ",d"}]), true).unwrap();
+        assert!(block.columns[0].ribbon_cells.is_empty());
+    }
+
+    #[test]
+    fn a_percent_column_over_a_zero_first_stage_refuses() {
+        let config = parse_config(&serde_json::json!({"entries": [{"percent": "n", "format": ".0%"}]}), "bar").unwrap();
+        let rows: Vec<serde_json::Map<String, Value>> = [("A", 0.0), ("B", 1.0), ("C", 2.0)]
+            .iter()
+            .map(|(c, n)| serde_json::from_value(serde_json::json!({"cat": c, "n": n})).unwrap())
+            .collect();
+        let err = build_block(
+            &config, &rows, "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style(), crate::common::TAB_FONT,
+            Side::Left, 6.0, None, &[], None, None, None, true,
+        )
+        .unwrap_err();
+        assert!(err.contains("first stage"), "{err}");
     }
 
     #[test]

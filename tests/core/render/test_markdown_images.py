@@ -395,7 +395,6 @@ def test_a_render_with_no_project_reports_the_image() -> None:
     executor = Run(
         result.board,
         env=make_exec_env(project=InMemoryProject(Path("/p"), {})),
-        query_registry=result.query_registry,
         result_cache=None,
     )
     rendered = render(result.board, executor.ctx, executor.ledger)

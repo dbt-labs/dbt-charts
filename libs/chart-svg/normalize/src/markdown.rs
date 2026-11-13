@@ -34,8 +34,11 @@ fn parse_error(d: Diagnostic) -> Diagnostic {
     }
 }
 
-/// `style.text.column.max_number: 1` for a leaf the merged board leaves unset: the lowest-priority
-/// style layer, beneath `meta.yml`, `extends:` and the board's own style (`with_document_style`).
+/// A markdown document's line length in characters, wider than the renderer's default measure.
+const DOCUMENT_MAX_CHARS: u32 = 90;
+
+/// `style.text.column.max_number: 1` and `max_chars: 90` for each leaf the merged board leaves unset:
+/// the lowest-priority style layer, beneath `meta.yml`, `extends:` and the board's own style (`with_document_style`).
 pub(crate) fn with_document_style(patch: &mut crate::extends::Patch) {
     let mut style = match std::mem::take(&mut patch.body.style) {
         Tri::Value(style) => style,
@@ -47,6 +50,9 @@ pub(crate) fn with_document_style(patch: &mut crate::extends::Patch) {
     };
     if matches!(style.text.column.max_number, Tri::Unset) {
         style.text.column.max_number = Tri::Value(1);
+    }
+    if matches!(style.text.column.max_chars, Tri::Unset) {
+        style.text.column.max_chars = Tri::Value(DOCUMENT_MAX_CHARS);
     }
     patch.body.style = Tri::Value(style);
 }

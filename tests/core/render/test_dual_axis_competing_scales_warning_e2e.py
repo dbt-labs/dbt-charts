@@ -52,7 +52,6 @@ def test_fires_for_layer_pinned_to_its_own_axis() -> None:
     executor = Run(
         result.board,
         env=mock_registry,
-        query_registry=result.query_registry,
     )
 
     rendered = render(result.board, executor.ctx, executor.ledger, format="svg")

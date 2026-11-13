@@ -177,6 +177,7 @@ style:
         fill: chrome[5]
     support_table:
       neutral_color: chrome[8]
+      ribbon_color: chrome[8]
       label:
         font:
           color: chrome[8]

@@ -205,11 +205,29 @@ impl CellMismatch {
     }
 }
 
-/// One query result as the board payload carries it: rows plus their types.
+/// What the wire tagged on one cell: the Python `str()` of the value, and the
+/// non-finite float a `null` stands for (`None` for a Decimal).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CellTag {
+    pub text: String,
+    pub non_finite: Option<f64>,
+}
+
+/// The tags of one row's tagged cells, keyed by column.
+pub type CellRow = std::collections::BTreeMap<String, CellTag>;
+
+/// The tags of every row's tagged cells, by row.
+pub type CellText = Vec<CellRow>;
+
+/// One query result as the board payload carries it: rows plus their types. The rows hold plain
+/// numbers: the wire's cell markers are decoded once, where the host's text becomes a `Dataset`,
+/// and `cell_text` keeps the text they carried.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Dataset {
     pub rows: SharedRows,
     pub schema: ColumnTypes,
+    #[serde(skip)]
+    pub cell_text: CellText,
 }
 
 /// One chart's datasets, keyed by query name.

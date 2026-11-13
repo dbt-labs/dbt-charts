@@ -42,6 +42,7 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedChartDefaults
 from dbt_charts.core.compile.models.style.theme import (
     AxisLabelStyle,
+    BarChartStyle,
     ChartLegendStyle,
     LegendEdge,
     PaddingStyle,
@@ -168,7 +169,7 @@ def _base_kwargs(
     legend_hidden_under_edge: LegendEdge | None = None,
     radial_legend: bool = False,
     legendless: bool = False,
-    wrap_legend: bool,
+    wrap_columns: int | None,
 ) -> dict[str, Any]:
     """Common kwargs for all _BaseResolvedChartFields subclasses.
 
@@ -195,12 +196,13 @@ def _base_kwargs(
     drop_legend: True when an attached table replaces the legend. Hides it
     whatever ``visible`` says: both would name the same series twice.
     top_legend: force the legend above the plot, reading left to right like the
-    marks it names. "compact" wraps at compact_columns for cards too narrow to
+    marks it names. "compact" wraps at wrap_columns for cards too narrow to
     hold a row; "row" leaves the entry count to the renderer.
     radial_legend: True for pie and donut, whose key never overlays
     (``decide_legend_position``'s ``radial``).
-    wrap_legend: True when one horizontal row cannot hold the entries; wraps an
-    inferred-horizontal legend at compact_columns. An authored direction or
+    wrap_columns: the columns ``legend_wrap_columns`` fits the entries into,
+    None when one horizontal row holds them all; wraps an
+    inferred-horizontal legend at that count. An authored direction or
     columns wins.
     legendless: True for families that draw no legend; the
     board's baked placement is left alone and never validated.
@@ -231,7 +233,11 @@ def _base_kwargs(
         legend = merge_unset(legend, overridden)
     if top_legend != "off":
         top = LegendStylePatch.model_validate(
-            {"columns": legend.compact_columns if top_legend == "compact" else 0}
+            {
+                "columns": wrap_columns
+                if top_legend == "compact" and wrap_columns is not None
+                else 0
+            }
         )
         legend = merge_unset(legend, top)
     if not legendless:
@@ -260,7 +266,7 @@ def _base_kwargs(
             chart_style_context.cascaded.charts.legend, legend_patch
         )
         wrap = (
-            wrap_legend
+            wrap_columns is not None
             and top_legend == "off"
             and not decided.overlay
             and decided.edge in ("top", "bottom")
@@ -273,7 +279,7 @@ def _base_kwargs(
                 {
                     "position": decided.model_dump(),
                     "direction": direction,
-                    **({"columns": legend.compact_columns} if wrap else {}),
+                    **({"columns": wrap_columns} if wrap else {}),
                 }
             ),
         )
@@ -437,6 +443,7 @@ def _shared_kwargs(
 # on purpose — it sizes from the board-level charts default.
 _FAMILY_SLOT: dict[str, str] = {
     "bar": "bar",
+    "funnel": "bar",
     "histogram": "histogram",
     "line": "line",
     "area": "area",
@@ -462,15 +469,25 @@ def donut_over_pie(chart_style_context: ChartStyleContext) -> PieChartStyle:
     return pie if donut is None else merge_unset(pie, donut)
 
 
+def funnel_over_bar(chart_style_context: ChartStyleContext) -> BarChartStyle:
+    """The board-wide style of a funnel: the funnel recipe over the bar slot."""
+    bar = chart_style_context.bar
+    funnel = chart_style_context.funnel
+    return bar if funnel is None else merge_unset(bar, funnel)
+
+
 def board_family_style(
     chart_style_context: ChartStyleContext, chart: Chart
 ) -> Any:  # type-state: explicit_any — one of the per-family style classes
-    """The board's family style for a chart's type; a donut's sits over its pie's.
+    """The board's family style for a chart's type; a donut's sits over its
+    pie's, a funnel's over its bar's.
 
     A resolver that layers the chart's own patch merges it onto this.
     """
     if isinstance(chart, PieChart) and chart.is_donut:
         return donut_over_pie(chart_style_context)
+    if chart.type == "funnel":
+        return funnel_over_bar(chart_style_context)
     return getattr(chart_style_context, _FAMILY_SLOT[chart.type])
 
 
@@ -574,6 +591,7 @@ def _support_table_geometry(
     category_axis_vertical: bool,
     axis_y_orient: Literal["left", "right"],
     stacked: bool,
+    stage_ink: str | None,
 ) -> tuple[SupportTableStyle | None, float | None, bool | None]:
     """Bake the support_table strip's compile-owned geometry: the chart's
     effective SupportTableStyle (with ``position`` resolved to a concrete
@@ -617,7 +635,8 @@ def _support_table_geometry(
         effective_style.position, category_axis_vertical, axis_y_orient, chart_id
     )
     effective_style, series_ink = bake_neutral_ink(
-        effective_style.model_copy(update={"position": resolved_position})
+        effective_style.model_copy(update={"position": resolved_position}),
+        stage_ink,
     )
     return (
         effective_style,
@@ -643,6 +662,7 @@ def _cartesian_kwargs(
     category_axis_vertical: bool = False,
     axis_y_orient: Literal["left", "right"] = "left",
     header_inks: Mapping[str, str] = MappingProxyType({}),
+    stage_ink: str | None = None,
 ) -> dict[str, Any]:
     """Extra kwargs for _CartesianResolvedChartFields subclasses.
 
@@ -686,6 +706,7 @@ def _cartesian_kwargs(
         category_axis_vertical,
         axis_y_orient,
         stacked,
+        stage_ink,
     )
     return {
         **_shared_kwargs(normalized, display_text, chart_style_context),

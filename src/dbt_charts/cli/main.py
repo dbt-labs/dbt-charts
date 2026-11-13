@@ -1935,6 +1935,18 @@ def query(
         bool,
         typer.Option("--json", help="JSON output"),
     ] = False,
+    cache: Annotated[
+        Path | None,
+        typer.Option(
+            "--cache",
+            help=(
+                "Keep the rows a board query composes through "
+                "{{ queries.X.cache }} in this DuckDB file (created if absent), "
+                "so runs sharing the file execute each upstream once. "
+                "Default: an in-memory cache per run."
+            ),
+        ),
+    ] = None,
     project_dir: ProjectDirOption = None,
     dbt_project_dir: DbtProjectDirOption = None,
 ) -> None:
@@ -1950,6 +1962,7 @@ def query(
         vars=variables or None,
         show_suppressed=show_suppressed,
         json_output=json_output,
+        cache_path=cache,
         project_dir=project_dir,
         dbt_project_dir=dbt_project_dir,
     )

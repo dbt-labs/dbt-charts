@@ -219,15 +219,17 @@ class _LegendStyleBase(BaseModel):
     columns: int = Field(
         ge=0,
         description=(
-            "Legend entry columns. Zero keeps the renderer default; positive values "
-            "set Vega-Lite legend columns."
+            "Legend entry columns. Zero keeps the renderer default; a positive value "
+            "sets the columns, and a bar's top or bottom legend takes fewer when "
+            "its labels would not fit."
         ),
     )
     compact_columns: int = Field(
         ge=1,
         description=(
-            "Entry columns when a horizontal legend wraps: the automatic compact "
-            "top legend, or an inferred-horizontal legend too wide for one row."
+            "Most entry columns when a horizontal legend wraps (the automatic "
+            "compact top legend, or an inferred-horizontal legend too wide for "
+            "one row); it takes fewer when its labels would not fit."
         ),
     )
     row: LegendRowStyle = Field(

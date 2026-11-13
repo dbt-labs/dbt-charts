@@ -30,7 +30,7 @@ use d3rs::native::NULL_DISPLAY;
 
 /// The value a template name resolves to.
 #[derive(Clone, Debug, PartialEq)]
-enum Val {
+pub enum Val {
     Null,
     Bool(bool),
     Int(i64),
@@ -87,7 +87,39 @@ pub struct Scope<'a> {
     pub total: f64,
 }
 
-impl Scope<'_> {
+/// What a template name resolves to.
+pub trait Lookup {
+    fn get(&self, name: &str) -> Result<Val, String>;
+}
+
+/// A bar's or ribbon's template scope: the row's columns, with the engine's
+/// `names` (`value`, and `percent` where the chart has one) over any same-named
+/// column. A name in neither is undefined, as `label_jinja_env`'s
+/// `StrictUndefined` makes it.
+pub struct RowScope<'a> {
+    pub row: &'a Map<String, Value>,
+    pub names: &'a [(&'a str, f64)],
+}
+
+impl Lookup for RowScope<'_> {
+    fn get(&self, name: &str) -> Result<Val, String> {
+        if let Some((_, x)) = self.names.iter().find(|(n, _)| *n == name) {
+            return Ok(Val::Float(*x));
+        }
+        match self.row.get(name) {
+            Some(v) => Val::from_json(name, v),
+            None => Err(format!("pie: slice-label template variable '{name}' is undefined")),
+        }
+    }
+}
+
+/// Rewrites a template error's owner, which the evaluator words for the pie it
+/// was written for.
+pub fn owned_by(owner: &str, error: String) -> String {
+    error.replacen("pie: slice-label template", &format!("{owner}: label template"), 1)
+}
+
+impl Lookup for Scope<'_> {
     fn get(&self, name: &str) -> Result<Val, String> {
         let cell = |field: &str| self.row.get(field).map_or(Ok(Val::Null), |v| Val::from_json(field, v));
         match name {
@@ -295,7 +327,7 @@ impl Template {
     }
 
     /// The template's rendered lines for one slice.
-    pub fn render(&self, scope: &Scope) -> Result<Vec<String>, String> {
+    pub fn render(&self, scope: &impl Lookup) -> Result<Vec<String>, String> {
         let mut text = String::new();
         for part in &self.0 {
             match part {
@@ -308,7 +340,7 @@ impl Template {
 }
 
 impl Expr {
-    fn eval(&self, scope: &Scope) -> Result<String, String> {
+    fn eval(&self, scope: &impl Lookup) -> Result<String, String> {
         match self {
             Expr::Var(name) => Ok(scope.get(name)?.py_str()),
             Expr::PyFormat { prefix, spec, suffix, arg } => {

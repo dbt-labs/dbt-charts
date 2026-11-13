@@ -25,7 +25,7 @@ use crate::facet::Color;
 use crate::names::PaletteName;
 use crate::primitives::{BorderStyle, BoxShadow, FormatConfig, SpacingValues};
 use crate::style::annotations::AnnotationsStyle;
-use crate::style::board::{FrameStyle, PlaceholderStyle, RootFontStyle, TextStyle, TitleStyle};
+use crate::style::board::{CommentsStyle, FrameStyle, PlaceholderStyle, RootFontStyle, TextStyle, TitleStyle};
 use crate::style::charts::ChartsStyle;
 use crate::style::font::NamedFont;
 use crate::style::kpi::KpiTonesStyle;
@@ -135,6 +135,9 @@ pub struct Style {
     pub placeholder: PlaceholderStyle,
     /// Root of all chart-type styles and shared chart configuration.
     pub charts: Box<ChartsStyle>,
+    /// Tints of the comment highlights a hosting app paints over the board.
+    #[model(nested = drop)]
+    pub comments: CommentsStyle,
     /// Default look of each annotation type: rule, band, note, trend.
     pub annotations: AnnotationsStyle,
     /// Spacing and arrangement inside the containers (rows, cols, grid, tabs, details).

@@ -343,8 +343,11 @@ pub(super) fn rekey_to_enclosing_buckets(
 ///
 /// `_zero_label_scope` (`:51`) is the gate: a bar, no stack (`:73`), no
 /// layers (`:75`), no authored value labels (`:77` — the value-label layer owns
-/// the zero row then) and no color channel (`:79`). A wide chart passes the
-/// scope (its resolved `y` is the synthetic `WIDE_VALUE_FIELD`) and falls out
+/// the zero row then) and no color channel (`:79`). Only a
+/// resolved `visible: "auto"` is in scope: an authored `false` hides the `0`
+/// with every other label. A wide
+/// chart passes the scope (its resolved `y` is the synthetic `WIDE_VALUE_FIELD`)
+/// and falls out
 /// at the row test (`:111`): the rows `:106-110` read do not carry that column
 /// (probed: a wide bar with a zero row draws no label). The mark is "above"
 /// whatever `labels.position` says (`:119`), with no `dx`/`dy`, and takes only
@@ -365,7 +368,7 @@ pub(super) fn zero_label(
     let in_scope = r.stack == "none"
         && r.layers.is_empty()
         && r.wide_measures.is_empty()
-        && !authored.is_some_and(|l| l.visible)
+        && authored.is_some_and(|l| l.visible_auto)
         && !r.resolved_channels.contains_key("color");
     let px = |v: f64| scale.scale(v);
     let range = (scale.range[0], scale.range[1]);
@@ -378,6 +381,7 @@ pub(super) fn zero_label(
     let slot = authored.ok_or("bar: style.mark.labels absent (resolved payload required)")?;
     Ok(Some(MarkLabels {
         visible: true,
+        visible_auto: false,
         anchors: Vec::new(),
         field: None,
         format: slot.format.clone(),
@@ -387,5 +391,6 @@ pub(super) fn zero_label(
         position: Some("above".into()),
         auto: false,
         stacked: None,
+        template: None,
     }))
 }

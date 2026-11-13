@@ -158,7 +158,7 @@ def resolve(
         require_sort_field(normalized.sort, data)
     try:
         match normalized.type:
-            case "bar":
+            case "bar" | "funnel":
                 return _resolve_bar(
                     normalized,
                     partition(normalized.multiples, data),

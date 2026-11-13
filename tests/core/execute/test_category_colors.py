@@ -24,6 +24,7 @@ from dbt_charts.core.compile.resolve.style.category_colors import CategoryColorS
 from dbt_charts.core.execute.category_colors import plan_board_category_colors
 from dbt_charts.core.execute.env import build_exec_env
 
+from ..._compile import remember
 from ..._run import Run
 
 # A typed NULL needs a SQL source; a values column of only nulls has no type.
@@ -38,10 +39,12 @@ def _plan(yaml_content: str, focus: str | None = None) -> dict[str, CategoryColo
     result = compile(yaml_content, project_sources=project.sources)
     assert result.success and result.board is not None, result.errors
     board = result.board if focus is None else focus_on_chart(result.board, focus)
+    # A focused board is derived from the compiled one, not compiled from text:
+    # it plans from the text it was derived from.
+    remember(board, yaml_content)
     executor = Run(
         board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
     scales = plan_board_category_colors(board, executor, {}, {})
     return {s.field: s for s in scales}

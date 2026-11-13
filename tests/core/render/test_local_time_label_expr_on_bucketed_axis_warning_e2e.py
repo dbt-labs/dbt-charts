@@ -58,7 +58,7 @@ def _make_executor(
     board: object, query_registry: object, rows: list[dict[str, object]] | None = None
 ) -> Run:
     mock_registry = scripted_env(ScriptedBackend(rows if rows is not None else _ROWS))
-    return Run(board, env=mock_registry, query_registry=query_registry)
+    return Run(board, env=mock_registry)
 
 
 def _board_yaml(*, time_unit: str | None, expr: str) -> str:

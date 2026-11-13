@@ -50,7 +50,7 @@ _POINT_MAP: dict[str, Any] = {
     "longitude": "b",
     "collapse": True,
 }
-_SUPPORT_TYPES = "area, bar, line"
+_SUPPORT_TYPES = "area, bar, funnel, line"
 
 CASES: list[tuple[str, type[BaseModel], dict[str, Any], str]] = [
     (

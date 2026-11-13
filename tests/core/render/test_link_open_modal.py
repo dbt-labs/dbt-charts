@@ -24,7 +24,6 @@ def _render_svg(board_yaml: str) -> str:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(Path.cwd())),
-        query_registry=result.query_registry,
     )
     rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert not rendered.chart_errors, rendered.chart_errors

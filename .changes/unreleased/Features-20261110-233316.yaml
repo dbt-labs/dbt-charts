@@ -1,0 +1,5 @@
+kind: Features
+body: Hover a table cell cut with an ellipsis to read its full value, and click the card to keep it open for copying.
+time: 2026-11-10T23:33:16.122339593Z
+custom:
+    DbtChartsIssue: "93"

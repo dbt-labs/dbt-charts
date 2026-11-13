@@ -64,7 +64,6 @@ def _link_examples_board_chart(chart_id: str) -> tuple[Chart, Run]:
     assert board is not None
     executor = Run(
         board,
-        query_registry=result.query_registry,
         env=build_exec_env(
             project,
             read_only=True,
@@ -192,7 +191,6 @@ def test_guard_message_states_the_measured_card_width(tmp_path: Path) -> None:
     executor = Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
 
     out = render(result.board, executor.ctx, executor.ledger, format="svg")

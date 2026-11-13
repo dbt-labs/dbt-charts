@@ -1,6 +1,7 @@
 //! `style/theme/charts.py`: the per-chart-type style map and the shared chart configuration.
 //!
-//! `PieChartStylePatch` is not a model: the donut slot is `Patch<PieChartStyle>`. The `title` slot
+//! `PieChartStylePatch` and `BarChartStylePatch` are not models: the donut slot is
+//! `Patch<PieChartStyle>` and the funnel slot `Patch<BarChartStyle>`. The `title` slot
 //! is the total [`ChartTitleStyle`]: Python's sparse patch only meant "copy `Style.title`". The root
 //! redeclares `padding` and `background` and takes `legend` as the total model, where a family
 //! holds a sparse override, so it lists the painted fields itself instead of flattening them.
@@ -141,6 +142,9 @@ pub struct ChartsStyle {
     pub marks: GlobalMarksStyle,
     /// Bar chart style; histogram has its own block.
     pub bar: Box<BarChartStyle>,
+    /// Funnel recipe, applied over `bar`: a board's bar or funnel style reaches every funnel, and `funnel` styles funnels only.
+    #[model(absent = "no funnel recipe: a funnel is the plain bar", local)]
+    pub funnel: Option<Patch<BarChartStyle>>,
     /// Line chart style.
     pub line: Box<LineChartStyle>,
     /// Area chart style.

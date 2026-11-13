@@ -40,7 +40,7 @@ def _make_executor(
     board: object, query_registry: object, rows: list[dict[str, object]]
 ) -> Run:
     mock_registry = scripted_env(ScriptedBackend(rows))
-    return Run(board, env=mock_registry, query_registry=query_registry)
+    return Run(board, env=mock_registry)
 
 
 def _render_svg(yaml_source: str, rows: list[dict[str, object]]) -> str:
@@ -216,6 +216,95 @@ rows: [{rows: [c]}]
     # ZeroValueLabelFeature's own (using the authored format), never a
     # second, blank-or-not, value-label text node at the same anchor.
     assert _value_label_texts(svg) == ["$0.00", "$12.00", "$7.00"]
+
+
+def test_authored_hidden_value_labels_hide_the_zero_label_too() -> None:
+    """An authored `labels.visible: false` hides every value label, the zero
+    row's included; the theme's own `false` (nothing authored) keeps that `0`."""
+    board = """
+title: probe
+charts:
+  c:
+    type: bar
+    query: q
+    x: k
+    y: v
+    width: 600
+    style:
+      orientation: vertical
+      marks:
+        bar:
+          labels:
+            visible: false
+queries:
+  q:
+    sql: "SELECT 1"
+    source: test_source
+rows: [{rows: [c]}]
+"""
+    rows = [{"k": "A", "v": 0}, {"k": "B", "v": 12}, {"k": "C", "v": 7}]
+    assert _value_label_texts(_render_svg(board, rows)) == []
+    unauthored = board.replace(
+        "          labels:\n            visible: false\n",
+        "          padding: 0.2\n",
+    )
+    assert _value_label_texts(_render_svg(unauthored, rows)) == ["0"]
+
+
+def test_theme_default_bar_labels_visible_is_auto() -> None:
+    """The theme spells its hidden default `auto`, which keeps the zero label."""
+    assert get_theme_style().charts.marks.bar.labels.visible == "auto"
+
+
+def test_authored_auto_bar_labels_keep_the_zero_label() -> None:
+    board = """
+title: probe
+charts:
+  c:
+    type: bar
+    query: q
+    x: k
+    y: v
+    width: 600
+    style:
+      orientation: vertical
+      marks:
+        bar:
+          labels:
+            visible: auto
+queries:
+  q:
+    sql: "SELECT 1"
+    source: test_source
+rows: [{rows: [c]}]
+"""
+    rows = [{"k": "A", "v": 0}, {"k": "B", "v": 12}, {"k": "C", "v": 7}]
+    assert _value_label_texts(_render_svg(board, rows)) == ["0"]
+
+
+def test_authored_auto_line_labels_draw_nothing() -> None:
+    board = """
+title: probe
+charts:
+  c:
+    type: line
+    query: q
+    x: k
+    y: v
+    width: 600
+    style:
+      marks:
+        line:
+          labels:
+            visible: auto
+queries:
+  q:
+    sql: "SELECT 1"
+    source: test_source
+rows: [{rows: [c]}]
+"""
+    rows = [{"k": "A", "v": 3}, {"k": "B", "v": 12}, {"k": "C", "v": 7}]
+    assert _value_label_texts(_render_svg(board, rows)) == []
 
 
 def test_custom_label_field_is_not_overwritten_by_the_zero_label() -> None:

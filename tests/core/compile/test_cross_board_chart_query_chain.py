@@ -144,7 +144,6 @@ rows:
         executor = Run(
             result.board,
             registry,
-            query_registry=result.query_registry,
             use_cache=False,
         )
 
@@ -311,7 +310,6 @@ rows:
         executor = Run(
             result.board,
             registry,
-            query_registry=result.query_registry,
             use_cache=False,
         )
 
@@ -370,7 +368,6 @@ rows:
         executor = Run(
             result.board,
             registry,
-            query_registry=result.query_registry,
             use_cache=False,
         )
         rows = executor.execute_chart("mqls_by_week")
@@ -422,7 +419,6 @@ rows:
         executor = Run(
             result.board,
             registry,
-            query_registry=result.query_registry,
             use_cache=False,
         )
         assert executor.execute_chart("mqls_by_week") == [{"mqls": 42}]
@@ -483,7 +479,6 @@ rows:
         executor = Run(
             result.board,
             registry,
-            query_registry=result.query_registry,
             use_cache=False,
         )
         assert executor.execute_chart("local_chart") == [{"mqls": 1}]
@@ -538,7 +533,6 @@ rows:
         executor = Run(
             result.board,
             registry,
-            query_registry=result.query_registry,
             use_cache=False,
         )
         assert executor.execute_chart("mqls_by_week") == [
@@ -656,7 +650,6 @@ rows:
         executor = Run(
             result.board,
             registry,
-            query_registry=result.query_registry,
             use_cache=False,
         )
         rows = executor.execute_chart("mqls_by_week")
@@ -700,7 +693,6 @@ rows:
         executor = Run(
             result.board,
             registry,
-            query_registry=result.query_registry,
             use_cache=False,
         )
         rows = executor.execute_chart("revenue")
@@ -756,7 +748,6 @@ rows:
         executor = Run(
             result.board,
             registry,
-            query_registry=result.query_registry,
             use_cache=False,
         )
         rows = executor.execute_chart("mqls_by_week")

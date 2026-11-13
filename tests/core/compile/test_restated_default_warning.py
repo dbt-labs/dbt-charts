@@ -9,7 +9,7 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile_file
-from dbt_charts.core.compile.config import reset_config
+from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.diagnostics import Diagnostic
 
 _BODY = "rows:\n  - text: hi\n"
@@ -217,3 +217,56 @@ def test_query_source_equal_to_the_board_source_warns(
     paths = _paths(restated(board))
     assert "queries.q.source" in paths
     assert "queries.r.source" not in paths
+
+
+_FUNNEL = """\
+queries:
+  q:
+    type: values
+    rows:
+      - {{genre: a, units: 3}}
+      - {{genre: b, units: 2}}
+charts:
+  f:
+    type: funnel
+    query: q
+    x: genre
+    y: units
+{extra}rows:
+  - f
+"""
+
+
+def test_a_funnels_built_in_defaults_are_not_restated(
+    restated: Callable[..., list[Diagnostic]],
+) -> None:
+    assert restated(_FUNNEL.format(extra="")) == []
+
+
+def test_a_funnel_with_a_support_table_restates_nothing(
+    restated: Callable[..., list[Diagnostic]],
+) -> None:
+    assert restated(_FUNNEL.format(extra="    support_table:\n      - units\n")) == []
+
+
+def test_a_funnel_restating_its_recipe_is_flagged(
+    restated: Callable[..., list[Diagnostic]],
+) -> None:
+    """The recipe is theme style, so a chart that writes the same band width
+    again restates it."""
+    funnel = get_theme_style().charts.funnel
+    assert funnel is not None
+    band = funnel.marks.bar.band_width
+    extra = f"    style:\n      marks:\n        bar:\n          band_width: {band}\n"
+    assert _paths(restated(_FUNNEL.format(extra=extra))) == [
+        "charts.f.style.marks.bar.band_width"
+    ]
+
+
+@pytest.mark.parametrize("leaf", ["labels", "ribbons"])
+def test_turning_off_what_the_funnel_recipe_turns_on_is_not_restated(
+    restated: Callable[..., list[Diagnostic]], leaf: str
+) -> None:
+    """The plain bar slot has these off, but a funnel's board style is the recipe."""
+    extra = f"    style:\n      marks:\n        bar:\n          {leaf}:\n            visible: false\n"
+    assert restated(_FUNNEL.format(extra=extra)) == []

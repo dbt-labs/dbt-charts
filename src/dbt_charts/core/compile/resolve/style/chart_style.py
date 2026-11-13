@@ -11,9 +11,13 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from dbt_charts.core.compile.merge import merge_onto_base
-from dbt_charts.core.compile.models.chart.normalized import Chart
-from dbt_charts.core.compile.models.style.authored import ChartStylePatch
+from dbt_charts.core.compile.merge import merge_onto_base, merge_patches
+from dbt_charts.core.compile.models.chart.normalized import BarChart, Chart
+from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
+from dbt_charts.core.compile.models.style.authored import (
+    BarChartStylePatch,
+    ChartStylePatch,
+)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve.style.board import _seed_spark_colors
 from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
@@ -110,6 +114,36 @@ def _family_field_patch(
     )  # type-state: silent_fallback — family is a per-family style union; not every member (e.g. ResolvedCalloutStyle) carries every cascade field
 
 
+# A funnel whose support table prints its stages leaves its marks unlabeled, so
+# the numbers are printed once. Its own style can turn them back on.
+_TABLE_CARRIES_THE_NUMBERS = BarChartStylePatch.model_validate(
+    {
+        "marks": {
+            "bar": {
+                "labels": {"visible": False},
+                "ribbons": {"labels": {"visible": False}},
+            }
+        }
+    },
+    context=AUTHORED_INPUT,
+)
+
+
+def _funnel_patch(
+    board_ctx: ChartStyleContext, chart: BarChart
+) -> (
+    BarChartStylePatch | None
+):  # type-state: optional — None when neither the board nor the chart styles the funnel
+    """A funnel's bar patch: the board's funnel recipe, then the support-table
+    rule, then the chart's own style."""
+    table = _TABLE_CARRIES_THE_NUMBERS if chart.support_table is not None else None
+    merged: BarChartStylePatch | None = None  # type-state: optional — no layer yet
+    for layer in (board_ctx.funnel, table, chart.style):
+        if layer is not None:
+            merged = layer if merged is None else merge_patches(merged, layer)
+    return merged
+
+
 ChartStyleOverrides = dict[str, Any]  # type-state: explicit_any — mixed field values
 
 
@@ -157,6 +191,9 @@ def merge_chart_style(
     per_family_patch = chart.style
     chart_type_raw = chart.type
     chart_type = chart_type_raw  # Chart.type is always a concrete type string
+    if isinstance(chart, BarChart) and chart.type == "funnel":
+        per_family_patch = _funnel_patch(board_ctx, chart)
+        chart_type = "bar"
 
     # Chart style is a per-family patch; wrap it into a monolithic ChartStylePatch
     # so the rest of this function (which iterates _ALL_FAMILY_KEYS) works. An

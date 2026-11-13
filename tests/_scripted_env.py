@@ -165,7 +165,14 @@ def scripted_env(
     env = make_exec_env(
         project=project,
         project_sources=ProjectSourcesConfig(
-            sources={"scripted": {"type": source.type}}, implicit_source="scripted"
+            sources={
+                "scripted": {"type": source.type},
+                **{
+                    name: config.model_dump(exclude_none=True)
+                    for name, config in (named_sources or {}).items()
+                },
+            },
+            implicit_source="scripted",
         ),
         resolver=FixedSourceResolver(source, named_sources),
         backends=BackendRegistry({source.type: backend}),

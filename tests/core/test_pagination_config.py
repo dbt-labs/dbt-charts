@@ -44,6 +44,12 @@ class TestPaginationConfig:
         config = PaginationConfig(enabled=False)
         assert config.enabled is False
 
+    def test_rows_scroll_by_default(self) -> None:
+        from dbt_charts.core.compile.models.style.authored import PaginationConfig
+
+        assert PaginationConfig().mode == "scroll"
+        assert get_theme_style().charts.table.pagination.mode == "scroll"
+
     def test_pagination_config_rejects_extra_fields(self) -> None:
         """PaginationConfig forbids unknown fields."""
         from dbt_charts.core.compile.models.style.authored import PaginationConfig

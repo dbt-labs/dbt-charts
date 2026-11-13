@@ -472,13 +472,13 @@ pub(crate) struct PointPatch {
 impl LineResolved {
     /// The patch `style.conditional` makes to the point drawn for `row`. Rules on different
     /// columns never set the same key (resolve refuses it), so column order is immaterial.
-    pub(crate) fn patch_of(&self, row: &serde_json::Map<String, Value>) -> Result<PointPatch, String> {
+    pub(crate) fn patch_of(&self, row: &serde_json::Map<String, Value>) -> Result<PointPatch, Diagnostic> {
         let mut patch = PointPatch::default();
         for (column, rules) in self.style.conditional.iter().flatten() {
             if crate::conditional::other_series(row, column, &self.wide_measures) {
                 continue;
             }
-            for rule in crate::conditional::matching(rules, |r| &r.predicate, row.get(column))? {
+            for rule in crate::conditional::matching(rules, |r| &r.predicate, column, row.get(column))? {
                 let Some(marks) = &rule.marks else { continue };
                 if let Some(point) = &marks.point {
                     patch.color = point.color.clone().or(patch.color);
@@ -505,7 +505,7 @@ impl LineResolved {
                     if let Some(weight) = &font.weight {
                         let css = super::table::bind::font_weight_as_css(weight);
                         if !super::table::VALID_FONT_WEIGHTS.contains(&css.as_str()) {
-                            return Err(format!("line: conditional font weight {css:?} is not a CSS weight"));
+                            return Err(format!("line: conditional font weight {css:?} is not a CSS weight").into());
                         }
                         patch.label_weight = Some(css);
                     }
@@ -519,7 +519,7 @@ impl LineResolved {
     pub(crate) fn patches(
         &self,
         label_rows: &HashMap<(String, String), &serde_json::Map<String, Value>>,
-    ) -> Result<HashMap<(String, String), PointPatch>, String> {
+    ) -> Result<HashMap<(String, String), PointPatch>, Diagnostic> {
         if self.style.conditional.as_ref().is_none_or(|c| c.is_empty()) {
             return Ok(HashMap::new());
         }
@@ -4960,6 +4960,7 @@ mod tests {
             "padding_top": 8.0,
             "padding_bottom": 4.0,
             "label_max_lines": 2,
+            "ribbon_color": "#999999",
             "position": "top",
         })
     }

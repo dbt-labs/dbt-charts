@@ -70,7 +70,7 @@ def _make_executor(board: object, query_registry: dict, layer_rows: list[dict]):
             {query_registry[name].sql: rows for name, rows in rows_by_query.items()}
         )
     )
-    return Run(board, env=scripted_env(backend), query_registry=query_registry)
+    return Run(board, env=scripted_env(backend))
 
 
 def _render(layer_rows: list[dict]):

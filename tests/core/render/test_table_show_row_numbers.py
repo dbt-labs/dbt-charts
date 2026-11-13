@@ -309,7 +309,7 @@ class TestPaginationContinuity:
         data = self._fifty_row_data()
         chart = _with_row_numbers(
             _resolve_table(make_chart, data),
-            pagination=PaginationConfig(enabled=True, page_rows=10),
+            pagination=PaginationConfig(enabled=True, mode="pages", page_rows=10),
             visible=True,
         )
         svg = render_table_svg(
@@ -340,7 +340,7 @@ class TestPaginationContinuity:
         data = self._fifty_row_data()
         chart = _with_row_numbers(
             _resolve_table(make_chart, data),
-            pagination=PaginationConfig(enabled=True, page_rows=10),
+            pagination=PaginationConfig(enabled=True, mode="pages", page_rows=10),
             visible=True,
         )
         svg = render_table_svg(
@@ -373,7 +373,7 @@ class TestPaginationContinuity:
         data_small = [{"company": f"C{i:03d}", "revenue": i} for i in range(1, 11)]
         chart = _with_row_numbers(
             _resolve_table(make_chart, data_big),
-            pagination=PaginationConfig(enabled=True, page_rows=10),
+            pagination=PaginationConfig(enabled=True, mode="pages", page_rows=10),
             visible=True,
         )
         svg_big = render_table_svg(

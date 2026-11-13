@@ -81,7 +81,7 @@ class _MergedChartStyle(BaseModel):
 
 
 class MergedBarStyle(_MergedChartStyle):
-    type: Literal["bar"]
+    type: Literal["bar", "funnel"]
     family: BarChartStyle = Field(description="Look of the bar chart.")
 
 

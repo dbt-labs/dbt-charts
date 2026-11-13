@@ -13,7 +13,7 @@ control.
 Widths are *measured*, not guessed. A control whose width is content-driven —
 a select showing ``All`` versus ``Latin America and the Caribbean`` — is sized
 from the text it will actually draw. A control the theme fixes (`text`,
-`number`, `checkbox`, `slider`, `daterange`) keeps its theme width, so
+`number`, `checkbox`, `slider`, `daterange`) keeps at least its theme width, so
 ``variables.input.widths.*`` stays load-bearing rather than silently orphaned.
 A multiselect holds the text width whatever is ticked, and its text gives way
 instead: a field that grew with each tick moved every control beside it.
@@ -431,7 +431,7 @@ def _input_width(
     sizing = traits_of(spec.input).sizing
 
     if sizing == "checkbox":
-        return float(widths.checkbox)
+        return max(float(widths.checkbox), _text_width(spec.value, font_size))
     if sizing == "summary":
         return float(widths.text)
     if sizing == "slider":

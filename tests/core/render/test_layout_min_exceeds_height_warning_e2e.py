@@ -27,7 +27,7 @@ def _make_executor(
     board: object, query_registry: object, rows: list[dict[str, object]]
 ):
     mock_registry = scripted_env(ScriptedBackend(rows))
-    return Run(board, env=mock_registry, query_registry=query_registry)
+    return Run(board, env=mock_registry)
 
 
 def _board_yaml(*, wrapper: str, authored_height: str) -> str:

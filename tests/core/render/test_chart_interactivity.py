@@ -52,6 +52,19 @@ def test_the_board_root_publishes_the_theme_facts() -> None:
     assert 'data-dbt-hover-emphasis="' in attrs
 
 
+def test_the_board_root_publishes_both_comment_tints() -> None:
+    from dbt_charts.core.render.chart_interactivity import hover_runtime_attributes
+
+    resolved = _resolved_style()
+
+    attrs = hover_runtime_attributes(resolved)
+
+    assert f'data-dbt-comment-highlight="{resolved.comments.highlight}"' in attrs
+    assert (
+        f'data-dbt-comment-highlight-new="{resolved.comments.highlight_new}"' in attrs
+    )
+
+
 def test_null_display_is_the_shared_constant_not_a_js_literal() -> None:
     """formatValue()'s null case must read the substituted NULL_DISPLAY value,
     not a hardcoded JS literal -- the tooltip surface is the one place a null

@@ -53,7 +53,6 @@ def _render_blank(rows: list[dict[str, Any]]) -> list[str]:
     executor = Run(
         result.board,
         env=env,
-        query_registry=result.query_registry,
     )
     return [
         e.code

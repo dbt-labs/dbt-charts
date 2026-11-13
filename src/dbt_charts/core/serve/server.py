@@ -89,6 +89,7 @@ from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
     CHARTS_SUBDIR,
     PROJECT_CONFIG_NAME,
+    InMemoryBoard,
     Project,
     ProjectDirectory,
     ProjectPath,
@@ -868,6 +869,7 @@ def _render_directory_listing(
         from dbt_charts.core.execute.env import make_exec_env  # noqa: PLC0415
 
         result = render_dashboard(
+            board=InMemoryBoard(board_text, path=None),
             project=project,
             env=make_exec_env(project=project),
             format="html",

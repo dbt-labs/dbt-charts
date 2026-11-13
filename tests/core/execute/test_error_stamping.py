@@ -38,6 +38,9 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # planned.py — the engine refusing with a code the registry does not
         # hold as an error is the same breach: engine and registry out of step.
         ("planned.py", "plan_board"),
+        # plan_reader.py — the run-time name of an ad hoc query is chosen by the
+        # calling code, never authored; a name the plan already holds is a caller bug.
+        ("plan_reader.py", "with_adhoc_query"),
         # backends/databricks_connection_manager.py
         (
             "backends/databricks_connection_manager.py",

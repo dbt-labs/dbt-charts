@@ -190,6 +190,12 @@ impl<'a> Cx<'a> {
                 return Ok(Patch::default());
             }
         }
+        // A board with no location, compiled from an anchor directory, has no `extends:` file
+        // chain: Python's `compile(yaml, base_dir=...)` folds none, so a file ref is neither
+        // read nor refused.
+        if !self.files.located() && self.files.anchor().is_some() {
+            return Ok(Patch::default());
+        }
         let (path, text) = self.fragment(entry, dir)?;
         if chain.contains(&path) {
             return Err(FoldError::Circular(path));

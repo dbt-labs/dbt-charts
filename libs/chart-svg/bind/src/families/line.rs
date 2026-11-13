@@ -22,9 +22,9 @@ use std::collections::HashSet;
 use board_model::board::Board;
 use board_model::chart::{Columns, LineChart};
 use board_model::ids::ChartId;
+use board_model::style::marks::labels_drawn;
 use board_model::primitives::{Curve, LineCap, LineJoin};
 use board_model::style::axis::FillMode;
-use board_model::style::marks::LabelVisible;
 use diagnostic::{codes, diag, py_str_repr, refuse, Diagnostic};
 use board_model::rule::Auto;
 use model_core::Engine;
@@ -93,7 +93,7 @@ fn refuse_unported(chart: &LineChart) -> Result<(), Diagnostic> {
         ("`style.conditional`", !chart.style.conditional.is_empty()),
         (
             "value labels",
-            marks.line.labels.base.visible != LabelVisible::Off || marks.point.labels.base.visible != LabelVisible::Off,
+            labels_drawn(&marks.line.labels.base.visible) || labels_drawn(&marks.point.labels.base.visible),
         ),
         ("a `marks.point.size`", !matches!(marks.point.size, Engine::Rule(_))),
     ];

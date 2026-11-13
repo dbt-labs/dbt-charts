@@ -141,23 +141,25 @@ class TestExecutorProvenance:
 
     def test_provenance_after_execute(self, routes: Mock) -> None:
         """After executing a query, provenance is accessible."""
-        from unittest.mock import MagicMock
-
-        from dbt_charts.core.compile.models.board.normalized import Board
-        from dbt_charts.core.compile.models.primitives import Regional
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.compile import compile
 
         from .._run import Run
         from .._scripted_env import ScriptedBackend, scripted_env
 
-        board = MagicMock(spec=Board)
-        board.queries = {
-            "orders": SqlQuery(sql="SELECT * FROM orders", source="test_db"),
-        }
-        board.variable_defaults = {}
-        board.variable_registry = {}
-        board.sources = {}
-        board.regional = Regional()
+        board = compile(
+            """
+queries:
+  orders:
+    sql: SELECT * FROM orders
+    source: test_db
+charts:
+  c:
+    query: orders
+    type: table
+rows:
+  - c
+"""
+        ).board
 
         rel = ResolvedRelation(ref_name="orders", schema="dev_dave")
         mock_result = QueryResult(

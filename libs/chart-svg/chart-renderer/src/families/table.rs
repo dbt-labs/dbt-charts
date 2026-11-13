@@ -32,7 +32,7 @@ use crate::Payload;
 use crate::TitleShift;
 use crate::TonesStyle;
 use diagnostic::codes;
-use ::bind::rows::CellRow;
+use ::column_types::CellRow;
 use crate::common::Divider;
 use crate::common::Font;
 use crate::common::FormatSlot;
@@ -566,7 +566,6 @@ struct PaginationCfg {
     enabled: bool,
     page_rows: Option<usize>,
     /// `pagination.mode`: a pager (`pages`) or a vertical scroll viewport.
-    #[serde(default)]
     mode: PaginationMode,
 }
 
@@ -592,10 +591,9 @@ impl PaginationCfg {
     }
 }
 
-#[derive(Deserialize, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 enum PaginationMode {
-    #[default]
     Pages,
     Scroll,
 }
@@ -648,6 +646,7 @@ const FREEZE_MAX_SHARE: f64 = 0.5;
 const SCROLL_MIN_THUMB: f64 = 24.0;
 // Width of the shadow along a frozen edge once content scrolls under it.
 const SCROLL_SHADOW: f64 = 6.0;
+
 // MUI-style sibling/boundary window sizing
 // `_paginator_window` defaults.
 const PAGINATOR_SIBLING_COUNT: i64 = 1;
@@ -1649,7 +1648,7 @@ pub(crate) mod tests {
             },
             "column_layout": {"cell_padding": 8.0},
             "outer_padding": 12.0,
-            "pagination": {"enabled": true, "page_rows": 20},
+            "pagination": {"enabled": true, "page_rows": 20, "mode": "pages"},
             "bottom_padding": 0.0,
             "text_baseline_offset": 4.0,
             "symbol_mode": "all",
@@ -3091,6 +3090,170 @@ pub(crate) mod tests {
         let svg = render(&leading_total_payload(), &test_fonts()).expect("renders");
         assert!(svg.contains("1\u{2013}2 / 7<"), "{svg}");
         assert!(!svg.contains(" / 8<"), "{svg}");
+    }
+
+    fn scroll_payload(rows: usize) -> Payload {
+        let rows: Vec<Value> = (0..rows)
+            .map(|i| json!({"product": format!("Row {i}"), "revenue": i as f64}))
+            .collect();
+        let columns = json!({"product": {"label": "Product"}, "revenue": {"label": "Revenue"}});
+        let mut payload = make_paginated_payload_with_id("t1", columns, rows, 3, 0.0);
+        payload.resolved["style"]["table"]["pagination"]["mode"] = json!("scroll");
+        payload
+    }
+
+    /// The open (first) scroll pager's markup.
+    fn scroll_pager(svg: &str, page: &str) -> String {
+        let open = format!("data-dbt-scroll-pager=\"{page}\"");
+        let at = svg.find(&open).unwrap_or_else(|| panic!("no scroll pager {page}:\n{svg}"));
+        let start = svg[..at].rfind("<g").unwrap();
+        let end = svg[at..].find("</g></g>").unwrap() + at;
+        svg[start..end].to_string()
+    }
+
+    fn range_label(svg: &str) -> String {
+        let pager = scroll_pager(svg, "1");
+        let at = pager.find("dbt-paginator-label").unwrap_or_else(|| panic!("no range label:\n{pager}"));
+        let start = pager[..at].rfind("<text").unwrap();
+        let end = pager[at..].find("</text>").unwrap() + at;
+        pager[start..end].to_string()
+    }
+
+    fn tag_attr(tag: &str, name: &str) -> f64 {
+        attr_f64(tag, name)
+    }
+
+    /// Each `<text>`'s content, in document order.
+    fn texts(markup: &str) -> Vec<&str> {
+        markup
+            .split("</text>")
+            .filter_map(|chunk| chunk.rfind('>').map(|at| &chunk[at + 1..]))
+            .filter(|text| !text.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn a_scrolling_table_labels_its_row_total_under_the_rows() {
+        let svg = render(&scroll_payload(7), &test_fonts()).expect("renders");
+        assert!(svg.contains("data-max-y"), "{svg}");
+        assert!(svg.contains("data-dbt-scroll-range=\"7\""), "{svg}");
+        let label = range_label(&svg);
+        assert!(label.ends_with(">1\u{2013}3 / 7"), "{label}");
+        let rows_bottom = attr_f64(&svg, "data-rows-bottom");
+        let baseline = tag_attr(&label, " y");
+        assert!(rows_bottom < baseline && baseline <= rendered_height(&svg), "{label}\n{svg}");
+        assert_eq!(tag_attr(&label, " x"), 12.0, "left-aligned where the pager label sits: {label}");
+    }
+
+    #[test]
+    fn a_scrolling_table_draws_the_pager_a_paged_table_draws() {
+        let scrolled = render(&scroll_payload(7), &test_fonts()).expect("renders");
+        let mut paged_payload = scroll_payload(7);
+        paged_payload.resolved["style"]["table"]["pagination"]["mode"] = json!("pages");
+        let paged = render(&paged_payload, &test_fonts()).expect("renders");
+        let paged_pager = &paged[paged.find("class=\"dbt-paginator-label\"").expect("a pager")..];
+        let first = scroll_pager(&scrolled, "1");
+        assert_eq!(texts(&first), texts(paged_pager)[..texts(&first).len()], "{first}\n{paged_pager}");
+        assert!(texts(&first).contains(&"3"), "a page per viewport: {first}");
+        assert!(!first.contains("display=\"none\""), "page 1 opens: {first}");
+        let third = scroll_pager(&scrolled, "3");
+        assert!(third.contains("display=\"none\""), "{third}");
+        assert!(texts(&third).contains(&"7\u{2013}7 / 7"), "{third}");
+        assert!(!scrolled.contains("data-dbt-scroll-pager=\"4\""), "{scrolled}");
+        assert!(!scrolled.contains("data-dbt-page-var"), "a page scrolls, it sets no variable");
+    }
+
+    #[test]
+    fn an_interactive_scrolling_table_draws_a_hidden_compact_pager() {
+        let mut payload = scroll_payload(7);
+        payload.interactive_controls = true;
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(svg.contains("<g data-dbt-scroll-pager=\"compact\" display=\"none\""), "{svg}");
+        let mut static_payload = scroll_payload(7);
+        static_payload.interactive_controls = false;
+        let svg = render(&static_payload, &test_fonts()).expect("renders");
+        assert!(!svg.contains("<g data-dbt-scroll-pager=\"compact\""), "{svg}");
+    }
+
+    #[test]
+    fn a_scrolling_table_past_the_pager_cap_draws_only_the_open_compact_pager() {
+        let svg = render(&scroll_payload(3 * POOL_PAGER_MAX_PAGES + 1), &test_fonts()).expect("renders");
+        assert!(svg.contains("<g data-dbt-scroll-pager=\"compact\">"), "{svg}");
+        assert!(!svg.contains("<g data-dbt-scroll-pager=\"1\""), "{svg}");
+    }
+
+    #[test]
+    fn a_scrolling_table_with_a_trailing_total_draws_no_overflow_note() {
+        let mut rows: Vec<Value> = (0..7)
+            .map(|i| json!({"product": format!("Row {i}"), "revenue": i as f64, "row_role": "value"}))
+            .collect();
+        rows.push(json!({"product": "Total", "revenue": 21.0, "row_role": "total"}));
+        let columns = json!({"product": {"label": "Product"}, "revenue": {"label": "Revenue"}});
+        let mut payload = make_paginated_payload_with_id("t1", columns, rows, 3, 0.0);
+        payload.resolved["row_role"] = json!("row_role");
+        payload.resolved["style"]["table"]["pagination"]["mode"] = json!("scroll");
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(svg.contains("data-dbt-pinned"), "{svg}");
+        assert!(!svg.contains(">+1<"), "a pinned total is drawn, not counted as cut: {svg}");
+    }
+
+    #[test]
+    fn a_slot_whose_viewport_holds_only_a_leading_total_is_refused() {
+        let mut payload = leading_total_payload();
+        payload.resolved["style"]["table"]["pagination"]["mode"] = json!("scroll");
+        payload.height = 140.0;
+        let err = render(&payload, &test_fonts()).expect_err("no data row fits the viewport");
+        assert!(format!("{err:?}").contains("shows no data row"), "{err:?}");
+    }
+
+    #[test]
+    fn a_static_export_mounts_its_scroll_script_after_the_range_label() {
+        // The script mounts as the page parses, so whatever it binds must precede it.
+        let svg = render(&scroll_payload(7), &test_fonts()).expect("renders");
+        let script = svg.find("<script").expect("a static export embeds the runtime");
+        let label = svg.find("data-dbt-scroll-range").expect("a range label");
+        assert!(label < script, "{svg}");
+    }
+
+    #[test]
+    fn a_scrolling_table_that_fits_draws_no_range_label() {
+        let svg = render(&scroll_payload(3), &test_fonts()).expect("renders");
+        assert!(!svg.contains("data-dbt-scroll-range"), "{svg}");
+    }
+
+    #[test]
+    fn the_scroll_range_counts_data_rows_not_the_total_row() {
+        let mut payload = leading_total_payload();
+        payload.resolved["style"]["table"]["pagination"]["mode"] = json!("scroll");
+        payload.height = 0.0;
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let label = range_label(&svg);
+        assert!(label.ends_with(">1\u{2013}2 / 7"), "{label}");
+        assert!(svg.contains("data-dbt-scroll-range=\"7\""), "{svg}");
+    }
+
+    #[test]
+    fn the_range_label_clears_the_sideways_scrollbar() {
+        let mut payload = scroll_payload(7);
+        payload.resolved["columns"]["product"]["width"] = json!(2000);
+        payload.resolved["style"]["table"]["column_layout"]["overflow"] = json!("scroll");
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let label = range_label(&svg);
+        let thumb_tag = svg.split("data-dbt-scroll-thumb=\"x\"").next().unwrap();
+        let thumb = &thumb_tag[thumb_tag.rfind("<rect").unwrap()..];
+        let thumb_bottom = tag_attr(thumb, " y") + tag_attr(thumb, " height");
+        assert!(thumb_bottom <= tag_attr(&label, " y") - 18.0 + 0.01, "{thumb}\n{label}");
+    }
+
+    #[test]
+    fn a_slotted_scrolling_table_reserves_the_label_band_in_its_slot() {
+        let mut payload = scroll_payload(30);
+        payload.height = 200.0;
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let label = range_label(&svg);
+        assert_eq!(rendered_height(&svg), 200.0, "{svg}");
+        assert!(attr_f64(&svg, "data-rows-bottom") <= tag_attr(&label, " y") - 18.0 + 0.01, "{svg}");
+        assert!(tag_attr(&label, " y") <= 200.0, "{svg}");
     }
 
     #[test]
@@ -6652,6 +6815,20 @@ pub(crate) mod tests {
         assert!(wrapped.contains("<rect x=\"20\""), "a wrapping table's text cells never drive the cascade:\n{wrapped}");
     }
 
+    /// A cut cell publishes its whole text as `data-dbt-full` for the host to
+    /// reveal; a cell that fits carries none.
+    #[test]
+    fn a_cut_cell_publishes_its_full_text() {
+        let long = "A very long name that cannot fit & more";
+        let rows = vec![json!({"name": long, "value": 1.0}), json!({"name": "Ann", "value": 2.0})];
+        let columns = json!({"name": {"label": "Name", "width": 60}, "value": {"label": "Value"}});
+        let mut theme = base_table_theme();
+        theme["wrap"] = json!(false);
+        let svg = render(&plain_payload(theme, columns, rows, 300.0, 400.0), &test_fonts()).unwrap();
+        assert_eq!(svg.matches("data-dbt-full=").count(), 1, "{svg}");
+        assert!(svg.contains("data-dbt-full=\"A very long name that cannot fit &amp; more\""), "{svg}");
+    }
+
     /// A title-less table needs no subtitle family.
     #[test]
     fn a_table_without_a_subtitle_needs_no_table_font_family() {
@@ -6989,7 +7166,8 @@ pub(crate) mod tests {
         // The clamped lane ends on the content edge, where the header rule ends.
         assert_eq!(lane_tspan, 582.0, "{svg}");
         // Production cuts the too-wide date instead of drawing it whole.
-        assert!(!svg.contains("15 Mar 2024"), "the date is cut, not spilled:\n{svg}");
+        assert!(!svg.contains(">15 Mar 2024<"), "the date is cut, not spilled:\n{svg}");
+        assert!(svg.contains("data-dbt-full=\"15 Mar 2024\""), "{svg}");
         assert!(svg.contains("\u{2026}</text>"), "{svg}");
     }
 
@@ -7459,22 +7637,19 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn spark_bar_cell_with_a_clamped_to_zero_value_falls_through_to_the_cell_text() {
-        // The `if spark_content:` truthiness check: a plain
-        // `bar` (no track) whose fill_width clamps to <= 0
-        // returns EMPTY inner content, so production takes the falsy branch
-        // and paints the ordinary formatted cell text instead — a `0` cell
-        // shows "0", never a blank mark.
-        let rows = vec![json!({"c": "Alpha", "v": 0})];
-        let columns =
-            json!({"c": {"label": "C"}, "v": {"label": "V", "spark": {"type": "bar", "max": 100.0}}});
-        let payload = make_payload(columns, rows, None, 20);
-        let svg = render(&payload, &test_fonts()).expect("renders");
-        assert!(
-            !svg.contains("<g transform=\"translate("),
-            "an empty-content bar mark must not draw an empty <g>:\n{svg}"
-        );
-        assert!(svg.contains(">0<"), "falls through to painting the cell's own text:\n{svg}");
+    fn spark_bar_and_column_cells_with_a_zero_value_draw_an_empty_cell() {
+        // A zero-length bar draws neither a mark nor the cell text.
+        for spark_type in ["bar", "column"] {
+            let rows = vec![json!({"c": "Alpha", "v": 0})];
+            let columns = json!({
+                "c": {"label": "C"},
+                "v": {"label": "V", "spark": {"type": spark_type, "max": 100.0}},
+            });
+            let payload = make_payload(columns, rows, None, 20);
+            let svg = render(&payload, &test_fonts()).expect("renders");
+            assert!(!svg.contains("<g transform=\"translate("), "{spark_type}: no empty <g>:\n{svg}");
+            assert!(!svg.contains(">0<"), "{spark_type}: no cell text:\n{svg}");
+        }
     }
 
     #[test]
@@ -7608,8 +7783,8 @@ mod conditional_formatting_tests {
     #[test]
     fn eq_matches_a_string_value() {
         let r = rule(json!({"eq": "urgent", "glyph": "x"}));
-        assert!(match_predicate(&r.predicate, Some(&json!("urgent"))).unwrap());
-        assert!(!match_predicate(&r.predicate, Some(&json!("normal"))).unwrap());
+        assert!(match_predicate(&r.predicate, "c", Some(&json!("urgent"))).unwrap());
+        assert!(!match_predicate(&r.predicate, "c", Some(&json!("normal"))).unwrap());
     }
 
     #[test]
@@ -7617,8 +7792,8 @@ mod conditional_formatting_tests {
         // isinstance(value, bool) != isinstance(rule.eq, bool) -> False,
         // even though 1 == True in Python.
         let r = rule(json!({"eq": true, "glyph": "x"}));
-        assert!(!match_predicate(&r.predicate, Some(&json!(1))).unwrap());
-        assert!(match_predicate(&r.predicate, Some(&json!(true))).unwrap());
+        assert!(!match_predicate(&r.predicate, "c", Some(&json!(1))).unwrap());
+        assert!(match_predicate(&r.predicate, "c", Some(&json!(true))).unwrap());
     }
 
     #[test]
@@ -7626,40 +7801,40 @@ mod conditional_formatting_tests {
         // A cross-type pair against `ne` always satisfies it (return True),
         // the mirror image of eq's guard.
         let r = rule(json!({"ne": true, "glyph": "x"}));
-        assert!(match_predicate(&r.predicate, Some(&json!(1))).unwrap());
-        assert!(!match_predicate(&r.predicate, Some(&json!(true))).unwrap());
+        assert!(match_predicate(&r.predicate, "c", Some(&json!(1))).unwrap());
+        assert!(!match_predicate(&r.predicate, "c", Some(&json!(true))).unwrap());
     }
 
     #[test]
     fn numeric_operators_never_coerce_a_numeric_string() {
         let lte = rule(json!({"lte": 30, "glyph": "x"}));
-        assert!(!match_predicate(&lte.predicate, Some(&json!("29.5"))).unwrap());
+        assert!(!match_predicate(&lte.predicate, "c", Some(&json!("29.5"))).unwrap());
         let gt = rule(json!({"gt": 90, "glyph": "x"}));
-        assert!(match_predicate(&gt.predicate, Some(&json!(91))).unwrap());
+        assert!(match_predicate(&gt.predicate, "c", Some(&json!(91))).unwrap());
         let between = rule(json!({"between": [10, 20], "glyph": "x"}));
-        assert!(match_predicate(&between.predicate, Some(&json!(15))).unwrap());
-        assert!(!match_predicate(&between.predicate, Some(&json!(21))).unwrap());
+        assert!(match_predicate(&between.predicate, "c", Some(&json!(15))).unwrap());
+        assert!(!match_predicate(&between.predicate, "c", Some(&json!(21))).unwrap());
     }
 
     #[test]
     fn numeric_operator_on_a_non_numeric_value_does_not_match() {
         let r = rule(json!({"gt": 1, "glyph": "x"}));
-        assert!(!match_predicate(&r.predicate, Some(&json!("Zed"))).unwrap());
-        assert!(!match_predicate(&r.predicate, None).unwrap());
+        assert!(!match_predicate(&r.predicate, "c", Some(&json!("Zed"))).unwrap());
+        assert!(!match_predicate(&r.predicate, "c", None).unwrap());
     }
 
     #[test]
     fn is_null_matches_a_missing_or_explicit_null_value() {
         let r = rule(json!({"is_null": true, "glyph": "x"}));
-        assert!(match_predicate(&r.predicate, None).unwrap());
-        assert!(!match_predicate(&r.predicate, Some(&json!(5))).unwrap());
+        assert!(match_predicate(&r.predicate, "c", None).unwrap());
+        assert!(!match_predicate(&r.predicate, "c", Some(&json!(5))).unwrap());
     }
 
     #[test]
     fn in_matches_any_scalar_candidate() {
         let r = rule(json!({"in": ["a", "b"], "glyph": "x"}));
-        assert!(match_predicate(&r.predicate, Some(&json!("b"))).unwrap());
-        assert!(!match_predicate(&r.predicate, Some(&json!("c"))).unwrap());
+        assert!(match_predicate(&r.predicate, "c", Some(&json!("b"))).unwrap());
+        assert!(!match_predicate(&r.predicate, "c", Some(&json!("c"))).unwrap());
     }
 
     /// `ConditionalRule.model_dump` writes the predicate as `in`.
@@ -7667,20 +7842,20 @@ mod conditional_formatting_tests {
     fn in_reads_the_key_the_python_model_dumps() {
         let rules: Vec<WhenRule> =
             serde_json::from_value(json!([{"in": ["a"], "glyph": "x"}])).unwrap();
-        assert!(match_predicate(&rules[0].predicate, Some(&json!("a"))).unwrap());
+        assert!(match_predicate(&rules[0].predicate, "c", Some(&json!("a"))).unwrap());
     }
 
     #[test]
     fn in_with_a_non_scalar_candidate_is_not_supported() {
         let r = rule(json!({"in": [["nested"]], "glyph": "x"}));
-        let err = match_predicate(&r.predicate, Some(&json!("nested"))).unwrap_err();
+        let err = match_predicate(&r.predicate, "c", Some(&json!("nested"))).unwrap_err();
         assert!(err.contains("non-scalar"), "{err}");
     }
 
     #[test]
     fn a_rule_with_no_active_predicate_is_not_supported() {
         let r = rule(json!({"glyph": "x"}));
-        let err = match_predicate(&r.predicate, Some(&json!(1))).unwrap_err();
+        let err = match_predicate(&r.predicate, "c", Some(&json!(1))).unwrap_err();
         assert!(err.contains("no active predicate"), "{err}");
     }
 
@@ -7745,7 +7920,7 @@ mod conditional_formatting_tests {
             rule(json!({"gt": 0, "background": "#111111", "glyph": "a"})),
             rule(json!({"gt": 10, "background": "#222222"})),
         ];
-        let out = resolve_conditional_styles(&rules, Some(&json!(20)), None).unwrap();
+        let out = resolve_conditional_styles(&rules, "c", Some(&json!(20)), None).unwrap();
         assert_eq!(out.background.as_deref(), Some("#222222"));
         // The second rule set no glyph, so the first rule's glyph survives
         // — only an explicit glyph on a LATER rule clears the color, and
@@ -7759,9 +7934,9 @@ mod conditional_formatting_tests {
             rule(json!({"gt": 100, "background": "#111111"})),
             rule(json!({"default": true, "background": "#999999"})),
         ];
-        let matched = resolve_conditional_styles(&rules, Some(&json!(200)), None).unwrap();
+        let matched = resolve_conditional_styles(&rules, "c", Some(&json!(200)), None).unwrap();
         assert_eq!(matched.background.as_deref(), Some("#111111"));
-        let fell_through = resolve_conditional_styles(&rules, Some(&json!(5)), None).unwrap();
+        let fell_through = resolve_conditional_styles(&rules, "c", Some(&json!(5)), None).unwrap();
         assert_eq!(fell_through.background.as_deref(), Some("#999999"));
     }
 
@@ -7771,7 +7946,7 @@ mod conditional_formatting_tests {
             rule(json!({"gt": 0, "glyph": "a", "glyph_color": "#ff0000"})),
             rule(json!({"gt": 10, "glyph": "b"})),
         ];
-        let out = resolve_conditional_styles(&rules, Some(&json!(20)), None).unwrap();
+        let out = resolve_conditional_styles(&rules, "c", Some(&json!(20)), None).unwrap();
         assert_eq!(out.glyph.as_deref(), Some("b"));
         assert_eq!(out.glyph_color, None, "later glyph clears the earlier rule's color");
     }
@@ -7780,7 +7955,7 @@ mod conditional_formatting_tests {
     fn tone_resolves_a_glyph_color_from_board_tones() {
         let t = tones();
         let rules = vec![rule(json!({"gt": 90, "glyph": "\u{25d0}", "tone": "warning"}))];
-        let out = resolve_conditional_styles(&rules, Some(&json!(95)), Some(&t)).unwrap();
+        let out = resolve_conditional_styles(&rules, "c", Some(&json!(95)), Some(&t)).unwrap();
         assert_eq!(out.glyph_color.as_deref(), Some("#e69812"));
     }
 
@@ -7789,7 +7964,7 @@ mod conditional_formatting_tests {
         let t = tones();
         let rules =
             vec![rule(json!({"gt": 90, "glyph": "x", "glyph_color": "#abcdef", "tone": "warning"}))];
-        let out = resolve_conditional_styles(&rules, Some(&json!(95)), Some(&t)).unwrap();
+        let out = resolve_conditional_styles(&rules, "c", Some(&json!(95)), Some(&t)).unwrap();
         assert_eq!(out.glyph_color.as_deref(), Some("#abcdef"));
     }
 
@@ -7804,7 +7979,7 @@ mod conditional_formatting_tests {
         // `a_tone_rule_with_no_board_tones_refuses_at_render` and
         // `a_tone_rule_renders_and_paints_when_board_tones_are_present`.
         let rules = vec![rule(json!({"gt": 90, "glyph": "x", "tone": "warning"}))];
-        let overrides = resolve_conditional_styles(&rules, Some(&json!(95)), None).unwrap();
+        let overrides = resolve_conditional_styles(&rules, "c", Some(&json!(95)), None).unwrap();
         assert!(overrides.tone_needs_board_tones);
         assert_eq!(overrides.glyph_color, None);
     }
@@ -7815,7 +7990,7 @@ mod conditional_formatting_tests {
             "gt": 0,
             "font": {"color": "#333333", "weight": 700, "style": "italic", "decoration": "underline"}
         }))];
-        let out = resolve_conditional_styles(&rules, Some(&json!(1)), None).unwrap();
+        let out = resolve_conditional_styles(&rules, "c", Some(&json!(1)), None).unwrap();
         assert_eq!(out.color.as_deref(), Some("#333333"));
         assert_eq!(out.weight.as_deref(), Some("700"));
         assert_eq!(out.style.as_deref(), Some("italic"));
@@ -8250,7 +8425,7 @@ mod conditional_formatting_tests {
             }
         }}});
         let mut theme = cf_theme();
-        theme["pagination"] = json!({"enabled": true, "page_rows": 3});
+        theme["pagination"] = json!({"enabled": true, "page_rows": 3, "mode": "pages"});
         let resolved = json!({
             "link_open": "page",
             "id": "t1",

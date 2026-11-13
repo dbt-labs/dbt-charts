@@ -90,6 +90,9 @@ class RefIndex:
     available_sources: sorted "source.table" strings for unknown-source diagnostics.
     formats:           ref name or "source.table" → column → ``meta.format``; only
                        columns that carry one, so models without any are absent.
+    unresolved:        ref name or "source.table" → why a host that builds the
+                       manifest could not place it (the manifest's optional
+                       top-level ``unresolved`` mapping).
     """
 
     refs: dict[str, tuple[str, str]]
@@ -97,6 +100,12 @@ class RefIndex:
     available_refs: list[str]
     available_sources: list[str]
     formats: RawTableFormats
+    unresolved: dict[str, str]
+
+    def why(self, name: str) -> str:
+        """The stored reason *name* has no relation, as an error-message suffix."""
+        reason = self.unresolved.get(name)
+        return f" Why: {reason}." if reason else ""
 
 
 def manifest_relpath(project: Project | None, target_path: str | None = None) -> str:
@@ -225,6 +234,9 @@ def ref_index(loaded: LoadedManifest) -> RefIndex:
         available_refs=available_refs,
         available_sources=available_sources,
         formats=formats,
+        unresolved=loaded.raw.get(  # type-state: silent_fallback — dbt omits host-only reasons
+            "unresolved", {}
+        ),
     )
 
 

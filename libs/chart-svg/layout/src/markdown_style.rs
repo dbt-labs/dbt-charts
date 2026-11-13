@@ -28,12 +28,22 @@ const PROSE_SAMPLE: &str = "North America's primary issue is insufficient MQL su
 /// `MAX_CHARS`: the readable line length when the theme sets none.
 const MAX_CHARS: u32 = 75;
 
+/// `heading_margin_scale`: the line a heading's margins are measured in. A heading inside prose is
+/// spaced by the prose's own lines; a section title labels a card of any kind, so its spacing is the
+/// board chrome's and does not move when the prose is resized.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MarginScale {
+    Prose,
+    Chrome,
+}
+
 /// What a caller overrides of `get_compact_style`.
 #[derive(Debug, Clone)]
 pub struct Overrides {
     pub font_family: Option<String>,
     pub h1_size: Option<f64>,
     pub heading_weight: Option<String>,
+    pub margin_scale: MarginScale,
 }
 
 impl Overrides {
@@ -42,6 +52,7 @@ impl Overrides {
         font_family: None,
         h1_size: None,
         heading_weight: None,
+        margin_scale: MarginScale::Prose,
     };
 }
 
@@ -142,8 +153,10 @@ impl Axes {
 pub fn compact_style(style: &Style, overrides: &Overrides) -> Result<MdsvgStyle, Diagnostic> {
     let text = &style.text;
     let (body_size, body_line) = (text.font.size, text.font.line_height);
-    // A heading margin of 1.5 is a line and a half of the body text the heading belongs to.
-    let margin_unit = body_size * body_line;
+    // A heading margin of 1.5 is a line and a half of the body text the heading belongs to, or of the
+    // board chrome's for a section title.
+    let chrome = overrides.margin_scale == MarginScale::Chrome;
+    let margin_unit = if chrome { style.font.size * style.font.line_height } else { body_size * body_line };
     let emoji = &style.font.emoji;
     let heading_sizes = heading_ramp(style, "heading")?;
     if heading_sizes.len() != 6 {
@@ -208,10 +221,12 @@ pub fn compact_style(style: &Style, overrides: &Overrides) -> Result<MdsvgStyle,
         font_weight,
         line_height: body_line,
         heading_margin_top_px: Some(margin_unit * text.heading.margin_top),
-        heading_margin_bottom_px: Some(margin_unit * text.heading.margin_bottom),
-        minor_heading_margin_top_px: Some(paragraph_gap),
-        major_heading_margin_bottom_px: Some(paragraph_gap),
-        heading_grid_px: Some(body_size * body_line),
+        // A section title is followed by the paragraph gap; the authored heading bottom margin belongs
+        // to headings inside prose.
+        heading_margin_bottom_px: Some(margin_unit * if chrome { paragraph.margin_top.max(paragraph.margin_bottom) } else { text.heading.margin_bottom }),
+        minor_heading_margin_top_px: (!chrome).then_some(paragraph_gap),
+        major_heading_margin_bottom_px: (!chrome).then_some(paragraph_gap),
+        heading_grid_px: (!chrome).then_some(body_size * body_line),
         paragraph_spacing: paragraph_gap,
         text_color: text.font.color.as_str().to_string(),
         heading_color: Some(style.title.font.color.as_str().to_string()),
@@ -312,21 +327,31 @@ pub fn has_italic(style: &MdsvgStyle) -> bool {
     italic_font_file(&style.font_family).is_some()
 }
 
-/// `board_title_spec` for the root title (level 1): the H1 size of the ramp and the title weight.
-/// A deeper title reads the section ramp, which no board drawn here has.
-pub fn root_title_overrides(style: &Style) -> Result<Overrides, Diagnostic> {
+/// `board_title_spec` and `title_renderer`: a board title's size by its semantic `level` (the count of
+/// titled boards from the root down to it) and its weight, in the title family. Level 1 and an
+/// authored level read the heading ramp; a deeper title reads the section ramp, H2 first. The root's
+/// title is spaced on the body's line grid, a nested one in the chrome's.
+pub fn title_overrides(style: &Style, level: u32, root: bool) -> Result<Overrides, Diagnostic> {
     if let Engine::Value(_) = style.title.base.level {
         return Err(Diagnostic::refused(refuse!(
             "a board title with an authored `style.title.level` is not supported"
         )));
     }
-    let sizes = heading_ramp(style, "heading")?;
+    let size = if level >= 2 {
+        let sections = heading_ramp(style, "section")?;
+        let at = (level as usize).min(sections.len() + 1).saturating_sub(2);
+        *sections.get(at).ok_or_else(|| diag::err_internal("style.fonts.section.sizes is empty"))?
+    } else {
+        let sizes = heading_ramp(style, "heading")?;
+        *sizes.get((level as usize).clamp(1, sizes.len().max(1)) - 1).ok_or_else(|| diag::err_internal("style.fonts.heading.sizes is empty"))?
+    };
     Ok(Overrides {
-        // `int(sizes[0])`
-        h1_size: Some(sizes[0].trunc()),
+        // `int(size)`
+        h1_size: Some(size.trunc()),
         heading_weight: Some(Weight::of(&style.title.font.weight).attr()),
         // A title is always a heading: it draws in the title family, never the body's.
         font_family: Some(style.title.font.family.as_str().to_string()),
+        margin_scale: if root { MarginScale::Prose } else { MarginScale::Chrome },
     })
 }
 

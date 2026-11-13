@@ -84,6 +84,27 @@ class ChartSupportTableAggregate(BaseModel):
     )
 
 
+class ChartSupportTablePercent(BaseModel):
+    """A support_table row that reads a column as a share of its first stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    percent: str = Field(
+        description=(
+            "Query column whose value, at each stage, prints as a share of the "
+            "first stage's value. Funnel charts only."
+        ),
+    )
+    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
+        default=None,
+        description="D3 format string or format config object. Optional; prints as a percentage when omitted.",
+    )
+    label: Annotated[str | None, DisplayText()] = Field(
+        default=None,
+        description="Column header label override for this row. Optional.",
+    )
+
+
 class ChartSupportTablePerSeries(BaseModel):
     """A support_table entry that expands into one row per color: series.
 
@@ -132,6 +153,8 @@ def _discriminate_entry(entry: Any) -> str | None:
         return "aggregate"
     if isinstance(entry, ChartSupportTablePerSeries):
         return "per_series"
+    if isinstance(entry, ChartSupportTablePercent):
+        return "percent"
     if isinstance(entry, ChartSupportTableSource):
         return "source"
     if isinstance(entry, str):
@@ -141,6 +164,8 @@ def _discriminate_entry(entry: Any) -> str | None:
             return "aggregate"
         if "per_series" in entry:
             return "per_series"
+        if "percent" in entry:
+            return "percent"
         return "source"
     return None
 
@@ -154,7 +179,8 @@ ChartSupportTableEntry = Annotated[
         Tag("source"),
     ]
     | Annotated[ChartSupportTableAggregate, Tag("aggregate")]
-    | Annotated[ChartSupportTablePerSeries, Tag("per_series")],
+    | Annotated[ChartSupportTablePerSeries, Tag("per_series")]
+    | Annotated[ChartSupportTablePercent, Tag("percent")],
     Discriminator(_discriminate_entry),
 ]
 
@@ -185,7 +211,7 @@ class ChartSupportTable(BaseModel):
     entries: list[ChartSupportTableEntry] = Field(
         min_length=1,
         description=(
-            "List of support-table entries (source, aggregate, or per-series rows). "
+            "List of support-table entries (source, aggregate, per-series, or percent rows). "
             "A source entry may be written as a bare column name (`revenue` in "
             "place of `{source: revenue}`), the same scalar-listable spelling "
             "`y:` uses."
@@ -207,7 +233,18 @@ ChartSupportTableOrList = Annotated[
 ]
 
 
-CHART_SUPPORT_TABLE_SUPPORTED_TYPES: frozenset[str] = frozenset({"bar", "line", "area"})
+CHART_SUPPORT_TABLE_SUPPORTED_TYPES: frozenset[str] = frozenset(
+    {"bar", "funnel", "line", "area"}
+)
+
+
+def support_table_column(entry: ChartSupportTableEntry) -> str:
+    """The query column an entry reads."""
+    if isinstance(entry, ChartSupportTablePerSeries):
+        return entry.per_series
+    if isinstance(entry, ChartSupportTablePercent):
+        return entry.percent
+    return entry.source
 
 
 def validate_support_table_shape(entries: list[ChartSupportTableEntry]) -> None:
@@ -224,12 +261,21 @@ def validate_support_table_shape(entries: list[ChartSupportTableEntry]) -> None:
                 )
             seen.add(key)
             continue
-        agg = entry.aggregate if isinstance(entry, ChartSupportTableAggregate) else None
-        source = entry.source
+        if isinstance(entry, ChartSupportTablePercent):
+            agg, source = "percent", entry.percent
+        else:
+            agg = (
+                entry.aggregate
+                if isinstance(entry, ChartSupportTableAggregate)
+                else None
+            )
+            source = entry.source
         normal_key: tuple[str, str | None, bool] = (source, agg, False)
         if normal_key in seen:
             label = (
-                f"{{aggregate: {agg}, source: {source}}}"
+                f"{{percent: {source}}}"
+                if agg == "percent"
+                else f"{{aggregate: {agg}, source: {source}}}"
                 if agg is not None
                 else f"{{source: {source}}}"
             )

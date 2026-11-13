@@ -7,7 +7,7 @@ use crate::sql::PySqlAnalysis;
 use board_model::board::HtmlPolicy;
 use board_model::cache::{CacheLayer, CacheTtl};
 use board_model::sql_analysis::{Refused, SqlAnalysis};
-use normalize::{HostInputs, ProjectFiles, ReadError, SourceRegistry};
+use normalize::{HostInputs, ProjectFiles, ReadError, SourceRegistry, SourceZone};
 use project::ProjectPath;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -72,6 +72,13 @@ impl CompiledBoard {
     /// `source_needle` rides in `params`.
     fn diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         json_to_py(py, &self.0.structure.wire_diagnostics())
+    }
+
+    /// The findings only `dct validate` reports (a chart naming part of its channel set, an
+    /// unknown color token), in the same wire shape as [`Self::diagnostics`]. Compile accepts
+    /// the board; each is an error.
+    fn validate_findings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        json_to_py(py, &self.0.structure.wire_validate_only())
     }
 
     /// What validate's host checks read (queries, column refs, unbound charts, links, suppressed
@@ -163,20 +170,22 @@ enum Board<'a> {
     Text(&'a str),
 }
 
-/// `compile(files, path, *, boards_root, today, default_theme, html_policy_ceiling, sources, implicit_source, cache_root, source_caches, sql, named, text)`.
+/// `compile(files, path, *, boards_root, today, default_theme, html_policy_ceiling, sources, implicit_source, cache_root, source_caches, zones, sql, named, text, anchor)`.
 ///
 /// `path` is `None` for a board with no project location, whose `text` is then required (and
-/// refused beside a path): it inherits no `meta.yml` and resolves no relative reference.
+/// refused beside a path): it inherits no `meta.yml` and resolves no relative reference, unless
+/// `anchor` names the project directory its references resolve from.
 ///
 /// `cache_root` is the project's `cache:` layer and `source_caches` each declared source's; both
 /// are required, since a compile with no root has no cache policy to resolve.
 ///
-/// `sources` maps each project source name to its declaration as JSON text.
+/// `sources` maps each project source name to its declaration as JSON text. `zones` maps the
+/// sources the host parsed and whose type has a dialect to `(type, authored time zone)`.
 ///
 /// `today` is `YYYY-MM-DD`. `sql` is the host's analyzer (`analyze_all(requests) -> outcomes`);
 /// without one a SQL query is refused. The GIL is released while compiling.
 #[pyfunction]
-#[pyo3(signature = (files, path, *, boards_root, today, default_theme, html_policy_ceiling, sources, implicit_source, cache_root, source_caches, sql=None, named=false, text=None))]
+#[pyo3(signature = (files, path, *, boards_root, today, default_theme, html_policy_ceiling, sources, implicit_source, cache_root, source_caches, zones, sql=None, named=false, text=None, anchor=None))]
 #[allow(clippy::too_many_arguments)]
 fn compile(
     py: Python<'_>,
@@ -190,9 +199,11 @@ fn compile(
     implicit_source: Option<String>,
     cache_root: CacheWire,
     source_caches: BTreeMap<String, CacheWire>,
+    zones: BTreeMap<String, (String, Option<String>)>,
     sql: Option<Py<PyAny>>,
     named: bool,
     text: Option<&str>,
+    anchor: Option<&str>,
 ) -> PyResult<CompiledBoard> {
     let board = match (path, text) {
         (Some(_), Some(_)) => {
@@ -217,7 +228,10 @@ fn compile(
             })
             .collect::<PyResult<Vec<_>>>()?,
     )
-    .with_implicit(implicit_source);
+    .with_implicit(implicit_source)
+    .with_zones(zones.into_iter().map(|(name, (adapter_type, authored))| {
+        (name, SourceZone::new(adapter_type, authored.as_deref()))
+    }));
     let cache_root = cache_layer(cache_root);
     let source_caches: BTreeMap<String, CacheLayer> = source_caches
         .into_iter()
@@ -244,7 +258,7 @@ fn compile(
         };
         match &board {
             Board::At(path) => normalize::compile_or_refuse(&files, path, &host),
-            Board::Text(text) => normalize::compile_text_or_refuse(&files, text, &host),
+            Board::Text(text) => normalize::compile_text_or_refuse(&files, text, &host, anchor),
         }
     });
     if let Some(interrupt) = escaped.take() {

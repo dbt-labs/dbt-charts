@@ -60,6 +60,7 @@ def resolve_dbt_refs_with_provenance(
                 ERR_DBT_REF_UNKNOWN_NODE,
                 ref_name=ref_name,
                 available=index.available_refs,
+                why=index.why(ref_name),
             )
         fragment, schema = entry
         relations.append(ResolvedRelation(ref_name=ref_name, schema=schema))
@@ -77,6 +78,7 @@ def resolve_dbt_refs_with_provenance(
                 source_name=source_name,
                 table_name=table_name,
                 available=index.available_sources,
+                why=index.why(f"{source_name}.{table_name}"),
             )
         fragment, schema = entry
         ref_name = f"{source_name}.{table_name}"

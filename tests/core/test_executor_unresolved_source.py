@@ -15,6 +15,7 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
+from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.execute import QueryError
 from dbt_charts.core.execute.env import build_exec_env
 
@@ -39,12 +40,14 @@ rows:
 def test_unresolved_source_raises_query_error_not_duckdb_parse_error(
     local_project: Callable[..., FilesystemProject],
 ) -> None:
-    result = compile(PREVIEW_BOARD_YAML)
+    # No source declared: the plan names `my_bigquery` and nothing resolves it.
+    result = compile(
+        PREVIEW_BOARD_YAML, project_sources=ProjectSourcesConfig(sources={})
+    )
     assert result.board is not None
     executor = Run(
         result.board,
         env=build_exec_env(local_project(Path.cwd())),
-        query_registry=result.query_registry,
     )
 
     with pytest.raises(QueryError) as exc_info:

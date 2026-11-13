@@ -32,6 +32,7 @@ from dbt_charts.core.compile.models.style.theme import (
     AxisXStyle,
     AxisYStyle,
     BarLabelsStyle,
+    BarMarkStyle,
 )
 from dbt_charts.core.compile.models.style.theme.marks import label_anchors
 from dbt_charts.core.compile.resolve.chart._annotations import (
@@ -50,6 +51,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     _rail_off_for_multiples,
     _reject_dual_axis_layered_endpoint_labels,
     cartesian_color_domain_values,
+    cartesian_series_domain_values,
     cartesian_series_naming,
     cartesian_top_legend_entries,
     estimate_cartesian_plot_height,
@@ -73,7 +75,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     restamp,
 )
 from dbt_charts.core.compile.resolve.chart._conditional import (
-    validate_mark_conditional,
+    resolve_mark_conditional,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
     _axis_headroom,
@@ -106,6 +108,7 @@ from dbt_charts.core.compile.resolve.chart._marks import (
     _label_format_fallback,
     _measure_tooltip_format,
     _resolve_authored_label_format,
+    callout_label_format,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
@@ -154,13 +157,20 @@ from dbt_charts.core.compile.resolve.style.legend_position import (
 )
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
+from dbt_charts.core.compile.template.labels_env import (
+    accounting_spec_beside_secondary,
+)
 from dbt_charts.core.constants.bar import TOP_RAIL_LABEL_GAP_SPACES
 from dbt_charts.core.constants.estimates import ROW_LEGEND_TOTAL_PX
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_ANNOTATION_INVALID,
     ERR_BAR_LOG_SCALE_NOT_SUPPORTED,
     ERR_BAR_Y_NOT_NUMERIC,
+    ERR_FUNNEL_BAND_WIDTH_TOO_THIN,
+    ERR_FUNNEL_VERTICAL,
+    ERR_LABEL_TEMPLATE_ACCOUNTING_PARENS,
     ERR_LABELS_ANCHOR_UNSUPPORTED,
+    ERR_RIBBON_LABELS_FUNNEL_ONLY,
 )
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.text.category_label import category_label_text
@@ -602,10 +612,9 @@ def _stack_legend_should_yield(
     resolved_stack: str,
     orientation: Literal["vertical", "horizontal"] | None,
     distinct_series: int,
-    symbol_limit: int | None,
     plot_height: float,
     legend_is_top: bool,
-    legend_columns: int,
+    legend_columns: int | None,
 ) -> bool:
     """True when a stacked bar's legend would squeeze its own segments to zero height.
 
@@ -621,8 +630,9 @@ def _stack_legend_should_yield(
     plot height, and never competes with the plot for it). The height math
     (``legend_wrap_required_height_px`` -- the legend's *total* footprint at
     collapse, correct here because nothing else is subtracted alongside it)
-    divides entries across ``legend_columns`` — the renderer never lays out
-    one row per entry once the legend goes top/compact.
+    divides entries across ``legend_columns`` (``legend_wrap_columns``;
+    ``None`` is one row) — the renderer never lays out one row per entry
+    once the legend goes top/compact.
     """
     if (
         resolved_stack == "none"
@@ -631,10 +641,35 @@ def _stack_legend_should_yield(
         or not legend_is_top
     ):
         return False
-    required = legend_wrap_required_height_px(
-        distinct_series, symbol_limit, legend_columns
-    )
+    # Every entry is charged: a bar's legend draws them all, never folding
+    # at symbol_limit (only pie and geo keys fold).
+    required = legend_wrap_required_height_px(distinct_series, None, legend_columns)
     return required > plot_height
+
+
+def _check_funnel_labels(normalized: BarChart, mark: BarMarkStyle) -> None:
+    """Ribbon labels are funnel-only, and a label with a secondary value in parens
+    cannot also format a number in accounting parens."""
+    ribbon_labels = mark.ribbons.labels
+    base = f"charts.{normalized.id}.style.marks.bar"
+    if ribbon_labels.visible and normalized.type != "funnel":
+        raise CompilationError.from_code(
+            ERR_RIBBON_LABELS_FUNNEL_ONLY,
+            chart_id=normalized.id,
+            field_path=f"{base}.ribbons.labels.visible",
+        )
+    for path, template in (
+        (f"{base}.labels.template", mark.labels.template),
+        (f"{base}.ribbons.labels.template", ribbon_labels.template),
+    ):
+        spec = accounting_spec_beside_secondary(template) if template else None
+        if spec is not None:
+            raise CompilationError.from_code(
+                ERR_LABEL_TEMPLATE_ACCOUNTING_PARENS,
+                chart_id=normalized.id,
+                field_path=path,
+                spec=spec,
+            )
 
 
 def _resolve_bar(
@@ -704,7 +739,15 @@ def _resolve_bar(
         temporal_band_axes=frozenset(),
     )
     bar = chart_local_style_context.bar
-    validate_mark_conditional(bar.conditional, data, y=normalized.y)
+    band_width = bar.marks.bar.band_width
+    if normalized.type == "funnel" and band_width is not None and band_width <= 0.5:
+        raise CompilationError.from_code(
+            ERR_FUNNEL_BAND_WIDTH_TOO_THIN,
+            chart_id=normalized.id,
+            band_width=band_width,
+        )
+    _check_funnel_labels(normalized, bar.marks.bar)
+    bar_conditional = resolve_mark_conditional(bar.conditional, data, y=normalized.y)
     # Computed here (rather than at their original, later call sites) because
     # the plot-height floor check below needs both before axes are built:
     # the legend the classifier judges must be the legend that actually
@@ -758,6 +801,8 @@ def _resolve_bar(
     orientation = _bar_orientation(
         normalized, bar, data, ax_merged.time_unit is not None
     )
+    if normalized.type == "funnel" and orientation == "vertical":
+        raise CompilationError.from_code(ERR_FUNNEL_VERTICAL, chart_id=normalized.id)
     if orientation == "horizontal":
         ay_merged = horizontal_measure_style(
             chart_style_context, normalized, "bar", plan.axis_overrides, ay_merged
@@ -865,7 +910,9 @@ def _resolve_bar(
     # signal, which must survive a gradient), but cartesian_series_naming
     # ignores them for the two rungs that measure rows -- once, for every
     # family that calls it (see that function's own docstring), not here.
-    color_domain_values = cartesian_color_domain_values(dataset, normalized.color)
+    color_domain_values = cartesian_series_domain_values(
+        dataset, normalized.y, normalized.color, normalized.field_labels
+    )
     legend_entries = cartesian_top_legend_entries(
         normalized.y if isinstance(normalized.y, str) else None,
         normalized.y_label,
@@ -979,10 +1026,10 @@ def _resolve_bar(
         resolved_stack,
         orientation,
         legend_entry_count,
-        merged_legend.symbol_limit,
-        plot_height_estimate,
+        # The subtitle and axis title take card height the legend cannot.
+        plot_height_estimate - _subtitle_height_px - _axis_title_height_px,
         legend_is_top,
-        merged_legend.compact_columns,
+        naming.wrap_columns,
     )
     # Any legend Vega actually draws above the plot -- `row` as well as
     # `compact`. `legend_is_top` above stays compact-only because
@@ -1008,10 +1055,8 @@ def _resolve_bar(
     # suppressed the legend on a short layered card. The layer term belongs
     # to the legend's *height*, not to the collapse model, so it lives here.
     #
-    # Vega draws at most `symbol_limit` symbols, so a 60-series legend is 20
-    # symbols tall, not 60 -- the sibling _stack_legend_should_yield clamps
-    # the same way. Unclamped, a high-cardinality legend charges rows that
-    # never render and accuses a plot that is not starved.
+    # This floor still caps the count at `symbol_limit`, though the bar
+    # legend draws every entry; `_stack_legend_should_yield` charges them all.
     # A color-less overlay joins the base's color scale under its own
     # label, adding exactly one entry (_overlay.py appends it
     # unconditionally) -- measured domain ["APAC", "EMEA", "NA", "target"]
@@ -1062,7 +1107,7 @@ def _resolve_bar(
         legend_height_for_floor = 0.0
     elif naming.top_legend == "compact":
         legend_height_for_floor = legend_wrap_marginal_height_px(
-            _legend_entries_for_floor, None, merged_legend.compact_columns
+            _legend_entries_for_floor, None, naming.wrap_columns
         )
     else:
         legend_height_for_floor = ROW_LEGEND_TOTAL_PX
@@ -1268,7 +1313,7 @@ def _resolve_bar(
         suppress_legend=naming.suppress_legend,
         drop_legend=stack_legend_yield,
         top_legend=naming.top_legend,
-        wrap_legend=naming.wrap_legend,
+        wrap_columns=naming.wrap_columns,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
         legend_hidden_under_edge=naming.hidden_under_edge,
     )
@@ -1331,14 +1376,26 @@ def _resolve_bar(
                 field_path=f"charts.{normalized.id}.style.marks.bar.labels.visible",
                 where=where,
             )
-    resolved_labels, label_is_house = _label_format_fallback(
-        bar.marks.bar.labels,
-        ResolvedBarLabels,
-        ay.labels.format,
-        axis_house_default,
-        chart_style_context.formats,
-        tooltip_format_values,
-    )
+    # Ribboned bars are stages: each label is a datum beside its mark, not a
+    # reading of the measure ruler.
+    if bar.marks.bar.ribbons.visible and isinstance(normalized.y, str):
+        resolved_labels, label_is_house = callout_label_format(
+            bar.marks.bar.labels,
+            ResolvedBarLabels,
+            chart_style_context.formats,
+            normalized.query.formats if normalized.query else None,
+            normalized.y,
+            data,
+        )
+    else:
+        resolved_labels, label_is_house = _label_format_fallback(
+            bar.marks.bar.labels,
+            ResolvedBarLabels,
+            ay.labels.format,
+            axis_house_default,
+            chart_style_context.formats,
+            tooltip_format_values,
+        )
     bar_mark = resolved_as(
         ResolvedBarMarkStyle,
         bar.marks.bar,
@@ -1371,6 +1428,9 @@ def _resolve_bar(
             legend_visible=bkw["legend"].visible,
             canvas=chart_local_style_context.ink_canvas,
         ),
+        stage_ink=ay_merged.labels.font.color
+        if bar.marks.bar.ribbons.visible
+        else None,
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
     return ResolvedBarChart(
@@ -1398,7 +1458,7 @@ def _resolve_bar(
             series_label=series_label,
             stack_order=bar.stack_order,
             mark=bar_mark,
-            conditional=bar.conditional,
+            conditional=bar_conditional,
             overlap=bar.overlap,
             plot_height_below_floor=plot_starved,
             estimated_plot_height_px=estimated_plot_height,
@@ -1531,7 +1591,7 @@ def _resolve_histogram(
             ),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=hist.padding,
-            wrap_legend=False,  # a histogram has one series, no legend entries
+            wrap_columns=None,  # a histogram has one series, no legend entries
         ),
         **{
             **_cartesian_kwargs(

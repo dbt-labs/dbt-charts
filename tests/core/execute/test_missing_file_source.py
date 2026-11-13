@@ -98,7 +98,6 @@ class TestMissingCsvSourceFile:
         executor = Run(
             board,
             env=build_exec_env(project),
-            query_registry=dict(board.queries),
         )
 
         found = executor.lookup(["q_bad"])

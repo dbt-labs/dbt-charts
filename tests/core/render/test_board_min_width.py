@@ -51,7 +51,6 @@ def _executor(board: Board, project: Project) -> Run:
     return Run(
         board,
         env=build_exec_env(project),
-        query_registry=None,
     )
 
 
@@ -193,7 +192,7 @@ def test_paginated_narrow_table_keeps_row_label(local_project) -> None:
     yaml = (
         f"queries:\n  q:\n    type: values\n    rows:\n{rows}\n"
         + "charts:\n  t:\n    query: q\n    type: table\n"
-        + "    style:\n      pagination:\n        enabled: true\n        page_rows: 10\n"
+        + "    style:\n      pagination:\n        enabled: true\n        mode: pages\n        page_rows: 10\n"
         + _QUIET
         + _ROWS
     )

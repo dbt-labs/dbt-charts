@@ -1,6 +1,6 @@
 //! A KPI headline cut into the lanes it draws in: the number, and the magnitude word beside it.
 
-use diagnostic::{diag, refuse, Diagnostic};
+use diagnostic::{diag, Diagnostic};
 
 use super::locale::NumberLocale;
 use super::paint::split_si_suffix;
@@ -40,13 +40,18 @@ impl ResolvedFormat {
     /// d3 never sees a `$` or a `%`: the locale's own symbol and gap land in the prefix or suffix
     /// lane. `keep_affix_gaps` strips only the far edge of each lane, so an authored gap against the
     /// number survives (the support row); otherwise both edges are stripped and the locale's gap
-    /// between digits and a symbol is put back. A native member (`bytes`, `duration`) is refused.
-    pub fn paint_lanes(&self, locale: &NumberLocale, value: f64, native: bool, keep_affix_gaps: bool) -> Result<Lanes, Diagnostic> {
+    /// between digits and a symbol is put back. `anchored` (`format_kpi_parts`): the column declares its
+    /// unit once, so a `$` currency leads; otherwise the locale places it before or after the digits. A native member (`bytes`, `duration`, `percent_number`) bypasses d3 and prints its own number and unit.
+    pub fn paint_lanes(&self, locale: &NumberLocale, value: f64, native: bool, keep_affix_gaps: bool, anchored: bool) -> Result<Lanes, Diagnostic> {
         // An engine SI member never prints an SI prefix below 1: per value it takes its plain sibling.
         let voted = super::sub_unit_spec_for_value(self.raw.as_deref(), &self.spec, value, super::Formats::new(None))?;
         let spec = voted.as_str();
-        if d3rs::native::predefined_native(spec, value).map_err(Diagnostic::refused)?.is_some() {
-            return Err(Diagnostic::refused(refuse!("a native KPI value format is not supported")));
+        // `PREDEFINED_NATIVE`: the formatter knows its own unit, and the authored affix rides
+        // around the number and the unit.
+        if let Some((number, unit)) = d3rs::native::predefined_native(spec, value).map_err(Diagnostic::refused)? {
+            let (explicit_prefix, _, number) = sign_into_prefix(self.prefix.as_str(), "", &number, self.placement());
+            let prefix = if keep_affix_gaps { lstrip(&explicit_prefix) } else { strip(&explicit_prefix) }.to_string();
+            return Ok(Lanes { prefix, number, suffix: format!("{unit}{}", rstrip(self.suffix.as_str())) });
         }
         if spec.ends_with('%') && !spec.starts_with('+') && value.abs() >= 10.0 {
             return Err(diag::err_percent_range(value, spec));
@@ -63,7 +68,7 @@ impl ResolvedFormat {
             };
         } else {
             if spec.contains('$') {
-                [d3_prefix, d3_suffix] = [locale.currency_front(), String::new()];
+                [d3_prefix, d3_suffix] = if anchored { [locale.currency_front(), String::new()] } else { locale.locale.currency.clone() };
             }
             let clean = spec.replace('$', "");
             if clean.ends_with('s') {

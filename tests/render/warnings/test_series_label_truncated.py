@@ -13,6 +13,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from dbt_charts.core.compile.models.source import (
+    DuckDBSourceConfig,
+    ResolvedSourceConfig,
+)
 from dbt_charts.core.diagnostics import (
     WARN_RAIL_VALUE_DROPPED,
     WARN_SERIES_LABEL_TRUNCATED,
@@ -25,6 +29,10 @@ from dbt_charts.core.render.warnings import series_label_truncated as detector
 from dbt_charts.core.render.warnings.base import WarningContext
 
 from ..._scripted_env import ScriptedBackend, scripted_env
+
+_EXAMPLES_DB: dict[str, ResolvedSourceConfig] = {
+    "examples_db": DuckDBSourceConfig(type="duckdb", path=":memory:")
+}
 from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
 
 _LONG = "Enterprise Cloud Data Integration Platform — North America Region West"
@@ -158,7 +166,8 @@ def test_render_dashboard_fires_the_warning_for_a_long_color_column(
                     {"month": month, "revenue": value, "segment": segment}
                     for month, value in (("2024-01-01", 10), ("2024-02-01", 20))
                 ]
-            )
+            ),
+            named_sources=_EXAMPLES_DB,
         )
         project = local_project(tmp_path)
         board = InMemoryBoard(

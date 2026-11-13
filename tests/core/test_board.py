@@ -20,7 +20,9 @@ from unittest.mock import MagicMock, patch
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import render_dashboard
 from dbt_charts.core.compile.compiler import compile_file
+from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.execute.env import ExecEnv
+from dbt_charts.core.execute.source_registry import SourceRegistry
 from dbt_charts.core.project import InMemoryBoard
 from dbt_charts.core.render.render_result import RenderResult
 
@@ -55,7 +57,10 @@ def test_render_dashboard_does_not_mutate_a_shared_compile_result(
     assert compile_result.success
     assert compile_result.warnings == []
 
+    # Only planning reads the env; `render` and `make_context` are patched out.
     mock_registry = MagicMock(spec=ExecEnv)
+    mock_registry.sources = SourceRegistry(ProjectSourcesConfig())
+    mock_registry.project = project
     render_result = RenderResult(output='{"id": "test", "title": "Board", "items": []}')
 
     with (

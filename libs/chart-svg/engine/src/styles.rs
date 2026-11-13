@@ -7,6 +7,7 @@
 
 use bind::board::{ChartStyles, DetailsFacts, TabsFacts};
 use diagnostic::{diag, Diagnostic};
+use board_model::ids::ChartId;
 use normalize::CompiledBoard;
 
 /// Each placement's total family style, own tier, scope, rhythm slot and public chart ids, keyed by position, and each
@@ -14,7 +15,8 @@ use normalize::CompiledBoard;
 pub fn chart_styles(compiled: &CompiledBoard) -> Result<ChartStyles, Diagnostic> {
     let layout = &compiled.structure.layout;
     let missing = |what: &str, at: &str| diag::err_internal(format!("the compiled board holds no {what} for the placement {at}"));
-    let mut styles = ChartStyles { public_ids: compiled.structure.index.public_ids.clone(), ..ChartStyles::default() };
+    let chart_boards = compiled.structure.index.chart_boards.iter().filter(|(key, _)| compiled.structure.index.declared_below.contains(*key)).map(|(key, board)| Ok((ChartId::try_from(key.clone()).map_err(|e| diag::err_internal(format!("{e:?}")))?, board.clone()))).collect::<Result<_, Diagnostic>>()?;
+    let mut styles = ChartStyles { public_ids: compiled.structure.index.public_ids.clone(), chart_boards, ..ChartStyles::default() };
     for at in layout.charts.keys() {
         let placed = compiled.placed.get(at.as_str()).ok_or_else(|| missing("placed style", at.as_str()))?;
         let own = compiled.placed_own.get(at.as_str()).ok_or_else(|| missing("own style", at.as_str()))?;
@@ -30,6 +32,10 @@ pub fn chart_styles(compiled: &CompiledBoard) -> Result<ChartStyles, Diagnostic>
         }
     }
     styles.tabs = layout.tabs.iter().map(|(at, t)| (at.clone(), TabsFacts { variable: t.variable.clone(), slugs: t.slugs.clone(), default_tab: t.default_tab })).collect();
+    for key in compiled.structure.policies.keys() {
+        let id = normalize::sql::query_id(key, &compiled.structure.file).map_err(|e| diag::err_internal(format!("the root's query {key}: {e:?}")))?;
+        styles.root_queries.insert(key.clone(), id);
+    }
     styles.details = layout.details.iter().map(|(at, d)| (at.clone(), DetailsFacts { variable: d.variable.clone(), expanded: d.expanded })).collect();
     Ok(styles)
 }

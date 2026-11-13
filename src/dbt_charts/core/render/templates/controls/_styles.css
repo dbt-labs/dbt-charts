@@ -357,6 +357,18 @@
   text-decoration: underline;
 }
 
+.dbt-select-truncated {
+  flex: none;
+  padding: 8px 14px;
+  border-top: 1px solid var(--dbt-system-input-border, #ced4da);
+  font-size: 12px;
+  color: var(--dbt-system-muted, #6c757d);
+}
+
+.dbt-select-truncated[hidden] {
+  display: none;
+}
+
 .dbt-select-option {
   padding: 6px 14px;
   cursor: pointer;
@@ -763,8 +775,16 @@
    read as stray marks beside the value. Opacity keeps them out of layout, so
    the width reserved for them is identical either way. #}
 .dbt-interactive [data-dbt-ornament="arrow"],
-.dbt-interactive [data-dbt-ornament="calendar"] {
+.dbt-interactive [data-dbt-ornament="calendar"],
+.dbt-interactive [data-dbt-ornament="checkbox"],
+.dbt-interactive [data-dbt-ornament="slider"],
+.dbt-interactive [data-dbt-ornament="slider-thumb"] {
     opacity: 1;
+}
+
+{# A checkbox at rest states Yes or No; bound, its box takes that word's place. #}
+.dbt-interactive [data-dbt-at-rest] {
+    opacity: 0;
 }
 
 {# The reset item is drawn hidden for the same reason. Bound, it takes the
@@ -981,6 +1001,109 @@
 
 .dbt-table-row:hover .dbt-table-row-link {
   fill: color-mix(in srgb, var(--dbt-link) 8%, transparent);
+}
+
+{# The full value of a cut table cell (table_cell_reveal.js): a card under
+   the hovered cell that offers "Open" when the pointer reaches it, and a click
+   pins it in place as a popover. Its surface is the board theme's tooltip
+   style, which the runtime sets as the --dbt-tip-* properties on show. The
+   width cap is the card's own: a cut value is often a sentence or more, wider
+   than a chart tooltip's cap. The value keeps its own line breaks and wraps. #}
+.dbt-table-cell-tip {
+  display: none;
+  position: fixed;
+  z-index: 10000;
+  box-sizing: border-box;
+  max-width: min(420px, 90vw);
+  padding: var(--dbt-tip-pad);
+  border: var(--dbt-tip-border);
+  border-radius: var(--dbt-tip-radius);
+  background: var(--dbt-tip-bg);
+  color: var(--dbt-tip-fg);
+  box-shadow: var(--dbt-tip-shadow);
+  font-family: var(--dbt-tip-font);
+  font-size: var(--dbt-tip-size);
+  line-height: var(--dbt-tip-line);
+  cursor: pointer;
+}
+
+{# The right padding reserves the close button's place in both states, so
+   pinning never rewraps the text. #}
+.dbt-table-cell-tip-text {
+  max-height: min(300px, 60vh);
+  overflow: auto;
+  padding-right: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+{# The hint straddles the card's top edge so it never covers the value, in the
+   card's own colors inverted. #}
+.dbt-table-cell-tip-open {
+  position: absolute;
+  top: -9px;
+  right: 8px;
+  opacity: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--dbt-tip-fg);
+  color: var(--dbt-tip-bg);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.dbt-table-cell-tip-hot .dbt-table-cell-tip-open {
+  animation: dbt-table-cell-tip-open 1.4s ease-out;
+}
+
+@keyframes dbt-table-cell-tip-open {
+  0%, 60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.dbt-table-cell-tip-pinned {
+  cursor: auto;
+}
+
+.dbt-table-cell-tip-close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  display: none;
+  border: 0;
+  background: none;
+  font-size: 18px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.dbt-table-cell-tip-pinned .dbt-table-cell-tip-close {
+  display: block;
+}
+
+.dbt-table-cell-tip-close:hover,
+.dbt-table-cell-tip-close:focus-visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dbt-table-cell-tip-hot .dbt-table-cell-tip-open {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+.dbt-chart text[data-dbt-full] {
+  cursor: help;
 }
 
 .dbt-details-toggle {

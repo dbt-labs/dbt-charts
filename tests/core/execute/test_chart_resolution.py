@@ -75,7 +75,6 @@ def _executor(yaml_content: str, tmp_path: Path) -> tuple[Run, dict]:
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(tmp_path)),
-        query_registry=result.query_registry,
     )
     return executor, result.board.charts
 

@@ -467,7 +467,6 @@ def _executor(rows: list[dict[str, int]]) -> Run:
     return Run(
         compiled.board,
         env=registry,
-        query_registry=compiled.query_registry,
     )
 
 

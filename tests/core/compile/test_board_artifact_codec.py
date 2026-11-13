@@ -43,6 +43,7 @@ from dbt_charts.core.render.board_resolve import (
     build_resolved_board_static,
 )
 
+from ..._compile import remember
 from ..._run import Run
 
 _ADAPTER: TypeAdapter[ResolvedBoard] = TypeAdapter(ResolvedBoard)
@@ -294,14 +295,16 @@ cols:
     ) -> tuple[ResolvedBoard, dict[str, ChartResolveFailure]]:
         (tmp_path / "board.yml").write_text(self._BROKEN_PIE_YAML)
         project = local_project(tmp_path)
-        result = compile_file(project.path("board.yml").read_board())
+        board_file = project.path("board.yml").read_board()
+        result = compile_file(board_file)
         assert result.success, result.errors
         assert result.board is not None
+        # compile_file bypasses the recorder; Run plans the board from its text.
+        remember(result.board, board_file.content, board_file.path.parent)
 
         executor = Run(
             result.board,
             env=build_exec_env(project),
-            query_registry=result.query_registry,
         )
         failures: dict[str, ChartResolveFailure] = {}
         resolved, _cache = build_resolved_board(

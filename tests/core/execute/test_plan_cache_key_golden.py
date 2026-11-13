@@ -11,6 +11,10 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
+from dbt_charts.core.execute.duckdb_cache import (
+    compute_query_hash,
+    compute_source_hash,
+)
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.plan import plan
 
@@ -41,12 +45,16 @@ rows:
 
 _PINNED_NS = 1_700_000_000_000_000_000
 
+# The source hash folds in the declaration's identity (so two declarations of one name never
+# share an entry), and a database file's declaration carries its absolute path, which a
+# temporary directory moves; its first part is derived, the other two pinned.
 GOLDEN = {
-    "sourced": ["6fe2e0f6071ac2bb", "4531145a17146f20", "0000000000000000"],
-    "from_csv": ["eba884da42f1ea97", "4c75abdcf100788a", "0000000000000000"],
-    "from_db_file": ["2397a9c68d0d7ca0", "bdd379b02821e0bc", "0000000000000000"],
-    "from_manifest": ["91a09aab11774422", "0123c8085cda7940", "0000000000000000"],
+    "sourced": ["8c853ea5ee7efa6c", "4531145a17146f20", "0000000000000000"],
+    "from_csv": ["d5dd02fa2de1139c", "4c75abdcf100788a", "0000000000000000"],
+    "from_manifest": ["f6af04a17d97f899", "0123c8085cda7940", "0000000000000000"],
 }
+DB_FILE_TAIL = ["bdd379b02821e0bc", "0000000000000000"]
+DB_FILE_VERSION = f"{_PINNED_NS}:22"
 
 
 def _pin(path: Path) -> None:
@@ -102,7 +110,6 @@ def run(tmp_path: Path, local_project: Callable[..., FilesystemProject]) -> Run:
     return Run(
         compiled.board,
         env=build_exec_env(local_project(tmp_path)),
-        query_registry=compiled.query_registry,
     )
 
 
@@ -111,4 +118,10 @@ def test_planned_cache_keys_are_byte_stable(run: Run) -> None:
         p.name: list(p.cache_key)
         for p in plan(run.ctx, ["sourced", "from_csv", "from_db_file", "from_manifest"])
     }
+    db_file = keys.pop("from_db_file")
     assert keys == GOLDEN
+    declared = run.ctx.plan["sources"]["project"]
+    source_hash = compute_query_hash(
+        f"{compute_source_hash('dbfile', declared)}:{DB_FILE_VERSION}"
+    )
+    assert db_file == [source_hash, *DB_FILE_TAIL]

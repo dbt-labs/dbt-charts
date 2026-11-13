@@ -15,7 +15,8 @@ use serde_json::{json, Value};
 
 use diagnostic::codes;
 use crate::common::{Font};
-use ::bind::rows::{tag_at, CellRow, CellTag};
+use ::bind::rows::tag_at;
+use ::column_types::{CellRow, CellTag};
 use diagnostic::{py_repr, warn, Diagnostic};
 use crate::layout::{IntrinsicWidth, Layout, Rect};
 use measure::{FontBook, Measure};

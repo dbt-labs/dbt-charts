@@ -512,6 +512,43 @@ def _max_number(result: CompileResult) -> int | None:
     return result.board.resolved_style.text.column.max_number
 
 
+def _max_chars(result: CompileResult) -> float | None:
+    assert result.success and result.board is not None, result.errors
+    return result.board.resolved_style.text.column.max_chars
+
+
+class TestMarkdownBoardsDefaultToAWiderMeasure:
+    def test_markdown_measure_is_wider_than_a_yaml_board(
+        self, in_memory_project: Callable[..., FilesystemProject]
+    ) -> None:
+        text = "\n".join(f"  {line}" for line in _LONG_BODY.splitlines())
+        yaml_chars = _max_chars(compile(f"text: |\n{text}\n"))
+        markdown_chars = _max_chars(_compile_md(in_memory_project, _LONG_BODY))
+        assert markdown_chars is not None
+        assert yaml_chars is None or markdown_chars > yaml_chars
+
+    def test_frontmatter_overrides_the_measure(
+        self, in_memory_project: Callable[..., FilesystemProject]
+    ) -> None:
+        md = f"---\nboard:\n  style:\n    text:\n      column:\n        max_chars: 60\n---\n\n{_LONG_BODY}\n"
+        assert _max_chars(_compile_md(in_memory_project, md)) == 60
+
+    def test_meta_yml_overrides_the_measure(
+        self, in_memory_project: Callable[..., FilesystemProject]
+    ) -> None:
+        meta = "style:\n  text:\n    column:\n      max_chars: 50\n"
+        result = _compile_md(in_memory_project, _LONG_BODY, meta=meta)
+        assert _max_chars(result) == 50
+
+    def test_extends_template_overrides_the_measure(
+        self, in_memory_project: Callable[..., FilesystemProject]
+    ) -> None:
+        md = f"---\nboard:\n  extends: ./base.yml\n---\n\n{_LONG_BODY}\n"
+        base = "style:\n  text:\n    column:\n      max_chars: 55\n"
+        result = _compile_md(in_memory_project, md, extra={"charts/base.yml": base})
+        assert _max_chars(result) == 55
+
+
 class TestMarkdownBoardsDefaultToOneColumn:
     def test_markdown_board_is_one_column(
         self, in_memory_project: Callable[..., FilesystemProject]

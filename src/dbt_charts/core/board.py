@@ -22,6 +22,7 @@ import functools
 import logging
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal, ParamSpec, get_args
@@ -30,19 +31,23 @@ _logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel, ConfigDict
 
+from dbt_charts import _engine
 from dbt_charts.core.compile import (
     CompileResult,
     compile,
     compile_file,
     focus_on_chart,
 )
-from dbt_charts.core.compile.config import resolve_max_template_output_bytes
+from dbt_charts.core.compile.config import (
+    ProjectSourcesConfig,
+    resolve_max_template_output_bytes,
+)
+from dbt_charts.core.compile.engine import engine_compile, refusal_diagnostics
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.parse.source_map import stamp_diagnostics
 from dbt_charts.core.compile.template.output_budget import template_output_budget
-from dbt_charts.core.compile.template.variables import check_variable_overrides
 from dbt_charts.core.diagnostics import (
     ERR_FORMAT_UNSUPPORTED,
     ERR_INPUT_INVALID,
@@ -64,6 +69,9 @@ from dbt_charts.core.execute.lookup import (
     warehouse_cache_hit_ats,
 )
 from dbt_charts.core.execute.plan import make_context, utc_now
+from dbt_charts.core.execute.plan_reader import env_sources
+from dbt_charts.core.execute.planned import plan_board
+from dbt_charts.core.execute.query_plan import QueryPlan
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
     BoardFile,
@@ -88,8 +96,8 @@ from dbt_charts.core.link_targets import check_link_targets
 from dbt_charts.core.render import RenderError, render
 from dbt_charts.core.render.board_links import LinkContext
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
-from dbt_charts.core.render.dir_context import lazy_dir_context
-from dbt_charts.core.render.renderer import prefetch_tab_queries
+from dbt_charts.core.render.dir_context import eager_values, lazy_dir_context
+from dbt_charts.core.render.renderer import EVERY_TAB_FORMATS, prefetch_tab_queries
 from dbt_charts.core.render_format import RenderFormat
 from dbt_charts.core.session_time_zone_check import check_session_time_zones
 
@@ -210,9 +218,7 @@ def _charts_meta_default_source(charts_dir: ProjectDirectory) -> str | None:
 
 def _check_manifest_refs(result: CompileResult, project: Project) -> None:
     for diagnostic in check_manifest_refs(
-        sql_host_queries(result.query_registry),
-        project,
-        result.board.sources if result.board else {},
+        sql_host_queries(result.query_registry), project
     ):
         (result.errors if diagnostic.level == "error" else result.warnings).append(
             diagnostic
@@ -322,6 +328,73 @@ def _compile_failed(
     )
 
 
+def plan_for_board(
+    board: BoardFile,
+    project: Project,
+    variables: VariableValues | None,
+    builtins: VariableValues | None,
+    now: datetime,
+    strict: bool,
+    active_tab_only: bool,
+    only_charts: list[str] | None = None,
+    all_queries: bool = False,
+    sources: ProjectSourcesConfig | None = None,
+) -> QueryPlan:
+    """The engine's compile of *board* and its plan under the caller's values.
+
+    *sources* is the registry to compile against when the caller connects (``env_sources``); the
+    plan carries it.
+
+    Raises ``_engine.CompileError`` when the engine refuses the board and
+    ``ExecutionError`` when it refuses the values."""
+    compiled = engine_compile(
+        board.path,
+        board.named,
+        board.content,
+        # A board with no location names no project: the caller's is the one it compiles against.
+        project if board.path is None else None,
+        sources=sources,
+        # Where a pathless board's relative references resolve, as the Python compile anchored
+        # them: at the boards directory.
+        anchor=CHARTS_SUBDIR,
+    )
+    return plan_board(
+        compiled,
+        variables,
+        builtins=None if builtins is None else eager_values(builtins),
+        now=now,
+        strict=strict,
+        active_tab_only=active_tab_only,
+        only_charts=only_charts,
+        all_queries=all_queries,
+    )
+
+
+def _compile_alongside(
+    python_compile: Callable[[], CompileResult],
+    engine_job: Callable[[], QueryPlan],
+    release_thread: Callable[[], None],
+) -> tuple[CompileResult, Callable[[], QueryPlan]]:
+    """Python's compile of a board, with the engine's compile and plan running beside it.
+
+    They run concurrently, so a render's wall time is the slower of the two. The
+    second result gives the plan, or raises what the engine raised; a failed
+    Python compile does not wait for it. The engine's thread reads the project
+    through the host, so it calls *release_thread* when it is done.
+    """
+
+    def job() -> QueryPlan:
+        try:
+            return engine_job()
+        finally:
+            release_thread()
+
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dct-plan")
+    future = pool.submit(job)
+    pool.shutdown(wait=False)
+    return python_compile(), future.result
+
+
 def prefetch_dashboard(
     board: BoardFile,
     variables: VariableValues,
@@ -336,34 +409,59 @@ def prefetch_dashboard(
 ) -> dict[str, Exception | None]:
     """Warm the result cache with the tabs a drawn render of ``board`` skipped.
 
-    Compiles ``board`` and runs ``prefetch_tab_queries``: the queries of every
-    hidden tab (inner tabs of a hidden tab included) whose cache policy sets ``prefetch: true``. Pass
-    the ``compile_result`` the render got to skip recompiling. Returns each
-    query's outcome (``None`` or its exception). Raises ``CompilationError``
-    when ``board`` no longer compiles.
+    Plans ``board`` on its active tabs and runs ``prefetch_tab_queries``: the
+    queries of every hidden tab (inner tabs of a hidden tab included) whose cache
+    policy sets ``prefetch: true``. Pass the ``compile_result`` the render got to
+    skip recompiling. Returns each query's outcome (``None`` or its exception).
+    Raises ``CompilationError`` when ``board`` no longer compiles.
     """
     with template_output_budget(resolve_max_template_output_bytes()):
-        result = compile_result if compile_result is not None else compile_file(board)
+        now = clock()
+
+        def plan_job() -> QueryPlan:
+            return plan_for_board(
+                board,
+                project,
+                variables,
+                builtin_variables,
+                now,
+                strict=False,
+                active_tab_only=True,
+                sources=env_sources(env),
+            )
+
+        if compile_result is not None:
+            result, plan_of = compile_result, plan_job
+        else:
+            result, plan_of = _compile_alongside(
+                lambda: compile_file(board), plan_job, env.release_thread
+            )
         if not result.success or result.board is None:
             raise CompilationError("; ".join(e.message for e in result.errors))
+        hidden = plan_of()["prefetch"]
+        # The active-tab plan omits the hidden tabs' queries; the plan that warms
+        # them covers every tab under the same values and clock.
+        every_tab = plan_for_board(
+            board,
+            project,
+            variables,
+            builtin_variables,
+            now,
+            strict=False,
+            active_tab_only=False,
+            sources=env_sources(env),
+        )
         ctx = make_context(
             result.board,
+            every_tab,
             env,
-            result.query_registry,
             result_cache=result_cache,
             clock=clock,
             board_slug=board_identity(board.path.relpath)
             if board.path is not None
             else None,
         )
-        return prefetch_tab_queries(
-            result.board,
-            ctx,
-            Ledger(),
-            variables,
-            max_workers,
-            builtin_variables,
-        )
+        return prefetch_tab_queries(ctx, Ledger(), hidden, max_workers)
 
 
 @_with_template_output_budget
@@ -372,6 +470,7 @@ def render_dashboard(
     variables: dict[str, Any] | None = None,
     *,
     chart: str | None = None,
+    only_charts: list[str] | None = None,
     project: Project,
     env: ExecEnv | None = None,
     format: str = "json",
@@ -409,6 +508,9 @@ def render_dashboard(
     otherwise derives from ``board.path`` — pass it when the caller's anchor has its
     own directory-listing semantics.
     ``clock`` is the render's time source, handed to its context.
+    ``only_charts`` plans only those charts and what they read, for a caller that
+    drew a focused board (``compile_result`` narrowed to them); ``chart`` is the
+    one-chart case of it.
     ``strict_variables`` rejects a variable the board does not declare, and a
     choice value outside its static options, instead of running the queries as
     if it were never set. A host whose variables are a browser's query string,
@@ -477,10 +579,34 @@ def render_dashboard(
                 ).to_diagnostic()
             ],
         )
-    if compile_result is None and board is None:
-        return _input_error("Must provide one of 'board' or 'compile_result'")
+    if board is None:
+        return _input_error("Must provide 'board': the engine compiles it for the plan")
 
     _t_start = time.perf_counter()
+    if builtin_variables is not None:
+        _builtin_variables: VariableValues | None = builtin_variables
+    else:
+        _board_dir = file_path.parent if file_path is not None else None
+        _builtin_variables = (
+            lazy_dir_context(_board_dir, url_mount_dir=url_mount_dir)
+            if _board_dir is not None
+            else None
+        )
+
+    def plan_job() -> QueryPlan:
+        return plan_for_board(
+            board,
+            project,
+            variables,
+            _builtin_variables,
+            clock(),
+            strict_variables,
+            format not in EVERY_TAB_FORMATS,
+            only_charts=[chart] if chart is not None else only_charts,
+            sources=env_sources(env),
+        )
+
+    plan_of: Callable[[], QueryPlan]
     if compile_result is not None:
         # validate_compiled_queries/check_manifest_refs below append to
         # errors/warnings/suppressed_warnings/diagnostics in place. A caller
@@ -496,14 +622,15 @@ def render_dashboard(
             suppressed_warnings=list(compile_result.suppressed_warnings),
             diagnostics=list(compile_result.diagnostics),
         )
+        plan_of = plan_job
     else:
-        assert board is not None  # guaranteed by the check above
-        if board.path is not None:
-            result = compile_file(board)
-        else:
+
+        def python_compile() -> CompileResult:
+            if board.path is not None:
+                return compile_file(board)
             # Pathless in-memory content: no meta.yml cascade to run, so
             # compile the string directly.
-            result = compile(
+            return compile(
                 board.content,
                 base_dir=project.directory(CHARTS_SUBDIR),
                 project_sources=project.sources,
@@ -512,6 +639,10 @@ def render_dashboard(
                     project.directory(CHARTS_SUBDIR)
                 ),
             )
+
+        result, plan_of = _compile_alongside(
+            python_compile, plan_job, env.release_thread
+        )
     _t_compile = time.perf_counter()
 
     if not result.success:
@@ -563,20 +694,20 @@ def render_dashboard(
     render_result: _RenderResult
     ledger = Ledger()
     try:
-        if strict_variables and result.board is not None:
-            # The full board's registry, not the focused one: a focused chart
-            # render still accepts every variable the board declares.
-            check_variable_overrides(
-                result.board.variable_registry
-                or {},  # type-state: silent_fallback — a board without variables has an empty registry
-                variables
-                or {},  # type-state: silent_fallback — no values is an empty mapping, not masked bad input
+        try:
+            plan = plan_of()
+        except _engine.CompileError as refusal:
+            return BoardRenderResult(
+                status="failed",
+                validation_errors=refusal_diagnostics(
+                    refusal, None if file_path is None else file_path.relpath
+                ),
             )
         # A stored board's file slug goes on every cache entry it writes.
         ctx = make_context(
             compiled_board,
+            plan,
             env,
-            result.query_registry,
             use_cache=use_cache,
             result_cache=result_cache,
             clock=clock,
@@ -589,15 +720,6 @@ def render_dashboard(
         if link_context is not None:
             render_options["link_context"] = link_context
         _t_execute_start = time.perf_counter()
-        if builtin_variables is not None:
-            _builtin_variables: VariableValues | None = builtin_variables
-        else:
-            _board_dir = file_path.parent if file_path is not None else None
-            _builtin_variables = (
-                lazy_dir_context(_board_dir, url_mount_dir=url_mount_dir)
-                if _board_dir is not None
-                else None
-            )
         with image_scope(project):
             render_result = render(
                 compiled_board,

@@ -1,5 +1,5 @@
 //! The laws of the one date parser, scanned over the engine's sources: `bind::time_axis` holds the only
-//! date reader, and outside it only the readers of text no axis holds call the parser, and only the readers of
+//! date reader (its text parser lives in `d3rs::calendar`, below both crates), and outside it only the readers of text no axis holds call the parser, and only the readers of
 //! a domain no chart axis holds read one into dates; tests read through `bind::time_axis::testing`.
 
     /// Every source of the engine's two crates that parse or order data, as `(path, text)`: this crate's
@@ -43,8 +43,10 @@ fn this_module_holds_the_only_date_parser() {
 #[test]
 fn only_readers_of_text_no_axis_holds_call_the_parser() {
     const PARSERS: [&str; 2] = ["date_text_day", "parse_iso_date"];
-    const PARSER_READERS: [(&str, &str); 9] = [
+    const PARSER_READERS: [(&str, &str); 11] = [
         ("annotation/model.rs", "days"),
+        ("conditional.rs", "deserialize"),
+        ("bind/conditional.rs", "date_cell_day"),
         ("bind/x_type.rs", "parse_date"),
         ("families/scatter_axis.rs", "authored_day_domain"),
         ("families/scatter/layout.rs", "fit"),

@@ -25,9 +25,7 @@ from datetime import datetime
 from typing import Any
 
 from dbt_charts.core.compile import config
-from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.cache import CachePolicy
-from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_UNKNOWN_COLUMN,
@@ -48,14 +46,16 @@ from dbt_charts.core.execute.cache_backend import (
     TruncatedReason,
     TruncationInfo,
 )
-from dbt_charts.core.execute.duckdb_cache import compute_relevant_variables
+from dbt_charts.core.execute.duckdb_cache import relevant_to
 from dbt_charts.core.execute.plan import (
     CacheKey,
     ExecContext,
-    PlannedQuery,
+    QueryRun,
+    cache_policy,
     plan,
     source_version,
 )
+from dbt_charts.core.execute.query_plan import PlannedQuery
 from dbt_charts.core.execute.query_result import ResolvedRelation
 
 _logger = logging.getLogger(__name__)
@@ -188,7 +188,7 @@ def limit_rows(
     return ResultRows(kept, result.schema), truncation
 
 
-def memo_key(query: AnyQuery, cache_key: CacheKey) -> MemoKey:
+def memo_key(entry: PlannedQuery, cache_key: CacheKey) -> MemoKey:
     """Scope a content cache key to the asking query's resolved cache policy.
 
     ``compute_cache_key`` is content-addressed on purpose: identical SQL against
@@ -203,13 +203,14 @@ def memo_key(query: AnyQuery, cache_key: CacheKey) -> MemoKey:
     *persistent* key is untouched — folding policy in there would cold-start the
     stored entry on every ttl edit.
     """
-    if not query.cache.enabled:
+    cache = cache_policy(entry)
+    if not cache.enabled:
         # Disabled queries never read the store, so this slot only ever holds
         # rows the current render executed. That is what makes `cache: false` a
         # real no-store without a special case, while still memoizing across a
         # query's own consumers.
         return (*cache_key, "off")
-    ttl = query.cache.ttl_timedelta
+    ttl = cache.ttl_timedelta
     return (*cache_key, "forever" if ttl is None else str(ttl.total_seconds()))
 
 
@@ -240,7 +241,7 @@ class Miss:
     """A query that must run. ``tail`` is set when the store held prior rows an
     incremental refresh can extend."""
 
-    planned: PlannedQuery
+    planned: QueryRun
     tail: Tail | None = None
 
     @property
@@ -248,8 +249,8 @@ class Miss:
         return self.planned.name
 
     @property
-    def query(self) -> AnyQuery:
-        return self.planned.query
+    def entry(self) -> PlannedQuery:
+        return self.planned.entry
 
     @property
     def cache_key(self) -> CacheKey:
@@ -335,7 +336,7 @@ def _memoized_error(stored: Exception, query_name: str) -> QueryError:
 
 
 def lookup(
-    planned: Sequence[PlannedQuery],
+    planned: Sequence[QueryRun],
     *,
     memo: Mapping[MemoKey, ResultRows],
     errors: Mapping[str, Exception],
@@ -367,7 +368,7 @@ def lookup(
     misses: list[Miss] = []
     failures: dict[str, Failure] = {}
     for query_plan in planned:
-        name, query, cache_key = query_plan.name, query_plan.query, query_plan.cache_key
+        name, entry, cache_key = query_plan.name, query_plan.entry, query_plan.cache_key
         if force_refresh:
             misses.append(Miss(query_plan))
             continue
@@ -375,17 +376,18 @@ def lookup(
         # memo before its persistent write-through, which can raise and land an
         # error in ``errors`` beside valid rows. Errors reflect a real failure only
         # when the memo has no rows.
-        memoized = memo.get(memo_key(query, cache_key))
+        memoized = memo.get(memo_key(entry, cache_key))
         if memoized is not None:
             hits[name] = CachedRows(memoized, None)
             continue
         if name in errors:
             failures[name] = Failure(_memoized_error(errors[name], name))
             continue
-        if not (query_plan.use_store and query.cache.enabled and result_cache):
+        cache = cache_policy(entry)
+        if not (query_plan.use_store and cache.enabled and result_cache):
             misses.append(Miss(query_plan))
             continue
-        outcome = result_cache.get(*cache_key, ttl=query.cache.ttl_timedelta)
+        outcome = result_cache.get(*cache_key, ttl=cache.ttl_timedelta)
         if isinstance(outcome, CachedQueryFailure):
             # Written under a code this version no longer registers: it cannot
             # be replayed as it was raised, so the query re-runs.
@@ -407,14 +409,16 @@ def lookup(
             ResultRows(outcome.rows, outcome.schema), name, outcome.truncated_reason
         )
         if (
-            is_sql_query(query)
+            entry["type"] == "sql"
             # isinstance, not truthiness: the cache-key fold uses the same gate.
-            and isinstance(query.incremental, str)
+            and isinstance(entry["incremental"], str)
             and resume_incremental
             and query_plan.tailable
         ):
             try:
-                watermark = _compute_watermark(enforced.rows, query.incremental, name)
+                watermark = _compute_watermark(
+                    enforced.rows, entry["incremental"], name
+                )
             except QueryError as exc:
                 failures[name] = Failure(exc)
                 continue
@@ -428,7 +432,7 @@ def lookup(
 def lookup_and_record(
     ctx: ExecContext,
     ledger: Ledger,
-    planned: Sequence[PlannedQuery],
+    planned: Sequence[QueryRun],
     *,
     resume_incremental: bool,
     force_refresh: bool = False,
@@ -464,7 +468,7 @@ def lookup_and_record(
     for name, hit in found.hits.items():
         if hit.written_at is not None:
             query_plan = by_name[name]
-            ledger.memo[memo_key(query_plan.query, query_plan.cache_key)] = hit.result
+            ledger.memo[memo_key(query_plan.entry, query_plan.cache_key)] = hit.result
             _record_store_hit(ctx, ledger, query_plan, hit.written_at)
             if hit.truncation is not None:
                 ledger.truncations[name] = hit.truncation
@@ -477,7 +481,7 @@ def lookup_and_record(
         if failure.failed_at is not None:
             ledger.replayed_failure_ats.append(failure.failed_at)
             ledger.ages.append(
-                (name, failure.failed_at, by_name[name].query.cache, False)
+                (name, failure.failed_at, cache_policy(by_name[name].entry), False)
             )
     return found
 
@@ -486,7 +490,6 @@ def lookup_names(
     ctx: ExecContext,
     ledger: Ledger,
     names: Iterable[str],
-    variables: VariableValues | None,
     *,
     resume_incremental: bool,
     use_cache: bool | None = None,
@@ -502,23 +505,22 @@ def lookup_names(
 
     Args:
         names: Names of the queries (may include the "queries." prefix).
-        variables: Caller values, merged with the board's defaults per query.
         resume_incremental: See ``lookup``. True when the caller is about to run
             the misses and wants a stored incremental query refreshed.
         use_cache: Overrides the context's store participation for this call.
         force_refresh: Read nothing; clear the memo, error memo and store entry
             of every planned query first.
     """
-    planned: dict[str, PlannedQuery] = {}
+    planned: dict[str, QueryRun] = {}
     key_failures: dict[str, Failure] = {}
     for raw_name in names:
         try:
-            for query_plan in plan(ctx, [raw_name], variables, use_cache):
+            for query_plan in plan(ctx, [raw_name], use_cache):
                 planned.setdefault(query_plan.name, query_plan)
         except ExecutionError as exc:
             key_failures[raw_name.removeprefix("queries.")] = Failure(exc)
 
-    def look_up(batch: list[PlannedQuery]) -> Lookup:
+    def look_up(batch: list[QueryRun]) -> Lookup:
         return lookup_and_record(
             ctx,
             ledger,
@@ -551,14 +553,14 @@ def lookup_names(
 
 
 def _record_store_hit(
-    ctx: ExecContext, ledger: Ledger, planned: PlannedQuery, written_at: datetime
+    ctx: ExecContext, ledger: Ledger, planned: QueryRun, written_at: datetime
 ) -> None:
     if isinstance(ctx.result_cache, BrowsableResultCache):
         ctx.result_cache.note_use(
             *planned.cache_key, cache_board_slug(ctx), planned.name
         )
-    ledger.ages.append((planned.name, written_at, planned.query.cache, True))
-    if not source_version(ctx, planned.query, planned.source):
+    ledger.ages.append((planned.name, written_at, cache_policy(planned.entry), True))
+    if not source_version(ctx, planned.entry, planned.source):
         ledger.warehouse_hit_ats.append(written_at)
 
 
@@ -573,9 +575,8 @@ def cache_board_slug(ctx: ExecContext) -> str:
 def cache_outcome(
     ctx: ExecContext,
     query_name: str,
-    query: AnyQuery,
+    entry: PlannedQuery,
     outcome: ResultRows | Exception,
-    variables: VariableValues | None,
     cache_key: CacheKey,
     truncated_reason: TruncatedReason | None = None,
 ) -> None:
@@ -608,21 +609,19 @@ def cache_outcome(
         outcome,
         board_slug=cache_board_slug(ctx),
         query_name=query_name,
-        source_name=(
-            query.source
-            if is_sql_query(query) and isinstance(query.source, str)
-            else ""
-        ),
+        source_name=entry["source"] if entry["source"] is not None else "",
         truncated_reason=truncated_reason,
-        variables=compute_relevant_variables(query, variables),
+        variables=relevant_to(
+            entry["variable_dependencies"] if entry["type"] == "sql" else (),
+            ctx.variables,
+        ),
     )
 
 
 def cache_failure(
     ctx: ExecContext,
     query_name: str,
-    query: AnyQuery,
-    variables: VariableValues | None,
+    entry: PlannedQuery,
     cache_key: CacheKey,
     exception: Exception,
 ) -> None:
@@ -657,7 +656,7 @@ def cache_failure(
     ):
         return
     try:
-        cache_outcome(ctx, query_name, query, exception, variables, cache_key)
+        cache_outcome(ctx, query_name, entry, exception, cache_key)
     except Exception:  # noqa: BLE001 — a failure-cache write may raise anything; it must not mask the query's own error
         _logger.debug(
             "Failed to cache query failure for '%s'", query_name, exc_info=True

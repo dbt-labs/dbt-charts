@@ -49,6 +49,14 @@ UNKNOWN_RELATION_DIALECT_NOTES: dict[str, str] = {
     ),
 }
 
+#: Extra sentence for ERR-BINDER-UNKNOWN-RELATION when the query's ref() or
+#: source() calls resolved against the dbt manifest.
+UNKNOWN_RELATION_MANIFEST_NOTE = (
+    "This query reads a ref() or source() from the dbt manifest; if the "
+    "profile's schema changed since the manifest was built, run `dbt parse` "
+    "(or build the new schema) and retry."
+)
+
 
 @dataclass(frozen=True)
 class ResolvedRelation:

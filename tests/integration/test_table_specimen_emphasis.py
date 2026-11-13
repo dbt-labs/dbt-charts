@@ -29,6 +29,7 @@ from dbt_charts.core.execute.env import ExecEnv, make_exec_env
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from .._compile import remember
 from .._paths import DBT_CHARTS_DIR
 from .._run import Run
 
@@ -55,16 +56,18 @@ def _compile_and_render(
     # state and causes failures when running in parallel with other tests that
     # also chdir.
     project = local_project(EXAMPLES_DIR / "playground")
-    result = compile_file(project.path("charts/cards/table-emphasis.yml").read_board())
+    board_file = project.path("charts/cards/table-emphasis.yml").read_board()
+    result = compile_file(board_file)
     assert result.success, f"Compile failed: {result.errors}"
     board = result.board
     assert board is not None
+    # compile_file bypasses the recorder; Run plans the board from its text.
+    remember(board, board_file.content)
 
     cache = TrivialDuckDBCache()
     executor = Run(
         board,
         env=_registry(local_project),
-        query_registry=result.query_registry,
         result_cache=cache,
     )
 

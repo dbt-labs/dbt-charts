@@ -43,6 +43,7 @@ from dbt_charts.core.compile.models.style.resolved.callout import (
 from dbt_charts.core.compile.models.style.theme import (
     AreaChartStyle,
     BarChartStyle,
+    CommentsStyle,
     FooterStyle,
     FrameStyle,
     GeoshapeChartStyle,
@@ -773,6 +774,7 @@ class ResolvedStyle:
     title: TitleStyle
     text: TextStyle
     placeholder: PlaceholderStyle
+    comments: CommentsStyle
     layout: LayoutStyle
     variables: VariablesStyle
     footer: FooterStyle

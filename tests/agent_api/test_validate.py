@@ -707,6 +707,21 @@ class TestValidatePathsAcceptsMarkdownBoards:
         assert results[0].success is False
         assert [e.code for e in results[0].errors] == ["ERR-MARKDOWN-PARSE"]
 
+    def test_markdown_parse_error_keeps_its_foreign_text_out_of_fields(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate_paths
+
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        page = charts / "broken.md"
+        page.write_text("---\nboard: not-a-mapping\n---\nA sentence.\n")
+
+        (result,) = validate_paths([page], project=local_project(tmp_path))
+        (error,) = result.errors
+        assert error.detail
+        assert "detail" not in error.fields
+
 
 class TestValidatePathSkipsMetaYaml:
     """validate_paths() skips meta.yml/meta.yaml in directory walk."""
@@ -990,6 +1005,20 @@ class TestValidateProjectConfigSingleFile:
         assert result.success is False
         assert result.errors
         assert all(e.code == "ERR-PROJECT-CONFIG-SCHEMA" for e in result.errors)
+
+    def test_an_unreadable_board_is_internal_not_missing(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate
+        from dbt_charts.core.project import ProjectPath
+
+        (tmp_path / "charts").mkdir()
+        board = _write_board(tmp_path / "charts", _VALID_BOARD, "board.yml")
+        denied = PermissionError("Permission denied")
+        with patch.object(ProjectPath, "read_text", side_effect=denied):
+            result = validate(board, project=local_project(tmp_path))
+        assert [e.code for e in result.errors] == ["ERR-INTERNAL"]
+        assert "Permission denied" in result.errors[0].message
 
     @_needs_non_root
     def test_unreadable_dbt_charts_yml_reports_diagnostic_not_traceback(
@@ -1616,6 +1645,7 @@ def test_validate_text_names_the_successor_of_a_retired_key(
     assert (
         zero.fields["successor"] == "charts.revenue_trend.style.axis_y.grid.threshold"
     )
+    assert "WARN-SCHEMA-MIGRATED" in [w.code for w in result.warnings]
 
 
 def test_validate_text_honors_project_warnings_ignore(

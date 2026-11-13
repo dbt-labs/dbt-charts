@@ -590,8 +590,9 @@ pub struct PaginationConfig {
     /// to 20; unset means unlimited (the tile height alone sizes the page).
     #[model(absent = "unlimited")]
     pub page_rows: Option<u32>,
-    /// Page rows with a pager, or scroll them under a pinned header.
-    #[model(fill = "pages")]
+    /// Scroll rows under a pinned header, or page them with a pager. No effect
+    /// with pagination off.
+    #[model(fill = "scroll")]
     pub mode: PaginationMode,
 }
 
@@ -1057,6 +1058,9 @@ pub struct SupportTableStyle {
     /// when `font.color` is 'auto'.
     #[model(inherit = "Style.charts.font.color")]
     pub neutral_color: Color,
+    /// Ink for a funnel's ribbon rows, the change between two stage rows. One step
+    /// quieter than the stage rows, at the same size.
+    pub ribbon_color: Color,
     /// Line at the boundary between the chart plot and the data strip. For
     /// position='bottom': the line sits above the strip (below the axis). For
     /// position='top': the line sits below the strip rows (above the plot top).

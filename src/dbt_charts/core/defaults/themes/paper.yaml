@@ -178,6 +178,7 @@ style:
       drop_line_width: 3.0
     support_table:
       neutral_color: chrome[8]
+      ribbon_color: chrome[8]
       divider:
         color: chrome[8]
       row:

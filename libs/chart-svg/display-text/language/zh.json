@@ -62,6 +62,7 @@
   "controls.selection_summary": "（{n}）{first}",
   "controls.show_all": "显示全部",
   "controls.show_only_selected": "仅显示已选（{n}）",
+  "controls.options_truncated": "显示 {total} 个中的 {shown} 个。搜索以查找更多。",
   "controls.sort": "排序",
   "controls.sort_count_ascending": "按数量排序（从少到多）",
   "controls.sort_count_descending": "按数量排序（从多到少）",

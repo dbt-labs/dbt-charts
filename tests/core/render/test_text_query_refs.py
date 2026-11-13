@@ -74,7 +74,6 @@ def _executor(yaml: str, local_project: Callable[..., Project]) -> Run:
     return Run(
         result.board,
         env=build_exec_env(project),
-        query_registry=result.query_registry,
     )
 
 
@@ -353,7 +352,7 @@ def test_codes_survive_the_lenient_sizing_and_prose_sites(
 
     executor = _executor(_board_text(text_block), local_project)
     board = executor.board
-    for name in ("summary", "top_regions"):
+    for name in executor.ctx.plan["queries"]:
         executor.execute_query(name, {})
     style = board.resolved_style
     with board_data_provider(executor):

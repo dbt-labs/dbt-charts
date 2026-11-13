@@ -1674,7 +1674,9 @@ class TestAspectRatioDrivenSizing:
         _, charts_style = self._get_table_style_defaults()
         assert charts_style.pagination is not None
         self._paged_height(
-            self._chart("table", title="Paged Table"),
+            self._chart(
+                "table", title="Paged Table", style={"pagination": {"mode": "pages"}}
+            ),
             int(charts_style.pagination.page_rows),
         )
 
@@ -1684,7 +1686,9 @@ class TestAspectRatioDrivenSizing:
             self._chart(
                 "table",
                 title="Paged Table",
-                style={"pagination": {"enabled": True, "page_rows": 5}},
+                style={
+                    "pagination": {"enabled": True, "mode": "pages", "page_rows": 5}
+                },
             ),
             5,
         )
@@ -1695,7 +1699,9 @@ class TestAspectRatioDrivenSizing:
         assert charts_style.pagination is not None
         self._paged_height(
             self._chart(
-                "table", title="Paged Table", style={"pagination": {"enabled": True}}
+                "table",
+                title="Paged Table",
+                style={"pagination": {"enabled": True, "mode": "pages"}},
             ),
             int(charts_style.pagination.page_rows),
         )
@@ -2744,7 +2750,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         return result.board, executor
 
@@ -2795,7 +2800,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         sized_board, render_cache = calculate_data_aware_layout(
@@ -2942,7 +2946,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
@@ -2980,7 +2983,6 @@ text: |
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
@@ -3035,7 +3037,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         measured_widths: list[float] = []
@@ -3139,7 +3140,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
@@ -3505,7 +3505,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
 
         # Mock a small natural-height SVG (50px) — smaller than DEFAULT_CHART_HEIGHT
@@ -4443,7 +4442,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         sized_board, _ = calculate_data_aware_layout(
             result.board, executor, {}, pre_resolved={}
@@ -4732,7 +4730,6 @@ rows:
         executor = Run(
             result.board,
             env=build_exec_env(local_project(Path.cwd())),
-            query_registry=result.query_registry,
         )
         svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)

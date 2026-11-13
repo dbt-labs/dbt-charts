@@ -47,7 +47,7 @@ from dbt_charts.core.compile.models.chart.normalized import Chart, _CartesianCha
 # Canonical set of chart types whose mark color is the single-series ink
 # from theme.charts.single_series_palette.
 SINGLE_INK_CHART_TYPES: frozenset[str] = frozenset(
-    {"bar", "line", "area", "scatter", "circle", "point", "histogram"}
+    {"bar", "funnel", "line", "area", "scatter", "circle", "point", "histogram"}
 )
 
 

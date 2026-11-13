@@ -10,15 +10,20 @@ from unittest.mock import MagicMock
 import duckdb
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.board import plan_for_board
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.config import ProjectSourcesConfig
-from dbt_charts.core.compile.models.board.normalized import Board, LayoutItem
+from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.chart.normalized.table import TableChart
 from dbt_charts.core.execute.column_formats import (
     known_format_names,
     with_dbt_column_formats,
 )
 from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.execute.lookup import Ledger
+from dbt_charts.core.execute.plan import ExecContext, make_context, utc_now
+from dbt_charts.core.execute.plan_reader import env_sources
+from dbt_charts.core.project import InMemoryBoard
 from dbt_charts.core.render import render
 from dbt_charts.core.render.render_result import RenderResult
 
@@ -84,6 +89,9 @@ def _prepare(tmp_path: Path, meta: dict[str, object]) -> ProjectSourcesConfig:
             "t(month, amount)"
         )
         con.close()
+    (tmp_path / "dbt_charts.yml").write_text(
+        f"sources:\n  s:\n    type: duckdb\n    path: {db}\n"
+    )
     return ProjectSourcesConfig(sources={"s": {"type": "duckdb", "path": str(db)}})
 
 
@@ -105,7 +113,6 @@ def _render(
     executor = Run(
         result.board,
         env=build_exec_env(FilesystemProject(tmp_path)),
-        query_registry=result.query_registry,
     )
     return render(result.board, executor.ctx, executor.ledger, format=output_format)
 
@@ -225,44 +232,50 @@ _BASE_STYLE = "style:\n  formats:\n    currency: '$,.0f'\n    integer: ',.0f'\n"
 
 def _two_boards(
     tmp_path: Path, meta: dict[str, object], nested_style: str
-) -> tuple[Board, Run]:
+) -> tuple[Board, ExecContext]:
     sources = _prepare(tmp_path, meta)
-    nested = compile_board(
-        _BOARD.replace(_BASE_STYLE, nested_style) % {"chart": _TABLE, "formats": ""},
-        project_sources=sources,
+    nested = _BOARD.replace(_BASE_STYLE, nested_style) % {
+        "chart": _TABLE,
+        "formats": "",
+    }
+    (tmp_path / "nested.yml").write_text(
+        nested.replace("  q:\n", "  q2:\n")
+        .replace("query: q\n", "query: q2\n")
+        .replace("  c:\n", "  c2:\n")
+        .replace("  - c\n", "  - c2\n")
+    )
+    project = FilesystemProject(tmp_path)
+    root_text = (_BOARD % {"chart": _TABLE, "formats": ""}).replace(
+        "  - c\n", "  - c\n  - nested.yml\n"
     )
     root = compile_board(
-        _BOARD % {"chart": _TABLE, "formats": ""}, project_sources=sources
+        root_text, base_dir=project.directory(), project_sources=sources
     )
-    assert nested.board is not None and root.board is not None
-    tree = root.board.model_copy(
-        update={
-            "layout": root.board.layout.model_copy(
-                update={
-                    "items": [
-                        *root.board.layout.items,
-                        LayoutItem(
-                            type="board", board=nested.board, width=600, height=300
-                        ),
-                    ]
-                }
-            )
-        }
+    tree = root.board
+    assert tree is not None, root.errors
+    env = build_exec_env(project)
+    # The nested file resolves against the root board's location, which a
+    # compiled board's recorded text does not carry: plan it from its path.
+    plan = plan_for_board(
+        InMemoryBoard(root_text, path=project.path("root.yml")),
+        project,
+        None,
+        None,
+        utc_now(),
+        False,
+        False,
+        all_queries=True,
+        sources=env_sources(env),
     )
-    executor = Run(
-        tree,
-        env=build_exec_env(FilesystemProject(tmp_path)),
-        query_registry=root.query_registry,
-    )
-    return tree, executor
+    return tree, make_context(tree, plan, env)
 
 
 def test_a_name_only_a_nested_board_defines_fails_the_chart_in_every_placement(
     tmp_path: Path,
 ) -> None:
-    tree, executor = _two_boards(tmp_path, {"format": "arr_money"}, _ALIAS_STYLE)
+    tree, ctx = _two_boards(tmp_path, {"format": "arr_money"}, _ALIAS_STYLE)
 
-    result = render(tree, executor.ctx, executor.ledger, format="svg")
+    result = render(tree, ctx, Ledger(), format="svg")
 
     assert result.chart_errors
     assert {e.code for e in result.chart_errors} == {"ERR-DBT-COLUMN-FORMAT-UNKNOWN"}

@@ -5978,7 +5978,7 @@ mod nested_box_sidecar_tests {
             serde_json::from_str(rows_json).unwrap();
         let schema = crate::payload_schema::test_schema_of(&rows);
         let mut inner = HashMap::new();
-        inner.insert(query_name.to_string(), column_types::Dataset { rows: rows.into(), schema });
+        inner.insert(query_name.to_string(), column_types::Dataset { rows: rows.into(), schema, cell_text: Vec::new() });
         (chart_id.to_string(), inner)
     }
 

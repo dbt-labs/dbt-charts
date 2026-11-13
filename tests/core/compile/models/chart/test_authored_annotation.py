@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from dbt_charts.core.compile.models.aggregate import AggregateAnchor
 from dbt_charts.core.compile.models.chart.authored._annotation import (
-    AggregateAnchor,
     AnchorRange,
     Annotation,
     BandAnnotation,

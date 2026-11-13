@@ -34,6 +34,11 @@ style:
     stripe: chrome[10]
     accent: info.border
   background: chrome[12]
+  # The base tints wash out to gray over the near-black canvas; one step up
+  # the amber ramp keeps seen and new apart on dark chrome.
+  comments:
+    highlight: warning.border
+    highlight_new: warning.solid
   font:
     color: &high chrome[3]
   palettes:
@@ -215,6 +220,7 @@ style:
           background: *faint
     support_table:
       neutral_color: *value
+      ribbon_color: chrome[7]
       label:
         font:
           color: *mid

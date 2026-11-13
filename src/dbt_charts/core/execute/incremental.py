@@ -20,7 +20,6 @@ import sqlglot
 import sqlglot.errors
 import sqlglot.expressions as exp
 
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.cache_backend import ResultRows, TruncationInfo
 from dbt_charts.core.execute.lookup import Tail, limit_rows
@@ -156,21 +155,20 @@ def merge_incremental_rows(
 
 def run_incremental_tail(
     query_name: str,
-    query: SqlQuery,
+    sql: str,
+    key_col: str,
     tail: Tail,
     dialect: str | None,
-    execute: Callable[[SqlQuery], QueryResult],
+    execute: Callable[[str], QueryResult],
 ) -> tuple[ResultRows, TruncationInfo | None]:
     """Fetch only new rows (>= watermark) and merge with the prior cached set.
 
-    ``execute`` runs the tail query on the query's own route.
+    *sql* is the query's SQL as it executes and *key_col* its watermark column;
+    ``execute`` runs a tail's SQL on the query's own route.
 
     The merged set carries no data age of its own: its prior rows' age was
     recorded when the lookup served them.
     """
-    key_col = query.incremental
-    assert key_col is not None  # the lookup builds a tail only for incremental
-
     # Built entirely via sqlglot expressions (never f-string interpolation)
     # so the identifier and literal are quoted/cast per the query's actual
     # dialect — a hardcoded ANSI `"col"` tokenizes as a STRING LITERAL on
@@ -179,12 +177,10 @@ def run_incremental_tail(
         tail.watermark, query_name
     )
     tail_sql = (
-        f"SELECT * FROM ({query.sql}) AS _dct_base "
-        f"WHERE {predicate.sql(dialect=dialect)}"
+        f"SELECT * FROM ({sql}) AS _dct_base WHERE {predicate.sql(dialect=dialect)}"
     )
-    tail_query = query.model_copy(update={"sql": tail_sql})
 
-    result = execute(tail_query)
+    result = execute(tail_sql)
     if not result.is_success:
         assert result.error is not None
         result.error.fields.setdefault("query_name", query_name)

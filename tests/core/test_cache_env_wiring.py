@@ -16,18 +16,17 @@ duplicates that coverage now that compile_and_render is deleted.
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 from dbt_charts.core.compile import compile as df_compile
 from dbt_charts.core.execute import QueryError
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
-from dbt_charts.core.execute.duckdb_cache import compute_cache_key
+from dbt_charts.core.execute.plan import plan
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
-from dbt_charts.core.text.time_zones import UTC
 
 from .._run import Run
+from .._scripted_env import ScriptedBackend, scripted_env
 
 BOARD_YAML = """\
 title: Test
@@ -45,18 +44,6 @@ rows:
 """
 
 
-def _ok_adapter() -> MagicMock:
-    """Mock exec env that returns one row successfully."""
-    ok = MagicMock()
-    ok.is_success = True
-    ok.data = [{"value": 42}]
-    ok.resolved_relations = None
-    ok.truncated_reason = None
-    registry = MagicMock()
-    registry.execute.return_value = ok
-    return registry
-
-
 class TestExecutorFailureCacheBlocksAdapter:
     """Verify that a pre-seeded DuckDB failure cache prevents adapter execution."""
 
@@ -64,13 +51,12 @@ class TestExecutorFailureCacheBlocksAdapter:
         """A cached failure for the query means adapter.execute is never called."""
         db = tmp_path / "cache.duckdb"
 
-        # Seed using compute_cache_key — the single source of truth — so the
-        # seeded key always matches what execute_query will look up.
-        result_for_seed = df_compile(BOARD_YAML)
-        query = result_for_seed.board.queries["my_query"]
-        source_hash, query_hash, variables_hash = compute_cache_key(
-            query, board_sources=result_for_seed.board.sources, time_zone=UTC
-        )
+        # Seed under the planned query's cache key — the single source of truth — so
+        # the seeded key always matches what execute_query will look up.
+        backend = ScriptedBackend([{"value": 42}])
+        env = scripted_env(backend)
+        [planned] = plan(Run(df_compile(BOARD_YAML).board, env=env).ctx, ["my_query"])
+        source_hash, query_hash, variables_hash = planned.cache_key
         seed = TrivialDuckDBCache(db_path=db, failure_ttl_seconds=9000)
         seed.put(
             source_hash,
@@ -84,17 +70,15 @@ class TestExecutorFailureCacheBlocksAdapter:
 
         cache = TrivialDuckDBCache(db_path=db, failure_ttl_seconds=9000)
         result = df_compile(BOARD_YAML)
-        adapter = _ok_adapter()
         try:
             executor = Run(
                 result.board,
-                env=adapter,
-                query_registry=result.query_registry,
+                env=env,
                 result_cache=cache,
             )
             with pytest.raises((CachedQueryFailure, QueryError)):
                 executor.execute_query("my_query")
 
-            assert adapter.execute.call_count == 0
+            assert backend.execute.call_count == 0
         finally:
             cache.close()

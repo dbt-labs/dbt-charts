@@ -5,9 +5,9 @@ description: 'Draw a chart shape no built-in type has with `type: custom`: an SV
   surface, the template header, every name the template sees (rows, style, variables,
   helpers), links, fonts, where the drawing lands, the allowed SVG, and the template
   dialect. Use when the user asks for a shape by name that no built-in type or composed
-  recipe draws: a Sankey, funnel, gauge, radar, XmR chart, isotype pictogram, waffle.
-  Do NOT use when a built-in type answers the question (see chart), or for styling
-  an existing chart.'
+  recipe draws: a Sankey, gauge, radar, XmR chart, isotype pictogram, waffle. Do NOT
+  use when a built-in type answers the question (see chart), or for styling an existing
+  chart.'
 metadata:
   author: fivetran
 ---
@@ -24,7 +24,7 @@ what its template draws.
 
 ```bash
 dct describe templates/            # every template: description, channels, options
-dct describe templates/funnel.svg.j2
+dct describe templates/stage_bars.svg.j2
 dct examples charts/custom-inline  # a complete inline board to copy
 ```
 
@@ -44,7 +44,7 @@ charts:
   signup_flow:
     type: custom
     query: stages
-    # template: funnel          # templates/funnel.svg.j2, or the template inline
+    # template: stage_bars      # templates/stage_bars.svg.j2, or the template inline
     svg: |                      # under svg: (exactly one of the two)
       {#---
       description: One bar per stage, each a link.
@@ -76,7 +76,7 @@ rows:
 ```
 
 Channels use the built-in names (`x`, `y`, `color`, `size`, `shape`, `theta`,
-`value`); pick the role a built-in chart would use (a funnel's stage is `x`,
+`value`); pick the role a built-in chart would use (a stage is `x`,
 its count `y`; a waffle's parts are `color` and `theta`). Everything else the
 template needs goes under `options:`. The look comes from the board's
 `style:`, never from the chart.

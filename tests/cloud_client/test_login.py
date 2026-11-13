@@ -113,7 +113,7 @@ def test_start_device_login_posts_client_id_and_scope() -> None:
     assert seen == [
         {
             "client_id": CLIENT_ID,
-            "scope": "dashboards:read orgs:admin projects:admin connections:admin",
+            "scope": "dashboards:read orgs:admin projects:admin connections:admin comments:read comments:write",
         }
     ]
 

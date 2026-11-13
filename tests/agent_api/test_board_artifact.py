@@ -159,16 +159,18 @@ def test_render_board_from_files_reproduces_the_live_render(
     from dbt_charts.core.render.board_resolve import build_resolved_board
     from dbt_charts.core.render.boards import render_board_svg
 
+    from .._compile import remember
     from .._run import Run
 
     located = resolve_board_or_error(tmp_path / "board.yml", project)
     assert not isinstance(located, Diagnostic)
     compile_result = compile_file(located)
     assert compile_result.board is not None
+    # compile_file bypasses the recorder; Run plans the board from its text.
+    remember(compile_result.board, located.content)
     live_executor = Run(
         compile_result.board,
         env,
-        query_registry=compile_result.query_registry,
     )
     live_resolved, live_cache = build_resolved_board(
         compile_result.board, live_executor, {}

@@ -216,6 +216,7 @@ def _get_terminal_chart_type(chart_type: str) -> str:
     chart_type_map = {
         # Direct support (no mapping needed)
         "bar": "bar",
+        "funnel": "bar",
         "histogram": "histogram",
         "line": "line",
         "circle": "scatter",

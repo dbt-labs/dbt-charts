@@ -4,11 +4,11 @@ notes: "Minimal example showing SQL data source usage"
 source: examples_db
 
 # Variables become controls on the board and are readable in any query.
-# Each starts unset, which filter() below treats as "no filter".
+# `column:` fills the dropdown with that column's values. It starts unset,
+# which filter() below treats as "no filter".
 variables:
   region:
-    options:
-      static: [North, South, East, West]
+    column: ecommerce_orders.region
 
 # Named SQL, run against `source`. Queries own the data: grain,
 # aggregation and ordering all live here.

@@ -20,7 +20,7 @@ use model_core::SetLeaves;
 use crate::column_kind::ChannelType;
 use crate::bound::{
     self, AuthoredLegend, Baselines, BinStyle, Bounds, BoundsReason, Datum, Extent, FixedLadder, Ladder, Mark, MarkLayer, MarkStyle,
-    Naming, Orient, Panels, Pos, RowRef, Rung, Scale, ScaleKind, Side, Tooltip, TooltipEntry, ValueAxis, ValueDomain, Zero,
+    Naming, Orient, Panels, Pos, RowRef, Rung, Scale, ScaleKind, Side, Tooltip, TooltipEntry, ValueAxis, ValueDomain, ValueScale, Zero,
 };
 use crate::decode::decode;
 use crate::derived::Placed;
@@ -49,7 +49,6 @@ fn refuse_unported(chart: &BarChart) -> Result<(), Diagnostic> {
         ("`sort:`", fields.sort.is_some()),
         ("`support_table:`", fields.support_table.is_some()),
         ("`pattern:`", chart.pattern.pattern.is_some()),
-        ("a multi-line `x_label:` or `y_label:`", [&fields.x_label, &fields.y_label].into_iter().flatten().any(|label| label.contains('\n'))),
     ];
     match unported.into_iter().find_map(|(field, set)| set.then_some(field)) {
         Some(field) => Err(unsupported(refuse!("a histogram with {field} is not supported"))),
@@ -83,13 +82,13 @@ pub fn bind(id: &ChartId, chart: &BarChart, board: &Board, run: &RunResult, plac
     let title = plain_text(chart.cartesian.shared.title.as_ref())?;
     let subtitle = plain_text(chart.cartesian.shared.subtitle.as_ref())?;
     let p = Prelude::counting(&chart.cartesian, ChannelType::Quantitative, placed)?;
+    cartesian::refuse_scale(p.x_scale, "histogram", "x", false)?;
+    cartesian::refuse_scale(p.y_scale, "histogram", "y", false)?;
     let x_field = p.x_field;
-    let x_title = chart.cartesian.x_label.clone().unwrap_or_else(|| p.x_title.clone());
     let x_format = axis_format(&p.x_ladder, p.formats)?;
     let dataset = cartesian::dataset(id, &chart.cartesian, board, run, &[x_field])?;
     if dataset.rows.is_empty() {
-        let frame = Some(placed.derive()?.frame);
-        return Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(no_data(placed, "histogram")?)) });
+        return Ok(no_data(placed.derive()?, placed.public_id, run, title, subtitle));
     }
     if !dataset.schema.get(x_field).map_err(Diagnostic::refused)?.is_number() {
         return Err(unsupported(refuse!("a histogram on a column that is not a declared number is not supported")));
@@ -126,6 +125,7 @@ pub fn bind(id: &ChartId, chart: &BarChart, board: &Board, run: &RunResult, plac
         .collect::<Result<Vec<_>, Diagnostic>>()?;
     let x_extent = Extent::new(start, stop).map_err(internal("x extent"))?;
     let x_domain = ValueDomain {
+        scale: ValueScale::Linear,
         extent: x_extent,
         zero: Zero::Free,
         headroom: 0.0,
@@ -138,6 +138,7 @@ pub fn bind(id: &ChartId, chart: &BarChart, board: &Board, run: &RunResult, plac
     let top = d3rs::ticks::d3_nice(0.0, tallest as f64, 10).1;
     let y_extent = Extent::new(0.0, tallest as f64).map_err(internal("y extent"))?;
     let y_domain = ValueDomain {
+        scale: ValueScale::Linear,
         extent: y_extent,
         zero: Zero::Anchored,
         headroom: 0.0,
@@ -148,7 +149,7 @@ pub fn bind(id: &ChartId, chart: &BarChart, board: &Board, run: &RunResult, plac
         bounds: Bounds { extent: Extent::new(0.0, top).map_err(internal("y bounds"))?, reason: BoundsReason::Niced },
     };
     let y_format = axis_format(&p.y_ladder, p.formats)?;
-    let (axis_styles, [x_shown, y_shown]) = cartesian::axes((&p.x_ladder, x_title.clone(), chart.cartesian.x_label.as_deref().is_some_and(|label| !label.is_empty())), (&p.y_ladder, p.y_title.clone(), chart.cartesian.y_label.as_deref().is_some_and(|label| !label.is_empty())), &y_domain, placed.scope, "histogram", true, false)?;
+    let (axis_styles, [x_shown, y_shown]) = cartesian::axes(&p, Some(&y_domain), placed.scope, "histogram", true, false)?;
 
     if axis_styles.y[0].side == Side::Right {
         return Err(unsupported(refuse!("a histogram with its count axis on the right is not supported")));
@@ -174,9 +175,9 @@ pub fn bind(id: &ChartId, chart: &BarChart, board: &Board, run: &RunResult, plac
                 row: RowRef(index),
                 label: None,
                 tooltip: Tooltip {
-                    header: None,
+                    heads: Vec::new(),
                     entries: vec![
-                        TooltipEntry { title: x_title.clone(), value: span },
+                        TooltipEntry { title: p.x_title.clone(), value: span },
                         TooltipEntry { title: p.y_title.clone(), value: count_text },
                     ],
                 },

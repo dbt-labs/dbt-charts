@@ -19,7 +19,8 @@ const OBJECT_TITLE_ANCHOR_LEVEL: i64 = 2;
 
 /// The size, weight and family stack an object title paints in at a card's outer `width`
 /// (typography.py:`chart_title_spec`): the heading ramp at the tier's level, the compact weight on a
-/// tiny card, the title slot's family on a medium or wide one and the chart font's below.
+/// tiny card whose title weight is `auto`, the title slot's family on a medium or wide one and the
+/// chart font's below.
 pub fn chart_title_spec(style: &Style, width: f64) -> Result<(f64, FontWeightValue, String), Diagnostic> {
     let title = &style.charts.title;
     let sizes = heading_ramp(style, "heading")?;
@@ -32,10 +33,11 @@ pub fn chart_title_spec(style: &Style, width: f64) -> Result<(f64, FontWeightVal
     };
     let level = (OBJECT_TITLE_ANCHOR_LEVEL + i64::from(offset)).clamp(1, sizes.len() as i64);
     let size = sizes[(level - 1) as usize].trunc();
-    // An `auto` weight or family is the board title's (`style.title.font`, which the chart slot inherits).
+    // An authored weight wins at every tier; an `auto` one is the compact weight on a tiny card, else
+    // the board title's (`style.title.font`, which the chart slot inherits). An `auto` family is the board title's too.
     let weight = match (tier, &title.font.weight) {
-        (WidthTier::Tiny, _) => title.base.compact_weight.clone(),
         (_, Engine::Value(weight)) => weight.clone(),
+        (WidthTier::Tiny, Engine::Rule(_)) => title.base.compact_weight.clone(),
         (_, Engine::Rule(_)) => style.title.font.weight.clone(),
     };
     let family = match (tier, &title.font.family) {
@@ -101,12 +103,16 @@ impl ChartTitle {
     }
 
     /// Each subtitle line with its baseline from the block's top: the subtitle's first row starts
-    /// `size + SUBTITLE_PADDING` under the last title row's top.
+    /// `size + SUBTITLE_PADDING` under the last title row's top, or at the block's top when there is
+    /// no title.
     pub fn subtitle_lines(&self) -> impl Iterator<Item = (&str, f64)> {
         let title_pitch = self.size + LINE_PITCH_EXTRA;
-        let last_row = (self.lines.len() - 1) as f64 * title_pitch;
+        let above = match self.lines.len() {
+            0 => 0.0,
+            n => (n - 1) as f64 * title_pitch + self.size + SUBTITLE_PADDING,
+        };
         self.subtitle.iter().flat_map(move |sub| {
-            let first = last_row + self.size + SUBTITLE_PADDING + measure::baseline_shift("top", sub.size);
+            let first = above + measure::baseline_shift("top", sub.size);
             sub.lines.iter().enumerate().map(move |(i, line)| (line.as_str(), first + i as f64 * (sub.size + LINE_PITCH_EXTRA)))
         })
     }
@@ -148,7 +154,8 @@ impl ChartTitle {
 /// subtitle (when non-empty, as production tests it) paints in `charts.title.subtitle`'s face and
 /// overflow. The sizing block is production's Vega-Lite title (title_shift.rs:`vega_title_block`):
 /// the first baseline at `round(0.8 * size)`, the body `size` plus the subtitle's size and gap plus
-/// `offset` under the top; each wrapped line past the first moves the body down by its size and 2 px
+/// `offset` under the top. With no title the subtitle is the block's only row: the first baseline at
+/// `round(0.8 * subtitle size)` and the body that size plus `offset`, with no gap; each wrapped line past the first moves the body down by its size and 2 px
 /// (`vega_fit::TitleInk::with_subtitle_lines`). The font's own ascent and descent (`title_block`)
 /// only decide how the text wraps or is cut, which each `diagnostics` entry reports.
 ///
@@ -157,9 +164,10 @@ impl ChartTitle {
 /// longest prefix that fits, `truncate` the longest that fits with its ellipsis).
 /// A size where Vega's `round(0.79 * size)` text baseline and `round(0.8 * size)` ascent part draws
 /// a wrapped or subtitled block on a baseline nothing here is held to, and is refused.
-/// `None` when the text is empty or blank in a wrapping mode.
+/// `None` when neither the title nor the subtitle has text, or the title is blank in a wrapping mode.
 pub fn chart_title(chart_id: &str, text: &str, subtitle: Option<&str>, style: &Style, width: f64, avail_w: f64, book: &FontBook) -> Result<Option<ChartTitle>, Diagnostic> {
-    if text.is_empty() {
+    let subtitle = subtitle.filter(|text| !text.is_empty());
+    if text.is_empty() && subtitle.is_none() {
         return Ok(None);
     }
     let slot = &style.charts.title;
@@ -173,21 +181,26 @@ pub fn chart_title(chart_id: &str, text: &str, subtitle: Option<&str>, style: &S
     let sub_family = sub_face.font.family.as_str();
     let sub_italic = sub_face.font.style.as_str() == "italic";
     let sub_fitted = subtitle
-        .filter(|text| !text.is_empty())
         .map(|text| Ok::<_, Diagnostic>(TitleText { text, font: painted_font(sub_family, sub_face.font.size, &sub_face.font.weight, sub_italic)?, overflow: overflow_of(sub_face.overflow) }))
         .transpose()?;
-    let Some(block) = title_block(chart_id, Some(&fitted), sub_fitted.as_ref(), offset, avail_w, book).map_err(diag::err_internal)? else {
+    let fitted = (!text.is_empty()).then_some(fitted);
+    let Some(block) = title_block(chart_id, fitted.as_ref(), sub_fitted.as_ref(), offset, avail_w, book).map_err(diag::err_internal)? else {
         return Ok(None);
     };
     let (lines, sub_lines) = (block.title.len(), block.subtitle.len());
     let rounds_apart = |size: f64| measure::baseline_shift("top", size) != (size * TITLE_ASCENT_RATIO).round();
-    if (lines > 1 || sub_fitted.is_some()) && (rounds_apart(size) || sub_fitted.is_some() && rounds_apart(sub_face.font.size)) {
+    if (lines > 1 || sub_fitted.is_some()) && (lines > 0 && rounds_apart(size) || sub_fitted.is_some() && rounds_apart(sub_face.font.size)) {
         return Err(Diagnostic::refused(refuse!("a wrapped or subtitled chart title at a size whose Vega baseline rounds off its ascent is not supported")));
     }
-    let ascent = (size * TITLE_ASCENT_RATIO).round_ties_even();
-    let sub_block = sub_fitted.as_ref().map_or(0.0, |_| sub_face.font.size + SUBTITLE_PADDING);
-    let metrics = TitleMetrics { ascent, tail: size + sub_block + offset - ascent };
-    let extra = (lines - 1) as f64 * (size + LINE_PITCH_EXTRA) + sub_lines.saturating_sub(1) as f64 * (sub_face.font.size + LINE_PITCH_EXTRA);
+    // With no title the subtitle is the block's only row: it leads at its own size, with no gap above.
+    let (lead, sub_block) = match (lines, &sub_fitted) {
+        (0, _) => (sub_face.font.size, 0.0),
+        (_, Some(_)) => (size, sub_face.font.size + SUBTITLE_PADDING),
+        (_, None) => (size, 0.0),
+    };
+    let ascent = (lead * TITLE_ASCENT_RATIO).round_ties_even();
+    let metrics = TitleMetrics { ascent, tail: lead + sub_block + offset - ascent };
+    let extra = lines.saturating_sub(1) as f64 * (size + LINE_PITCH_EXTRA) + sub_lines.saturating_sub(1) as f64 * (sub_face.font.size + LINE_PITCH_EXTRA);
     let subtitle = sub_fitted.as_ref().map(|_| ChartSubtitle {
         lines: block.subtitle.iter().map(|line| line.text.clone()).collect(),
         size: sub_face.font.size,
@@ -293,9 +306,9 @@ pub struct TitleBlock {
 /// Vega text metrics); the subtitle sits `SUBTITLE_PADDING` under the title and
 /// `offset` separates the block from the body.
 ///
-/// `None` when nothing draws: no title (a subtitle needs one), or a blank title in
-/// a wrapping mode with a limit. A blank title in `Clip` or `Truncate`, or with no
-/// limit, keeps its band.
+/// With no title the subtitle is the block's only row, at the block's top. `None` when nothing
+/// draws: neither text, or a blank title in a wrapping mode with a limit. A blank title in `Clip` or
+/// `Truncate`, or with no limit, keeps its band.
 pub fn title_block(
     chart_id: &str,
     title: Option<&TitleText>,
@@ -304,12 +317,12 @@ pub fn title_block(
     avail_w: f64,
     book: &FontBook,
 ) -> Result<Option<TitleBlock>, String> {
-    let Some(title) = title else {
-        return Ok(None);
-    };
     let limit = avail_w.trunc();
-    let (title_lines, title_cut) = fit(title, limit, book)?;
-    if title_lines.is_empty() {
+    let (title_lines, title_cut) = match title {
+        Some(title) => fit(title, limit, book)?,
+        None => (vec![], false),
+    };
+    if title.is_some() && title_lines.is_empty() {
         return Ok(None);
     }
     let (sub_lines, sub_cut) = match subtitle {
@@ -321,21 +334,29 @@ pub fn title_block(
         top: 0.0,
         width: 0.0,
     };
-    let drawn = pen.place(title_lines, &title.font, book)?;
+    let drawn = match title {
+        Some(title) => pen.place(title_lines, &title.font, book)?,
+        None => vec![],
+    };
     let sub_drawn = match subtitle {
         Some(sub) if !sub_lines.is_empty() => {
-            pen.top += SUBTITLE_PADDING;
+            if !drawn.is_empty() {
+                pen.top += SUBTITLE_PADDING;
+            }
             pen.place(sub_lines, &sub.font, book)?
         }
         _ => vec![],
     };
+    let Some(first) = drawn.first().or(sub_drawn.first()) else {
+        return Ok(None);
+    };
+    let ascent = first.baseline;
     let (top, width) = (pen.top, pen.width);
     let height = top + offset;
-    let ascent = drawn[0].baseline;
 
     let mut diagnostics = Vec::new();
     for (cut, field, text) in [
-        (title_cut, "title", Some(title)),
+        (title_cut, "title", title),
         (sub_cut, "subtitle", subtitle),
     ] {
         if let (true, Some(text)) = (cut, text) {

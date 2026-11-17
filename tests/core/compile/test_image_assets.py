@@ -10,6 +10,7 @@ import pytest
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.image_assets import (
     image_scope,
+    project_images,
     resolve_image_ref,
     rewrite_markdown_images,
     rewrite_markdown_text_images,
@@ -170,3 +171,20 @@ class TestRewriteMarkdownTextImages:
             assert list(parse(out)) == rewrite_markdown_images(
                 list(parse(text)), "charts"
             )
+
+
+class TestProjectImages:
+    def test_each_project_image_maps_to_its_embedded_bytes(self) -> None:
+        markdown = (
+            "![a](img/a.svg) and ![remote](https://example.com/b.png)\n\n"
+            "- ![again](img/a.svg)"
+        )
+        with _bound({"charts/img/a.svg": _SVG}):
+            images = project_images(markdown, "charts")
+        assert list(images) == ["img/a.svg"]
+        assert images["img/a.svg"].startswith(_EMBEDDED)
+
+    def test_a_project_image_that_does_not_resolve_raises(self) -> None:
+        with _bound({}), pytest.raises(CompilationError) as e:
+            project_images("![a](img/missing.svg)", "charts")
+        assert e.value.code.code == "ERR-IMAGE-REF-UNRESOLVED"

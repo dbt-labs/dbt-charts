@@ -51,7 +51,9 @@ def intervals(monkeypatch: pytest.MonkeyPatch) -> dict[str, tuple[float, float]]
         board_module, "compile_file", slowed("python", board_module.compile_file)
     )
     monkeypatch.setattr(
-        board_module, "engine_compile", slowed("engine", board_module.engine_compile)
+        board_module,
+        "engine_compile_recorded",
+        slowed("engine", board_module.engine_compile_recorded),
     )
     spans["threads"] = (0.0, 0.0)
     yield spans
@@ -105,7 +107,7 @@ def test_a_pathless_board_plans_without_the_projects_meta_yml(tmp_path: Path) ->
     session = ProjectSession.open(tmp_path)
 
     def source_of(board: object) -> str | None:
-        plan = plan_for_board(
+        planned = plan_for_board(
             board,  # type: ignore[arg-type] — a BoardFile
             session.project,
             {},
@@ -114,7 +116,7 @@ def test_a_pathless_board_plans_without_the_projects_meta_yml(tmp_path: Path) ->
             strict=True,
             active_tab_only=False,
         )
-        return plan["queries"]["q"]["source"]
+        return planned.plan["queries"]["q"]["source"]
 
     located = session.project.path("charts/located.yml").read_board(named=True)
     assert source_of(located) == "from_meta"

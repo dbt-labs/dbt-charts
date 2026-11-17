@@ -20,7 +20,7 @@ def run_wizard(
     force: bool,
 ) -> None:
     """Scaffold the project and install the `dct` stub skill."""
-    from dbt_charts.agent_api.init import init_project
+    from dbt_charts.agent_api.init import INIT_SKILL_TARGETS, init_project
     from dbt_charts.cli.commands import skills_init
 
     resolution = resolve_init_root(project_dir, Path.cwd())
@@ -41,7 +41,7 @@ def run_wizard(
     for hint in result.hints:
         typer.echo(f"\n  Tip: {hint}")
 
-    for target in ("agents", "claude"):
+    for target in INIT_SKILL_TARGETS:
         skills_init.run_init_skills(
             target=target,
             all_targets=False,

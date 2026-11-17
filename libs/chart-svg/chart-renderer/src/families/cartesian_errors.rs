@@ -300,7 +300,7 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
         }
         null_series(&facts, &payload.schema.rows, &payload.rows)?;
     }
-    if chart_type == "histogram" {
+    if chart_type == "histogram" && !crate::families::no_results::nothing_to_plot(payload, chart_type)? {
         histogram(&facts, &payload.schema.rows, &payload.rows)?;
     }
     if matches!(chart_type, "bar" | "line" | "area" | "scatter" | "heatmap") {

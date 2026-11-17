@@ -19,7 +19,7 @@ pub(crate) struct TitleSource<'a> {
 }
 
 pub(crate) struct TitlePlan {
-    text: String,
+    text: Option<String>,
     subtitle: Option<String>,
     pub(crate) ink: vega_fit::TitleInk,
     /// Set when the title or subtitle wraps onto measured lines.
@@ -38,7 +38,7 @@ impl TitlePlan {
         if let Some(block) = &self.block {
             crate::common::warn_title_truncations(
                 chart_id,
-                (Some(&self.text), block.title_truncated),
+                (self.text.as_deref(), block.title_truncated),
                 (self.subtitle.as_deref(), block.subtitle_truncated),
             );
         }
@@ -62,13 +62,15 @@ pub(crate) fn layout_title(
     let eff_title_style = src.effective_style();
     let eff_title_ref = eff_title_style.as_ref().or(src.title_style);
     let font_size = crate::common::painted_title_size(src.title.is_some() || src.subtitle.is_some(), eff_title_ref)?;
-    let Some(raw_title) = src.title else { return Ok(TitleLayout::Untitled) };
+    if src.title.is_none() && src.subtitle.is_none() {
+        return Ok(TitleLayout::Untitled);
+    }
     let case = eff_title_ref.and_then(|ts| ts.font.case.as_deref()).unwrap_or("none");
-    let text = display_text::case::apply_case(raw_title, case)?;
+    let text = src.title.map(|raw| display_text::case::apply_case(raw, case)).transpose()?;
     let subtitle = src.subtitle;
     let family = eff_title_ref.and_then(|ts| ts.font.family.as_deref()).unwrap_or("serif");
     let offset = eff_title_ref.and_then(|ts| ts.position.as_ref()).and_then(|pos| pos.offset).unwrap_or(10.0);
-    let width = fonts.measure(&text, family, font_size)?;
+    let width = text.as_deref().map(|t| fonts.measure(t, family, font_size)).transpose()?;
     let sub_measure = match subtitle {
         None => None,
         Some(sub) => {
@@ -78,10 +80,11 @@ pub(crate) fn layout_title(
             Some((sub_fs, fonts.measure(sub, sub_family, sub_fs)?))
         }
     };
-    let overflows = width > avail_w || sub_measure.is_some_and(|(_, sub_w)| sub_w > avail_w);
+    // A subtitle with no title is laid out by the wrap law whether or not it overflows.
+    let overflows = width.is_none_or(|w| w > avail_w) || sub_measure.is_some_and(|(_, sub_w)| sub_w > avail_w);
     let (ink, block) = if overflows {
         let block = crate::common::wrap_title_block(
-            Some(&text),
+            text.as_deref(),
             subtitle,
             eff_title_ref,
             font_size,
@@ -94,6 +97,7 @@ pub(crate) fn layout_title(
             .ok_or_else(|| format!("{}: a wrapped title block carries no ink", src.family))?;
         (ink, Some(block))
     } else {
+        let width = width.expect("a title-less plan always overflows into the wrap law");
         let ink = match sub_measure {
             None => vega_fit::TitleInk::single(font_size, offset, width),
             Some((sub_fs, sub_w)) => vega_fit::TitleInk::with_subtitle(font_size, sub_fs, offset, width, sub_w),
@@ -111,7 +115,8 @@ impl TitlePlan {
         match &self.block {
             Some(block) => crate::common::title_block_nodes(block, style, x, y, self.font_size),
             None => {
-                let mut nodes = vec![crate::common::title_node(&self.text, style, x, y, true)];
+                let text = self.text.as_deref().expect("an unwrapped plan carries its title");
+                let mut nodes = vec![crate::common::title_node(text, style, x, y, true)];
                 if let Some(sub) = &self.subtitle {
                     nodes.extend(crate::common::subtitle_nodes(std::slice::from_ref(sub), style, x, y, self.font_size));
                 }

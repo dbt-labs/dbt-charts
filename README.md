@@ -263,7 +263,7 @@ That is the short path. `dct` is a full CLI: it validates, renders to HTML, PDF,
 PNG, runs queries, searches boards, traces column impact, and carries the YAML reference
 offline. The [dct CLI](#dct-cli) section below lists the verbs.
 
-Explore the [dbtcharts.com platform](https://docs.dbtcharts.com/cloud/) for hosted boards and an enhanced
+Explore the [dbtcharts.com platform](https://docs.dbtcharts.com/platform/getting-started/) for hosted boards and an enhanced
 collaboration experience.
 
 ---

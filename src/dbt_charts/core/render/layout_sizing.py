@@ -40,11 +40,13 @@ from dbt_charts.core.compile.models.chart.normalized import (
     Chart,
     TableChart,
 )
+from dbt_charts.core.compile.models.chart.normalized.bar import BarChart
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedChart,
     ResolvedPieChart,
     ResolvedTableChart,
 )
+from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.style.resolved import effective_padding
 from dbt_charts.core.compile.resolve import preferred_chart_width
 from dbt_charts.core.compile.resolve.style.typography import own_title_fonts
@@ -66,7 +68,7 @@ from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_
 from dbt_charts.core.render.chart.spec_builders import additive_padding
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 from dbt_charts.core.render.conditions import item_is_drawn
-from dbt_charts.core.render.engine import render_native
+from dbt_charts.core.render.engine_cell import measure_in_cell
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.pie_layout import sized_pie_mode
 from dbt_charts.core.render.prose import plan_board_prose
@@ -674,6 +676,21 @@ def _render_chart_to_svg(
     return svg, dims.width, dims.height
 
 
+def _torn_band(resolved_chart: ResolvedChart, chart: Chart) -> float:
+    """The share a vertical torn bar chart grows by: its cap band sits on top of the plot
+    a chart of its width would have, past ``max_height``, unless the author set the
+    height. A horizontal chart's band sits in its width."""
+    if (
+        not isinstance(resolved_chart, ResolvedBarChart)
+        or not isinstance(chart, BarChart)
+        or resolved_chart.torn_break is None
+        or resolved_chart.orientation == "horizontal"
+        or chart.height is not None
+    ):
+        return 0.0
+    return resolved_chart.style.torn_outlier.band
+
+
 def _make_data_aware_height_provider(
     render_ctx: SizingRenderCtx,
     results: ResolveDataProvider,
@@ -788,10 +805,10 @@ def _make_data_aware_height_provider(
                     return _unresolved_height(item.chart, width, resolved_style)
                 return table_height + _vertical_inset(resolved_table)
 
-            # callout and spark_bar render their real SVG to measure it, and
-            # either can fail doing so (a callout's image ref, spark_bar's data
-            # shape). A failure is that one chart's error tile: escaping to
-            # renderer.py's board-level handler would blank every chart.
+            # callout and spark_bar draw to measure themselves, and either can
+            # fail doing so (a callout's image ref, spark_bar's data shape). A
+            # failure is that one chart's error tile: escaping to renderer.py's
+            # board-level handler would blank every chart.
             if item.chart.type == "callout":
                 resolved_callout = _require_resolved(
                     render_ctx,
@@ -804,30 +821,19 @@ def _make_data_aware_height_provider(
                 )
                 if resolved_callout is None:
                     return _unresolved_height(item.chart, width, resolved_style)
+                # The board's render draws each placement in the engine's cell: no
+                # SVG of the measure is kept.
                 try:
-                    callout_svg, natural_height = render_native(
-                        resolved_callout,
-                        ResultRows([], {}),
-                        width=width,
-                        height=0.0,
-                        padding=None,
-                        board_style=resolved_style,
+                    actual_height = measure_in_cell(
+                        resolved_callout, resolved_style, width, None
                     )
                 except DbtChartsError as exc:
                     return _sizing_render_failed(item.chart, exc, width, resolved_style)
-                assert natural_height is not None
-                actual_height = natural_height
-                render_ctx.render_cache[
-                    (item.chart.id, width, actual_height, NO_TITLE_SHIFT)
-                ] = (callout_svg, actual_height)
                 render_ctx.natural_heights[(item.chart.id, width)] = actual_height
                 return actual_height
 
-            # spark_bar: natural-height SVG renderer — renders content-first.
-            # Returns natural_height + (top+bottom) padding so the slot includes
-            # the SVG-family translate wrap and any chart-local padding override.
-            # Not cached: rendering.py skips render_cache for SVG_LAYOUT_PADDED_TYPES,
-            # so the final render pass re-renders regardless.
+            # spark_bar: the engine's cell draws it inside the padding the slot is shrunk
+            # by, at its natural height; the slot adds that padding back.
             if item.chart.type == "spark_bar":
                 resolved_spark_bar = _require_resolved(
                     render_ctx,
@@ -840,22 +846,15 @@ def _make_data_aware_height_provider(
                 )
                 if resolved_spark_bar is None:
                     return _unresolved_height(item.chart, width, resolved_style)
-                # spark_bar validates its data at RENDER time, not resolve time
-                # (whether x holds numbers is a property of the rows, which the
-                # resolver never inspects), so _require_resolved's catch above
-                # cannot see it. Degrade the same way it does: record the
-                # per-chart failure and fall back to the unresolved slot height,
-                # letting the main pass paint an error card. Without this a
-                # single bad spark_bar escapes to renderer.py's board-level
-                # handler and takes down every chart on the board.
+                padding = additive_padding(
+                    card_padding, resolved_spark_bar.layout_padding
+                )
+                inner_width = max(width - padding["left"] - padding["right"], 0.0)
+                # A spark_bar's rows are checked when the engine binds them, which
+                # the resolver never reaches: a failure is that chart's error card.
                 try:
-                    _chart_svg, _, actual_height = _render_chart_to_svg(
-                        resolved_spark_bar,
-                        results,
-                        variables,
-                        width,
-                        height=None,
-                        resolved_style=resolved_style,
+                    actual_height = measure_in_cell(
+                        resolved_spark_bar, resolved_style, inner_width, padding
                     )
                 except DbtChartsError as exc:
                     return _sizing_render_failed(item.chart, exc, width, resolved_style)
@@ -922,6 +921,7 @@ def _make_data_aware_height_provider(
                             width=render_inner_width,
                             resolved_style=resolved_style,
                         )
+                        * (1 + _torn_band(resolved_chart, item.chart))
                         + 2 * card_pad
                         + chart_padding.top
                         + chart_padding.bottom

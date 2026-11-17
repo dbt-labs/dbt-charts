@@ -34,6 +34,7 @@ from dbt_charts.core.compile.models.board.normalized import VariableValues
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from dbt_charts.core.compile.models.variable.authored import Variable
     from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 
 _BOARD_VARIABLES: ContextVar[VariableValues | None] = ContextVar(
@@ -100,6 +101,27 @@ def variable_options(options: Mapping[str, LinkedOptions]) -> Generator[None]:
 def current_variable_options() -> Mapping[str, LinkedOptions]:
     """The options of the variables chart links set, for the render pass in progress."""
     return _VARIABLE_OPTIONS.get()
+
+
+_VARIABLE_DEFS: ContextVar[Mapping[str, Variable]] = ContextVar(
+    "dct_variable_defs", default=MappingProxyType({})
+)
+
+
+@contextmanager
+def variable_defs(defs: Mapping[str, Variable]) -> Generator[None]:
+    """Scope the board's declared variables, for one render pass: a chart with
+    nothing to show names the filters that reach it."""
+    token = _VARIABLE_DEFS.set(MappingProxyType(dict(defs)))
+    try:
+        yield
+    finally:
+        _VARIABLE_DEFS.reset(token)
+
+
+def current_variable_defs() -> Mapping[str, Variable]:
+    """The board's declared variables, for the render pass in progress."""
+    return _VARIABLE_DEFS.get()
 
 
 _BOARD_DATA_PROVIDER: ContextVar[ChartDataProvider | None] = ContextVar(

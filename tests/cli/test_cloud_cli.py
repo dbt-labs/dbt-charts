@@ -2003,6 +2003,8 @@ class TestStatusHumanStepsAhead:
         assert "project connect github --git-url https://github.com/x/y.git" in out(
             result
         )
+        assert "--token <token>" not in out(result)
+        assert "DCT_GIT_TOKEN" in out(result)
 
     def test_names_the_warehouse_credential_when_a_declared_source_is_untested(
         self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2770,10 +2772,7 @@ class TestProjects:
         result = self._connect(api, {**_project(), "unmapped_source_count": 2})
         assert result.exit_code == 0, out(result)
         assert "Next: dct cloud connection create --org acme-data" in result.output
-        assert (
-            "dct cloud source map <source> <connection> --org acme-data "
-            "--project analytics" in result.output
-        )
+        assert "--project analytics --map-all-sources" in result.output
         assert "file source" in result.output
         assert "project sync" not in result.output
 
@@ -4449,7 +4448,8 @@ class TestRender:
             app, ["cloud", "render", "--org", "acme-data", "--project", "analytics"]
         )
         assert result.exit_code == 0, out(result)
-        assert "14" in result.output
+        assert "Queued 14 board render(s)" in result.output
+        assert "still unrendered" not in result.output
 
     def test_a_blocked_project_gets_a_reason_not_a_bare_zero(
         self, api: FakeApi
@@ -4486,7 +4486,7 @@ class TestRender:
             app, ["cloud", "render", "--org", "acme-data", "--project", "analytics"]
         )
         assert result.exit_code == 0, out(result)
-        assert "2 still unrendered" in result.output
+        assert "2 still unrendered: run `dct cloud render` again" in result.output
         assert "Nothing to start" not in result.output
 
     def test_nothing_to_start_claims_only_that_no_first_render_is_waiting(
@@ -6640,6 +6640,8 @@ class TestProjectConnectGithubNamesTheRepo:
             "github_token": "gho_secret",
         }
         assert "Using your gh login to verify acme/analytics" in result.stderr
+        assert "Using acme/analytics." in result.stderr
+        assert "Picked" not in result.stderr
         assert "/github/connect/" not in out(result)
         assert api.body("POST", self.FROM_PICK)["slug"] == "analytics"
 
@@ -6894,6 +6896,26 @@ class TestComments:
         assert result.exit_code == 0, out(result)
         assert "Wizard: It fell." in out(result)
         assert "deleted account" not in out(result)
+
+    def test_list_shows_a_wizard_replys_state_and_change(self, api: FakeApi) -> None:
+        thread = _thread(replies=2)
+        replies = thread["replies"]
+        assert isinstance(replies, list)
+        wizard = {"author": None, "author_kind": "wizard"}
+        replies[0] |= wizard | {"body": "", "wizard_status": "working"}
+        replies[1] |= wizard | {
+            "body": "Fixed the title.",
+            "wizard_status": "answered",
+            "change_url": "https://cloud.example/change",
+        }
+        api.add("GET", _COMMENTS, {"threads": [thread]})
+
+        result = runner.invoke(app, ["cloud", "comments", "list", *_SCOPE])
+
+        assert result.exit_code == 0, out(result)
+        assert "Wizard: (working)" in out(result)
+        assert "Wizard: Fixed the title." in out(result)
+        assert "change: https://cloud.example/change" in out(result)
 
     def test_list_filters_by_chart_and_status(self, api: FakeApi) -> None:
         api.add("GET", _COMMENTS, {"threads": []})

@@ -1080,7 +1080,7 @@ def test_native_preset_beside_an_affix_paints_unit_and_affix_in_text_and_termina
     chart, resolved, data = _resolved_native_kpi(make_chart, slot, fmt, value)
     expected = _native_expected(preset, affix)
 
-    text_parts = _kpi_text_parts(resolved, data[0], None)
+    text_parts = _kpi_text_parts(resolved, data[0], None, [])
     assert expected in text_parts["value" if slot == "headline" else "support"]
     if slot == "headline":
         assert expected in render_kpi_terminal(
@@ -1136,7 +1136,7 @@ def test_native_preset_beside_a_prefix_and_suffix_paints_both(
     )
 
     _, resolved, data = _resolved_native_kpi(make_chart, slot, fmt, value)
-    parts = _kpi_text_parts(resolved, data[0], None)
+    parts = _kpi_text_parts(resolved, data[0], None, [])
     assert expected in parts["value" if slot == "headline" else "support"]
     if slot == "headline":
         chart = make_chart(
@@ -1161,7 +1161,7 @@ def test_native_preset_negative_value_paints_sign_before_a_prefix(
     svg = render_board_to_svg(_to_yaml(_native_kpi_board(slot, fmt, -12.3)))
     assert any("−~12.3%" in _TAG_RE.sub("", t) for t in _digit_texts(svg))
     _, resolved, data = _resolved_native_kpi(make_chart, slot, fmt, -12.3)
-    parts = _kpi_text_parts(resolved, data[0], None)
+    parts = _kpi_text_parts(resolved, data[0], None, [])
     assert "−~12.3%" in parts["value" if slot == "headline" else "support"]
 
 
@@ -1200,7 +1200,7 @@ def test_unit_beside_an_authored_suffix_paints_the_same_in_kpi_text(
 
     fmt, value, expected = _UNIT_SUFFIX_PAINT[case]
     _, resolved, data = _resolved_native_kpi(make_chart, slot, fmt, value)
-    parts = _kpi_text_parts(resolved, data[0], None)
+    parts = _kpi_text_parts(resolved, data[0], None, [])
     assert re.search(expected, parts["value" if slot == "headline" else "support"])
 
 
@@ -1353,7 +1353,7 @@ def test_date_spec_beside_an_affix_paints_the_affix_in_kpi_text(
         data,
         chart_style_context=resolve_chart_style_context(get_theme_style()),
     )
-    parts = _kpi_text_parts(resolved, data[0], aliases or None)
+    parts = _kpi_text_parts(resolved, data[0], aliases or None, [])
     assert expected in parts["value" if slot == "kpi_headline" else "support"]
 
 

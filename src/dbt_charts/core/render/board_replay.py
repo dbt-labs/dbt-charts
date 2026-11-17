@@ -4,7 +4,8 @@ The two halves of the artifact round trip that make a resolved board a
 first-class, replayable output: `dump_board_artifact`/`load_board_artifact`
 (de)serialize the published `ResolvedBoard` contract, and
 `render_board_from_artifact` renders one with a `ReplayDataProvider` instead
-of live `QueryResults` — no compile, no warehouse.
+of live `QueryResults`: no warehouse, and the engine compile is rebuilt from the
+artifact's own record of it, not from a project.
 
 Both loaders stamp a registered `ERR-*` code on failure rather than letting a
 bare `pydantic.ValidationError` or `ReplayDataProvider` exception reach a
@@ -16,14 +17,22 @@ loading an artifact, so an unmigrated raise here would surface as
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
+from dbt_charts import _engine
 from dbt_charts.core.compile.board_artifact import (
     DanglingStyleRefError,
     dump_resolved_board_artifact,
     load_resolved_board_artifact,
+)
+from dbt_charts.core.compile.compiler import cross_board_query_key
+from dbt_charts.core.compile.engine import (
+    CompileRecord,
+    refusal_diagnostics,
+    replay_compile,
 )
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
 from dbt_charts.core.compile.models.chart.resolved import ResolvedPieChart
@@ -38,8 +47,12 @@ from dbt_charts.core.diagnostics.codes_render import (
     ERR_BOARD_RECORDING_MISMATCH,
     ERR_RESOLVED_PIE_DATA_MISMATCH,
 )
+from dbt_charts.core.execute.cache_backend import ResultRows
+from dbt_charts.core.execute.planned import plan_board
+from dbt_charts.core.execute.query_plan import QueryPlan
 from dbt_charts.core.execute.replay_provider import ReplayDataProvider
 from dbt_charts.core.render.boards import render_board_svg
+from dbt_charts.core.render.engine_cell import EngineBoard, engine_board
 from dbt_charts.core.render.font_selection import collect_painted_italic_families
 
 if TYPE_CHECKING:
@@ -47,7 +60,17 @@ if TYPE_CHECKING:
     from dbt_charts.core.execute.recording import BoardRecording
 
 
-def dump_board_artifact(resolved: ResolvedBoard) -> bytes:
+@dataclass(frozen=True)
+class BoardArtifact:
+    """A stored board: its resolved tree and the engine compile it came from."""
+
+    resolved: ResolvedBoard
+    engine_compile: CompileRecord
+
+
+def dump_board_artifact(
+    resolved: ResolvedBoard, engine_compile: CompileRecord
+) -> bytes:
     """Serialize a resolved board to its published JSON contract.
 
     Delegates the shape to ``compile.board_artifact``, which owns the envelope
@@ -56,10 +79,14 @@ def dump_board_artifact(resolved: ResolvedBoard) -> bytes:
     schema this repo publishes, and would carry one full copy of the ~81 KB
     style tree per nested board.
     """
-    return json.dumps(dump_resolved_board_artifact(resolved), indent=2).encode()
+    envelope = {
+        **dump_resolved_board_artifact(resolved),
+        "engine_compile": engine_compile.model_dump(mode="json"),
+    }
+    return json.dumps(envelope, indent=2).encode()
 
 
-def load_board_artifact(data: bytes) -> ResolvedBoard:
+def load_board_artifact(data: bytes) -> BoardArtifact:
     """Parse a board artifact, raising a registered ERR-* on malformed input.
 
     ``DanglingStyleRefError`` is caught alongside the parse errors: a board whose
@@ -69,7 +96,17 @@ def load_board_artifact(data: bytes) -> ResolvedBoard:
     exception.
     """
     try:
-        resolved = load_resolved_board_artifact(json.loads(data))
+        envelope = json.loads(data)
+        if "engine_compile" not in envelope:
+            raise DbtChartsError.from_code(
+                ERR_BOARD_ARTIFACT_INVALID,
+                detail=(
+                    "the artifact carries no engine compile, so it was emitted by an "
+                    "earlier release; run `dct artifact emit` again"
+                ),
+            )
+        resolved = load_resolved_board_artifact(envelope)
+        record = CompileRecord.model_validate(envelope["engine_compile"])
     except (
         ValidationError,
         DanglingStyleRefError,
@@ -80,7 +117,7 @@ def load_board_artifact(data: bytes) -> ResolvedBoard:
             ERR_BOARD_ARTIFACT_INVALID, detail=str(exc)
         ) from exc
     _require_prose_plans(resolved)
-    return resolved
+    return BoardArtifact(resolved, record)
 
 
 def _require_prose_plans(resolved: ResolvedBoard) -> None:
@@ -107,13 +144,27 @@ def _require_prose_plans(resolved: ResolvedBoard) -> None:
         )
 
 
+def _plan_keyed(plan: QueryPlan, recording: BoardRecording) -> dict[str, ResultRows]:
+    """The recording's rows under the plan's query keys, which the engine takes its
+    datasets by. The recording is keyed by the resolved board's query names; a query an
+    imported chart reads is planned as `file#name` and recorded as the name
+    `cross_board_query_key` makes of them."""
+    rows: dict[str, ResultRows] = {}
+    for key in plan["queries"]:
+        file, separator, local = key.rpartition("#")
+        name = cross_board_query_key(file, local) if separator else key
+        if name in recording.results_by_query:
+            rows[key] = recording.results_by_query[name]
+    return rows
+
+
 def render_board_from_artifact(
-    resolved: ResolvedBoard,
+    artifact: BoardArtifact,
     recording: BoardRecording,
     variables: VariableValues,
     embed_fonts: bool = False,
 ) -> str:
-    """Render a resolved board from a recording — no compile, no warehouse.
+    """Render a stored board from a recording — no project, no warehouse.
 
     `variables` is the state to render with; it is checked against
     `recording.variables` (the state the rows were captured under) rather than
@@ -138,6 +189,7 @@ def render_board_from_artifact(
             query the artifact needs, was captured under different variable
             values, or the board's text lists boards.
     """
+    resolved = artifact.resolved
     missing = sorted(set(resolved.queries) - set(recording.results_by_query))
     if missing:
         raise DbtChartsError.from_code(
@@ -192,7 +244,36 @@ def render_board_from_artifact(
     # match `dct render`, which carries its fonts, while a replay checked against a
     # plain `render_board_svg` must match that instead. The sink italic selection
     # writes into is opened either way — branching on it would buy nothing.
-    with collect_painted_italic_families():
+    try:
+        compiled = replay_compile(artifact.engine_compile)
+    except _engine.CompileError as refusal:
+        raise DbtChartsError.from_code(
+            ERR_BOARD_ARTIFACT_INVALID,
+            detail=refusal_diagnostics(refusal, artifact.engine_compile.path)[
+                0
+            ].message,
+        ) from refusal
+    plan = plan_board(
+        compiled,
+        recording.variables,
+        builtins=None,
+        now=recording.recorded_at,
+        strict=False,
+        active_tab_only=False,
+        only_charts=None,
+        all_queries=True,
+    )
+    engine = EngineBoard(
+        compiled,
+        plan,
+        _plan_keyed(plan, recording),
+        {},
+        frozenset(recording.variables),
+        frozenset(),
+        recording.recorded_at,
+        None,
+    )
+    with collect_painted_italic_families(), engine_board(engine):
         return render_board_svg(
             resolved,
             provider,

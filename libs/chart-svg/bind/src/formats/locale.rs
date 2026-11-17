@@ -33,7 +33,56 @@ pub struct NumberLocale {
     pub locale: Locale,
     analytic: [String; 4],
     narrative: [String; 4],
+    /// The board's `regional.currency` has no minor unit, so `currency_full` prints whole units. Not part of the wire.
+    pub whole_currency: bool,
 }
+
+/// How one ISO 4217 code prints: the minor unit and the symbol (`core/text/currencies.py::Currency`).
+pub struct Currency {
+    pub digits: u8,
+    pub symbol: &'static str,
+}
+
+/// `CURRENCIES` (`core/text/currencies.py`): the codes `regional.currency` accepts.
+pub fn currency(code: &str) -> Option<Currency> {
+    let (digits, symbol) = match code {
+        "USD" => (2, "$"),
+        "EUR" => (2, "€"),
+        "GBP" => (2, "£"),
+        "JPY" => (0, "¥"),
+        "CAD" => (2, "CA$"),
+        "AUD" => (2, "A$"),
+        "CHF" => (2, "CHF"),
+        "SEK" | "NOK" | "DKK" => (2, "kr"),
+        "INR" => (2, "₹"),
+        "CNY" => (2, "CN¥"),
+        "BRL" => (2, "R$"),
+        "MXN" => (2, "MX$"),
+        _ => return None,
+    };
+    Some(Currency { digits, symbol })
+}
+
+/// `with_symbol` (`core/text/currencies.py`): a d3 locale's `currency` template with `symbol` in place of its own,
+/// on the template's side with its gap, and a gap a word symbol needs that the template's symbol did not
+/// (`CHF 12`, not `CHF12`).
+pub fn with_symbol(before: &str, after: &str, symbol: &str) -> Result<[String; 2], String> {
+    use d3rs::py_str::is_py_space;
+    let gap = if before.trim_matches(is_py_space).is_empty() { None } else { Some(&before[before.trim_end_matches(is_py_space).len()..]) };
+    if let Some(gap) = gap {
+        let alpha = symbol.chars().next_back().is_some_and(char::is_alphabetic);
+        let gap = if gap.is_empty() && alpha { "\u{a0}" } else { gap };
+        return Ok([format!("{symbol}{gap}"), String::new()]);
+    }
+    if !after.trim_matches(is_py_space).is_empty() {
+        let gap = &after[..after.len() - after.trim_start_matches(is_py_space).len()];
+        let alpha = symbol.chars().next().is_some_and(char::is_alphabetic);
+        let gap = if gap.is_empty() && alpha { "\u{a0}" } else { gap };
+        return Ok([String::new(), format!("{gap}{symbol}")]);
+    }
+    Err("the locale's currency template has no symbol to replace".to_string())
+}
+
 
 /// `HouseLocale` as `chart_svg_dev._sweep.board_style_envelope` writes it:
 /// d3's locale definition (`locale_definition`) plus the two word registers.
@@ -86,6 +135,7 @@ impl TryFrom<Wire> for NumberLocale {
             },
             analytic: wire.analytic,
             narrative: wire.narrative,
+            whole_currency: false,
         })
     }
 }
@@ -144,6 +194,40 @@ impl NumberLocale {
             narrative: words.narrative.clone(),
         }
         .try_into()
+    }
+
+    /// `Regional.format_locale` for a defined number locale: the board's own d3 definition and magnitude words
+    /// (en-US's where it states none), which `format_locale` takes with no numerals and d3's default `nan`.
+    pub fn defined(definition: &board_model::regional::NumberLocaleAuthored) -> Result<NumberLocale, String> {
+        use model_core::Tri;
+        let required = |what: &str| format!("a defined number locale reaches bind with no `{what}`");
+        let words = |words: &Tri<board_model::regional::MagnitudeWords>, house: &[String; 4]| match words {
+            Tri::Value(words) => words.0.clone(),
+            Tri::Unset | Tri::Null => house.clone(),
+        };
+        let house = NumberLocale::named("en-US")?;
+        Wire {
+            decimal: definition.decimal.clone().ok_or_else(|| required("decimal"))?,
+            thousands: Some(definition.thousands.clone().ok_or_else(|| required("thousands"))?),
+            grouping: Some(definition.grouping.as_ref().ok_or_else(|| required("grouping"))?.0.iter().map(|size| size.get() as usize).collect()),
+            currency: definition.currency.as_ref().ok_or_else(|| required("currency"))?.0.clone(),
+            numerals: None,
+            percent: definition.percent.clone().unwrap_or_else(|| "%".to_string()),
+            minus: definition.minus.clone().unwrap_or_else(|| "\u{2212}".to_string()),
+            nan: "NaN".to_string(),
+            analytic: words(&definition.analytic, &house.analytic),
+            narrative: words(&definition.narrative, &house.narrative),
+        }
+        .try_into()
+    }
+
+    /// `Regional.format_locale` under `regional.currency`: the code's symbol swapped into the locale's currency template.
+    pub fn with_currency(mut self, code: &str) -> Result<NumberLocale, String> {
+        let currency = currency(code).ok_or_else(|| format!("regional.currency {code:?} is not a supported currency"))?;
+        let [before, after] = &self.locale.currency;
+        self.locale.currency = with_symbol(before, after, currency.symbol)?;
+        self.whole_currency = currency.digits == 0;
+        Ok(self)
     }
 
     /// `HOUSE_EN_US`: what a format outside any board's scope speaks, read
@@ -324,6 +408,23 @@ pub fn fr_fr() -> NumberLocale {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_symbol_takes_the_templates_side_and_gap_and_a_word_gets_one() {
+        let nbsp = "\u{a0}";
+        assert_eq!(with_symbol("$", "", "\u{20ac}").unwrap(), ["\u{20ac}".to_string(), String::new()]);
+        assert_eq!(with_symbol("$", "", "CHF").unwrap(), [format!("CHF{nbsp}"), String::new()]);
+        assert_eq!(with_symbol("", &format!("{nbsp}\u{20ac}"), "$").unwrap(), [String::new(), format!("{nbsp}$")]);
+        assert_eq!(with_symbol("", "\u{20ac}", "kr").unwrap(), [String::new(), format!("{nbsp}kr")]);
+        assert!(with_symbol("", " ", "$").is_err());
+    }
+
+    #[test]
+    fn only_the_yen_has_no_minor_unit() {
+        let whole: Vec<&str> = ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "SEK", "NOK", "DKK", "INR", "CNY", "BRL", "MXN"].into_iter().filter(|code| currency(code).unwrap().digits == 0).collect();
+        assert_eq!(whole, ["JPY"]);
+        assert!(currency("XXX").is_none());
+    }
 
     fn wire_with(edit: impl FnOnce(&mut serde_json::Value)) -> Result<NumberLocale, serde_json::Error> {
         let mut wire: serde_json::Value = serde_json::from_str(EN_US_WIRE).unwrap();

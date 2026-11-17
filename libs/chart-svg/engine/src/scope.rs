@@ -2,7 +2,7 @@
 //! opened for the whole render.
 //!
 //! All four come from the board's `regional:`, never from the host: a board with none prints in en-US and
-//! UTC, the schema's own fills. A value the engine cannot honor (a defined locale, a currency) is refused by
+//! UTC, the schema's own fills. A value the engine cannot honor (a defined time locale) is refused by
 //! name, not rendered in the default. The thread-locals the readers in `bind` and `layout` consult are only the
 //! transport.
 
@@ -36,21 +36,23 @@ pub(crate) fn time_tag(regional: Option<&Regional>) -> Result<&str, Diagnostic> 
     }
 }
 
-fn number_tag(regional: Option<&Regional>) -> Result<&str, Diagnostic> {
-    match regional.and_then(|r| r.locale.as_ref()).map(|l| &l.number) {
-        None => Ok("en-US"),
-        Some(NumberLocaleChoice::Name(name)) => Ok(name.as_str()),
-        Some(NumberLocaleChoice::Definition(_)) => {
-            Err(Diagnostic::refused(refuse!("a defined number locale is not supported")))
-        }
+/// `Regional.format_locale`: the board's named or defined number locale, with `regional.currency`'s symbol in its
+/// currency template.
+fn number_locale(regional: Option<&Regional>) -> Result<NumberLocale, Diagnostic> {
+    let locale = match regional.and_then(|r| r.locale.as_ref()).map(|l| &l.number) {
+        None => NumberLocale::named("en-US"),
+        Some(NumberLocaleChoice::Name(name)) => NumberLocale::named(name.as_str()),
+        Some(NumberLocaleChoice::Definition(definition)) => NumberLocale::defined(definition),
+    }
+    .map_err(diag::err_internal)?;
+    match regional.and_then(|r| r.currency.as_ref()) {
+        Some(currency) => locale.with_currency(currency.as_str()).map_err(diag::err_internal),
+        None => Ok(locale),
     }
 }
 
 /// The scope a board's `regional:` names.
 pub(crate) fn of(regional: Option<&Regional>) -> Result<Scope, Diagnostic> {
-    if regional.is_some_and(|r| r.currency.is_some()) {
-        return Err(Diagnostic::refused(refuse!("a regional currency is not supported")));
-    }
     let tag = time_tag(regional)?;
     let language = regional.and_then(|r| r.language.as_ref()).map(|l| l.as_str());
     let code = language.unwrap_or_else(|| language_of_time_locale(Some(tag)));
@@ -58,7 +60,7 @@ pub(crate) fn of(regional: Option<&Regional>) -> Result<Scope, Diagnostic> {
     Ok(Scope {
         language: Language::new(code).map_err(diag::err_internal)?,
         locale: serde_json::from_str(definition).map_err(|e| diag::err_internal(e.to_string()))?,
-        number: NumberLocale::named(number_tag(regional)?).map_err(diag::err_internal)?,
+        number: number_locale(regional)?,
         zone: bind::time_zone::named(zone_name(regional)).map_err(|e| diag::err_internal(e.to_string()))?,
     })
 }
@@ -104,10 +106,36 @@ mod tests {
     }
 
     #[test]
-    fn a_value_the_engine_cannot_honor_is_refused_by_name() {
-        let currency = regional(|r| r["currency"] = json!("EUR"));
-        assert!(of(Some(&currency)).err().unwrap().to_string().contains("a regional currency is not supported"));
-        let defined = regional(|r| r["locale"]["number"] = json!({"decimal": ",", "thousands": ".", "grouping": [3], "currency": ["", " EUR"], "percent": "%", "minus": "-"}));
-        assert!(of(Some(&defined)).err().unwrap().to_string().contains("a defined number locale is not supported"));
+    fn a_regional_currency_swaps_its_symbol_into_the_locales_template() {
+        let money = |locale: &str, currency: &str| {
+            let stated = regional(|r| {
+                r["locale"]["number"] = json!(locale);
+                r["currency"] = json!(currency);
+            });
+            of(Some(&stated)).unwrap().within(|| bind::formats::locale::d3_format("$,.2f", 1234.5).unwrap())
+        };
+        assert_eq!(money("en-US", "EUR"), "€1,234.50");
+        assert_eq!(money("de-DE", "USD"), "1.234,50\u{a0}$");
+        assert_eq!(money("en-US", "CHF"), "CHF\u{a0}1,234.50");
+    }
+
+    #[test]
+    fn a_defined_number_locale_prints_its_own_marks_and_words() {
+        let defined = regional(|r| {
+            r["locale"]["number"] = json!({"decimal": ",", "thousands": ".", "grouping": [3], "currency": ["", " EUR"], "analytic": [" Tsd", " Mn", " Mrd", " Bn"], "narrative": ["tsd", "mio", "mrd", "bio"]})
+        });
+        let scope = of(Some(&defined)).unwrap();
+        assert_eq!(scope.within(|| bind::formats::locale::d3_format("$,.1f", 1234.5).unwrap()), "1.234,5 EUR");
+        assert_eq!(scope.within(|| bind::formats::locale::active_number_locale().magnitude_word("M", "narrative").unwrap()), Some("mio".to_string()));
+    }
+
+    #[test]
+    fn a_currency_without_a_minor_unit_prints_whole_units() {
+        let full = |currency: &str| {
+            let stated = regional(|r| r["currency"] = json!(currency));
+            of(Some(&stated)).unwrap().within(|| bind::formats::resolve_format(&bind::formats::AuthoredFormat::named("currency_full"), bind::formats::Formats::new(None)).unwrap())
+        };
+        assert_eq!(full("JPY"), "$,.0f");
+        assert_eq!(full("USD"), "$,.2f");
     }
 }

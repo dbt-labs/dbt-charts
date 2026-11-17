@@ -15,6 +15,7 @@ use board_model::style::font::LetterCase;
 use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 use mdsvg::style::{Style as MdsvgStyle, TextAlign as MdAlign};
+use mdsvg::types::{AnyBlock, Heading, OrderedList, Paragraph, Span, SpanType, UnorderedList};
 use measure::font_files::{font_file, italic_font_file, MONO_FILE};
 use measure::fonts::{css_weight_axis, FontSlot, FontSlots};
 use measure::shaped::FontBook;
@@ -76,14 +77,52 @@ pub(crate) fn heading_ramp<'a>(style: &'a Style, name: &str) -> Result<&'a [f64]
         })
 }
 
-/// A letter case mdsvg cannot paint is refused where the text is, not guessed.
-pub fn refuse_case(case: &LetterCase, what: &str) -> Result<(), Diagnostic> {
+/// `markdown_style.py::case_blocks`: `case` applied to the words of every run of spans (a paragraph,
+/// heading, list item or table cell, at any depth), each run cased as one string
+/// (`apply_case_to_runs`) however inline formatting splits it. Code spans and images keep their text:
+/// code is literal, and an image's URL is data.
+pub fn case_blocks(blocks: &mut [AnyBlock], case: &LetterCase) -> Result<(), Diagnostic> {
     if *case == LetterCase::None {
         return Ok(());
     }
-    Err(Diagnostic::refused(refuse!(
-        "a {what} with a letter case is not supported"
-    )))
+    for block in blocks {
+        match block {
+            AnyBlock::Paragraph(Paragraph { spans }) | AnyBlock::Heading(Heading { spans, .. }) => case_words(spans, case)?,
+            AnyBlock::Blockquote(quote) => case_blocks(&mut quote.blocks, case)?,
+            AnyBlock::UnorderedList(UnorderedList { items }) | AnyBlock::OrderedList(OrderedList { items, .. }) => {
+                for item in items {
+                    case_words(&mut item.spans, case)?;
+                    case_blocks(&mut item.children, case)?;
+                }
+            }
+            AnyBlock::Table(table) => {
+                for row in std::iter::once(&mut table.header).chain(&mut table.rows) {
+                    for cell in &mut row.cells {
+                        case_words(&mut cell.spans, case)?;
+                    }
+                }
+            }
+            AnyBlock::CodeBlock(_) | AnyBlock::HorizontalRule(_) | AnyBlock::ImageBlock(_) | AnyBlock::RawHtmlBlock(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// `_case_words`: one run of spans cased as one string, its code and image spans left as written.
+pub fn case_words(spans: &mut [Span], case: &LetterCase) -> Result<(), Diagnostic> {
+    if *case == LetterCase::None {
+        return Ok(());
+    }
+    let mut words: Vec<&mut Span> = spans
+        .iter_mut()
+        .filter(|s| !s.code && !matches!(s.span_type, SpanType::Code | SpanType::Image))
+        .collect();
+    let texts: Vec<&str> = words.iter().map(|s| s.text.as_str()).collect();
+    let cased = display_text::case::apply_case_to_runs(&texts, case.as_str()).map_err(diag::err_internal)?;
+    for (span, text) in words.iter_mut().zip(cased) {
+        span.text = text;
+    }
+    Ok(())
 }
 
 /// A box font's axes as mdsvg takes them: a field the theme leaves unset is the empty string (or 0
@@ -364,4 +403,13 @@ pub fn char_ratio(book: &FontBook, style: &MdsvgStyle) -> Result<f64, Diagnostic
 /// `readable_measure`: `max_chars` (or the default) characters of `char_px` each.
 pub fn readable_measure(char_px: f64, max_chars: Option<u32>) -> f64 {
     f64::from(max_chars.unwrap_or(MAX_CHARS)) * char_px
+}
+
+/// An mdsvg error as a diagnostic: a gap mdsvg names (`mdsvg-rs: ... not supported`, markdown production
+/// draws by a law not ported) is a refusal by name; anything else is a broken invariant.
+pub fn mdsvg_error(error: String) -> Diagnostic {
+    match error.strip_prefix("mdsvg-rs: ") {
+        Some(gap) if gap.contains("not supported") => Diagnostic::refused(refuse!("{gap}")),
+        _ => diag::err_internal(error),
+    }
 }

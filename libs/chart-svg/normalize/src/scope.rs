@@ -16,7 +16,7 @@ use board_model::cascade;
 use board_model::facet::Color;
 use board_model::ids::{ItemId, Step};
 use board_model::names::ThemeName;
-use board_model::nested::{in_force, family_reaches_recipe, scope_patch, GapLayout};
+use board_model::nested::{family_reaches_recipe, in_force, scope_patch, GapLayout};
 use board_model::style::style::Style;
 use diagnostic::{diag, restated_text, Diagnostic, ModelPath};
 use model_core::{CascadeError, Leaf, Resolved, ToAuthored, ToPatch, Tri};
@@ -108,6 +108,23 @@ struct Walk {
     authored: BTreeMap<String, StylePatch>,
     /// The leaves each theme the walk met sets, spelled once.
     themes: HashMap<String, HashMap<String, Value>>,
+    /// Scopes that author no style of their own, by what they resolve from.
+    plain: Vec<PlainScope>,
+}
+
+/// A scope with no `style:` of its own resolves from its parent's patches, its theme and its
+/// layout's gap alone, so a later scope with the same inputs takes the same answer.
+struct PlainScope {
+    inputs: (
+        String,
+        bool,
+        Option<GapLayout>,
+        Option<StylePatch>,
+        Option<StylePatch>,
+    ),
+    resolved: Resolved<Style>,
+    children: Option<StylePatch>,
+    plain_children: Option<StylePatch>,
 }
 
 /// The scopes of a board's nested boards and tabs, and each nested board's restated-style findings.
@@ -132,6 +149,7 @@ pub fn nested_styles(
         restated: BTreeMap::new(),
         authored: BTreeMap::new(),
         themes: HashMap::new(),
+        plain: Vec::new(),
     };
     if let Some(layout) = layout {
         let children = scope_patch(None, root_style);
@@ -316,6 +334,23 @@ impl Walk {
                 .insert(ItemId::at(at).as_str().to_string(), own.clone());
         }
         let theme = declared.unwrap_or_else(|| parent_theme.to_string());
+        let switched = theme != parent_theme;
+        let inputs = own.is_none().then(|| {
+            (
+                theme.clone(),
+                switched,
+                layout,
+                parent_patch.cloned(),
+                plain_parent.cloned(),
+            )
+        });
+        if let Some(inputs) = &inputs {
+            if let Some(same) = self.plain.iter().find(|p| &p.inputs == inputs) {
+                self.out
+                    .insert(ItemId::at(at).as_str().to_string(), same.resolved.clone());
+                return Ok((same.children.clone(), same.plain_children.clone(), theme));
+            }
+        }
         let built_in = built_in_theme(&theme).map_err(style_err)?;
         let Tri::Value(base) = &built_in.style else {
             return Err(style_err(format!("theme {theme} has no style")));
@@ -323,7 +358,7 @@ impl Walk {
         if let Some(own) = &own {
             self.restated(own, plain_parent, &theme, base, at);
         }
-        let canvas = match (&base.background, theme != parent_theme) {
+        let canvas = match (&base.background, switched) {
             (Some(own), true) => own,
             _ => &self.transparent,
         };
@@ -342,13 +377,18 @@ impl Walk {
                 &e,
             ))
         })?;
+        let plain_children = scope_patch(plain_parent, own.as_ref());
+        if let Some(inputs) = inputs {
+            self.plain.push(PlainScope {
+                inputs,
+                resolved: resolved.clone(),
+                children: force.children.clone(),
+                plain_children: plain_children.clone(),
+            });
+        }
         self.out
             .insert(ItemId::at(at).as_str().to_string(), resolved);
-        Ok((
-            force.children,
-            scope_patch(plain_parent, own.as_ref()),
-            theme,
-        ))
+        Ok((force.children, plain_children, theme))
     }
 }
 
@@ -432,6 +472,6 @@ where
     StylePatch: ToAuthored<Out = T>,
 {
     if let Some(resolved) = nested.get(ItemId::at(at).as_str()) {
-        *slot = Tri::Value(Box::new((*resolved.inherited).clone().to_authored()));
+        *slot = Tri::Value(Box::new((*resolved.inherited).to_authored_ref()));
     }
 }

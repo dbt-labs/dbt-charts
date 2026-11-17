@@ -499,9 +499,12 @@ def test_a_pie_with_no_rows_to_bind_from_fails_loudly() -> None:
     assert "no rows" in result.chart_errors[0].message
 
 
-def test_a_kpi_with_no_rows_fails_the_way_a_named_one_does() -> None:
+def test_a_kpi_with_no_rows_draws_its_empty_state() -> None:
     result = render_board_svg_result(_board({"type": "kpi"}, ["revenue"], []))
-    assert [e.code for e in result.chart_errors] == ["ERR-KPI-NO-DATA"]
+    assert result.chart_errors == []
+    svg = result.output
+    assert "\u2014" in svg
+    assert "No results" in svg
 
 
 def test_a_direct_resolve_binds_the_chart(make_chart) -> None:

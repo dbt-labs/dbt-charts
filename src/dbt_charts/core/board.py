@@ -42,7 +42,10 @@ from dbt_charts.core.compile.config import (
     ProjectSourcesConfig,
     resolve_max_template_output_bytes,
 )
-from dbt_charts.core.compile.engine import engine_compile, refusal_diagnostics
+from dbt_charts.core.compile.engine import (
+    engine_compile_recorded,
+    refusal_diagnostics,
+)
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.cache import CachePolicy
@@ -69,9 +72,11 @@ from dbt_charts.core.execute.lookup import (
     warehouse_cache_hit_ats,
 )
 from dbt_charts.core.execute.plan import make_context, utc_now
+from dbt_charts.core.execute.plan_names import plan_key
 from dbt_charts.core.execute.plan_reader import env_sources
-from dbt_charts.core.execute.planned import plan_board
-from dbt_charts.core.execute.query_plan import QueryPlan
+from dbt_charts.core.execute.planned import Planned, plan_board
+from dbt_charts.core.execute.query_results import execute
+from dbt_charts.core.execute.window import Window, WindowError, WindowRows, slice_rows
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
     BoardFile,
@@ -339,7 +344,7 @@ def plan_for_board(
     only_charts: list[str] | None = None,
     all_queries: bool = False,
     sources: ProjectSourcesConfig | None = None,
-) -> QueryPlan:
+) -> Planned:
     """The engine's compile of *board* and its plan under the caller's values.
 
     *sources* is the registry to compile against when the caller connects (``env_sources``); the
@@ -347,7 +352,7 @@ def plan_for_board(
 
     Raises ``_engine.CompileError`` when the engine refuses the board and
     ``ExecutionError`` when it refuses the values."""
-    compiled = engine_compile(
+    compiled, record = engine_compile_recorded(
         board.path,
         board.named,
         board.content,
@@ -358,23 +363,27 @@ def plan_for_board(
         # them: at the boards directory.
         anchor=CHARTS_SUBDIR,
     )
-    return plan_board(
+    return Planned(
         compiled,
-        variables,
-        builtins=None if builtins is None else eager_values(builtins),
-        now=now,
-        strict=strict,
-        active_tab_only=active_tab_only,
-        only_charts=only_charts,
-        all_queries=all_queries,
+        record,
+        plan_board(
+            compiled,
+            variables,
+            builtins=None if builtins is None else eager_values(builtins),
+            now=now,
+            strict=strict,
+            active_tab_only=active_tab_only,
+            only_charts=only_charts,
+            all_queries=all_queries,
+        ),
     )
 
 
 def _compile_alongside(
     python_compile: Callable[[], CompileResult],
-    engine_job: Callable[[], QueryPlan],
+    engine_job: Callable[[], Planned],
     release_thread: Callable[[], None],
-) -> tuple[CompileResult, Callable[[], QueryPlan]]:
+) -> tuple[CompileResult, Callable[[], Planned]]:
     """Python's compile of a board, with the engine's compile and plan running beside it.
 
     They run concurrently, so a render's wall time is the slower of the two. The
@@ -383,7 +392,7 @@ def _compile_alongside(
     through the host, so it calls *release_thread* when it is done.
     """
 
-    def job() -> QueryPlan:
+    def job() -> Planned:
         try:
             return engine_job()
         finally:
@@ -418,7 +427,7 @@ def prefetch_dashboard(
     with template_output_budget(resolve_max_template_output_bytes()):
         now = clock()
 
-        def plan_job() -> QueryPlan:
+        def plan_job() -> Planned:
             return plan_for_board(
                 board,
                 project,
@@ -438,7 +447,7 @@ def prefetch_dashboard(
             )
         if not result.success or result.board is None:
             raise CompilationError("; ".join(e.message for e in result.errors))
-        hidden = plan_of()["prefetch"]
+        hidden = plan_of().plan["prefetch"]
         # The active-tab plan omits the hidden tabs' queries; the plan that warms
         # them covers every tab under the same values and clock.
         every_tab = plan_for_board(
@@ -462,6 +471,81 @@ def prefetch_dashboard(
             else None,
         )
         return prefetch_tab_queries(ctx, Ledger(), hidden, max_workers)
+
+
+def window_dashboard(
+    board: BoardFile,
+    query_name: str,
+    variables: VariableValues,
+    window: Window,
+    *,
+    project: Project,
+    env: ExecEnv,
+    result_cache: QueryResultCache | None,
+    url_mount_dir: str,
+    clock: Callable[[], datetime] = utc_now,
+) -> WindowRows:
+    """A window of one of ``board``'s query results, under ``variables``.
+
+    The board is planned under the values and built-ins a render of it gets, so
+    the query lands on the cache entry that render wrote and the window slices
+    its rows without re-running the query.
+
+    Raises:
+        CompilationError: ``board`` no longer compiles.
+        WindowError: ``board``'s plan holds no query ``query_name`` (a name it
+            does not define, or a query without SQL that nothing reads), or
+            ``window`` is invalid for its result.
+    """
+    with template_output_budget(resolve_max_template_output_bytes()):
+        result = compile_file(board)
+        if not result.success or result.board is None:
+            raise CompilationError("; ".join(e.message for e in result.errors))
+        compiled = result.board
+        try:
+            planned = plan_for_board(
+                board,
+                project,
+                variables,
+                lazy_dir_context(board.path.parent, url_mount_dir=url_mount_dir)
+                if board.path is not None
+                else None,
+                clock(),
+                strict=False,
+                active_tab_only=False,
+                all_queries=True,
+                sources=env_sources(env),
+            )
+        except _engine.CompileError as refusal:
+            raise CompilationError(
+                "; ".join(d.message for d in refusal_diagnostics(refusal))
+            ) from refusal
+        key = plan_key(planned.plan, compiled, query_name)
+        if key is None:
+            raise WindowError(
+                f"No query {query_name!r} in this board's plan "
+                f"(queries: {sorted(planned.plan['queries'])})."
+            )
+        ctx = make_context(
+            compiled,
+            planned,
+            env,
+            result_cache=result_cache,
+            clock=clock,
+            board_slug=board_identity(board.path.relpath)
+            if board.path is not None
+            else None,
+        )
+        ledger = Ledger()
+        rows = execute(ctx, [key], variables, ledger=ledger).execute_query_result(
+            key, variables
+        )
+    return slice_rows(
+        rows,
+        window,
+        compiled.regional.time_zone,
+        truncated=key in ledger.truncations,
+    )
 
 
 @_with_template_output_budget
@@ -593,7 +677,7 @@ def render_dashboard(
             else None
         )
 
-    def plan_job() -> QueryPlan:
+    def plan_job() -> Planned:
         return plan_for_board(
             board,
             project,
@@ -606,7 +690,7 @@ def render_dashboard(
             sources=env_sources(env),
         )
 
-    plan_of: Callable[[], QueryPlan]
+    plan_of: Callable[[], Planned]
     if compile_result is not None:
         # validate_compiled_queries/check_manifest_refs below append to
         # errors/warnings/suppressed_warnings/diagnostics in place. A caller
@@ -695,7 +779,7 @@ def render_dashboard(
     ledger = Ledger()
     try:
         try:
-            plan = plan_of()
+            planned = plan_of()
         except _engine.CompileError as refusal:
             return BoardRenderResult(
                 status="failed",
@@ -706,7 +790,7 @@ def render_dashboard(
         # A stored board's file slug goes on every cache entry it writes.
         ctx = make_context(
             compiled_board,
-            plan,
+            planned,
             env,
             use_cache=use_cache,
             result_cache=result_cache,

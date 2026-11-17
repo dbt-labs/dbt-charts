@@ -233,6 +233,23 @@ pub fn plan(
     strict: bool,
     only_charts: Option<&[String]>,
 ) -> Result<String, Diagnostic> {
+    let board = crate::host::board_of(compiled)?;
+    plan_on(compiled, &board, given, builtins, now_epoch, all_queries, active_tab_only, strict, only_charts)
+}
+
+/// [`plan`] over the total `board` of `compiled` (`host::board_of`), for a host that builds it once
+/// for every call it makes on a compile.
+pub fn plan_on(
+    compiled: &CompiledBoard,
+    board: &Board,
+    given: &IndexMap<String, Value>,
+    builtins: &IndexMap<String, Value>,
+    now_epoch: i64,
+    all_queries: bool,
+    active_tab_only: bool,
+    strict: bool,
+    only_charts: Option<&[String]>,
+) -> Result<String, Diagnostic> {
     if all_queries && only_charts.is_some() {
         return Err(diag::err_internal(
             "plan was called with both all_queries and only_charts: all_queries plans queries no chart reads and only_charts plans only the named charts. Pass one of them",
@@ -248,9 +265,6 @@ pub fn plan(
             "plan was called with both all_queries and active_tab_only: all_queries plans queries no tab shows and active_tab_only plans only the open tabs. Pass one of them",
         ));
     }
-    let board = compiled
-        .board()
-        .map_err(|e| diag::err_internal(format!("{e:?}")))?;
     // A focused board is the named charts alone, so it has no tabs or details to generate.
     let generated = match only_charts {
         None => generated(compiled)?,
@@ -262,7 +276,7 @@ pub fn plan(
     let mut declared = Vec::new();
     let mut walk = Walk {
         compiled,
-        board: &board,
+        board,
         declared: &mut declared,
         all: IndexSet::new(),
         open: IndexSet::new(),
@@ -288,14 +302,14 @@ pub fn plan(
             .map(|(key, _)| key.clone());
         names.extend(sql);
     }
-    let queries = queries(compiled, &board, names)?;
+    let queries = queries(compiled, board, names)?;
     let prefetch = if scoped {
-        hidden_prefetch(compiled, &board, all, &queries)?
+        hidden_prefetch(compiled, board, all, &queries)?
     } else {
         Vec::new()
     };
 
-    let clock = clock(&board, now_epoch)?;
+    let clock = clock(board, now_epoch)?;
     let (set, own): (IndexMap<_, _>, IndexMap<_, _>) = given
         .clone()
         .into_iter()
@@ -336,7 +350,7 @@ pub fn plan(
             .collect()
     };
     let (year, month, day) = clock.today;
-    let time_zone = zone(&board);
+    let time_zone = zone(board);
     let plan = Plan {
         version: VERSION,
         board_id: board.body.id.as_str(),

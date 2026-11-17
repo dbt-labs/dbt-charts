@@ -133,38 +133,21 @@ impl ClockPlan {
         cadence: Option<AuthoredTickCadence>,
         aware: bool,
     ) -> Result<Option<Self>, Diagnostic> {
-        // A short date form is no instant production reads (`SubdaySource::of`).
-        let read: Vec<_> = domain
-            .buckets
-            .iter()
-            .filter(|b| b.iso.len() >= 10)
-            .collect();
-        if !read.iter().any(|b| b.timed) {
+        let Some(extent) = domain.clock_extent() else {
             return Ok(None);
-        }
+        };
         if domain.unit.is_some() {
             return Err(diag::err_internal(
                 "a calendar grain keys a time of day to its bucket, so a grained domain holds none",
             ));
         }
-        let mut instants: Vec<i64> = read.iter().map(|b| ms_of(b.at)).collect();
-        instants.sort_unstable();
-        instants.dedup();
-        let (absolute, naive) = (
-            read.iter().any(|b| b.absolute),
-            read.iter().any(|b| !b.absolute),
-        );
-        if (absolute && naive) || instants.len() < 2 {
-            return Ok(None);
-        }
-        let (first, last) = (instants[0], instants[instants.len() - 1]);
+        let (first, last, absolute) = (extent.first, extent.last, extent.absolute);
         let span = last - first;
         let (ladder, count, ceiling) = match cadence {
             Some(AuthoredTickCadence::Interval(_)) => return Ok(None),
-            Some(AuthoredTickCadence::Count(_)) => {
-                unreachable!("an authored tick unit never yields a plain count")
+            Some(AuthoredTickCadence::Count(n) | AuthoredTickCadence::UncappedCount(n)) => {
+                (None, Some(n), Some(n))
             }
-            Some(AuthoredTickCadence::UncappedCount(n)) => (None, Some(n), Some(n)),
             None => match default_ladder(span, absolute, clock.available_width) {
                 Some((step, n)) => (Some(step), Some(n), Some(n)),
                 None => {

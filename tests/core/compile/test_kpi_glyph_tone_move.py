@@ -24,13 +24,12 @@ from dbt_charts.core.compile.models.chart.authored import (
 from dbt_charts.core.compile.models.chart.normalized import Chart, KpiChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
-from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
 
-from .._engine_render import render_kpi_svg
+from .._kpi_board import kpi_svg
 
 _DUMMY_QUERY = SqlQuery(sql="SELECT 1", source="t")
 
@@ -152,24 +151,25 @@ def _compiled_kpi_with_style(
 
 class TestStyleNamespacePositivePath:
     def test_glyph_character_renders_in_svg(self):
-        """The root glyph flows through resolve and appears in KPI SVG output."""
-        chart = _compiled_kpi_with_style(glyph_char="▲")
-        data = [{"revenue": 1_500_000}]
-        resolved = resolve(chart, data, chart_style_context=_chart_style_context())
-        svg = render_kpi_svg(
-            resolved, data, width=300, height=160, board_style=_board_style()
+        """The root glyph flows through the compile and appears in KPI SVG output."""
+        svg = kpi_svg(
+            {"label": "Revenue", "value": "revenue", "glyph": "▲"},
+            [{"revenue": 1_500_000}],
         )
         assert "▲" in svg
 
     def test_glyph_character_renders_neutral_regardless_of_support_tone(self):
         """The value-row glyph has no tone source of its own — it renders in the
         neutral value color even when the support row carries a tone."""
-        chart = _compiled_kpi_with_style(glyph_char="●", support_tone="positive")
-        data = [{"revenue": 1_500_000}]
-        resolved = resolve(chart, data, chart_style_context=_chart_style_context())
-        es = _es()
-        svg = render_kpi_svg(
-            resolved, data, width=300, height=160, board_style=_board_style()
+        svg = kpi_svg(
+            {
+                "label": "Revenue",
+                "value": "revenue",
+                "glyph": "●",
+                "support": {"label": "vs last quarter"},
+                "style": {"support": {"tone": "positive"}},
+            },
+            [{"revenue": 1_500_000}],
         )
         assert "●" in svg
         # The value-row glyph tspan carries the neutral kpi font color, not
@@ -178,15 +178,12 @@ class TestStyleNamespacePositivePath:
 
         glyph_tspan = re.search(r"<tspan[^>]*>●\s*</tspan>", svg)
         assert glyph_tspan is not None
-        assert es.tones.positive not in glyph_tspan.group(0)
+        assert _es().tones.positive not in glyph_tspan.group(0)
 
     def test_no_glyph_character_no_glyph_in_svg(self):
         """When the root glyph is absent, no glyph tspan is emitted."""
-        chart = _compiled_kpi_with_style()
-        data = [{"revenue": 1_500_000}]
-        resolved = resolve(chart, data, chart_style_context=_chart_style_context())
-        svg = render_kpi_svg(
-            resolved, data, width=300, height=160, board_style=_board_style()
+        svg = kpi_svg(
+            {"label": "Revenue", "value": "revenue"}, [{"revenue": 1_500_000}]
         )
         # No ▲, ▼, ● or similar glyphs expected in a plain KPI
         for glyph_char in ("▲", "▼", "●"):

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import socket
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,7 +12,12 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from dbt_charts.agent_api.serve import ServeSetup, format_startup_failure, prepare_serve
+from dbt_charts.agent_api.serve import (
+    ServeSetup,
+    _state_path,
+    format_startup_failure,
+    prepare_serve,
+)
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.diagnostics import Diagnostic
 
@@ -20,16 +28,27 @@ def _app_double() -> SimpleNamespace:
 
 
 @pytest.fixture
+def listener() -> Iterator[socket.socket]:
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen()
+    yield sock
+    sock.close()
+
+
+@pytest.fixture
 def project(tmp_path: Path) -> FilesystemProject:
     (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
     return FilesystemProject(tmp_path)
 
 
 class TestPrepareServe:
-    def test_explicit_dialect_skips_inference(self, project: FilesystemProject) -> None:
+    def test_explicit_dialect_skips_inference(
+        self, project: FilesystemProject, listener: socket.socket
+    ) -> None:
         sentinel = _app_double()
         with (
-            patch("dbt_charts.core.serve.port.resolve_port", return_value=1234),
+            patch("dbt_charts.core.serve.port.resolve_listener", return_value=listener),
             patch("dbt_charts.core.project_roots.infer_dialect_from_dbt") as mock_infer,
             patch(
                 "dbt_charts.core.serve.server.create_server",
@@ -51,11 +70,13 @@ class TestPrepareServe:
         assert result.dialect == "postgres"
         assert result.dialect_inferred is False
         assert result.app is sentinel
-        assert result.port == 1234
+        assert result.port == listener.getsockname()[1]
 
-    def test_infers_dialect_when_not_given(self, project: FilesystemProject) -> None:
+    def test_infers_dialect_when_not_given(
+        self, project: FilesystemProject, listener: socket.socket
+    ) -> None:
         with (
-            patch("dbt_charts.core.serve.port.resolve_port", return_value=1234),
+            patch("dbt_charts.core.serve.port.resolve_listener", return_value=listener),
             patch(
                 "dbt_charts.core.project_roots.infer_dialect_from_dbt",
                 return_value="bigquery",
@@ -79,10 +100,10 @@ class TestPrepareServe:
         assert result.dialect_inferred is True
 
     def test_no_dialect_inferred_falls_back_to_duckdb(
-        self, project: FilesystemProject
+        self, project: FilesystemProject, listener: socket.socket
     ) -> None:
         with (
-            patch("dbt_charts.core.serve.port.resolve_port", return_value=1234),
+            patch("dbt_charts.core.serve.port.resolve_listener", return_value=listener),
             patch(
                 "dbt_charts.core.project_roots.infer_dialect_from_dbt",
                 return_value=None,
@@ -140,10 +161,13 @@ class TestPrepareServe:
         assert result.code == "ERR-INVALID-DEFAULT-THEME"
 
     def test_valid_default_theme_env_proceeds(
-        self, project: FilesystemProject, monkeypatch: pytest.MonkeyPatch
+        self,
+        project: FilesystemProject,
+        monkeypatch: pytest.MonkeyPatch,
+        listener: socket.socket,
     ) -> None:
         with (
-            patch("dbt_charts.core.serve.port.resolve_port", return_value=1234),
+            patch("dbt_charts.core.serve.port.resolve_listener", return_value=listener),
             patch(
                 "dbt_charts.core.project_roots.infer_dialect_from_dbt",
                 return_value=None,
@@ -188,7 +212,9 @@ class TestPrepareServeDbtProjectDir:
     """Dialect inference reads the linked dbt_root; port allocation stays
     keyed off the dct project root, so the two must not share one variable."""
 
-    def test_dialect_inference_uses_external_dbt_root(self, tmp_path: Path) -> None:
+    def test_dialect_inference_uses_external_dbt_root(
+        self, tmp_path: Path, listener: socket.socket
+    ) -> None:
         project_root = tmp_path / "myproject"
         project_root.mkdir()
         (project_root / "dbt_charts.yml").write_text("# project marker\n")
@@ -198,8 +224,8 @@ class TestPrepareServeDbtProjectDir:
 
         with (
             patch(
-                "dbt_charts.core.serve.port.resolve_port", return_value=1234
-            ) as mock_resolve_port,
+                "dbt_charts.core.serve.port.resolve_listener", return_value=listener
+            ) as mock_resolve_listener,
             patch(
                 "dbt_charts.core.project_roots.infer_dialect_from_dbt",
                 return_value=None,
@@ -220,10 +246,33 @@ class TestPrepareServeDbtProjectDir:
             )
 
         mock_infer.assert_called_once_with(external_dbt.resolve(), None)
-        mock_resolve_port.assert_called_once()
+        mock_resolve_listener.assert_called_once()
         assert (
-            mock_resolve_port.call_args.kwargs["project_dir"] == project_root.resolve()
+            mock_resolve_listener.call_args.kwargs["project_dir"]
+            == project_root.resolve()
         )
+
+    def test_listens_before_the_server_runs(self, project: FilesystemProject) -> None:
+        """A request sent while startup still loads the project waits, not fails."""
+        with patch(
+            "dbt_charts.core.serve.server.create_server", return_value=_app_double()
+        ):
+            result = prepare_serve(
+                project,
+                port=None,
+                host="127.0.0.1",
+                dialect="duckdb",
+                target=None,
+                max_workers=None,
+                no_cache=False,
+                cache_path=None,
+            )
+        assert isinstance(result, ServeSetup)
+        try:
+            assert result.listener.getsockname()[1] == result.port
+            socket.create_connection(("127.0.0.1", result.port), timeout=1).close()
+        finally:
+            result.listener.close()
 
 
 class TestFormatStartupFailure:
@@ -231,3 +280,16 @@ class TestFormatStartupFailure:
         diagnostic = format_startup_failure(OSError("address already in use"))
         assert diagnostic.code == "ERR-STARTUP-FAILED"
         assert "address already in use" in str(diagnostic.model_dump())
+
+
+class TestDetachedRecordLocation:
+    def test_record_path_ignores_tmpdir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--stop must find the record --detach wrote, whatever TMPDIR each saw."""
+        paths = []
+        for name in ("a", "b"):
+            monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / name))
+            paths.append(_state_path(8080))
+        assert paths[0] == paths[1]
+        assert not paths[0].is_relative_to(tmp_path)

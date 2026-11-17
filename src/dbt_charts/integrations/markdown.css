@@ -163,11 +163,23 @@
     min-width: 0;
 }
 
-/* side-by-side floats the board over the code's upper right. */
+/* side-by-side floats the board over the code's upper right. Both panes share
+   one grid cell rather than the board being positioned absolutely, so a board
+   taller than its YAML grows the example instead of spilling onto the text
+   below it. */
+.dbt-charts-example--side-by-side {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.dbt-charts-example--side-by-side > * {
+    grid-area: 1 / 1;
+}
+
 .dbt-charts-example--side-by-side .dbt-charts-example-render {
-    position: absolute;
-    top: 16px;
-    right: 16px;
+    justify-self: end;
+    align-self: start;
+    margin: 16px;
     width: min(520px, 44%);
     max-width: 520px;
     z-index: 3;
@@ -326,12 +338,13 @@
 
 /* Narrow screens: side-by-side stacks the board under the code. */
 @media (max-width: 768px) {
+    .dbt-charts-example--side-by-side {
+        display: block;
+    }
+
     .dbt-charts-example--side-by-side .dbt-charts-example-render {
-        position: relative;
-        top: auto;
-        right: auto;
         width: 100%;
         max-width: none;
-        margin-top: 16px;
+        margin: 16px 0 0;
     }
 }

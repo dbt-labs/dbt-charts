@@ -2,6 +2,7 @@
 //! rule and its measure, and Vega's baseline. [`vega_space`] is the room production reserves for a
 //! label, which every gutter reads while the ink stays the face's own.
 
+use bind::bound::ValueScale;
 use diagnostic::{diag, Diagnostic};
 use measure::shaped::{Font, FontBook};
 use scene::Bounds;
@@ -136,6 +137,59 @@ pub(crate) fn parity_visible(ink: &[Bounds], separation: f64) -> Vec<bool> {
             visible[kept[kept.len() - 1]] = false;
         }
         visible[last] = true;
+    }
+    visible
+}
+
+/// Vega's `labelOverlap: greedy` (`Overlap.js`'s greedy reducer, `vega_fit::greedy_visible`) over label boxes in
+/// axis order: the first is kept, and each later one is hidden only if it overlaps the last one kept,
+/// under the same outer guards as [`parity_visible`]: with fewer than three boxes, or none overlapping,
+/// every one stays; and when fewer than three survive with the last one gone, it shows in place of
+/// the last survivor.
+pub(crate) fn greedy_visible(ink: &[Bounds], separation: f64) -> Vec<bool> {
+    let close = |a: &Bounds, b: &Bounds| {
+        separation
+            > (b.x1 - a.x2)
+                .max(a.x1 - b.x2)
+                .max(b.y1 - a.y2)
+                .max(a.y1 - b.y2)
+    };
+    let crowded = |kept: &[usize]| kept.windows(2).any(|w| close(&ink[w[0]], &ink[w[1]]));
+    let all: Vec<usize> = (0..ink.len()).collect();
+    if all.len() < 3 || !crowded(&all) {
+        return vec![true; ink.len()];
+    }
+    let mut kept: Vec<usize> = Vec::new();
+    for &i in &all {
+        if kept.last().is_none_or(|&last| !close(&ink[last], &ink[i])) {
+            kept.push(i);
+        }
+    }
+    let mut visible: Vec<bool> = all.iter().map(|i| kept.contains(i)).collect();
+    let last = ink.len() - 1;
+    if kept.len() < 3 && !visible[last] {
+        if kept.len() > 1 {
+            visible[kept[kept.len() - 1]] = false;
+        }
+        visible[last] = true;
+    }
+    visible
+}
+
+/// The labels of a value axis over `scale` that Vega draws, given each label's text and box in axis
+/// order: `labelOverlap` is greedy on a log axis and parity on every other, and runs over the labels
+/// that print text alone, as a tick whose label d3's `tickFormat` blanked is no candidate and draws
+/// nothing (`visible_tick_labels`, `chart-renderer/src/families/scatter.rs`).
+pub(crate) fn drawn_labels(scale: ValueScale, texts: &[&str], ink: &[Bounds], separation: f64) -> Vec<bool> {
+    let printed: Vec<usize> = (0..texts.len()).filter(|&i| !texts[i].is_empty()).collect();
+    let boxes: Vec<Bounds> = printed.iter().map(|&i| ink[i]).collect();
+    let survivors = match scale {
+        ValueScale::Log { .. } => greedy_visible(&boxes, separation),
+        _ => parity_visible(&boxes, separation),
+    };
+    let mut visible = vec![false; texts.len()];
+    for (&i, shown) in printed.iter().zip(survivors) {
+        visible[i] = shown;
     }
     visible
 }

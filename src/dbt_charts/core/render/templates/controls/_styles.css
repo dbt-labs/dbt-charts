@@ -185,10 +185,15 @@
   margin: 0;
 }
 
-{# A multiselect's bar is one field: its pills, then the search. It wraps
-   and grows down; contained, so a long pill never widens the menu. #}
+{# A multiselect's field holds its pills, then the search. It wraps and
+   grows down; contained, so a long pill never widens the menu. #}
 .dbt-select-field {
+  display: flex;
+  flex: 1;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   contain: inline-size;
   padding: 3px 4px;
   border: 1px solid var(--dbt-system-input-border, #ced4da);
@@ -282,59 +287,42 @@
   stroke: var(--dbt-system-text, #333333);
 }
 
-{# Three bars, shortest last — drawn, not a glyph, so no font decides it. #}
+{# One click moves to the next order. Unsorted, it draws an up and a down
+   arrow; sorted, it names the order in force in the accent color. #}
 .dbt-select-sort {
   flex: none;
-  width: 28px;
+  min-width: 28px;
   height: 28px;
-  padding: 0;
+  padding: 0 4px;
   border: 0;
   border-radius: 6px;
   cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
   color: var(--dbt-system-muted, #6c757d);
   background:
-    linear-gradient(currentColor, currentColor) 8px 8px / 12px 2px no-repeat,
-    linear-gradient(currentColor, currentColor) 8px 13px / 8px 2px no-repeat,
-    linear-gradient(currentColor, currentColor) 8px 18px / 4px 2px no-repeat;
+    linear-gradient(currentColor, currentColor) 10px 8px / 2px 12px no-repeat,
+    linear-gradient(135deg, transparent 50%, currentColor 50%) 7px 7px / 4px 4px no-repeat,
+    linear-gradient(225deg, transparent 50%, currentColor 50%) 11px 7px / 4px 4px no-repeat,
+    linear-gradient(currentColor, currentColor) 16px 8px / 2px 12px no-repeat,
+    linear-gradient(45deg, transparent 50%, currentColor 50%) 13px 17px / 4px 4px no-repeat,
+    linear-gradient(-45deg, transparent 50%, currentColor 50%) 17px 17px / 4px 4px no-repeat;
 }
 
-.dbt-select-sort:hover,
-.dbt-select-sort[aria-expanded="true"] {
-  background-color: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 12%, transparent);
-}
-
-.dbt-select-sort.dbt-select-sorted {
-  color: var(--dbt-system-accent, #667eea);
-}
-
-.dbt-select-sort-menu {
-  flex: none;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--dbt-system-input-border, #ced4da);
-}
-
-{# Block, not the inline-block a button is: sized to its content, the card
-   would otherwise lay the items side by side and take their combined width. #}
-.dbt-select-sort-menu button {
-  display: block;
-  width: 100%;
-  padding: 6px 14px;
-  border: 0;
+.dbt-select-sort:not([data-sort=""]) {
   background: none;
-  text-align: left;
-  font: inherit;
-  font-size: 13px;
-  color: var(--dbt-system-text, #333333);
-  cursor: pointer;
-}
-
-.dbt-select-sort-menu button:hover {
-  background: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 12%, transparent);
-}
-
-.dbt-select-sort-menu button[aria-checked="true"] {
   color: var(--dbt-system-accent, #667eea);
-  font-weight: 600;
+}
+
+.dbt-select-sort[data-sort="asc"]::after { content: "A–Z"; }
+.dbt-select-sort[data-sort="desc"]::after { content: "Z–A"; }
+.dbt-select-sort[data-sort="count-desc"]::after { content: "9–1"; }
+.dbt-select-sort[data-sort="count-asc"]::after { content: "1–9"; }
+
+.dbt-select-sort:hover {
+  background-color: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 12%, transparent);
 }
 
 {# The footer toggle: set off below the list, the way back to every row as #}
@@ -712,6 +700,12 @@
 {# The glyph is a child of the dimmed group; dim the marks, not the glyph. #}
 .dbt-chart-loading > :not(.dbt-chart-spinner) {
   opacity: 0.5;
+}
+.dbt-tab-pane-loading {
+  pointer-events: none;
+}
+.dbt-tab-pane-loading > :not(.dbt-chart-spinner) {
+  opacity: 0;
 }
 @keyframes dbt-spin {
   to { transform: rotate(360deg); }

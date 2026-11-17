@@ -540,6 +540,7 @@ fn rendered_vega_height(
         variables: Default::default(),
         variable_options: Default::default(),
         filter_variables: Default::default(),
+        empty_filters: Default::default(),
         interactive_controls: Default::default(),
         link_context: None,
         measuring: true,
@@ -618,6 +619,7 @@ fn spark_bar_natural_height(
         variables: Default::default(),
         variable_options: Default::default(),
         filter_variables: Default::default(),
+        empty_filters: Default::default(),
         interactive_controls: Default::default(),
         link_context: None,
         measuring: false,
@@ -745,6 +747,7 @@ fn get_table_height_from_data(
         variables: Default::default(),
         variable_options: Default::default(),
         filter_variables: Default::default(),
+        empty_filters: Default::default(),
         interactive_controls: Default::default(),
         link_context: None,
         measuring: false,
@@ -792,7 +795,20 @@ pub fn static_slot_estimate(
         None,
         defaults,
     )?;
-    Ok(content_estimate + inset)
+    Ok(content_estimate * (1.0 + torn_band(chart_json, authored_height)?) + inset)
+}
+
+/// The share a vertical torn bar chart grows by: its cap band sits on top of the plot a chart
+/// of its width would have, past `max_height`, unless the author set the height. A horizontal
+/// chart's band sits in its width.
+fn torn_band(chart_json: &Value, authored_height: Option<f64>) -> Result<f64, String> {
+    if authored_height.is_some()
+        || chart_json.get("torn_break").is_none_or(Value::is_null)
+        || chart_json["orientation"] == "horizontal"
+    {
+        return Ok(0.0);
+    }
+    chart_json.pointer("/style/torn_outlier/band").and_then(Value::as_f64).ok_or_else(|| "torn chart missing style.torn_outlier.band".to_string())
 }
 
 /// What the size stage decided about a placed pie.
@@ -898,6 +914,7 @@ pub fn sized_pie_mode(
         variables: Default::default(),
         variable_options: Default::default(),
         filter_variables: Default::default(),
+        empty_filters: Default::default(),
         interactive_controls: Default::default(),
         link_context: None,
         geometries: None,
@@ -964,6 +981,7 @@ pub fn resolve_chart_item_height(
             variables: Default::default(),
             variable_options: Default::default(),
             filter_variables: Default::default(),
+            empty_filters: Default::default(),
             interactive_controls: Default::default(),
             link_context: None,
             measuring: false,
@@ -2390,6 +2408,26 @@ mod tests {
         assert_eq!(pie, d.max_height);
         assert_eq!(donut, 1000.0 / d.donut.aspect_ratio.unwrap());
         assert!(donut > d.min_height && donut < d.max_height);
+    }
+
+    /// A torn bar chart's cap band sits on top of the plot it would otherwise have, past
+    /// the maximum height; an authored height still wins.
+    #[test]
+    fn a_torn_bar_chart_grows_by_its_cap_band() {
+        let d = test_defaults();
+        let chart = |torn_break: serde_json::Value| {
+            serde_json::json!({"chart_type": "bar", "torn_break": torn_break,
+                   "style": {"torn_outlier": {"band": 0.5}},
+                   "layout_padding": {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}})
+        };
+        let plain = static_slot_estimate(&chart(serde_json::Value::Null), None, 2000.0, 0.0, &d).unwrap();
+        let torn = static_slot_estimate(&chart(serde_json::json!(110.0)), None, 2000.0, 0.0, &d).unwrap();
+        assert_eq!(plain, d.max_height);
+        assert_eq!(torn, 1.5 * d.max_height);
+        assert_eq!(static_slot_estimate(&chart(serde_json::json!(110.0)), Some(300.0), 2000.0, 0.0, &d).unwrap(), 300.0);
+        let mut horizontal = chart(serde_json::json!(110.0));
+        horizontal["orientation"] = serde_json::json!("horizontal");
+        assert_eq!(static_slot_estimate(&horizontal, None, 2000.0, 0.0, &d).unwrap(), d.max_height);
     }
 
     #[test]

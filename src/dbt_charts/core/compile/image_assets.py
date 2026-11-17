@@ -110,6 +110,22 @@ def resolve_image_ref(ref: str, base_dir: str | None) -> str:
     return url
 
 
+def project_images(markdown: str, base_dir: str | None) -> dict[str, str]:
+    """The embeddable URL of each project image *markdown* writes, by that reference, for
+    a renderer that reads no files (the engine's cell): what
+    ``rewrite_markdown_text_images`` would write in each one's place.
+
+    Raises ``CompilationError`` (ERR-IMAGE-REF-UNRESOLVED) as ``resolve_image_ref`` does,
+    for any image the markdown writes, remote or ``data:`` ones included.
+    """
+    images: dict[str, str] = {}
+    for ref in image_urls(list(parse_markdown(markdown))):
+        url = resolve_image_ref(ref, base_dir)
+        if is_local_image(ref):
+            images[ref] = url
+    return images
+
+
 def rewrite_markdown_images(
     blocks: list[AnyBlock],
     base_dir: str | None,

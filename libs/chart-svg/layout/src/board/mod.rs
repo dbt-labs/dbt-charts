@@ -3,10 +3,14 @@
 pub mod assemble;
 pub mod band;
 pub mod bands;
+pub mod card;
 pub mod chrome;
+pub mod column_packer;
 pub mod frame;
 pub mod height;
 pub mod prose;
+pub mod prose_flow;
+pub mod prose_plan;
 pub mod stack;
 pub mod styles;
 pub mod tree;

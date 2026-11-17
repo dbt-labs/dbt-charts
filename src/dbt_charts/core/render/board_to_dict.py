@@ -6,7 +6,7 @@ serialize into their respective wire formats.
 
 import sys
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
@@ -25,6 +25,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedAreaChart,
     ResolvedBarChart,
+    ResolvedChart,
     ResolvedKpiChart,
     ResolvedLineChart,
     ResolvedScatterChart,
@@ -32,17 +33,17 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.primitives import (
     AUTHORED_FORMATS,
+    FormatConfig,
     FormatTable,
     LinkOpen,
     ResolvedFormat,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
+from dbt_charts.core.compile.models.style.resolved import ResolvedTickLabel
 from dbt_charts.core.compile.models.variable.authored import INTERNAL_VARIABLE_FIELDS
 from dbt_charts.core.compile.resolve import bind_channels, columns_of
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
 from dbt_charts.core.execute.chart_data_provider import (
     ResolveDataProvider,
     chart_rows,
@@ -53,6 +54,11 @@ from dbt_charts.core.execute.chart_resolution import (
 from dbt_charts.core.execute.column_formats import with_dbt_column_formats
 from dbt_charts.core.render.boards import resolve_display_text_via
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
+from dbt_charts.core.render.variables_resolve import (
+    board_variable_defs,
+    empty_filters,
+)
+from dbt_charts.core.text.format_d3 import NULL_DISPLAY, board_word
 
 #: "No cap" for ``max_rows_per_query`` — every row is embedded. A named
 #: unbounded default keeps the cap a required, always-comparable int instead
@@ -249,17 +255,31 @@ def _cartesian_y_range_display(
     chart: _CartesianValueAxisChart,
     data: list[dict[str, Any]],  # type-state: explicit_any — query row
     value_axis_format: ResolvedFormat | None,
+    tick_label: ResolvedTickLabel | None,
     formats: FormatTable | None,
 ) -> str | None:
     """Format the y column's min-max range as a standalone value.
 
     The axis's raw format (theme default included) is re-resolved, not its
     baked spec, so ``format_value`` applies house notation and the sub-unit
-    fallback.
+    fallback. A percent axis paints its ticks at the step-derived precision
+    (``.0%`` for a 10% step), so the range takes that spec: the text reads
+    54% where the axis labels 54%, not the column's ``.1%`` 53.7%.
     """
     authored = value_axis_format.authored if value_axis_format is not None else None
     if authored is None or not isinstance(chart.y, str):
         return None
+    if tick_label is not None and tick_label.format.endswith("%"):
+        assert value_axis_format is not None  # authored came from it
+        authored = FormatConfig(
+            spec=tick_label.format,
+            prefix=tick_label.prefix + value_axis_format.prefix,
+            suffix=value_axis_format.suffix,
+            notation=value_axis_format.notation
+            or ("analytic" if value_axis_format.is_house else None),
+            sign_placement=value_axis_format.sign_placement,
+            repeat=value_axis_format.repeat,
+        )
     from dbt_charts.core.compile.format_value import format_value
 
     values = [row[chart.y] for row in data if row.get(chart.y) is not None]
@@ -271,10 +291,14 @@ def _cartesian_y_range_display(
     )
 
 
+KpiRow = dict[str, Any]  # type-state: explicit_any — a query row, dynamically typed
+
+
 def _kpi_text_parts(
     resolved: ResolvedKpiChart,
-    row: dict[str, Any],  # type-state: explicit_any — a query row, dynamically typed
+    row: KpiRow | None,
     formats: FormatTable | None,
+    filters: list[tuple[str, str]],
 ) -> dict[str, str]:
     """Format a KPI's headline value and support line as the SVG renderer draws them.
 
@@ -288,7 +312,17 @@ def _kpi_text_parts(
     from dbt_charts.core.render.chart.kpi_value import kpi_value_text, resolve_kpi_value
 
     chart_id = resolved.id
+    empty = {
+        "value": NULL_DISPLAY,
+        "support": " \u00b7 ".join(
+            [board_word("chart.no_results"), *(f"{k}: {v}" for k, v in filters)]
+        ),
+    }
+    if row is None or resolved.value is None:
+        return empty
     cell = resolve_kpi_value(resolved.value, row, chart_id)
+    if cell is None:
+        return empty
     display = kpi_value_text(
         cell,
         resolved.format,
@@ -354,6 +388,7 @@ def _render_chart_item(
     *,
     filter_variables: frozenset[str],
     link_open: LinkOpen,
+    filters_of: Callable[[ResolvedChart], list[tuple[str, str]]],
     include_text_format: bool = False,
 ) -> dict[str, Any]:
     """Execute, resolve, and serialize a single chart item.
@@ -437,16 +472,17 @@ def _render_chart_item(
                     chart,
                     data,
                     resolved.style.axis_y.labels.format,
+                    resolved.style.axis_y.tick_label,
                     chart_style_context.formats,
                 )
                 if y_range_display:
                     item["y_range_display"] = y_range_display
             if isinstance(resolved, ResolvedKpiChart):
-                if not data:
-                    # Same error as the SVG KPI renderer, never a blank card.
-                    raise ChartDataError.from_code(ERR_KPI_NO_DATA, chart_id=chart.id)
                 item["kpi_text"] = _kpi_text_parts(
-                    resolved, data[0], chart_style_context.formats
+                    resolved,
+                    data[0] if data else None,
+                    chart_style_context.formats,
+                    filters_of(resolved),
                 )
             if isinstance(resolved, ResolvedTableChart):
                 item["table_text"] = _table_text_rows(
@@ -483,6 +519,7 @@ def _render_board_items(
     *,
     filter_variables: frozenset[str],
     link_open: LinkOpen,
+    filters_of: Callable[[ResolvedChart], list[tuple[str, str]]],
     include_text_format: bool = False,
 ) -> list[dict[str, Any]]:
     """Walk layout items and serialize each."""
@@ -499,6 +536,7 @@ def _render_board_items(
                     max_rows_per_query,
                     filter_variables=filter_variables,
                     link_open=link_open,
+                    filters_of=filters_of,
                     include_text_format=include_text_format,
                 )
             )
@@ -514,6 +552,7 @@ def _render_board_items(
                         max_rows_per_query,
                         filter_variables=filter_variables,
                         link_open=link_open,
+                        filters_of=filters_of,
                         include_text_format=include_text_format,
                     ),
                 }
@@ -530,6 +569,7 @@ def _board_to_dict(
     *,
     filter_variables: frozenset[str],
     link_open: LinkOpen,
+    filters_of: Callable[[ResolvedChart], list[tuple[str, str]]],
     include_text_format: bool = False,
 ) -> dict[str, Any]:
     """Convert a board to a JSON-serializable dict.
@@ -567,6 +607,7 @@ def _board_to_dict(
             max_rows_per_query,
             filter_variables=filter_variables,
             link_open=link_open,
+            filters_of=filters_of,
             include_text_format=include_text_format,
         ),
     }
@@ -601,6 +642,7 @@ def board_to_dict(
     declared_variables = frozenset(
         board.variable_registry or {}  # type-state: silent_fallback — none declared
     )
+    defs = board_variable_defs(board)
     return _board_to_dict(
         with_dbt_column_formats(board, results, variables),
         results,
@@ -609,5 +651,8 @@ def board_to_dict(
         max_rows_per_query,
         filter_variables=declared_variables,
         link_open=board.links.open,
+        filters_of=lambda chart: empty_filters(
+            chart, defs, variables, board.resolved_style.variables
+        ),
         include_text_format=include_text_format,
     )

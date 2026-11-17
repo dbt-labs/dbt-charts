@@ -627,7 +627,10 @@ fn nearest_homes(found: &[String], here: &str) -> Vec<String> {
     };
     let schema: Vec<Vec<&str>> = found.iter().map(|p| p.split('.').collect()).collect();
     let under = |pattern: &[&str], ancestor: &[&str]| {
-        pattern.iter().zip(ancestor).all(|(p, a)| *p == "*" || p == a)
+        pattern
+            .iter()
+            .zip(ancestor)
+            .all(|(p, a)| *p == "*" || p == a)
     };
     let mut homes: Vec<String> = Vec::new();
     for depth in (0..=at.len()).rev() {

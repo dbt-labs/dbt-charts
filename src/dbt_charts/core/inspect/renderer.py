@@ -304,7 +304,7 @@ def render_inspect_dashboard(
     if result.errors or not result.board:
         raise InspectProfileCompileError(result=result)
 
-    plan = plan_for_board(
+    planned = plan_for_board(
         InMemoryBoard(substituted_yaml, path=None),
         project,
         safe_vars,
@@ -314,7 +314,7 @@ def render_inspect_dashboard(
         active_tab_only=True,
         sources=env_sources(env),
     )
-    ctx = make_context(result.board, plan, env)
+    ctx = make_context(result.board, planned, env)
 
     html_output = render(
         result.board,

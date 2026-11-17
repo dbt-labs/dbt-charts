@@ -227,9 +227,9 @@ _NOT_DESIGN_PATHS = ("style.charts", "style.color.gradient")
 # out gets one of the two wrong.
 # GATED — the render sweep walks every Variable control in full. `histogram`'s
 # entry is a field one `type:` of a shared model refuses outright: `BarChart`
-# declares `y_start` and `pattern` for both tags, and the histogram rules refuse
-# them, since its bars count from zero and bin rows — no value a text box can
-# produce compiles there. The legend edge is the exception: only `endpoints` is
+# declares `y_start`, `pattern` and `style.torn_outlier` for both tags, and the
+# histogram rules refuse them, since its bars count from zero and bin rows — no
+# value a text box can produce compiles there. The legend edge is the exception: only `endpoints` is
 # refused (a histogram has one series to name), but this table drops a key, not
 # one value, so the sides go with it.
 # GATED (histogram) — the parse sweep (`histogram-no-x`, `histogram-multi-metric`).
@@ -248,6 +248,10 @@ _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("style.pattern.steps", None),
         ("style.pattern.palette", None),
         ("style.pattern.ground", None),
+        ("style.torn_outlier.enabled", None),
+        ("style.torn_outlier.at", None),
+        ("style.torn_outlier.band", None),
+        ("style.torn_outlier.cap", None),
         ("style.legend.position.edge", None),
     ),
 }

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart subtitle with no title now draws above the chart instead of disappearing.
+time: 2026-11-13T19:16:12.9883151Z

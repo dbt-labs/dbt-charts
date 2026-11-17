@@ -13,6 +13,7 @@ schema = ["dep:schemars"]
 bind = { path = "../bind" }
 board-model = { path = "../board-model" }
 color = { package = "dbt-charts-color", path = "../color" }
+column-types = { path = "../column-types" }
 d3rs = { path = "../d3rs" }
 diagnostic = { path = "../diagnostic" }
 display-text = { path = "../display-text" }
@@ -34,7 +35,6 @@ engine = { path = ".", features = ["schema"] }
 bind = { path = "../bind", features = ["test-support"] }
 normalize = { path = "../normalize", features = ["fixtures"] }
 project = { path = "../project" }
-column-types = { path = "../column-types" }
 board-model = { path = "../board-model", features = ["fixtures"] }
 diagnostic = { path = "../diagnostic", features = ["test-support"] }
 equivalence = { path = "../equivalence" }

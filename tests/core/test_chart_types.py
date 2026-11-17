@@ -174,7 +174,7 @@ class TestTableChart:
             board_style=resolve_style(get_theme_style()),
         )
         assert svg.startswith("<svg")
-        assert ">\u2014<" in svg
+        assert ">No results<" in svg
 
     def test_table_number_formatting(self, make_chart):
         from ._engine_render import render_table_svg

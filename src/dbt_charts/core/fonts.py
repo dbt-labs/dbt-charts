@@ -204,15 +204,20 @@ DBT_SERIF_MEDIUM_FONT_FAMILY = "dbt Serif Medium"
 DBT_SERIF_SEMIBOLD_FONT_FAMILY = "dbt Serif SemiBold"
 DBT_SANS_TABULAR_MEDIUM_FONT_FAMILY = "dbt Sans Tabular Medium"
 DBT_SANS_TABULAR_SEMIBOLD_FONT_FAMILY = "dbt Sans Tabular SemiBold"
+DBT_SANS_TABULAR_BOLD_FONT_FAMILY = "dbt Sans Tabular Bold"
 INTER_VARIABLE_MEDIUM_FONT_FAMILY = "Inter Variable Medium"
 INTER_VARIABLE_SEMIBOLD_FONT_FAMILY = "Inter Variable SemiBold"
+INTER_VARIABLE_BOLD_FONT_FAMILY = "Inter Variable Bold"
 
 # (base vendored family, cascaded font-weight) -> the internal family vl-convert
 # must select instead of the base family for that weight to render as anything
-# other than Regular. Keys are the closed, theme-cascaded weight set — every
-# non-400 (family, weight) pair the built-in themes ever produce for these three
-# families; dbt-charts/tests/core/render/test_theme_weight_face_coverage.py fails
-# the moment a theme starts cascading a weight with no row here.
+# other than Regular. Keys cover every non-400 (family, weight) pair the built-in
+# themes ever produce for these three families —
+# dbt-charts/tests/core/render/test_theme_weight_face_coverage.py fails the moment a
+# theme starts cascading a weight with no row here — plus 700, the weight an
+# authored `bold` (a table cell's conditional font, say) asks for. Source Serif 4
+# has no 700 row: its static instances must be cut from Adobe's full release
+# (fonts/README.md), not from the reduced variable file vendored here.
 WEIGHT_FACE_ALIASES: dict[str, dict[str, str]] = {
     SOURCE_SERIF_4_FONT_FAMILY: {
         "500": DBT_SERIF_MEDIUM_FONT_FAMILY,
@@ -221,10 +226,12 @@ WEIGHT_FACE_ALIASES: dict[str, dict[str, str]] = {
     DBT_SANS_TABULAR_FONT_FAMILY: {
         "500": DBT_SANS_TABULAR_MEDIUM_FONT_FAMILY,
         "600": DBT_SANS_TABULAR_SEMIBOLD_FONT_FAMILY,
+        "700": DBT_SANS_TABULAR_BOLD_FONT_FAMILY,
     },
     INTER_VARIABLE_FONT_FAMILY: {
         "500": INTER_VARIABLE_MEDIUM_FONT_FAMILY,
         "600": INTER_VARIABLE_SEMIBOLD_FONT_FAMILY,
+        "700": INTER_VARIABLE_BOLD_FONT_FAMILY,
     },
 }
 
@@ -322,6 +329,13 @@ FONT_REGISTRY: tuple[VendoredFace, ...] = (
         tabular=True,
     ),
     VendoredFace(
+        family=DBT_SANS_TABULAR_BOLD_FONT_FAMILY,
+        style="normal",
+        measure_file="DBTSansTabular-Bold.ttf",
+        web_file=None,
+        tabular=True,
+    ),
+    VendoredFace(
         family=INTER_VARIABLE_MEDIUM_FONT_FAMILY,
         style="normal",
         measure_file="InterVariable-Medium.ttf",
@@ -343,6 +357,18 @@ FONT_REGISTRY: tuple[VendoredFace, ...] = (
         family=INTER_VARIABLE_SEMIBOLD_FONT_FAMILY,
         style="italic",
         measure_file="InterVariable-SemiBoldItalic.ttf",
+        web_file=None,
+    ),
+    VendoredFace(
+        family=INTER_VARIABLE_BOLD_FONT_FAMILY,
+        style="normal",
+        measure_file="InterVariable-Bold.ttf",
+        web_file=None,
+    ),
+    VendoredFace(
+        family=INTER_VARIABLE_BOLD_FONT_FAMILY,
+        style="italic",
+        measure_file="InterVariable-BoldItalic.ttf",
         web_file=None,
     ),
     VendoredFace(

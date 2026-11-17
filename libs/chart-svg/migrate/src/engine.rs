@@ -16,6 +16,7 @@ use crate::catalog::{current, current_grammar, entries, Date};
 use crate::doc::{document_keys, map};
 use crate::locate::move_source_locations;
 use crate::registry::Registry;
+use crate::schema::Probe;
 
 /// What `migrate` did with a document.
 #[derive(Debug, Clone, PartialEq)]
@@ -156,9 +157,10 @@ fn apply_identity_moves(
         .iter()
         .filter(|m| m.old_path == m.new_path && m.rewrite_in_document.is_none())
         .collect();
+    let probe = Probe::new(doc);
     if !identity
         .iter()
-        .any(|m| !move_source_locations(doc, m).is_empty())
+        .any(|m| !move_source_locations(&probe, doc, m).is_empty())
     {
         return Ok(());
     }
@@ -302,11 +304,12 @@ fn recognize(doc: &Node, reg: &Registry) -> Result<String, Stop> {
         return Ok(cur.version.clone());
     }
     let keys = owned_keys(doc);
+    let probe = Probe::new(doc);
     for e in entries() {
         if e.version == cur.version {
             continue;
         }
-        if transition_applies(doc, &e.version, reg, &keys) {
+        if transition_applies(&probe, doc, &e.version, reg, &keys) {
             return Ok(e.version.clone());
         }
     }
@@ -317,8 +320,9 @@ fn recognize(doc: &Node, reg: &Registry) -> Result<String, Stop> {
 }
 
 /// A pure dry run: whether `identifier`'s transition would find anything to rewrite.
-fn transition_applies(
-    doc: &Node,
+fn transition_applies<'d>(
+    probe: &Probe<'d>,
+    doc: &'d Node,
     identifier: &str,
     reg: &Registry,
     keys: &HashSet<String>,
@@ -328,7 +332,7 @@ fn transition_applies(
             continue;
         }
         if m.old_path.iter().all(|p| p == "*" || keys.contains(p))
-            && !move_source_locations(doc, m).is_empty()
+            && !move_source_locations(probe, doc, m).is_empty()
         {
             return true;
         }
@@ -571,13 +575,14 @@ pub fn retired_keys(doc: &Node) -> Vec<RetiredKey> {
             found.push(key);
         }
     };
+    let probe = Probe::new(doc);
     for e in entries().iter().rev() {
         for m in reg.moves_from(&e.version) {
             if m.old_path == m.new_path || !m.old_path.iter().all(|p| p == "*" || keys.contains(p))
             {
                 continue;
             }
-            for loc in move_source_locations(doc, m) {
+            for loc in move_source_locations(&probe, doc, m) {
                 let (Ok(path), Ok(successor)) = (
                     crate::locate::move_path(m, &m.old_path, &loc.bindings),
                     crate::locate::move_path(m, &m.new_path, &loc.bindings),

@@ -14,6 +14,7 @@ use mdsvg::types::AnyBlock;
 use model_core::{LeafValues, Tri};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex, PoisonError};
 
 type Patch = <board_model::board::Board as model_core::Leaf>::Patch;
 type NestedBoard = <board_model::board::layout::NestedBoard as model_core::Leaf>::Whole;
@@ -68,7 +69,7 @@ fn dotted(path: &str) -> ModelPath {
 /// The authored path of a layout item (`rows.3`, `grid.items.0`, `tabs.items.1.rows.2`) as the
 /// source map keys it: an [`ItemId`]'s indices become segments, and a grid cell is its `items`
 /// entry, not the `item` inside it.
-fn authored(at: &ItemId) -> String {
+pub(crate) fn authored(at: &ItemId) -> String {
     let id = at
         .as_str()
         .trim_start_matches('@')
@@ -528,15 +529,24 @@ pub fn axis_align_discarded(
     out
 }
 
-/// The theme in force, as leaves under the same paths the merged root's have.
-pub fn theme_leaves(name: &str) -> Leaves {
-    match built_in_theme(name) {
-        Ok(body) => Leaves::of(&Patch {
-            body: body.clone(),
-            ..Default::default()
-        }),
-        Err(_) => Leaves(Vec::new()),
+/// The theme in force, as leaves under the same paths the merged root's have. A built-in theme is a
+/// static, so its leaves are walked once per process.
+pub fn theme_leaves(name: &str) -> Arc<Leaves> {
+    static CACHE: Mutex<BTreeMap<String, Arc<Leaves>>> = Mutex::new(BTreeMap::new());
+    let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(found) = cache.get(name) {
+        return found.clone();
     }
+    // Only a built-in theme is cached: the key set stays the closed set of themes.
+    let Ok(body) = built_in_theme(name) else {
+        return Arc::new(Leaves(Vec::new()));
+    };
+    let found = Arc::new(Leaves::of(&Patch {
+        body: body.clone(),
+        ..Default::default()
+    }));
+    cache.insert(name.to_string(), found.clone());
+    found
 }
 
 /// `ALL_PREDEFINED_NAMES`: the engine's number, time and text format names, sorted.

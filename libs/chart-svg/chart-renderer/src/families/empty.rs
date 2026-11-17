@@ -1,9 +1,8 @@
 //! A chart whose query returned no rows.
 //!
 //! Production draws each family's zero-row chart through that family's own
-//! path, and the results differ by family: a table paints its "No data"
-//! text, a KPI raises `ChartDataError` (the board paints the error card), and
-//! a Vega-Lite family compiles over an empty dataset, so every scale is
+//! path, and the results differ by family: a table paints its "No results"
+//! text, a KPI a muted dash, and a Vega-Lite family compiles over an empty dataset, so every scale is
 //! degenerate and its axes, marks and legends come out empty. A family is
 //! ported here only once its empty drawing is; every other family refuses by
 //! name, never draws its ordinary chart over nothing.
@@ -16,7 +15,7 @@ use crate::contract::stamp_view_root;
 use diagnostic::Diagnostic;
 use crate::families::bar;
 use crate::families::empty_cartesian::{self, Facet, ValueAxis};
-use crate::families::{kpi, pie, spark_bar, table};
+use crate::families::{kpi, spark_bar, table};
 use crate::families::layers::{
     claim_layers, merged_legend_title, LayerScale, OverlayBarLayer, OverlayLayer, OverlayLineLayer, OverlayScatterLayer,
 };
@@ -52,10 +51,9 @@ pub fn render(chart_type: &str, payload: &Payload, fonts: &FontBook) -> Result<S
             fonts,
             ValueAxis::Point { pins_domain: chart_type == "scatter" },
         )?)?,
-        "pie" => stamp_view_root(pie::render_empty(payload, fonts)?)?,
         // `table::bind` decides its own empty result.
         "table" => table::render(payload, fonts)?,
-        // A KPI has no empty drawing: no rows is `ERR-KPI-NO-DATA`.
+        // A KPI with no rows paints its dash in `kpi::render`.
         "kpi" => kpi::render(payload, fonts)?,
         // `spark_bar.py::_validate_spark_bar_value_field` returns on `not data`
         // (`spark_bar.py:109`) and the render paints no bar rows: its ordinary

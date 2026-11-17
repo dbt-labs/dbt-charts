@@ -316,7 +316,7 @@ fn list_window(block: &AnyBlock, start: usize, count: usize) -> Result<AnyBlock,
 /// The number the item `offset` places after the list's first one carries.
 fn list_number(start: &Start, offset: usize) -> Result<u128, String> {
     let refusal = |digits: &dyn std::fmt::Display| {
-        format!("ordered list number {digits} is too large to count and is not supported")
+        format!("mdsvg-rs: ordered list number {digits} is too large to count and is not supported")
     };
     match start {
         Start::Number(first) => first

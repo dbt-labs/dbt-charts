@@ -292,7 +292,7 @@ def render_registered_view(
 
     # --- Step 4: execute + render ---
     try:
-        plan = plan_for_board(
+        planned = plan_for_board(
             InMemoryBoard(compiled.yaml, path=None),
             project,
             request_variables,
@@ -304,7 +304,7 @@ def render_registered_view(
         )
         ctx = make_context(
             compiled.board,
-            plan,
+            planned,
             env,
             result_cache=result_cache,
         )

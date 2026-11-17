@@ -11,7 +11,6 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
 use super::facet::color_1to1_with_cat;
-use super::labels::label_position;
 use super::{BAND_LABEL_LEADING, BarResolved, BarStyle, CHROME_PX, NORMALIZE_QUARTILE_TICKS, continuous_max_size};
 
 /// The order a categorical band domain renders in.
@@ -739,10 +738,8 @@ impl CenterStack {
     }
 }
 
-/// The spans a stack's value labels anchor on when they are not the bars' own.
-/// A centered stack's labels sit on the both-signs stack the bars are drawn on,
-/// and a non-`middle` label of a normalized stack sits on the raw zero stack
-/// (over a `[0, 1]` scale that puts it far past the plot).
+/// The spans a stack's value labels anchor on when they are not the bars' own:
+/// a centered stack's labels sit on the both-signs stack the bars are drawn on.
 pub(super) fn stack_label_spans(
     r: &BarResolved,
     // The both-signs stack of every row a `middle` label centers on.
@@ -751,14 +748,11 @@ pub(super) fn stack_label_spans(
     stack_order: &[String],
     data_map: &HashMap<(String, String), f64>,
 ) -> Result<Option<SegmentSpans>, String> {
-    let Some(labels) = r.style.mark.labels.as_ref().filter(|l| l.visible) else { return Ok(None) };
-    let middle = label_position(labels, true) == "middle";
-    let order = if stack_order.is_empty() { &[String::new()][..] } else { stack_order };
-    match r.stack.as_str() {
-        "center" => stack_spans(cat_domain, order, data_map, false, label_stack).map(Some),
-        "normalize" if !middle => stack_spans(cat_domain, order, data_map, false, None).map(Some),
-        _ => Ok(None),
+    if r.stack != "center" || !r.style.mark.labels.as_ref().is_some_and(|l| l.visible) {
+        return Ok(None);
     }
+    let order = if stack_order.is_empty() { &[String::new()][..] } else { stack_order };
+    stack_spans(cat_domain, order, data_map, false, label_stack).map(Some)
 }
 
 /// Separates a series from the tier of a repeated row: on a time axis two rows of one `(bucket, series)` stack

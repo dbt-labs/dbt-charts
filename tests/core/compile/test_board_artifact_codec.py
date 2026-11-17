@@ -358,17 +358,24 @@ rows:
 """
 
 
-def test_resolved_stops_appears_in_board_artifact_json() -> None:
+def test_resolved_stops_appears_in_board_artifact_json(tmp_path: Path) -> None:
     """resolved_stops must be serialized into the dump_board_artifact JSON, not
     stripped by exclude_none or lost via the pydantic union type declaration.
     Regression: a ResolvedNamedPaletteScaleTargetConfig stored in a
     ResolvedScaleTarget | None field must serialize as the runtime subtype, or
     the no-compile replay path reloads a plain ResolvedScaleTargetConfig with no
     resolved_stops."""
+    from dbt_charts.cli.filesystem_project import FilesystemProject
+    from dbt_charts.core.compile.engine import engine_compile_recorded
     from dbt_charts.core.render.board_replay import dump_board_artifact
 
     resolved = _resolved_board(_HEATMAP_NAMED_PALETTE_YAML)
-    artifact_bytes = dump_board_artifact(resolved)
+    record = engine_compile_recorded(
+        None,
+        content=_HEATMAP_NAMED_PALETTE_YAML,
+        project=FilesystemProject(tmp_path),
+    )[1]
+    artifact_bytes = dump_board_artifact(resolved, record)
     artifact = json.loads(artifact_bytes)
     # resolved_stops must appear as a JSON key — assert on the raw JSON string
     # so a silently-missing field can't be hidden by object construction.
@@ -379,9 +386,11 @@ def test_resolved_stops_appears_in_board_artifact_json() -> None:
     )
 
 
-def test_resolved_stops_survives_artifact_round_trip() -> None:
+def test_resolved_stops_survives_artifact_round_trip(tmp_path: Path) -> None:
     """load_board_artifact must reload resolved_stops exactly — no precision loss,
     no type downgrade to the plain ResolvedScaleTargetConfig supertype."""
+    from dbt_charts.cli.filesystem_project import FilesystemProject
+    from dbt_charts.core.compile.engine import engine_compile_recorded
     from dbt_charts.core.compile.models.primitives import (
         ResolvedNamedPaletteScaleTargetConfig,
     )
@@ -392,10 +401,15 @@ def test_resolved_stops_survives_artifact_round_trip() -> None:
     )
 
     resolved = _resolved_board(_HEATMAP_NAMED_PALETTE_YAML)
-    artifact_bytes = dump_board_artifact(resolved)
+    record = engine_compile_recorded(
+        None,
+        content=_HEATMAP_NAMED_PALETTE_YAML,
+        project=FilesystemProject(tmp_path),
+    )[1]
+    artifact_bytes = dump_board_artifact(resolved, record)
     reloaded = load_board_artifact(artifact_bytes)
 
-    color_scale = reloaded.charts["h"].resolved_channels["color"].scale
+    color_scale = reloaded.resolved.charts["h"].resolved_channels["color"].scale
     assert isinstance(color_scale, ResolvedNamedPaletteScaleTargetConfig), (
         f"Expected ResolvedNamedPaletteScaleTargetConfig, got {type(color_scale)}"
     )

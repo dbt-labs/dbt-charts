@@ -11,7 +11,7 @@ use layout::knockout::safe_scope;
 use layout::plot::bars::bars;
 use layout::plot::bins::bins;
 use layout::plot::lines::{lines, Metrics};
-use layout::plot::points::points;
+use layout::plot::points::{edge_pad, points};
 use layout::plot::value_axis::GutterRule;
 use layout::plot::{draw, empty, plan, Env, Heading, Painted};
 use measure::shaped::FontBook;
@@ -19,13 +19,15 @@ use scene::Node;
 
 type Painter<'a> = Box<dyn Fn(&bound::Plane, Size) -> Result<Painted, Diagnostic> + 'a>;
 
-/// The gutter law, the x inset (a line's mark pad) and the painter of a plot whose one layer is `mark`.
+/// The gutter law, the x inset (the mark pad a continuous x keeps off the plot edges) and the painter of a plot whose one layer is `mark`.
 fn family<'a>(plot: &bound::Plane, cell: Size, mark: &Mark, canvas: &'a str, scope: &'a str) -> Result<(GutterRule, Option<f64>, Painter<'a>), Diagnostic> {
     match mark {
-        Mark::Points { .. } => Ok((GutterRule::BAR_FIT, None, Box::new(|plot, size| {
-            let layer = &plot.layers()[0];
-            points(plot, 0, layer, &layer.panels[0], size, "marks").map(|marks| Painted { marks, y_axis_at: None })
-        }))),
+        Mark::Points { .. } => {
+            Ok((GutterRule::BAR_FIT, Some(edge_pad(plot)?), Box::new(|plot, size| {
+                let layer = &plot.layers()[0];
+                points(plot, 0, layer, &layer.panels[0], size, "marks").map(|marks| Painted { marks, y_axis_at: None })
+            })))
+        }
         Mark::Bins => Ok((GutterRule::BAR_FIT, None, Box::new(|plot, size| {
             let layer = &plot.layers()[0];
             bins(plot, 0, layer, &layer.panels[0], size, "marks").map(|marks| Painted { marks, y_axis_at: None })
@@ -43,8 +45,9 @@ fn family<'a>(plot: &bound::Plane, cell: Size, mark: &Mark, canvas: &'a str, sco
 
 /// The chart's root `<svg>` for a cell of `cell`: planned by layout's cartesian frame under its
 /// family's gutter law, its marks painted by the family. A title is laid out by the frame in the
-/// width-tier face of `placed`'s chart title slot (`layout::title::chart_title`), and the warnings its width raised against it come back with the nodes. A chart bound
-/// over no rows is its title, its canvas and "No data": a subtitle on it is refused.
+/// width-tier face of `placed`'s chart title slot (`layout::title::chart_title`), and the warnings
+/// its width raised against it come back with the nodes. A chart bound over no rows is its title,
+/// its marks background and production's "No results" card: a subtitle on it is refused.
 pub(crate) fn draw_plot(chart: &bound::Chart, chart_id: &str, cell: Size, book: &FontBook, placed: &Style, emoji: &EmojiMode, card_padding: f64) -> Result<(Vec<Node>, Vec<Diagnostic>), Diagnostic> {
     let Ok(Family::Cartesian(cartesian)) = &chart.family else {
         return Err(diag::err_internal("a plot is drawn from a plot body"));
@@ -69,7 +72,7 @@ pub(crate) fn draw_plot(chart: &bound::Chart, chart_id: &str, cell: Size, book: 
     let scope = safe_scope(chart_id);
     let (rule, x_inset, paint) = family(plot, cell, &layer.mark, &canvas, &scope)?;
     let locale = active_number_locale();
-    let heading = chart.title.as_ref().map(|_| Heading { chart_id, style: placed });
+    let heading = (chart.title.is_some() || chart.subtitle.is_some()).then_some(Heading { chart_id, style: placed });
     let env = Env { book, locale: &locale, emoji, rule, card_padding, x_inset };
     let planned = plan(chart, heading.as_ref(), cell, &env)?;
     Ok((draw(&**plot, &planned, paint)?, planned.diagnostics().to_vec()))

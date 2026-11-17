@@ -163,7 +163,7 @@ def test_render_kpi_terminal_paints_the_same_string_as_the_text_render(
         chart_style_context=resolve_chart_style_context(get_theme_style()),
     )
 
-    assert _kpi_text_parts(resolved, data[0], None)["value"] == painted
+    assert _kpi_text_parts(resolved, data[0], None, [])["value"] == painted
     assert painted in render_kpi_terminal(
         chart, data, "Revenue", formats=None, kpi_compact=_KPI_COMPACT
     )
@@ -483,14 +483,12 @@ def test_render_chart_item_terminal_still_isolates_bug_class_errors(make_chart):
     assert output.startswith(f"[Error rendering {chart.id}:")
 
 
-def test_render_kpi_terminal_no_rows_carries_code(make_chart):
-    from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
-
+def test_render_kpi_terminal_no_rows_prints_the_empty_dash(make_chart):
     chart = make_chart("kpi", value="revenue")
-    with pytest.raises(ChartDataError) as exc_info:
-        render_kpi_terminal(chart, [], "Rev", formats=None, kpi_compact=_KPI_COMPACT)
-    assert exc_info.value.code is ERR_KPI_NO_DATA
-    assert exc_info.value.fields == {"chart_id": chart.id}
+    output = render_kpi_terminal(
+        chart, [], "Rev", formats=None, kpi_compact=_KPI_COMPACT
+    )
+    assert "\u2014" in output
 
 
 def test_render_kpi_terminal_multirow_carries_code(make_chart):

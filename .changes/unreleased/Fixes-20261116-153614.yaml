@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart placed more than once on a board keeps each placement's clip paths and masks apart.
+time: 2026-11-16T15:36:14.25586-08:00

@@ -1665,8 +1665,8 @@ class TestDuckDBSqlBuilders:
             def execute(self, sql: str, params: list[str]) -> _FakeConn:
                 return self
 
-            def fetchone(self) -> None:
-                return None
+            def fetchall(self) -> list[tuple[bool]]:
+                return []
 
             def install_extension(self, name: str) -> None:
                 installed.append(name)

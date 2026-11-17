@@ -477,7 +477,9 @@ fn check_alias_cycle(name: &str, aliases: &Aliases) -> Result<(), Diagnostic> {
 /// Whether *key* names one of *returned*, ignoring letter case as a result-column reference does.
 fn names_a_column(key: &str, returned: &BTreeSet<&str>) -> bool {
     let folded = key.to_lowercase();
-    returned.iter().any(|column| column.to_lowercase() == folded)
+    returned
+        .iter()
+        .any(|column| column.to_lowercase() == folded)
 }
 
 /// One query's `formats:`, as `_validate_query_formats` reads it. `returned` is the column set of

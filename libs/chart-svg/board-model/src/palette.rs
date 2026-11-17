@@ -622,12 +622,17 @@ fn downsample(stops: &[String], n: usize, skip_midpoint_on_even: bool) -> Vec<St
     (0..n).map(|i| at(round(i * (len - 1), n - 1))).collect()
 }
 
-/// A palette name as its list of sRGB stops, `palette()` for the default surface: `:N` takes the
-/// first N stops of a categorical or scaffold palette and evenly spaces N over a continuous ramp
-/// (11 when unstated), `_r` reverses, and a trailing variant moves every stop of a categorical one.
-pub fn palette_list(name: &str) -> Result<Vec<String>, PaletteError> {
-    let authored = name;
-    let (name, variants) = split_variants(name);
+/// What a palette reference names: its variants, shipped name, `:N` count and `_r` reversal, and the palette.
+struct Reference {
+    variants: Vec<&'static str>,
+    name: String,
+    steps: Option<usize>,
+    reverse: bool,
+    spine: &'static Spine,
+}
+
+fn reference(authored: &str) -> Result<Reference, PaletteError> {
+    let (name, variants) = split_variants(authored);
     let (mut name, steps, reverse) = if name.contains(':') || name.ends_with("_r") {
         parse_reference(name)?
     } else {
@@ -643,8 +648,21 @@ pub fn palette_list(name: &str) -> Result<Vec<String>, PaletteError> {
         "parula" => "dbt-seq-blue".to_string(),
         _ => name,
     };
-    let sp = spine(&name)
+    let spine = spine(&name)
         .map_err(|_| PaletteError(format!("unknown palette {name:?} in {authored:?}")))?;
+    Ok(Reference { variants, name, steps, reverse, spine })
+}
+
+/// `palette_family`: the family of a palette reference, resolved the way `palette_list` resolves it.
+pub fn palette_family(authored: &str) -> Result<&'static str, PaletteError> {
+    Ok(reference(authored)?.spine.family)
+}
+
+/// A palette name as its list of sRGB stops, `palette()` for the default surface: `:N` takes the
+/// first N stops of a categorical or scaffold palette and evenly spaces N over a continuous ramp
+/// (11 when unstated), `_r` reverses, and a trailing variant moves every stop of a categorical one.
+pub fn palette_list(authored: &str) -> Result<Vec<String>, PaletteError> {
+    let Reference { variants, name, steps, reverse, spine: sp } = reference(authored)?;
     let colors = || {
         sp.colors
             .clone()

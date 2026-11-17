@@ -74,8 +74,8 @@ use clock::{Bare, ClockPlan, Mark};
 /// A grained axis whose labels stand on its ticks also assumes the caller refused what layout cannot
 /// see and production reads there: an authored `labels.align`, `labels.angle`, `labels.values`
 /// or `labels.expr` (`labels_unpinned`, `x_label_align`) keep end-point labels away or move the
-/// anchor, so such a board must not reach this axis. The authored `ticks.count` and label formats
-/// layout cannot read are stated (`tick_count`, `date_format`) and refused by name.
+/// anchor, so such a board must not reach this axis. An authored `ticks.count` is the axis's own
+/// (`tick_count`); the label formats layout cannot read are stated (`date_format`) and refused by name.
 ///
 /// An axis over times of day also assumes the caller refused what layout cannot see and production reads
 /// there: `labels.values`, `labels.expr` and `scale.continuous.domain`, each of which makes production
@@ -105,9 +105,9 @@ pub struct TimeLabels<'a> {
     pub inset: f64,
     /// `labels.font.case` is set: production measures and draws the cased text, which is not modeled.
     pub cased: bool,
-    /// `ticks.count` is authored: production ticks a capped count (`AuthoredTickCadence::Count`) on a
-    /// grained axis and picks d3's rung by it on a continuous one, which is not modeled.
-    pub tick_count: bool,
+    /// An authored `ticks.count`: production ticks a capped count (`AuthoredTickCadence::Count`) on a
+    /// grained axis and picks d3's rung by it on a continuous one. Exclusive with `tick_unit`.
+    pub tick_count: Option<usize>,
     /// `labels.format` or a redefined `date_<grain>` is authored: production prints every label through
     /// that format (`AuthoredTimeFormat`) and turns the interval labels off, which is not modeled.
     pub date_format: bool,
@@ -182,6 +182,20 @@ pub fn x_on_range(extent: (f64, f64), inset: f64, day: f64, width: f64) -> f64 {
     inset + (width - 2.0 * inset).max(0.0) * frac
 }
 
+/// A scale that pads its domain (`scale.padding`, a scatter's) rather than its range: Vega's `padDomain` widens the
+/// extent about its center so its ends stand `inset` px inside a range `width` wide, and a time scale's domain
+/// holds whole milliseconds (`vega_fit::pad_domain`, `scatter_axis.rs`: `Scale::domain_at`). The ticks and the
+/// marks land where [`x_on_range`] puts them either way; the scale's description names these ends.
+pub fn padded_extent((lo, hi): (f64, f64), inset: f64, width: f64) -> (f64, f64) {
+    let whole_ms = |day: f64| (day * MS_PER_DAY).trunc() / MS_PER_DAY;
+    if inset <= 0.0 {
+        return (whole_ms(lo), whole_ms(hi));
+    }
+    let widen = width / (width - 2.0 * inset);
+    let center = (lo + hi) / 2.0;
+    (whole_ms(center + (lo - center) * widen), whole_ms(center + (hi - center) * widen))
+}
+
 /// What a calendar grain adds to an axis: the grain, the fiscal year's first month, every bucket
 /// from the data's first to its last (the dates the ladder judges and the labels name) and the
 /// ladder's verdict.
@@ -217,11 +231,6 @@ impl<'a> TimeAxis<'a> {
                 "a time axis with labels.font.case is not supported"
             )));
         }
-        if labels.tick_count {
-            return Err(Diagnostic::refused(refuse!(
-                "a time axis with an authored ticks.count is not supported"
-            )));
-        }
         if labels.date_format {
             return Err(Diagnostic::refused(refuse!(
                 "a time axis with an authored labels.format or date_<grain> format is not supported"
@@ -242,19 +251,21 @@ impl<'a> TimeAxis<'a> {
                 "a moved fiscal year or quarter grain reached a continuous time axis",
             ));
         }
-        let cadence = match labels.tick_unit {
-            TimeUnitSetting::Absent => None,
-            TimeUnitSetting::Auto => return Err(no_cadence("auto")),
-            TimeUnitSetting::Unit(unit) => {
+        let cadence = match (labels.tick_unit, labels.tick_count) {
+            (TimeUnitSetting::Absent, count) => count.map(AuthoredTickCadence::Count),
+            (TimeUnitSetting::Auto, _) => return Err(no_cadence("auto")),
+            (TimeUnitSetting::Unit(unit), None) => {
                 Some(AuthoredTickCadence::authored(unit, labels.tick_step))
+            }
+            (TimeUnitSetting::Unit(_), Some(_)) => {
+                return Err(diag::err_internal(
+                    "an axis authors `ticks.time_unit` and `ticks.count` together, which the style schema excludes",
+                ))
             }
         };
         // An aware timestamp prints its wall clock in the board zone; a bare date or a naive
         // timestamp keeps the one it was written with.
-        let aware = domain
-            .buckets
-            .iter()
-            .all(|b| b.absolute && b.iso.len() > 10);
+        let aware = domain.aware();
         let clock = ClockPlan::of(domain, &labels.clock, cadence, aware)?;
         // Production draws a dropped-grain axis's ticks itself: the curated ladder for a
         // scaffold-budget drop it keeps (`keeps_dropped_grain_ladder`), d3's ticks for an authored
@@ -365,9 +376,8 @@ impl<'a> TimeAxis<'a> {
             Some(AuthoredTickCadence::Interval(interval)) => {
                 interval_instants(interval, lo, hi, zone.as_ref())
             }
-            Some(AuthoredTickCadence::UncappedCount(n)) => zone_instants(lo, hi, n, zone.as_ref()),
-            Some(AuthoredTickCadence::Count(_)) => {
-                unreachable!("an authored tick unit never yields a plain count")
+            Some(AuthoredTickCadence::Count(count) | AuthoredTickCadence::UncappedCount(count)) => {
+                zone_instants(lo, hi, count, zone.as_ref())
             }
             None => zone_instants(
                 lo,

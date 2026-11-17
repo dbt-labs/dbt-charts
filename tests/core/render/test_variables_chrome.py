@@ -416,6 +416,7 @@ class TestGeometryNeverEvaluatesBehavior:
     all — so it must evaluate nothing beyond the control's own geometry.
     """
 
+    @pytest.mark.usefixtures("placement_scope")
     def test_a_query_backed_enabled_condition_does_not_break_the_board(self) -> None:
         """Regression: `enabled: {query:, column:}` is a documented surface.
 
@@ -1005,6 +1006,7 @@ def test_a_list_of_dates_publishes_iso_string_json() -> None:
     assert json.loads(_committed_value(control)) == ["2026-01-01", "2026-02-01"]
 
 
+@pytest.mark.usefixtures("placement_scope")
 def test_a_board_with_a_bare_date_daterange_default_renders() -> None:
     from dbt_charts.core.compile import compile
     from dbt_charts.core.render.board_resolve import (

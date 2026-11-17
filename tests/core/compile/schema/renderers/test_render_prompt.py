@@ -459,12 +459,11 @@ class TestTypeCellEnumWithSiblingContainerArm:
         )
 
 
-class TestEnumCellTruncation:
-    """A long closed set (ScaleTargetConfig.palette's ~116 names) shouldn't
-    blow out the docs table — the JSON Schema still carries the full list,
-    where completion actually reads it."""
+class TestLongEnumCollapses:
+    """A long closed set (warning codes, palette names) renders as a
+    collapsed `<details>` list so it doesn't blow out the docs table."""
 
-    def test_short_enum_is_not_truncated(self) -> None:
+    def test_short_enum_is_inline(self) -> None:
         from dbt_charts.core.compile.schema.renderers.prompt import _enum_str
 
         assert _enum_str(["a", "b", "c"]) == 'enum: "a", "b", "c"'
@@ -485,36 +484,45 @@ class TestEnumCellTruncation:
 
         assert _enum_str([False]) == "const: false"
 
-    def test_long_enum_is_truncated_with_count(self) -> None:
+    def test_long_enum_collapses_with_every_member(self) -> None:
         from dbt_charts.core.compile.schema.renderers.prompt import (
-            _ENUM_CELL_TRUNCATE_AT,
+            _ENUM_CELL_COLLAPSE_AT,
             _enum_str,
         )
 
-        values = [f"v{i}" for i in range(_ENUM_CELL_TRUNCATE_AT + 5)]
+        values = [f"v{i}" for i in range(_ENUM_CELL_COLLAPSE_AT + 5)]
         result = _enum_str(values)
-        assert result.count('"v') == _ENUM_CELL_TRUNCATE_AT
-        assert "5 more" in result
+        assert result.startswith(
+            f"<details><summary>one of {len(values)} values</summary>"
+        )
+        assert result.endswith("</details>")
+        assert result.count('"v') == len(values)
 
-    def test_scale_target_config_palette_row_is_truncated(self) -> None:
+    def test_scale_target_config_palette_row_collapses(self) -> None:
         result = render_prompt(introspect())
         start = result.index("## ScaleTargetConfig\n")
         block = result[start : result.index("\n## ", start + 1)]
         row = next(
             line for line in block.splitlines() if line.startswith("| `palette`")
         )
-        assert "more" in row, f"palette row not truncated: {row}"
+        assert "<details><summary>one of " in row, f"palette row not collapsed: {row}"
 
-    def test_variable_input_row_not_collaterally_truncated(self) -> None:
-        # Variable.input has 14 members — a pre-existing enum unrelated to this
-        # task. It must stay under the truncation threshold: this task's own
-        # first-pass 12-member threshold previously clipped it to 12, silently
-        # dropping "checkbox" and "radio" from the published reference.
+    def test_warning_codes_inside_list_collapse(self) -> None:
+        result = render_prompt(introspect())
+        start = result.index("## SqlQuery\n")
+        block = result[start : result.index("\n## ", start + 1)]
+        row = next(line for line in block.splitlines() if line.startswith("| `ignore`"))
+        assert row.startswith("| `ignore` | list[<details><summary>one of "), row
+        assert "'WARN-ADJACENT-TEXT-ROWS'" in row
+        assert "values</summary>" in row
+
+    def test_variable_input_row_stays_inline(self) -> None:
+        # Variable.input (14 members) is the largest enum that stays inline.
         result = render_prompt(introspect())
         start = result.index("## Variable\n")
         block = result[start : result.index("\n## ", start + 1)]
         row = next(line for line in block.splitlines() if line.startswith("| `input`"))
-        assert "more" not in row, f"unrelated pre-existing enum got truncated: {row}"
+        assert "<details>" not in row, f"short enum got collapsed: {row}"
         assert '"checkbox"' in row
         assert '"radio"' in row
 

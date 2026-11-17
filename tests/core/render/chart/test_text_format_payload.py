@@ -54,19 +54,3 @@ def test_table_payload_keeps_the_text_format_and_blank_cells(
     assert "ann+x@example.com" in svg
     assert "—" in svg
     assert [load["rows"][1]["email"] for load in loaded_rows] == [""]
-
-
-def test_kpi_payload_sends_text_link_beside_link(
-    payloads: list[dict[str, Any]],
-) -> None:
-    rows = "      - {email: 'ann@example.com'}\n"
-    chart = "    type: kpi\n    value: email\n"
-    svg = render_board_to_svg(
-        text_format_board(rows, chart, formats="      email: email\n")
-    )
-    resolved = payloads[-1]["resolved"]
-    assert resolved["format"]["spec"] == "email"
-    assert resolved["link"] is None
-    assert resolved["text_link"] == "mailto:ann@example.com"
-    assert link_hrefs(svg) == ["mailto:ann@example.com"]
-    assert "ann@example.com" in svg

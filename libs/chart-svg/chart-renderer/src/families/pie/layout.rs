@@ -238,9 +238,10 @@ fn attached_wheel<'a>(
     // shift runs) or `bump_padding_top` without one. The table lands where the plot would have
     // started: below the card padding and the title block.
     let titled = r.title.as_deref().is_some_and(|t| !t.is_empty());
+    let subtitled = r.subtitle.as_deref().is_some_and(|s| !s.is_empty());
     let (wheel_h, wheel_pad_t, title_style, top_table_y) = if attached.placement == Placement::Top {
         let room = table_h + gap;
-        if titled {
+        if titled || subtitled {
             let shift = crate::TitleShift { title_dy: 0.0, body_dy: room };
             let shifted = crate::title_shift::shift_vega_payload(payload, shift)?;
             let title_style: Option<TitleStyle> = serde_json::from_value(shifted.resolved["title_style"].clone())
@@ -300,22 +301,28 @@ pub(crate) fn solve_candidate(bound: &Bound, cell: Rect, measure: &Measure) -> R
 /// padding excluded — the title font size, one subtitle line (its font size plus Vega's default
 /// 3px subtitle padding) and `title.offset` (Vega's own 4 when unset).
 fn vega_title_block_height(r: &Resolved) -> Result<f64, String> {
-    let title_size = r
-        .style
-        .title_font
-        .as_ref()
-        .and_then(|f| f.size)
-        .ok_or("pie: a titled attached_table at the top requires style.title_font.size")?;
-    let subtitle = if r.subtitle.as_deref().is_some_and(|s| !s.is_empty()) {
-        let size = r
-            .title_style
+    let subtitle_size = || {
+        r.title_style
             .as_ref()
             .and_then(|ts| ts.subtitle.as_ref())
             .and_then(|sub| sub.font.size)
-            .ok_or("pie: a subtitled attached_table at the top requires title_style.subtitle.font.size")?;
-        size + crate::constants::layout::VEGA_SUBTITLE_PADDING
-    } else {
-        0.0
+            .ok_or("pie: a subtitled attached_table at the top requires title_style.subtitle.font.size")
+    };
+    let titled = r.title.as_deref().is_some_and(|t| !t.is_empty());
+    let subtitled = r.subtitle.as_deref().is_some_and(|s| !s.is_empty());
+    // A subtitle with no title is the block's only row, at its own size.
+    let rows = match (titled, subtitled) {
+        (false, _) => subtitle_size()?,
+        (true, subtitled) => {
+            let title_size = r
+                .style
+                .title_font
+                .as_ref()
+                .and_then(|f| f.size)
+                .ok_or("pie: a titled attached_table at the top requires style.title_font.size")?;
+            let subtitle = if subtitled { subtitle_size()? + crate::constants::layout::VEGA_SUBTITLE_PADDING } else { 0.0 };
+            title_size + subtitle
+        }
     };
     // The shared shift law (`title_shift::shift_vega_payload`) has already refused an unset
     // offset before this runs; this read never falls back.
@@ -325,7 +332,7 @@ fn vega_title_block_height(r: &Resolved) -> Result<f64, String> {
         .and_then(|ts| ts.position.as_ref())
         .and_then(|pos| pos.offset)
         .ok_or("pie: a titled attached_table at the top requires title_style.position.offset")?;
-    Ok(title_size + subtitle + offset)
+    Ok(rows + offset)
 }
 
 /// A pie's color legend as Vega lays it out: `(label, fill)` per entry plus the shared grid
@@ -655,7 +662,7 @@ fn wheel(
 
     let mut nodes = vec![frame.background_node()];
     let title_pos = title.ink().map(|_| (pad_l - plot.x1, title_y - plot.y1));
-    if title_pos.is_some() && !title.block().title_lines.is_empty() {
+    if title_pos.is_some() {
         let title_nodes = title.nodes_at(pad_l, title_y);
         // A left-placed table pushes the wheel right, and the title group slides back by that
         // much so it stays on the card's own left edge.

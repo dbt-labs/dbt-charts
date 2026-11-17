@@ -3,8 +3,8 @@
 Tests that:
 - An alias URL 30x-redirects to the board's canonical file-path URL
 - Query string is preserved in the redirect
-- An alias colliding with a real file path errors at index build time
-- Two boards claiming the same alias errors at index build time
+- An alias colliding with a real file path fails only the board declaring it
+- Two boards claiming the same alias fail both boards, and the rest still serve
 - URL normalization (trailing slash, percent-decode, absolute)
 - Aliasing a generated system-view route redirects (D-21 override)
 - Unknown URL still 404s
@@ -273,25 +273,30 @@ class TestSystemViewAliasOverride:
 
 
 class TestCollisionDetection:
-    def test_alias_collision_with_real_file_raises(
+    def test_alias_collision_with_real_file_fails_only_that_board(
         self, collision_project: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """Alias colliding with a real file path → ValueError naming the offending boards."""
-        from dbt_charts.core.serve.alias_index import AliasIndex
+        """An alias shadowing a real board is that board's error, not a redirect."""
+        index = AliasIndex.build(local_project(collision_project))
 
-        with pytest.raises(ValueError, match="(?i)(collision|alias|other|sales)"):
-            AliasIndex.build(local_project(collision_project))
+        assert index.lookup("/other/") is None
+        assert [e.code for e in index.errors["charts/sales.yml"]] == ["ERR-BOARD-ALIAS"]
+        assert "charts/other.yml" not in index.errors
 
-    def test_duplicate_alias_raises(
+    def test_duplicate_alias_fails_both_boards_and_redirects_nowhere(
         self,
         duplicate_alias_project: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
-        """Two boards claiming the same alias → ValueError naming both files."""
-        from dbt_charts.core.serve.alias_index import AliasIndex
+        """Two boards claiming one alias: each names the other; neither wins."""
+        index = AliasIndex.build(local_project(duplicate_alias_project))
 
-        with pytest.raises(ValueError, match="(?i)(alias|shared)"):
-            AliasIndex.build(local_project(duplicate_alias_project))
+        assert index.lookup("/shared-alias/") is None
+        (a_error,) = index.errors["charts/a.yml"]
+        (b_error,) = index.errors["charts/b.yml"]
+        assert a_error.code == b_error.code == "ERR-BOARD-ALIAS"
+        assert "charts/b.yml" in a_error.message
+        assert "charts/a.yml" in b_error.message
 
 
 # ---------------------------------------------------------------------------
@@ -357,8 +362,10 @@ rows:
   - t
 """
         (boards / "bad.yml").write_text(bad_board)
-        with pytest.raises(ValueError, match="(?i)(absolute|leading|slash)"):
-            AliasIndex.build(local_project(tmp_path))
+        index = AliasIndex.build(local_project(tmp_path))
+        (error,) = index.errors["charts/bad.yml"]
+        assert error.code == "ERR-BOARD-ALIAS"
+        assert "leading /" in error.message
 
     def test_trailing_slash_normalized(self, tmp_path: Path) -> None:
         """Alias without trailing slash and request with trailing slash both match."""
@@ -675,7 +682,7 @@ rows:
         )
         assert "Other Dashboard" in response.text
 
-    def test_ambiguous_patterns_raise_at_build(
+    def test_ambiguous_patterns_fail_both_boards(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Two patterns with the same shape (/items/<name> vs /items/<id>) error."""
@@ -691,26 +698,52 @@ rows:
             "queries: {q: {type: values, rows: [{n: 2}]}}\n"
             "charts: {t: {query: q, type: table}}\nrows: [t]\n"
         )
-        with pytest.raises(ValueError, match="(?i)ambiguous"):
-            AliasIndex.build(local_project(tmp_path))
+        index = AliasIndex.build(local_project(tmp_path))
+        assert index.match_patterns("/items/x/") == []
+        assert set(index.errors) == {"charts/a.yml", "charts/b.yml"}
 
 
 # ---------------------------------------------------------------------------
-# Tests: server startup collision (lifespan surfaces ValueError)
+# Tests: a bad alias fails its own boards, never the server
 # ---------------------------------------------------------------------------
 
 
-class TestServerStartupCollision:
-    def test_create_server_raises_on_alias_collision(
+class TestServerAliasErrors:
+    def test_duplicate_alias_fails_only_the_claiming_boards(
+        self, duplicate_alias_project: Path
+    ) -> None:
+        (duplicate_alias_project / "charts" / "other.yml").write_text(_OTHER_BOARD)
+        with TestClient(
+            create_server(FilesystemProject(duplicate_alias_project)),
+            raise_server_exceptions=True,
+            follow_redirects=False,
+        ) as client:
+            other = client.get("/other/")
+            a = client.get("/a/")
+            b = client.get("/b/")
+            shared = client.get("/shared-alias/")
+
+        assert other.status_code == 200
+        assert "Other Dashboard" in other.text
+        for page in (a, b):
+            assert page.status_code == 422
+            assert "ERR-BOARD-ALIAS" in page.text
+        assert shared.status_code == 404
+
+    def test_alias_shadowing_a_board_fails_only_its_own_board(
         self, collision_project: Path
     ) -> None:
-        """create_server / lifespan surfaces ValueError when alias collides with real file."""
-        app = create_server(FilesystemProject(collision_project))
-        with (
-            pytest.raises(ValueError, match="(?i)(collision|alias|other|sales)"),
-            TestClient(app, raise_server_exceptions=True),
-        ):
-            pass  # lifespan runs on TestClient __enter__
+        with TestClient(
+            create_server(FilesystemProject(collision_project)),
+            raise_server_exceptions=True,
+            follow_redirects=False,
+        ) as client:
+            other = client.get("/other/")
+            sales = client.get("/sales/")
+
+        assert other.status_code == 200
+        assert sales.status_code == 422
+        assert "ERR-BOARD-ALIAS" in sales.text
 
 
 def test_normalize_alias_url_is_percent_decoded_and_trailing_slash_canonical() -> None:

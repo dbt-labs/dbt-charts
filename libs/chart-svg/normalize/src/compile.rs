@@ -507,7 +507,12 @@ fn fold<'a>(
     let own_variables = crate::restated_variables::variables(&parsed.twin, &imports.variables);
     let own_format_names = crate::board_warnings::own_format_names(&parsed.twin);
     let merged = merged_patch(parsed.twin, path, boards_root, &files, today)?;
-    gathered.extend(merged.notices.iter().map(|n| schema_migrated(n, files.located())));
+    gathered.extend(
+        merged
+            .notices
+            .iter()
+            .map(|n| schema_migrated(n, files.located())),
+    );
     check_layers(&merged.layers)?;
     if merged.layers.iter().any(|(_, l)| layer_sets_rect_stroke(l)) {
         return Err(CompileError::Invalid(rect_stroke_refusal()));
@@ -859,7 +864,7 @@ impl CompiledBoard {
     /// unset, by authored path.
     pub fn board(&self) -> Result<Board, model_core::Unset> {
         let mut patch = self.structure.patch.clone();
-        patch.body.style = Tri::Value(self.style.inherited.clone());
+        patch.body.style = Tri::Value(Box::new((*self.style.inherited).clone()));
         if let Some(layout) = &mut patch.body.layout {
             install(layout, &self.nested);
         }
@@ -986,14 +991,16 @@ fn compile_found(
         &structure.index.query_boards,
         &|key| public_id(&structure.index, key),
     )?;
-    let charts = chart_styles(&structure, &style, &mut chart_failures)?;
+    let charts = chart_styles(&structure, &style, &nested, &placed, &mut chart_failures)?;
     let layer_tokens = layer_color_tokens(&structure, &placed)?;
     structure.validate_only.extend(layer_tokens);
     // Validate reports the error as the cascade raised it, without the render's attribution param.
-    structure.validate_only.extend(chart_failures.values().cloned().map(|mut d| {
-        d.params.remove("chart_id");
-        d
-    }));
+    structure
+        .validate_only
+        .extend(chart_failures.values().cloned().map(|mut d| {
+            d.params.remove("chart_id");
+            d
+        }));
     Ok(CompiledBoard {
         structure,
         style,
@@ -1130,19 +1137,31 @@ fn placed_styles(
     Ok((placed, own))
 }
 
-/// Each defined chart's style at the root scope.
+/// Each defined chart's style at the root scope. A chart placed in the root scope already has it
+/// among `placed`: the same fold of the same inputs, so it is taken, not computed again.
 fn chart_styles(
     structure: &Structure,
     root: &Resolved<Style>,
+    nested: &BTreeMap<String, Resolved<Style>>,
+    placed: &BTreeMap<String, Resolved<Style>>,
     failures: &mut IndexMap<ChartId, Diagnostic>,
 ) -> Result<BTreeMap<String, Resolved<Style>>, CompileError> {
+    let mut at_root: BTreeMap<&str, &Resolved<Style>> = BTreeMap::new();
+    for (pos, name) in &structure.layout.charts {
+        if innermost(nested.keys(), pos.as_str()).is_none() {
+            if let Some(style) = placed.get(pos.as_str()) {
+                at_root.entry(name.as_str()).or_insert(style);
+            }
+        }
+    }
     let mut out = BTreeMap::new();
     for (name, chart) in &structure.patch.body.charts {
         if let Some(chart) = chart {
-            out.insert(
-                name.clone(),
-                fold_or_fail(name, &structure.index, chart, root, failures)?,
-            );
+            let style = match at_root.get(name.as_str()) {
+                Some(style) => (*style).clone(),
+                None => fold_or_fail(name, &structure.index, chart, root, failures)?,
+            };
+            out.insert(name.clone(), style);
         }
     }
     Ok(out)

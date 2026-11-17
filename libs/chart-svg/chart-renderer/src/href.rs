@@ -175,7 +175,7 @@ pub(crate) fn anchor_for<'h>(link: Option<&DatumLink>, href: &'h Option<String>)
 }
 
 impl DatumLink<'_> {
-    /// The href of `row`'s datum.
+    /// The href of `row`'s datum, resolved in the host's link context, its scheme checked.
     pub(crate) fn href(&self, row: &serde_json::Map<String, Value>) -> Result<String, String> {
         let href = resolve_channel_href(self.template, |channel| {
             let field = match channel {
@@ -208,7 +208,7 @@ impl DatumLink<'_> {
                 },
             }
         })?;
-        Ok(self.context.map_or(href.clone(), |ctx| resolve_href(&href, ctx)))
+        hosted(href, self.context)
     }
 }
 
@@ -259,6 +259,14 @@ pub(crate) fn resolve_channel_href_in(
     }
     out.push_str(rest);
     Ok(out)
+}
+
+/// An expanded mark href as the host serves it: resolved in its link context, and refused when a row
+/// filled it with a navigable script scheme, as a table cell's is (`checked_href`).
+pub(crate) fn hosted(href: String, context: Option<&LinkContext>) -> Result<String, String> {
+    let href = context.map_or(href.clone(), |ctx| resolve_href(&href, ctx));
+    checked_href(&href)?;
+    Ok(href)
 }
 
 /// `links.py::link_scheme`: the scheme a browser navigates `href` with, `None`

@@ -1,0 +1,3 @@
+kind: Fixes
+body: The text render of a percent chart now prints its y range at the precision the chart's axis shows.
+time: 2026-11-16T12:41:13.337994-08:00

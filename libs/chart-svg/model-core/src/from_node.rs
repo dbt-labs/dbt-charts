@@ -50,15 +50,16 @@ pub fn parse_patch<T: FromNode>(node: &Node, retired: Option<&dyn Retired>) -> P
 }
 
 /// The shared body of a derived `authored` / `patch`: the node must be a map;
-/// `read` claims keys; what it leaves unclaimed is an error.
+/// `read` claims keys; what it leaves unclaimed is an error. `keys` lists the keys a map of the
+/// type can hold, built only to word the error for a node that is not one.
 pub fn read_map<R: Default>(
     node: &Node,
     cx: &mut Cx,
-    keys: Vec<String>,
+    keys: fn() -> Vec<String>,
     read: impl FnOnce(&mut MapRead, &mut Cx) -> R,
 ) -> R {
     let Some(mut m) = MapRead::new(node) else {
-        cx.not_a_map(node, &keys);
+        cx.not_a_map(node, &keys());
         return R::default();
     };
     let out = read(&mut m, cx);

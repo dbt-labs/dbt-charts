@@ -80,6 +80,11 @@ impl TryFrom<u32> for PositiveInt {
         }
     }
 }
+impl PositiveInt {
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
 impl Spell for PositiveInt {
     fn spell(&self) -> serde_json::Value {
         self.0.spell()

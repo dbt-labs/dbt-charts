@@ -92,7 +92,7 @@ impl Weight {
     }
 
     /// What the stripe id's hash reads (callout.rs:`hash_weight_str`).
-    fn hashed(&self) -> String {
+    pub(super) fn hashed(&self) -> String {
         match self {
             Weight::Number(n) => legacy::hashed_number(*n),
             Weight::Css(css) => css.clone(),
@@ -433,22 +433,7 @@ pub(super) fn card_rect(background: &str, border: &Border, w: f64, top: f64, h: 
         .quick("fill", background)
         .quick("stroke", border.color.as_str())
         .num("stroke-width", border.width);
-    // common.rs:5890 (`border_dash_pairs`): the dash pattern, its cap and offset, only with a dash array.
-    let attrs = match &border.dash_array {
-        None => attrs,
-        Some(dashes) => {
-            let dashes = dashes.iter().map(|v| d3rs::py_float::format_g(*v)).collect::<Vec<_>>().join(",");
-            let attrs = attrs.quick("stroke-dasharray", dashes);
-            let attrs = match &border.line_cap {
-                Some(cap) => attrs.quick("stroke-linecap", cap.as_str()),
-                None => attrs,
-            };
-            match border.dash_offset {
-                Some(offset) => attrs.quick("stroke-dashoffset", d3rs::py_float::format_g(offset)),
-                None => attrs,
-            }
-        }
-    };
+    let attrs = crate::board::card::dash_attrs(attrs, border.dash_array.as_deref(), border.line_cap.as_deref(), border.dash_offset);
     Node::new(Role::Chrome, attrs, Shape::Rect { x: 0.0, y: top, w, h: h - top, rx: border.radius })
 }
 

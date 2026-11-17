@@ -549,8 +549,9 @@ pub struct BarLabelsStyle {
     #[model(fill = "auto")]
     pub stacked: Engine<bool, Auto>,
     /// Jinja2 label template, like a pie's. Its names are the row's columns and `value`,
-    /// the bar's measure; on bars joined by ribbons `percent` is the value as a share of
-    /// the first stage's. `value` and `percent` replace a same-named column.
+    /// the bar's measure; on bars joined by ribbons `percent_of_first` is the value as a
+    /// share of the first stage's and `percent_of_previous` as a share of the stage before's
+    /// (the first stage's own). `value` and the percents replace a same-named column.
     #[model(absent = "the value, formatted")]
     pub template: Option<String>,
 }
@@ -577,9 +578,9 @@ pub struct RibbonLabelsStyle {
     pub visible: bool,
     /// Jinja2 label template, like a pie's. Its names are the columns of the row the
     /// ribbon flows into, `value`, that stage's value less the previous stage's
-    /// (negative for a loss), and `percent`, that change as a share of the previous
-    /// stage's value. `value` and `percent` replace a same-named column. The label uses
-    /// the bar value labels' font.
+    /// (negative for a loss), and that change as a share of the previous stage's value,
+    /// `percent_of_previous`, and of the first stage's, `percent_of_first`. `value` and the
+    /// percents replace a same-named column. The label uses the bar value labels' font.
     #[model(absent = "no label text")]
     pub template: Option<String>,
 }
@@ -646,8 +647,10 @@ pub struct LineMarkStyle {
     /// Line interpolation curve, one of a fixed set.
     #[model(fill = "linear")]
     pub curve: Curve,
-    /// For curve='step' on a categorical x-axis, whether adjacent band plateaus
-    /// are joined by vertical jumps or left as disconnected segments.
+    /// Whether the line joins every point: on a date or numeric x-axis it breaks
+    /// across a large gap unless true. For curve='step' on a categorical x-axis,
+    /// whether adjacent band plateaus are joined by vertical jumps or left as
+    /// disconnected segments.
     #[model(fill = "auto")]
     pub connect: Engine<bool, Auto>,
     /// Stroke line cap for the sub-paths of a disconnected band-step.

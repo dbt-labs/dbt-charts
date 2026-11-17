@@ -15,13 +15,15 @@ Entry Points:
     - compose_query(plan, name, ...) -> ResolvedQuery | QueryResult
     - translate_query(plan, name, ...) -> ResolvedQuery | QueryResult
     - plan_board(compiled, variables, ...) -> QueryPlan
+    - Planned: a board's compile and its plan, what a render reads
 """
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from dbt_charts import _engine
+from dbt_charts.core.compile.engine import CompileRecord
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.source import (
     ResolvedSourceConfig,
@@ -53,6 +55,16 @@ from dbt_charts.core.execute.query_result import (
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 from dbt_charts.core.execute.sql_translate import dialect_differs, engine_dialect
 from dbt_charts.core.project import Project
+
+
+@dataclass(frozen=True)
+class Planned:
+    """The engine's compile of a board and its plan under one render's values: execute
+    reads the plan, and the engine draws from the compile."""
+
+    compiled: _engine.CompiledBoard
+    record: CompileRecord
+    plan: QueryPlan
 
 
 def _sql_entry(plan: QueryPlan, name: str) -> PlannedSqlQuery | QueryResult:

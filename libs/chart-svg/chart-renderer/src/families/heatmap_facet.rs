@@ -261,7 +261,7 @@ impl HeatmapXAxis {
     }
 
     /// One label's ink in the axis frame, below a plot whose bottom edge is at
-    /// `row_y - offset - tick_len - label_pad`: a rotated block turns about its
+    /// `row_y - offset - label_pad`: a rotated block turns about its
     /// anchor, a flat one is centered on its band. A second row hangs a line
     /// advance below the first.
     fn label_ink(&self, scale: &BandScale, row_y: f64, label: &AxisLabel) -> vega_fit::Bounds {
@@ -302,7 +302,7 @@ impl HeatmapXAxis {
 
     /// The axis frame's label row below a plot whose bottom edge sits at `plot_h`.
     fn label_row(&self, plot_h: f64) -> f64 {
-        self.edge.at(plot_h, self.offset + self.tick_len + self.label_pad)
+        self.edge.at(plot_h, self.offset + self.label_pad)
     }
 
     /// How far a rotated label column reaches below the plot (bounds drop the
@@ -404,7 +404,7 @@ impl HeatmapXAxis {
         use ::layout::labels_expr::view::{anchor, AxisSpec, Orient};
         let (align, baseline) = if self.angle == 0.0 { ("center", "top") } else { vega_fit::vl_x_label_anchor(self.angle, true) };
         let (align, baseline) = (Some(anchor(align)?), Some(anchor(baseline)?));
-        let (offset, angle) = (self.tick_len + self.label_pad, vega_fit::normalize_angle(self.angle));
+        let (offset, angle) = (self.label_pad, vega_fit::normalize_angle(self.angle));
         Ok(AxisSpec { orient: Orient::Bottom, offset, shift: -0.5, align, baseline, angle, flush: None, style: ax_x.labels.item_style()? })
     }
 
@@ -416,13 +416,13 @@ impl HeatmapXAxis {
         let scale = BandScale::new(self.domain.clone(), 0.0, plot_w, 0.0, 0.0);
         let sign = self.edge.sign();
         let axis_top = plot_edge + sign * self.offset + AXIS_TRANSLATE;
-        let label_y = axis_top + sign * (self.tick_len + self.label_pad) + measure::baseline_shift(self.edge.baseline(), self.font_size);
+        let label_y = axis_top + sign * self.label_pad + measure::baseline_shift(self.edge.baseline(), self.font_size);
         let row_advance = vega_fit::label_row_advance(self.font_size);
         let label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
         let label_weight = ax_x.labels.font.weight_str();
         let caption = category_axis_caption(&self.caption_title, ax_x, &self.domain)?;
         let (align, baseline) = self.anchor();
-        let anchor_y = axis_top + sign * (self.tick_len + self.label_pad);
+        let anchor_y = axis_top + sign * self.label_pad;
         let dy = measure::baseline_shift(baseline, self.font_size);
         // A flat label is `middle`-anchored whatever the side; a rotated one follows the angle.
         let face = LabelFace { anchor: svg_text_anchor(align), family: &self.family, size: self.font_size, weight: &label_weight, style: ax_x.labels.font.style.as_deref(), fill: label_color };
@@ -1133,6 +1133,7 @@ pub(crate) fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diag
     let folded = fold_wide_y(payload)?;
     let payload = folded.as_ref().unwrap_or(payload);
     let Prelude { r, kind, types, .. } = Prelude::of(payload)?;
+    crate::families::heatmap::axis_label_rules(&r).refuse_all("a faceted heatmap's shared x axis does not take label rules")?;
     render_facet(payload, fonts, &r, kind, &types)
 }
 

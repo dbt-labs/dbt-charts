@@ -65,16 +65,14 @@ class Run:
         """The context planned under *variables*, sharing this run's memos."""
         if not variables:
             return self.ctx
-        return replace(
-            self.ctx,
-            plan=plan_of(
-                self.ctx.board,
-                self.ctx.env,
-                self.ctx.rendered_at,
-                variables,
-                all_queries=True,
-            ),
+        planned = plan_of(
+            self.ctx.board,
+            self.ctx.env,
+            self.ctx.rendered_at,
+            variables,
+            all_queries=True,
         )
+        return replace(self.ctx, plan=planned.plan, compiled=planned.compiled)
 
     def results(
         self,

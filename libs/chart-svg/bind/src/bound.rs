@@ -15,9 +15,11 @@ use board_model::style::axis::TextAlign;
 use model_core::Engine;
 use board_model::ids::{BoardId, ChartId, ItemId};
 use board_model::style::board::{ChartTitleStyle, PaddingStyle};
+use board_model::style::font::FontStyle;
 use board_model::style::table::CellAlign;
-use board_model::style::legend::{LegendStyle, SideLegendStyle};
+use board_model::style::legend::{LegendAlign, LegendStyle, LegendStyleBase, SideLegendStyle};
 use color::Rgba;
+use d3rs::vega_symbol::VegaSymbol;
 use diagnostic::Diagnostic;
 use indexmap::IndexMap;
 
@@ -37,6 +39,8 @@ pub enum Invalid {
     /// A grid that facets on neither rows nor columns.
     GridNoAxis,
     RungOutside { value: f64 },
+    /// A log scale asked for a linear ladder: a log axis takes `domain::log`'s.
+    LogScaleLinearLadder,
     GridCells { expected: usize, got: usize },
     /// A grid's panel ids are not `0, 1, 2, …` in cell order.
     GridPanels,
@@ -62,6 +66,12 @@ pub enum Invalid {
         series: usize,
         series_len: usize,
     },
+    /// A sized point layer whose size scale has no value for a datum's row.
+    SizeRow { layer: usize, row: usize },
+    /// A sized point layer whose size domain does not hold 0.
+    SizeDomain { layer: usize },
+    /// A shaped point layer whose shape scale has no category for a datum's row.
+    ShapeRow { layer: usize, row: usize },
     /// A legend toggle that does not name one series of its domain per entry.
     LegendToggle { legend: usize },
     /// A panel no layer draws a datum in: an absent facet combination is a `None` grid cell.
@@ -252,6 +262,9 @@ pub struct Chart {
 pub struct Frame {
     /// The chart's background composited over the board's: the ground label ink is judged on.
     pub canvas: Rgba,
+    /// The card fill the chart's marks root paints (`ChartStyleContext.background`): clear where the
+    /// chart has no card of its own, else opaque.
+    pub card: Rgba,
     pub padding: PaddingStyle,
     /// Title and subtitle styles; the width-tier offsets are part of it, layout picks the tier.
     pub title: ChartTitleStyle,
@@ -275,7 +288,8 @@ pub enum Family {
     Cartesian(Cartesian),
     Kpi(Box<Kpi>),
     Table(Table),
-    Pie(Pie),
+    Pie(Box<Pie>),
+    Geoshape(Geoshape),
     SparkBar(SparkBar),
     Callout(Callout),
 }
@@ -284,10 +298,18 @@ pub enum Family {
 #[derive(Debug)]
 pub enum Cartesian {
     Plane(Box<Plane>),
-    /// Bound over no rows: its title and frame around a muted "No data" in the plot box, set in
-    /// the face its y axis labels would have had. It has no scales, series or legend, so a family
-    /// never invents a domain for nothing.
-    NoData(Face),
+    /// Bound over no rows: its title and frame around the "No results" card in the plot box. It has
+    /// no scales, series or legend, so a family never invents a domain for nothing. `headline` is the
+    /// legend label font the card's text is set in (`no_results::render`); the filters line, when the
+    /// chart has one, is set in the title's subtitle font.
+    NoData { empty: Empty, headline: FontStyle },
+}
+
+/// What any family says over no rows: the filters that reach the chart and hold a value, as one
+/// line (`no_results::context_line`), when it has any. Each family sets it in its own faces.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Empty {
+    pub filters: Option<String>,
 }
 
 /// A KPI card's data: the headline in the faces it draws in, its label and its support row.
@@ -323,6 +345,9 @@ pub struct Kpi {
     pub link: Option<Href>,
     /// How the card's `link` opens; the implied text link always opens as a page.
     pub link_open: LinkOpen,
+    /// The color scale on the card's background reads its hinge off the data or palette: the column it reads
+    /// and what is wrong, for `WARN-GRADIENT-HINGE-MISMATCH`.
+    pub hinge_mismatch: Option<(String, String)>,
 }
 
 /// A KPI's support row: a glyph, the support value as one string, and an explainer, each with the
@@ -348,6 +373,9 @@ pub struct SparkBar {
     /// A negative magnitude anywhere puts every bar on a shared midline.
     pub signed: bool,
     pub more: usize,
+    /// The chart's title and subtitle as authored; production tests `not title`, so an empty one is none.
+    pub title: Option<String>,
+    pub subtitle: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -364,6 +392,9 @@ pub struct Pie {
     /// The chart's opaque canvas: the ground the wedge stroke knocks out to and the label ink is
     /// judged on.
     pub canvas: String,
+    /// The board's card canvas, which the slice stroke's `theme.background` names
+    /// (`_resolve_canvas_tokens`): a transparent nested body shows its parent's.
+    pub ground: String,
     /// The chart's own background, which its card paints (`ResolvedPieChart.background`).
     pub background: String,
     /// The chart's title as authored; production tests `not title`, so an empty one is untitled.
@@ -373,10 +404,103 @@ pub struct Pie {
     /// Hole to disk ratio of the wheel.
     pub hole: f64,
     pub slices: Vec<PieSlice>,
+    /// How the slices' links open.
+    pub link_open: LinkOpen,
     /// The sum of the slice values.
     pub total: f64,
     /// The donut's center total, when drawn.
     pub center: Option<PieCenter>,
+    /// What the data alone allows (`labeled_mode`); whether the box lets it stand is layout's call.
+    pub labeled: PieLabeled,
+    /// The table of every slice, which stands in for the labels when the box cannot hold them.
+    pub full: Listed,
+    /// The color column names more categories than a reader can tell apart (`WARN-TOO-MANY-COLOR-CATEGORIES`).
+    pub excess_categories: Option<CategoryExcess>,
+    /// The color legend, when the board makes it visible.
+    pub legend: Option<Box<PieLegend>>,
+    /// The authored `legend.position`: where it puts the table of a pie drawn with one, visible legend or not,
+    /// and the edge and align of the visible legend (both read the same merge).
+    pub table_position: TablePosition,
+    /// The query returned no row: the card draws "No results" in place of a wheel, and `slices` is empty.
+    pub empty: Option<PieEmpty>,
+}
+
+/// The authored `legend.position` edge and align of a pie (`merge_authored_position`), which place its
+/// attached table (`choose_table_placement`, `decide_table_align`); none where the board names none.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TablePosition {
+    pub edge: Option<PieKeyEdge>,
+    pub align: Option<LegendAlign>,
+}
+
+/// A pie over no rows (`no_results::render`): what any family says, and the face its headline paints
+/// in, the pie's walked legend label font.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PieEmpty {
+    pub empty: Empty,
+    pub headline: FontStyle,
+}
+
+/// A color channel's distinct values past `max(palette length, 8)`, the count a reader can tell apart.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CategoryExcess {
+    pub field: String,
+    pub count: usize,
+    pub max_categories: usize,
+}
+
+/// A pie's table, or why it cannot be drawn. A pie drawn with no table never reads it, so the
+/// refusal is layout's to raise, only when the size stage chooses the table.
+pub type Listed = Result<PieTable, diagnostic::Diagnostic>;
+
+/// `labeled_mode` (`compile/resolve/chart/pie.py`): how a pie's slices may be labeled, from its shares alone.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PieLabeled {
+    /// Every slice is drawn: the big ones carry their label on the wheel.
+    Direct,
+    /// A slice is under `INVISIBLE_SLICE_SHARE`: the small slices are listed, under "Too small to
+    /// label", in this table.
+    Hybrid(Listed),
+    /// No slice clears the label floor: only the table of every slice labels the pie.
+    None,
+}
+
+/// A pie's attached table (`PieAttachment.table`): swatch, share, name and value columns over the
+/// slices it lists, with no header drawn and no widths (layout measures them).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PieTable {
+    pub heading: Option<String>,
+    pub table: Table,
+}
+
+/// A pie's color legend: its entries over the color scale's domain, the title it would draw and the
+/// walked style that places and fonts it. Layout limits the text and lays it out.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PieLegend {
+    /// `(label, fill)` per entry, in the legend's order.
+    pub entries: Vec<(String, String)>,
+    /// The last entry is the "+N more" note that stands for the entries past the symbol limit: it draws no swatch.
+    pub fold: bool,
+    /// The color scale's whole domain, in order, whatever the symbol limit keeps: a wrapped strip above or
+    /// below the wheel sizes its columns by all of it (`legend_wrap_columns`).
+    pub domain: Vec<String>,
+    /// The cased field name; empty when the title is hidden.
+    pub title: String,
+    /// The walked legend style (`direction`, `visible` and `title.visible` decided per chart).
+    pub base: LegendStyleBase,
+    /// The side of the wheel the legend reserves its strip on.
+    pub edge: PieKeyEdge,
+    /// Where the strip sits along that edge.
+    pub align: LegendAlign,
+}
+
+/// The side of a wheel a key sits on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PieKeyEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -387,6 +511,8 @@ pub struct PieSlice {
     pub aria: String,
     /// The text and ink of its label; none for a slice too small to label.
     pub label: Option<PieLabel>,
+    /// Where a click on its wedge or label goes (the center total takes the first slice's).
+    pub href: Option<Href>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -402,25 +528,154 @@ pub struct PieCenter {
     pub caption: String,
 }
 
-/// A table of text columns: what each column heads with and the text of each of its cells.
+/// A geoshape's base map: the features of its source and the neutral paint they draw with.
+#[derive(Debug, Clone)]
+pub struct Geoshape {
+    /// The chart's opaque canvas.
+    pub canvas: String,
+    /// The chart's own background, which its card paints.
+    pub background: String,
+    pub title: Option<String>,
+    pub subtitle: Option<String>,
+    /// The neutral fill of every region.
+    pub fill: String,
+    /// The boundary stroke, none when the theme sets none.
+    pub stroke: Option<GeoStroke>,
+    pub features: std::sync::Arc<crate::geo_source::Decoded>,
+    /// The chart's own projection; one taken from the source registry is refused.
+    pub projection: board_model::chart::projection::ProjectionChoice,
+}
+
+/// A geoshape's boundary stroke.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeoStroke {
+    pub ink: StrokeInk,
+    pub width: f64,
+}
+
+/// The ink of a geoshape's stroke: a color, or the theme's self-reference to the board's opaque
+/// background (`theme.background`), which a geoshape's layout will settle on the ground its card draws over.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StrokeInk {
+    BoardBackground,
+    Color(String),
+}
+
+/// A table of text, boolean and numeric columns: what each column heads with and each of its cells.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Table {
-    /// In paint order; at least one, each with a cell per row and at least one row.
+    /// In paint order, each with a cell per row; at least one, and at least one row, unless `empty`.
     pub columns: Vec<TableColumn>,
+    /// The query returned no row: the table draws "No results" and the filters that reach it in
+    /// place of its columns (`table/layout.rs::lay_out_empty`), and `columns` is empty.
+    pub empty: Option<Empty>,
 }
 
 impl Table {
     pub fn rows(&self) -> usize {
-        self.columns[0].cells.len()
+        self.columns.first().map_or(0, |column| column.cells.len())
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableColumn {
     pub header: String,
-    pub cells: Vec<String>,
+    pub cells: Vec<TableCell>,
     /// `style.columns.<name>.align`; a column that authors none starts its text.
     pub align: CellAlign,
+    /// `style.columns.<name>.width` in pixels: the column's own width, which the table does not size.
+    pub width: Option<f64>,
+    /// `style.columns.<name>.swatch`: each cell is a color the column paints as a small rounded square
+    /// (the cell holds the color as drawn: a hex as written, `transparent` for `none`).
+    pub swatch: bool,
+    /// `style.columns.<name>.max_width` in pixels, which caps what a text column takes of the budget.
+    pub max_width: Option<f64>,
+    /// The cell fill: a hex color as written, or `transparent`; none paints no rect.
+    pub background: Option<String>,
+    /// The cell text's color, in place of the table's.
+    pub ink: Option<String>,
+    /// The cell text's CSS `font-weight`.
+    pub weight: Option<String>,
+}
+
+impl TableColumn {
+    /// The column paints its numbers (and nulls) in a numeral lane: it holds a number
+    /// (`ColMeta.is_numeric`).
+    pub fn is_number_lane(&self) -> bool {
+        self.cells.iter().any(|cell| matches!(cell, TableCell::Number(_)))
+    }
+
+    /// The column is a right-aligned date column (`ColMeta.is_date`): its dates end at one lane edge, in the
+    /// numeral face, and its nulls paint apart from the lane.
+    pub fn is_date_lane(&self) -> bool {
+        self.cells.iter().any(|cell| matches!(cell, TableCell::Date(_)))
+    }
+
+    /// The column has a lane its cells are placed in, a number's or a date's.
+    pub fn has_lane(&self) -> bool {
+        self.is_number_lane() || self.is_date_lane()
+    }
+}
+
+/// One table cell. A text cell paints its text at the column's alignment; a null or blank value paints
+/// `NULL_DISPLAY` centered whatever the alignment; a number paints in its column's numeral lane; a date
+/// paints end-anchored at its column's date lane, in the numeral face.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TableCell {
+    Text(String),
+    Null,
+    Number(NumberCell),
+    Date(String),
+}
+
+/// A number cut into the lanes it paints in (`chart-renderer/src/families/table/bind.rs`, `Cell`):
+/// the prefix (a currency symbol), the digits (with their sign) and the suffix (a unit or magnitude
+/// word). Under `symbol_mode: anchors` only the anchor rows paint every symbol.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumberCell {
+    pub prefix: Option<String>,
+    pub number: String,
+    pub suffix: Option<String>,
+    /// What the width allocation measures the cell as, around its digits: every symbol it would paint as an
+    /// anchor row (`measured_cell_text`).
+    pub measured_prefix: String,
+    pub measured_suffix: String,
+    /// The reservation that aligns a trimmed value's decimals with the column's deepest cell.
+    pub pad: DecimalPad,
+    /// The raw value as production's `data-value` prints it (a float's Rust `{:?}`, an int's digits).
+    pub value: String,
+    /// The suffix is a magnitude word, which sits `SUFFIX_GAP` off the digits (a unit touches them).
+    pub magnitude_suffix: bool,
+}
+
+/// A trimmed number's trailing reservation (`numeral_scale.py:decimal_reservation_pad`): the digits and the
+/// decimal mark it lacks beside the column's deepest cell. The units are measured from the numeral face at
+/// layout (`compose_decimal_units`), which bind cannot measure.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DecimalPad {
+    /// `missing_len`: the characters the trim removed, the mark included.
+    pub missing: usize,
+    /// `has_dot`: the decimal mark survived the trim.
+    pub dot_kept: bool,
+}
+
+impl NumberCell {
+    /// `measured_cell_text`'s string around digits `number` (padded or not).
+    pub fn measured_around(&self, number: &str) -> String {
+        format!("{}{number}{}", self.measured_prefix, self.measured_suffix)
+    }
+}
+
+impl TableCell {
+    /// The cell's text without its pad, or the null dash: what the fit cascade measures (`unpadded_cell_text`),
+    /// a text cell paints, and a swatch cell fills with.
+    pub fn text(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            TableCell::Text(text) | TableCell::Date(text) => text.as_str().into(),
+            TableCell::Null => d3rs::native::NULL_DISPLAY.into(),
+            TableCell::Number(n) => n.measured_around(&n.number).into(),
+        }
+    }
 }
 
 /// A callout card's text, as authored markdown.
@@ -561,6 +816,12 @@ impl Plane {
                     });
                 }
                 x.kind.place(&datum.x, layer)?;
+                if let ScaleKind::Point { domain, .. } = &y[mark_layer.y_scale].kind {
+                    let slot = datum.y1;
+                    if slot.fract() != 0.0 || slot < 0.0 || slot >= domain.keys.len() as f64 {
+                        return Err(Invalid::PosOutside { layer, index: slot as usize, len: domain.keys.len() });
+                    }
+                }
             }
         }
         if layers
@@ -584,6 +845,22 @@ impl Plane {
                 series: outside,
                 series_len: series.len(),
             });
+        }
+        for (layer, drawn) in layers.iter().enumerate() {
+            let Mark::Points { size: Some(size), .. } = &drawn.mark else { continue };
+            if !(size.domain.0 <= 0.0 && 0.0 <= size.domain.1) {
+                return Err(Invalid::SizeDomain { layer });
+            }
+            if let Some(datum) = drawn.panels.iter().flatten().find(|datum| datum.row.0 >= size.by_row.len()) {
+                return Err(Invalid::SizeRow { layer, row: datum.row.0 });
+            }
+        }
+        for (layer, drawn) in layers.iter().enumerate() {
+            let Mark::Points { shape: Shape::Channel(shapes), .. } = &drawn.mark else { continue };
+            let row_of = |datum: &Datum| shapes.by_row.get(datum.row.0).filter(|category| **category < shapes.domain.len());
+            if let Some(datum) = drawn.panels.iter().flatten().find(|datum| row_of(datum).is_none()) {
+                return Err(Invalid::ShapeRow { layer, row: datum.row.0 });
+            }
         }
         for (legend, entry) in legends.iter().enumerate() {
             let Some(toggle) = &entry.toggle else { continue };
@@ -704,14 +981,61 @@ pub enum Mark {
     Lines,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A point layer's glyph: one Vega symbol for every datum (the point mark's authored `shape`, a circle
+/// unless authored), or one per datum from a shape channel.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Shape {
-    Circle,
+    Symbol(VegaSymbol),
+    Channel(ShapeScale),
 }
 
-/// A point mark's size channel; it has no leaves yet.
+/// Vega's default `range.symbol`, the named range a Vega-Lite shape scale takes (`compile/scale/range.ts`
+/// in vega-lite; `vega-parser/src/config.js` `range.symbol`; `scatter_shape.rs`: `RANGE_SYMBOL`).
+const SHAPE_RANGE: [VegaSymbol; 8] = [
+    VegaSymbol::Circle,
+    VegaSymbol::Square,
+    VegaSymbol::TriangleUp,
+    VegaSymbol::Cross,
+    VegaSymbol::Diamond,
+    VegaSymbol::TriangleRight,
+    VegaSymbol::TriangleDown,
+    VegaSymbol::TriangleLeft,
+];
+
+/// A point mark's shape channel: Vega's ordinal scale from the categories of the rows that draw a point,
+/// ascending, onto [`SHAPE_RANGE`], which a d3 ordinal scale cycles (`range[i % range.length]`).
 #[derive(Debug, Clone, PartialEq)]
-pub struct SizeScale {}
+pub struct ShapeScale {
+    /// The channel's column as authored, the shape legend's title: production's shape legend is
+    /// Vega-Lite's unconfigured one, which names the field, not its label.
+    pub title: String,
+    pub domain: Vec<String>,
+    /// Each dataset row's index in `domain`, indexed by [`RowRef`]; bind refuses a row that draws no point.
+    pub by_row: Vec<usize>,
+    /// The board's root font family (Vega's `config.font`), the shape legend's face.
+    pub font: String,
+}
+
+impl ShapeScale {
+    /// The symbol the scale gives the `index`-th category of its domain.
+    pub fn symbol(&self, index: usize) -> VegaSymbol {
+        SHAPE_RANGE[index % SHAPE_RANGE.len()]
+    }
+
+    /// The symbol of a datum's `row`.
+    pub fn of_row(&self, row: RowRef) -> VegaSymbol {
+        self.symbol(self.by_row[row.0])
+    }
+}
+
+/// A point mark's size channel: Vega-Lite's linear scale from the `domain` of the rows that draw a point
+/// (zero-anchored: it always holds 0) onto the point mark's fixed area range. `by_row` is each dataset row's
+/// value, indexed by [`RowRef`]; a null size is refused at bind, so every row has one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SizeScale {
+    pub domain: (f64, f64),
+    pub by_row: Vec<f64>,
+}
 
 /// One drawn mark in data space.
 #[derive(Debug, Clone)]
@@ -719,6 +1043,8 @@ pub struct Datum {
     pub x: Pos,
     /// The base of a stacked or spanned mark; 0 for plain marks.
     pub y0: f64,
+    /// The mark's value on its layer's measure scale; on a point scale, the index of its band in
+    /// the domain.
     pub y1: f64,
     /// Index into [`Plane::series`].
     pub series: usize,
@@ -769,9 +1095,20 @@ pub struct TooltipHeader {
 }
 
 impl TooltipHeader {
-    /// A temporal x's date: U+2061 (function application) is what production stamps on that row.
-    pub fn date(text: String) -> Self {
+    /// A header that names no series: a temporal x's date or a dot plot's category. U+2061 (function
+    /// application) is what production stamps on that row.
+    pub fn plain(text: String) -> Self {
         Self { marker: '\u{2061}', text }
+    }
+
+    /// The series name of a dot plot, a row of its own with no title: U+2062 (invisible times).
+    pub fn series(text: String) -> Self {
+        Self { marker: '\u{2062}', text }
+    }
+
+    /// A series' rank in the board's color plan: U+200C (zero width non-joiner).
+    pub fn rank(rank: usize) -> Self {
+        Self { marker: '\u{200C}', text: rank.to_string() }
     }
 
     /// The series name that is the color dimension, which the runtime draws swatched
@@ -784,9 +1121,9 @@ impl TooltipHeader {
 /// A datum's hover entries, formatted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tooltip {
-    /// The row that heads the hover: a temporal x's date (production words it ahead of the entries) or
-    /// the series name when the header is the color dimension (a swatched header).
-    pub header: Option<TooltipHeader>,
+    /// The rows that head the hover, ahead of the entries: a temporal x's date or a dot plot's
+    /// category, the series name (swatched when the header is the color dimension) and its rank.
+    pub heads: Vec<TooltipHeader>,
     pub entries: Vec<TooltipEntry>,
 }
 
@@ -794,8 +1131,8 @@ impl Tooltip {
     /// The hover text a mark carries as its `aria-label`: the header behind its role marker, then each
     /// row's `title: value`, joined `; `.
     pub fn text(&self) -> String {
-        let header = self.header.iter().map(|header| format!("{}{}", header.marker, header.text));
-        header.chain(self.entries.iter().map(|entry| format!("{}: {}", entry.title, entry.value))).collect::<Vec<_>>().join("; ")
+        let heads = self.heads.iter().map(|head| format!("{}{}", head.marker, head.text));
+        heads.chain(self.entries.iter().map(|entry| format!("{}: {}", entry.title, entry.value))).collect::<Vec<_>>().join("; ")
     }
 }
 
@@ -845,6 +1182,9 @@ pub struct Legend {
     pub entries: Vec<LegendEntry>,
     /// What a click on an entry does; `None` when the chart's legend hides no series.
     pub toggle: Option<Toggle>,
+    /// Each entry's label carries the series name as its join key (`data-dbt-series`) where the hover
+    /// names a series row of its own and ranks it by no board plan: a dot plot's (`_stamp_series_keys`).
+    pub stamps_series: bool,
 }
 
 /// A legend whose entries are buttons: a click sets the board param `param` to the series it names,
@@ -904,20 +1244,23 @@ pub struct AxisStyle {
     pub ticks: Option<Ticks>,
     pub labels: Option<Labels>,
     pub title: Option<Title>,
-    /// What only a time axis' labels read; `Some` exactly on the x axis of a temporal scale.
-    pub time: Option<TimeLabelStyle>,
+    /// What only an x axis whose labels lie along its width reads; `Some` exactly on the x axis of a
+    /// temporal, band or point scale.
+    pub crowding: Option<LabelCrowding>,
 }
 
-/// How a time axis crowds its labels, as the board's theme sets it (`labels.overlap`,
-/// `labels.tilt_increments`, `charts.label_usable_ratio`).
+/// How an x axis crowds its labels, as the board's theme sets it (`labels.overlap`,
+/// `labels.tilt_increments`, `charts.label_usable_ratio`), and how many ticks the chart asks it for.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TimeLabelStyle {
-    /// `labels.overlap.skip`: the cadence ladder may step to a coarser grain.
+pub struct LabelCrowding {
+    /// `labels.overlap.skip`: a time axis' cadence ladder may step to a coarser grain.
     pub skip: bool,
     /// The tilt angles, shallowest first, when `labels.overlap.tilt` is on; `None` never tilts.
     pub tilt: Option<Vec<f64>>,
     /// The fraction of the chart's width its labels may use before they crowd.
     pub usable_ratio: f64,
+    /// An authored `ticks.count`: how many ticks a time axis asks for.
+    pub ticks_count: Option<usize>,
 }
 
 /// The edge of the plot an axis sits on: an x axis bottom or top, a y axis left or right.
@@ -1001,8 +1344,6 @@ pub struct BarStyle {
     /// The band scale's padding between and around bands, as shares of the step.
     pub padding_inner: f64,
     pub padding_outer: f64,
-    /// The share of the card's width the band labels may use before they tilt or collide.
-    pub label_usable_ratio: f64,
 }
 
 /// A line mark's walked leaves. Its stroke width and point size are the density-adaptive law's,
@@ -1030,6 +1371,18 @@ pub struct PointStyle {
     pub opacity: f64,
     /// The outline width; 0 draws none, as an `auto` width does.
     pub stroke_width: f64,
+    /// `filled: false`: the points are rings over the interior fill.
+    pub unfilled: Option<Unfilled>,
+}
+
+/// How an unfilled point mark paints: an interior fill under a ring in the series color, or in `stroke`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unfilled {
+    /// `style.marks.point.fill`, the interior.
+    pub interior: String,
+    /// The ring's color when the chart has no `color:` channel: the mark's own, Vega-Lite's default.
+    /// With a channel the ring takes each series' color.
+    pub stroke: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1042,10 +1395,11 @@ pub struct Scale {
 pub enum ScaleKind {
     /// Bars, heatmap rows and columns.
     Band(BandDomain),
-    /// Nominal x on line and scatter.
-    Point(BandDomain),
+    /// A nominal axis of a scatter, one band center per category: d3's point scale, a band scale with
+    /// every inner gap, over `padding` of a step outside the first and last band.
+    Point { domain: BandDomain, padding: f64 },
+    /// A value scale: a number axis on any [`ValueScale`] its domain names.
     Linear(ValueAxis),
-    Log(ValueAxis),
     Time(TimeDomain),
 }
 
@@ -1053,7 +1407,7 @@ impl ScaleKind {
     /// Whether `pos` is a position this scale places.
     fn place(&self, pos: &Pos, layer: usize) -> Result<(), Invalid> {
         match (self, pos) {
-            (ScaleKind::Band(domain) | ScaleKind::Point(domain), Pos::Band(index)) => {
+            (ScaleKind::Band(domain) | ScaleKind::Point { domain, .. }, Pos::Band(index)) => {
                 if *index < domain.keys.len() {
                     Ok(())
                 } else {
@@ -1064,7 +1418,7 @@ impl ScaleKind {
                     })
                 }
             }
-            (ScaleKind::Linear(_) | ScaleKind::Log(_), Pos::Num(_) | Pos::Span(..))
+            (ScaleKind::Linear(_), Pos::Num(_) | Pos::Span(..))
             | (ScaleKind::Time(_), Pos::Time(_)) => Ok(()),
             _ => Err(Invalid::PosKind { layer }),
         }
@@ -1112,9 +1466,51 @@ pub struct ValueAxis {
     pub format: ResolvedFormat,
 }
 
+/// The continuous scale type a value axis is authored on (`scale.continuous.type`), its parameters
+/// read, the one place the type lives: layout positions every mark through [`Self::transform`] and
+/// the axis description names the scale by [`Self::name`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ValueScale {
+    Linear,
+    Log { base: f64 },
+    Pow { exponent: f64 },
+    Sqrt,
+    Symlog { constant: f64 },
+}
+
+impl ValueScale {
+    /// The d3 transform the scale maps through (`scaleSqrt` is `scalePow` at 0.5).
+    pub fn transform(self) -> d3rs::scale::Transform {
+        use d3rs::scale::Transform;
+        match self {
+            ValueScale::Linear => Transform::Identity,
+            ValueScale::Log { base } => Transform::Log { base },
+            ValueScale::Pow { exponent } => Transform::Pow(exponent),
+            ValueScale::Sqrt => Transform::Pow(0.5),
+            ValueScale::Symlog { constant } => Transform::Symlog(constant),
+        }
+    }
+
+    pub fn is_log(self) -> bool {
+        matches!(self, ValueScale::Log { .. })
+    }
+
+    /// Vega's name for the scale type, as an axis description speaks it (`domainCaption`).
+    pub fn name(self) -> &'static str {
+        match self {
+            ValueScale::Linear => "linear",
+            ValueScale::Log { .. } => "log",
+            ValueScale::Pow { .. } => "pow",
+            ValueScale::Sqrt => "sqrt",
+            ValueScale::Symlog { .. } => "symlog",
+        }
+    }
+}
+
 /// A value axis as data: layout reads one domain, with the exact bounds the axis pins.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueDomain {
+    pub scale: ValueScale,
     /// The shared-scale union: base, unpinned layers, annotations.
     pub extent: Extent,
     pub zero: Zero,
@@ -1200,7 +1596,11 @@ pub enum Ladder {
     /// A count axis (a histogram's): like `BySize`, but never more rungs than the domain's top
     /// count, and at least one (`tickCount: max(1, min(ceil(height / 40), top))`).
     Counts,
-    /// No data-chosen ticks: log axes, independent multiples.
+    /// A log axis's rungs: d3's loggish ticks at the count Vega ticks it at, each carrying its text
+    /// or the empty text d3's `tickFormat` blanks a crowded decade's minor ticks with. Not
+    /// size-dependent, and (production bakes no ladder for it) no floor to read.
+    Log(Vec<Rung>),
+    /// No data-chosen ticks: independent multiples.
     None,
 }
 

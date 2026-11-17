@@ -13,25 +13,25 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
+from dbt_charts.agent_api.board_artifact import emit_board_artifact
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile as compile_board
-from dbt_charts.core.compile.models.primitives import BoardLinks
+from dbt_charts.core.compile.engine import CompileRecord, engine_compile_recorded
 from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 from dbt_charts.core.execute.env import build_exec_env
-from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.execute.recording import (
     BoardRecording,
     load_board_recording,
     record_board,
 )
+from dbt_charts.core.execute.replay_provider import ReplayDataProvider
 from dbt_charts.core.render.board_replay import (
     dump_board_artifact,
     load_board_artifact,
@@ -45,7 +45,6 @@ from ..._results import rows_result
 from ..._run import Run
 from ..._svg_normalize import normalize_same_run_svg
 from .._pooled_table import visible_svg
-from .._svg_render import PINNED_RENDER_TIME
 
 _YAML = """
 title: Board Replay
@@ -98,6 +97,10 @@ rows:
 """
 
 
+def _record(board: str, project: FilesystemProject) -> CompileRecord:
+    return engine_compile_recorded(None, content=board, project=project)[1]
+
+
 def _live(tmp_path: Path, board: str = _YAML) -> tuple[bytes, BoardRecording, str]:
     """Compile + resolve + render a board live, returning artifact bytes,
     recording, and the live SVG for comparison."""
@@ -125,7 +128,7 @@ def _live(tmp_path: Path, board: str = _YAML) -> tuple[bytes, BoardRecording, st
     recording = record_board(
         resolved, executor.results(list(resolved.queries), variables), variables
     )
-    return dump_board_artifact(resolved), recording, live_svg
+    return dump_board_artifact(resolved, _record(board, project)), recording, live_svg
 
 
 def _pie_live(tmp_path: Path) -> tuple[bytes, BoardRecording, str]:
@@ -147,7 +150,7 @@ def _pie_live(tmp_path: Path) -> tuple[bytes, BoardRecording, str]:
         render_cache=render_cache,
     )
     return (
-        dump_board_artifact(resolved),
+        dump_board_artifact(resolved, _record(_PIE_YAML, FilesystemProject(tmp_path))),
         record_board(
             resolved, executor.results(list(resolved.queries), variables), variables
         ),
@@ -160,7 +163,7 @@ def test_dump_and_load_board_artifact_round_trips(tmp_path: Path) -> None:
 
     reloaded = load_board_artifact(artifact_bytes)
 
-    assert reloaded.queries.keys() == {"channel_mix"}
+    assert reloaded.resolved.queries.keys() == {"channel_mix"}
 
 
 def test_pie_attachment_round_trips_in_board_artifact(tmp_path: Path) -> None:
@@ -178,16 +181,18 @@ def test_pie_attachment_round_trips_in_board_artifact(tmp_path: Path) -> None:
     assert isinstance(original, ResolvedPieChart)
     assert original.full_attachment is not None
 
-    reloaded = load_board_artifact(dump_board_artifact(resolved))
-    restored = reloaded.charts["shares"]
+    reloaded = load_board_artifact(
+        dump_board_artifact(resolved, _record(_PIE_YAML, FilesystemProject(tmp_path)))
+    )
+    restored = reloaded.resolved.charts["shares"]
 
     assert isinstance(restored, ResolvedPieChart)
     assert restored == original
     assert restored.full_attachment is not None
 
-    pie_document = json.loads(dump_board_artifact(resolved))["board"]["charts"][
-        "shares"
-    ]
+    pie_document = json.loads(
+        dump_board_artifact(resolved, _record(_PIE_YAML, FilesystemProject(tmp_path)))
+    )["board"]["charts"]["shares"]
     assert "attached_rows" not in pie_document
     assert "slice_label_lines" not in pie_document
     assert "__dbt_label" not in json.dumps(pie_document)
@@ -240,6 +245,72 @@ def test_a_saved_board_keeps_its_currency(tmp_path: Path) -> None:
 
     assert "€" in replay_svg and "$" not in replay_svg
     assert normalize_same_run_svg(replay_svg) == normalize_same_run_svg(live_svg)
+
+
+_KPI_YAML = """
+title: KPI Replay
+queries:
+  totals:
+    columns: [revenue]
+    values:
+      - [4820]
+charts:
+  revenue:
+    query: totals
+    type: kpi
+    value: revenue
+rows:
+  - revenue
+"""
+
+
+def _kpi_artifact(tmp_path: Path) -> tuple[bytes, BoardRecording]:
+    result = compile_board(_KPI_YAML)
+    assert result.success, result.errors
+    assert result.board is not None
+    executor = Run(result.board, build_exec_env(FilesystemProject(tmp_path)))
+    resolved, _ = build_resolved_board(result.board, executor, {})
+    recording = record_board(resolved, executor.results(list(resolved.queries), {}), {})
+    return (
+        dump_board_artifact(resolved, _record(_KPI_YAML, FilesystemProject(tmp_path))),
+        recording,
+    )
+
+
+def test_a_saved_board_replays_its_kpi(tmp_path: Path) -> None:
+    """A replayed KPI is drawn by the engine from the artifact's own compile."""
+    artifact_bytes, recording = _kpi_artifact(tmp_path)
+
+    replay_svg = render_board_from_artifact(
+        load_board_artifact(artifact_bytes), recording, recording.variables
+    )
+
+    assert "4.8" in replay_svg
+    assert "dbt-chart-callout" not in replay_svg
+
+
+def test_a_kpi_drawn_outside_a_render_is_an_internal_error(
+    tmp_path: Path,
+) -> None:
+    """A render that lost its engine board is a bug, never a quiet fall back to
+    Python."""
+    artifact_bytes, recording = _kpi_artifact(tmp_path)
+    errors: list[Diagnostic] = []
+
+    render_board_svg(
+        load_board_artifact(artifact_bytes).resolved,
+        ReplayDataProvider(
+            results_by_query=recording.results_by_query,
+            recorded_at=recording.recorded_at,
+            variables=recording.variables,
+        ),
+        {},
+        background=None,
+        render_cache={},
+        error_collector=errors,
+    )
+
+    assert [e.code for e in errors] == ["ERR-INTERNAL"]
 
 
 def test_pie_fingerprint_survives_recording_json_non_finite_values() -> None:
@@ -444,7 +515,9 @@ def _paginated_table_live(
             render_cache=render_cache,
         )
     return (
-        dump_board_artifact(resolved),
+        dump_board_artifact(
+            resolved, _record(_PAGINATED_TABLE_YAML, FilesystemProject(tmp_path))
+        ),
         record_board(
             resolved, executor.results(list(resolved.queries), variables), variables
         ),
@@ -488,14 +561,17 @@ def test_render_board_from_artifact_reproduces_a_paginated_table_page(
     assert normalize_same_run_svg(replay_pool) == normalize_same_run_svg(live_pool)
 
 
-def test_render_board_from_artifact_dedupes_repeated_callout_css() -> None:
+def test_render_board_from_artifact_dedupes_repeated_callout_css(
+    tmp_path: Path,
+) -> None:
     """render_board_from_artifact goes through the same render_board_svg the
     live path uses, so two same-tone callouts dedupe there too -- with no
     board_replay-specific code, since deduplication is a property of
     render_board_svg's own post-pass over the fully assembled SVG, not of
-    anything this module does. A board with no queries needs no adapter
-    registry or real Executor."""
-    yaml_src = """
+    anything this module does. The artifact is emitted as a host emits one,
+    sizing its callouts in the engine's cell."""
+    (tmp_path / "board.yml").write_text(
+        """
 title: Callout Replay Dedup
 charts:
   c1:
@@ -506,20 +582,23 @@ charts:
     message: Second message
 cols: [c1, c2]
 """
-    result = compile_board(yaml_src)
-    assert result.success, result.errors
-    assert result.board is not None
+    )
+    project = FilesystemProject(tmp_path)
+    emitted = emit_board_artifact(
+        tmp_path / "board.yml",
+        tmp_path / "board.artifact.json",
+        tmp_path / "board.recording.json",
+        project=project,
+        env=build_exec_env(project),
+    )
+    assert emitted.success, emitted.errors
+    recording = load_board_recording((tmp_path / "board.recording.json").read_bytes())
 
-    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
-    executor.execute_query.return_value = []
-    executor.cache_hit_ats = []
-    executor.rendered_at = PINNED_RENDER_TIME
-    variables: dict[str, object] = {}
-    resolved, _render_cache = build_resolved_board(result.board, executor, variables)
-    recording = record_board(resolved, executor, variables)
-
-    reloaded = load_board_artifact(dump_board_artifact(resolved))
-    replay_svg = render_board_from_artifact(reloaded, recording, recording.variables)
+    replay_svg = render_board_from_artifact(
+        load_board_artifact((tmp_path / "board.artifact.json").read_bytes()),
+        recording,
+        recording.variables,
+    )
 
     assert "First message" in replay_svg
     assert "Second message" in replay_svg
@@ -568,7 +647,9 @@ def test_artifact_replay_does_not_double_paint_an_unstyled_nested_boards_tint(
     recording = record_board(
         resolved, executor.results(list(resolved.queries), variables), variables
     )
-    artifact_bytes = dump_board_artifact(resolved)
+    artifact_bytes = dump_board_artifact(
+        resolved, _record(_NESTED_BACKGROUND_YAML, FilesystemProject(tmp_path))
+    )
 
     reloaded = load_board_artifact(artifact_bytes)
     replay_svg = render_board_from_artifact(reloaded, recording, variables)

@@ -328,19 +328,20 @@ def _validate_resolved(
     )
 
 
-def annotate_with_data_lint(
+def annotate_with_alias_lint(
     results: list[ValidateResult],
     *,
     project: Project,
 ) -> list[ValidateResult]:
-    """Augment validate results with data alias typo lint.
+    """Augment validate results with the project-wide ``aliases:`` checks.
 
-    For each result that compiled successfully, reads its aliases and checks
-    any /data/ prefixed ones against the configured source names (config only,
-    no DB connection). Appends Diagnostics to results in place and updates
-    success=False when errors are found.
+    Each board's claims are checked against every other board's (the index
+    ``dct serve`` redirects from), and /data/ aliases against the configured
+    source names (config only, no DB connection). Findings append to each
+    result's errors and set success=False.
     """
     from dbt_charts.agent_api.data_paths import data_alias_errors_for_file
+    from dbt_charts.core.serve.alias_index import AliasIndex
 
     try:
         source_names = frozenset(project.declared_sources.sources.keys())
@@ -361,6 +362,7 @@ def annotate_with_data_lint(
         )
         return [*results, config_result]
 
+    alias_index = AliasIndex.build(project)
     annotated: list[ValidateResult] = []
     for result in results:
         project_path = project.path(result.path)
@@ -376,18 +378,18 @@ def annotate_with_data_lint(
         if not path_exists:
             annotated.append(result)
             continue
-        alias_msgs = data_alias_errors_for_file(
-            result.path, source_names=source_names, project=project
-        )
-        if not alias_msgs:
-            annotated.append(result)
-            continue
-        new_errors = list(result.errors) + [
+        alias_errors = alias_index.errors.get(result.path, []) + [
             DbtChartsError.from_code(ERR_INTERNAL, message=msg).to_diagnostic(
                 file=result.path
             )
-            for msg in alias_msgs
+            for msg in data_alias_errors_for_file(
+                result.path, source_names=source_names, project=project
+            )
         ]
+        if not alias_errors:
+            annotated.append(result)
+            continue
+        new_errors = list(result.errors) + alias_errors
         annotated.append(
             ValidateResult(
                 success=False,

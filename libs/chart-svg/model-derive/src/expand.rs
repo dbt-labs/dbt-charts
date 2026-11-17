@@ -499,6 +499,16 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                     quote!(#n: ::model_core::ToAuthored::to_authored(self.#n))
                 }
             });
+            let to_authored_ref = slots.iter().map(|s| {
+                let n = &s.name;
+                if s.authored.to_string() == s.patch.to_string() {
+                    quote!(#n: self.#n.clone())
+                } else if let Some(t) = &s.nullable {
+                    quote!(#n: ::model_core::tri_to_authored::<<#t as ::model_core::Leaf>::Patch>(self.#n.clone()))
+                } else {
+                    quote!(#n: ::model_core::ToAuthored::to_authored_ref(&self.#n))
+                }
+            });
             let drop_nulls = slots.iter().map(|s| {
                 let n = &s.name;
                 match &s.nullable {
@@ -564,6 +574,7 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                 impl ::model_core::ToAuthored for #patch {
                     type Out = #authored;
                     fn to_authored(self) -> #authored { #authored { #(#to_authored),* } }
+                    fn to_authored_ref(&self) -> #authored { #authored { #(#to_authored_ref),* } }
                 }
                 impl ::model_core::ToPatch for #authored {
                     type Out = #patch;
@@ -684,7 +695,7 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                     let payload_at = if container.tag.is_some() {
                         quote!(at)
                     } else {
-                        quote!(&::model_core::join(at, #key))
+                        quote!(&at.child(#key))
                     };
                     quote!(#authored::#id(w) => Ok(#name::#id(::model_core::build_payload::<#ty>(w, #payload_at)?)))
                 }
@@ -722,10 +733,10 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
                             }
                             #name_spell
                             impl ::model_core::Build for #name {
-                                fn build(slot: Option<#authored>, at: &str) -> Result<Self, ::model_core::Unset> {
+                                fn build(slot: Option<#authored>, at: &::model_core::At<'_>) -> Result<Self, ::model_core::Unset> {
                                     <Self as ::model_core::Build>::build_authored(slot, at)
                                 }
-                                fn build_authored(slot: Option<#authored>, at: &str) -> Result<Self, ::model_core::Unset> {
+                                fn build_authored(slot: Option<#authored>, at: &::model_core::At<'_>) -> Result<Self, ::model_core::Unset> {
                                     match slot {
                                         None => Err(::model_core::Unset { paths: vec![at.to_string()] }),
                                         Some(a) => match a { #(#cases,)* },
@@ -822,7 +833,7 @@ fn build_impl(name: &Ident, authored: &Ident, patch: &Ident, reads: &[Read]) -> 
             let at = if r.fa.flatten {
                 quote!(at)
             } else {
-                quote!(&::model_core::join(at, #key))
+                quote!(&at.child(#key))
             };
             let (field, nullable) = if authored_side {
                 (
@@ -893,7 +904,7 @@ fn build_impl(name: &Ident, authored: &Ident, patch: &Ident, reads: &[Read]) -> 
         let vars: Vec<_> = (0..reads.len()).map(|i| format_ident!("f{}", i)).collect();
         let names: Vec<_> = reads.iter().map(|r| &r.id).collect();
         quote! {
-            |p: #twin, at: &str| -> Result<#name, ::model_core::Unset> {
+            |p: #twin, at: &::model_core::At<'_>| -> Result<#name, ::model_core::Unset> {
                 let mut unset = Vec::new();
                 #(#lets)*
                 match (#(#vars,)*) {
@@ -906,17 +917,17 @@ fn build_impl(name: &Ident, authored: &Ident, patch: &Ident, reads: &[Read]) -> 
     let (from_patch, from_authored) = (body(patch, false), body(authored, true));
     quote! {
         impl ::model_core::Build for #name {
-            fn build(p: #patch, at: &str) -> Result<Self, ::model_core::Unset> {
+            fn build(p: #patch, at: &::model_core::At<'_>) -> Result<Self, ::model_core::Unset> {
                 (#from_patch)(p, at)
             }
-            fn build_authored(p: #authored, at: &str) -> Result<Self, ::model_core::Unset> {
+            fn build_authored(p: #authored, at: &::model_core::At<'_>) -> Result<Self, ::model_core::Unset> {
                 (#from_authored)(p, at)
             }
         }
         impl TryFrom<#patch> for #name {
             type Error = ::model_core::Unset;
             fn try_from(p: #patch) -> Result<Self, Self::Error> {
-                <Self as ::model_core::Build>::build(p, "")
+                <Self as ::model_core::Build>::build(p, &::model_core::At::ROOT)
             }
         }
     }
@@ -1041,11 +1052,11 @@ fn struct_from_node(
         impl ::model_core::FromNode for #name {
             fn authored(node: &::model_core::Node, cx: &mut ::model_core::Cx) -> #authored {
                 #widen
-                ::model_core::read_map(node, cx, <Self as ::model_core::FromNode>::keys(), |m, cx| <Self as ::model_core::FromMap>::authored_in(m, cx))
+                ::model_core::read_map(node, cx, <Self as ::model_core::FromNode>::keys, |m, cx| <Self as ::model_core::FromMap>::authored_in(m, cx))
             }
             fn patch(node: &::model_core::Node, cx: &mut ::model_core::Cx) -> #patch {
                 #widen
-                ::model_core::read_map(node, cx, <Self as ::model_core::FromNode>::keys(), |m, cx| <Self as ::model_core::FromMap>::patch_in(m, cx))
+                ::model_core::read_map(node, cx, <Self as ::model_core::FromNode>::keys, |m, cx| <Self as ::model_core::FromMap>::patch_in(m, cx))
             }
             fn whole(node: &::model_core::Node, cx: &mut ::model_core::Cx) -> Option<#authored> {
                 Some(<Self as ::model_core::FromNode>::authored(node, cx))
@@ -1187,7 +1198,7 @@ fn enum_from_node(
     quote! {
         impl ::model_core::FromNode for #name {
             fn authored(node: &::model_core::Node, cx: &mut ::model_core::Cx) -> Option<#authored> {
-                ::model_core::read_map(node, cx, <Self as ::model_core::FromNode>::keys(), |m, cx| <Self as ::model_core::FromMap>::authored_in(m, cx))
+                ::model_core::read_map(node, cx, <Self as ::model_core::FromNode>::keys, |m, cx| <Self as ::model_core::FromMap>::authored_in(m, cx))
             }
             fn patch(node: &::model_core::Node, cx: &mut ::model_core::Cx) -> Option<#authored> {
                 <Self as ::model_core::FromNode>::authored(node, cx)

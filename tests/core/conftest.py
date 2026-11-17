@@ -145,6 +145,9 @@ def bar_style() -> ResolvedBarStyle:
     unconditionally (``continuous_bar_size_prop``).
     """
     from dbt_charts.core.compile.models.style.resolved import ResolvedBarMarkStyle
+    from dbt_charts.core.compile.models.style.resolved.bar import (
+        ResolvedBarTornOutlierStyle,
+    )
     from dbt_charts.core.compile.models.style.theme.bar import BarGroupedStyle
 
     ax, ay = _bake_axes("bar", "ordinal", "quantitative")
@@ -159,6 +162,11 @@ def bar_style() -> ResolvedBarStyle:
         label_usable_ratio=0.8,
         axis_x=ax,
         axis_y=ay,
+        torn_outlier=ResolvedBarTornOutlierStyle(
+            enabled=False,
+            band=0.5,
+            cap=1.0,
+        ),
     )
 
 

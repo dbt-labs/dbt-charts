@@ -1,4 +1,4 @@
-"""Routing tests: `render_chart` must dispatch kpi/table/spark_bar/callout to V2.
+"""Routing tests: `render_chart` must dispatch a table to V2.
 
 Wave 0 built the 4 non-VL `render_*_svg` renderers + `_resolve_*` +
 `normalize_chart` dispatch, but `_V2_SUPPORTED` still excluded these
@@ -25,11 +25,6 @@ from dbt_charts.core.compile.config import (
     reset_config,
 )
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
-from dbt_charts.core.compile.models.chart.resolved.callout import ResolvedCalloutChart
-from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
-from dbt_charts.core.compile.models.chart.resolved.spark_bar import (
-    ResolvedSparkBarChart,
-)
 from dbt_charts.core.compile.models.chart.resolved.table import ResolvedTableChart
 from dbt_charts.core.compile.models.query.normalized import ValuesQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -41,26 +36,14 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
 )
 from dbt_charts.core.render.chart.vega_lite import render_chart
-from dbt_charts.core.render.engine import render_native
 
 from ...._results import rows_result
-from ..._engine_render import render_kpi_svg, render_spark_bar_svg, render_table_svg
+from ..._engine_render import render_table_svg
 
 # Oracle type: (resolved, data, width, height, board_style) -> svg string
 _Oracle = Callable[
     [ResolvedChart, list[dict[str, Any]], float, float, ResolvedStyle], str
 ]
-
-
-def _oracle_kpi(
-    resolved: ResolvedChart,
-    data: list[dict[str, Any]],
-    width: float,
-    height: float,
-    board_style: ResolvedStyle,
-) -> str:
-    assert isinstance(resolved, ResolvedKpiChart)
-    return render_kpi_svg(resolved, data, width, height, board_style=board_style)
 
 
 def _oracle_table(
@@ -74,35 +57,6 @@ def _oracle_table(
     return render_table_svg(resolved, data, width, height, board_style=board_style)
 
 
-def _oracle_spark_bar(
-    resolved: ResolvedChart,
-    data: list[dict[str, Any]],
-    width: float,
-    height: float,
-    board_style: ResolvedStyle,
-) -> str:
-    assert isinstance(resolved, ResolvedSparkBarChart)
-    return render_spark_bar_svg(resolved, data, width, height, board_style=board_style)
-
-
-def _oracle_callout(
-    resolved: ResolvedChart,
-    data: list[dict[str, Any]],
-    width: float,
-    height: float,
-    board_style: ResolvedStyle,
-) -> str:
-    assert isinstance(resolved, ResolvedCalloutChart)
-    return render_native(
-        resolved,
-        rows_result(data),
-        width=width,
-        height=height,
-        padding=None,
-        board_style=board_style,
-    )[0]
-
-
 def _board_style() -> ResolvedStyle:
     return resolve_style(get_theme_style(get_default_theme_name()))
 
@@ -112,17 +66,6 @@ def _board_ctx() -> ChartStyleContext:
 
 
 _FAMILIES: dict[str, dict[str, Any]] = {
-    "kpi": {
-        "chart_id": "k1",
-        "chart_def": {
-            "type": "kpi",
-            "query": "q",
-            "value": "revenue",
-            "label": "Revenue",
-        },
-        "query_registry": {"q": ValuesQuery(rows=[{"revenue": 128_000}])},
-        "oracle": _oracle_kpi,
-    },
     "table": {
         "chart_id": "t1",
         "chart_def": {"type": "table", "query": "q"},
@@ -132,22 +75,6 @@ _FAMILIES: dict[str, dict[str, Any]] = {
             )
         },
         "oracle": _oracle_table,
-    },
-    "spark_bar": {
-        "chart_id": "s1",
-        "chart_def": {"type": "spark_bar", "query": "q", "x": "value", "y": "month"},
-        "query_registry": {
-            "q": ValuesQuery(
-                rows=[{"month": "Jan", "value": 10}, {"month": "Feb", "value": 20}]
-            )
-        },
-        "oracle": _oracle_spark_bar,
-    },
-    "callout": {
-        "chart_id": "c1",
-        "chart_def": {"type": "callout", "message": "All systems normal"},
-        "query_registry": {},
-        "oracle": _oracle_callout,
     },
 }
 
@@ -205,7 +132,7 @@ def _route_and_compare(
     assert actual == expected
 
 
-@pytest.mark.parametrize("family", ["kpi", "table", "spark_bar", "callout"])
+@pytest.mark.parametrize("family", ["table"])
 def test_render_chart_routes_family_through_v2_svg(
     monkeypatch: pytest.MonkeyPatch, family: str
 ) -> None:
@@ -227,28 +154,6 @@ def _data_for(family: str) -> list[dict[str, Any]]:
     chart_def = _FAMILIES[family]["chart_def"]
     query_name = chart_def.get("query") or next(iter(registry))
     return registry[query_name].rows
-
-
-def test_render_chart_routes_kpi_gradient_background_through_v2_svg(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """kpi fixture with a background gradient channel routes byte-identically."""
-    chart_def = {
-        "type": "kpi",
-        "query": "q",
-        "value": "revenue",
-        "label": "Revenue",
-        "style": {
-            "background": {
-                "column": "revenue",
-                "scale": {"palette": ["#ffffff", "#3366cc"]},
-            }
-        },
-    }
-    query_registry = {"q": ValuesQuery(rows=[{"revenue": 128_000}])}
-    _route_and_compare(
-        monkeypatch, "kpi", chart_def, query_registry, query_registry["q"].rows
-    )
 
 
 def test_render_chart_routes_table_style_conditional_through_v2_svg(

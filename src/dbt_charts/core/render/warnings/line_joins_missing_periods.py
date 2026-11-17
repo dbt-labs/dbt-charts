@@ -8,7 +8,8 @@ whose x resolves to a temporal scale:
     irregular or event-shaped and has no period to skip);
   - two neighbors that both have a y are more than one step apart.
 A neighbor whose y is NULL breaks the line there, so a gap marked by a NULL row
-never fires.
+never fires. Neither does a gap the engine breaks itself (`split_line_gaps`, the
+engine's own rule), unless the chart sets `style.marks.line.connect: true`.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Any
 
+from dbt_charts import _engine
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedAreaChart,
     ResolvedLineChart,
@@ -46,6 +48,7 @@ _Point = tuple[
     Any,  # type-state: explicit_any — a query cell
 ]
 _SATURDAY = 5
+_EPOCH_ORDINAL = dt.date(1970, 1, 1).toordinal()
 _MAX_LISTED = 3
 
 
@@ -63,13 +66,41 @@ class _Skips:
 _Cell = Any  # type-state: explicit_any — a query cell
 
 
+def _epoch_day(x: _Cell) -> float:
+    day = bucket_position(x, "yearmonthdate")
+    assert day is not None, "a bucketed x cell is a date"
+    return float(day - _EPOCH_ORDINAL)
+
+
+def _engine_breaks(
+    positions: list[int], by_position: dict[int, tuple[_Cell, bool]], extent: float
+) -> set[int]:
+    """The positions where the engine starts a new line after a gap it breaks."""
+    runs: list[list[float]] = [[]]
+    for p in positions:
+        if by_position[p][1]:
+            runs[-1].append(_epoch_day(by_position[p][0]))
+        elif runs[-1]:
+            runs.append([])
+    split = _engine.split_line_gaps([r for r in runs if r], extent)
+    starts = {run[0] for run in split} - {run[0] for run in runs if run}
+    return {
+        p
+        for p in positions
+        if by_position[p][1] and _epoch_day(by_position[p][0]) in starts
+    }
+
+
 def _series_skips(
     label: str | None,  # type-state: optional — a chart with one series
     y_field: str,
     points: list[_Point],
+    extent: float | None,  # type-state: optional — None when the line joins every gap
 ) -> _Skips | None:  # type-state: optional — a series with no skip
     """The periods a series' line joins across, or None when it joins none or
-    its x values keep no regular grain. ``points`` are ``(x, y)`` cells."""
+    its x values keep no regular grain. ``points`` are ``(x, y)`` cells;
+    ``extent`` is the chart's x span in days, the width the engine judges a
+    gap against."""
     unit = detect_time_unit([x for x, _ in points])
     if unit is None:
         return None
@@ -90,10 +121,11 @@ def _series_skips(
     skip_weekends = unit == "yearmonthdate" and all(
         dt.date.fromordinal(p).weekday() < _SATURDAY for p in positions
     )
+    broken = set() if extent is None else _engine_breaks(positions, by_position, extent)
     missing = sum(
         1
         for a, b in zip(positions, positions[1:], strict=False)
-        if by_position[a][1] and by_position[b][1]
+        if by_position[a][1] and by_position[b][1] and b not in broken
         for gap in range(a + step, b, step)
         if not (skip_weekends and dt.date.fromordinal(gap).weekday() >= _SATURDAY)
     )
@@ -121,6 +153,15 @@ def _chart_skips(
     group_fields = [axis.field for axis in chart.panel_axes] + (
         [chart.color] if chart.color else []
     )
+    days = [
+        float(day - _EPOCH_ORDINAL)
+        for row in rows
+        if (day := bucket_position(row.get(chart.x), "yearmonthdate")) is not None
+    ]
+    joins_all = (
+        isinstance(chart, ResolvedLineChart) and chart.style.line_mark.connect is True
+    )
+    extent = None if joins_all or not days else max(days) - min(days)
     groups: dict[tuple[Any, ...], Rows] = {}  # type-state: explicit_any — query cells
     for row in rows:
         groups.setdefault(tuple(row.get(f) for f in group_fields), []).append(row)
@@ -132,6 +173,7 @@ def _chart_skips(
                 " / ".join(parts) or None,
                 y_field,
                 [(row.get(chart.x), row.get(y_field)) for row in group],
+                extent,
             )
             if skip is not None:
                 skips.append(skip)

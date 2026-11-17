@@ -15,6 +15,7 @@ pub mod geo;
 pub mod heatmap;
 pub mod histogram;
 pub mod kpi;
+pub mod no_results;
 pub mod line;
 pub mod pie;
 pub mod sankey;

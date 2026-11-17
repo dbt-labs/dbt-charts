@@ -27,6 +27,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.execute.env import build_exec_env
 
+from .._kpi_board import kpi_svg
 from .conftest import (
     compile_with_board_sources as compile_board,
     project_with_db_source,
@@ -323,27 +324,9 @@ class TestDataChartTitleAttributeContract:
         return svg
 
     def test_kpi_emits_data_chart_title_from_label(self):
-        svg = self._render_chart(
-            """
-title: T
-sources:
-  db:
-    type: duckdb
-    path: ":memory:"
-queries:
-  q:
-    source: db
-    sql: SELECT 1500000 AS revenue
-charts:
-  rev:
-    query: q
-    type: kpi
-    value: revenue
-    label: "Quarterly revenue"
-rows:
-  - rev
-""",
-            "rev",
+        svg = kpi_svg(
+            {"value": "revenue", "label": "Quarterly revenue"},
+            [{"revenue": 1500000}],
         )
         assert 'data-chart-title="Quarterly revenue"' in svg
         assert "data-chart-label=" not in svg

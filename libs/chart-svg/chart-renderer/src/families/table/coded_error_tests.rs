@@ -449,7 +449,7 @@ fn an_empty_pivot_with_row_numbers_draws_the_empty_state() {
     payload.resolved["style"]["table"]["empty_state"] =
         json!({"font": {"size": 14.0, "color": "#626366"}});
     let svg = render(&payload, &test_fonts()).expect("the empty state, not a refusal");
-    assert!(svg.contains(">\u{2014}</text>"), "{svg}");
+    assert!(svg.contains(">No results</text>"), "{svg}");
 }
 
 fn declare_column(payload: &mut Payload, column: &str, kind: Value) {

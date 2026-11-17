@@ -6,8 +6,9 @@ Used by the HTTP server to 30x-redirect alias URLs to the board's real path.
 Design invariants (from accepted decisions):
 - Aliases must be absolute (leading /).
 - URLs are trailing-slash-canonical and percent-decoded before matching.
-- An alias colliding with a real file path is a hard build-time error.
-- Two boards claiming the same alias is a hard build-time error.
+- An alias that is not absolute, shadows a real board file, is claimed by two
+  boards, or shares a parameterized shape with another is an error on each board
+  involved; the alias redirects nowhere and every other board keeps serving.
 - Aliasing a generated system view (data/inspector route) is allowed (override).
 - The index is strictly per-project.
 """
@@ -22,6 +23,8 @@ from typing import TYPE_CHECKING
 import yaml
 
 from dbt_charts.core.aliases import normalize_alias_url
+from dbt_charts.core.diagnostics import ERR_BOARD_ALIAS, Diagnostic
+from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
     INDEX_CANDIDATE_NAMES,
@@ -231,6 +234,9 @@ class AliasIndex:
     # redirects to "<canonical>?<name>=<captured>" (capture names come straight
     # off the match's groupdict()).
     _patterns: list[tuple[re.Pattern[str], str]] = field(default_factory=list)
+    # Board relpath → why its claims can't be served. Each fails only the boards
+    # it names, so one bad alias never takes the rest of the project down.
+    errors: dict[str, list[Diagnostic]] = field(default_factory=dict)
 
     def lookup(self, request_url: str) -> str | None:
         """Return the canonical URL for an exact (non-parameterized) alias, else None.
@@ -271,89 +277,93 @@ class AliasIndex:
         """Build the alias index by scanning every board root in the project.
 
         Scans the host ``charts/`` plus every installed package's ``charts/``
-        (see ``board_roots``). Returns an empty index when none exist.
-
-        Args:
-            project: The dbt charts project.
-
-        Returns:
-            A populated AliasIndex.
-
-        Raises:
-            ValueError: If any alias is not absolute, collides with a real
-                        file path, or two boards claim the same alias.
+        (see ``board_roots``). Never raises for an authored alias: an alias that
+        isn't absolute, shadows a real board file, is claimed by more than one
+        board, or matches the same URLs as another board's parameterized alias
+        lands in ``errors`` against each board involved and redirects nowhere.
         """
         from dbt_charts.core.registered_views.router import compile_route
 
-        alias_map: dict[str, str] = {}
-        patterns: list[tuple[re.Pattern[str], str]] = []
-        # normalized alias URL → board relpath that claimed it (for error messages)
-        alias_owners: dict[str, str] = {}
-        # pattern shape (captures → <*>) → (board relpath, raw alias), to reject ambiguity
-        pattern_shapes: dict[str, tuple[str, str]] = {}
+        index = cls()
 
+        def reject(relpath: str, alias: str, reason: str) -> None:
+            index.errors.setdefault(relpath, []).append(
+                DbtChartsError.from_code(
+                    ERR_BOARD_ALIAS, alias=alias, reason=reason
+                ).to_diagnostic(file=relpath)
+            )
+
+        # normalized alias URL → {board relpath: canonical URL}, in scan order
+        claims: dict[str, dict[str, str]] = {}
         for pf in project.iter_boards():
             raw_aliases = read_aliases_from_file(pf)
             if not raw_aliases:
                 continue
-
             canonical_url = url_for_file(pf.relpath)
-
             for raw_alias in raw_aliases:
-                # Validate and normalize the alias
-                normalized = normalize_alias_url(raw_alias)  # raises if not absolute
-
-                # A board aliasing its own canonical URL is a no-op, not a redirect.
-                # Skip it: mapping canonical→canonical would create a self-redirect
-                # loop at request time.
+                try:
+                    normalized = normalize_alias_url(raw_alias)
+                except ValueError:
+                    reject(
+                        pf.relpath,
+                        raw_alias,
+                        "is not absolute: aliases must start with a leading /, "
+                        "like /old-reports/.",
+                    )
+                    continue
+                # A board aliasing its own canonical URL is a no-op; mapping
+                # canonical→canonical would loop at request time.
                 if normalized == canonical_url:
                     continue
-
-                # An alias may not shadow a real board file. System-view routes
-                # (data/inspector) are generated, not files, so aliasing those is
-                # allowed — only real board files are forbidden.
+                # System-view routes (data/inspector) are generated, not files, so
+                # aliasing those is allowed — only real board files are forbidden.
                 if _file_url_exists(normalized, project):
-                    raise ValueError(
-                        f"Alias collision: {raw_alias!r} in {pf.relpath} collides "
-                        f"with an existing real board file. Aliases may not shadow "
-                        f"real board files; aliasing a system-view route "
-                        f"(data/inspector) is allowed."
+                    reject(
+                        pf.relpath,
+                        raw_alias,
+                        "shadows a real board at that URL. Aliases may not shadow "
+                        "real board files; aliasing a system-view route "
+                        "(data/inspector) is allowed.",
                     )
+                    continue
+                claims.setdefault(normalized, {})[pf.relpath] = canonical_url
 
-                # Check duplicate alias across boards
-                if normalized in alias_owners:
-                    other = alias_owners[normalized]
-                    raise ValueError(
-                        f"Duplicate alias {normalized!r}: both {pf.relpath} and {other} "
-                        f"claim this alias. Each alias must be unique across the project."
+        # pattern shape (captures → <*>) → [(board relpath, alias, canonical URL)]
+        shapes: dict[str, list[tuple[str, str, str]]] = {}
+        for alias, owners in claims.items():
+            if len(owners) > 1:
+                for relpath in owners:
+                    others = ", ".join(o for o in owners if o != relpath)
+                    reject(
+                        relpath,
+                        alias,
+                        f"is also claimed by {others}. Each alias must be unique "
+                        "across the project, so no board gets it until all but "
+                        "one drop it.",
                     )
-                alias_owners[normalized] = pf.relpath
+                continue
+            ((relpath, canonical_url),) = owners.items()
+            if "<" in alias or ">" in alias:
+                shape = re.sub(r"<[^>]+>", "<*>", alias)
+                shapes.setdefault(shape, []).append((relpath, alias, canonical_url))
+            else:
+                index._map[alias] = canonical_url
 
-                # Parameterized alias (contains a <name> capture) → compile to a
-                # pattern the server matches and rewrites to a query param. Plain
-                # aliases stay in the exact map (fast O(1) redirect lookup).
-                if "<" in normalized or ">" in normalized:
-                    # Two patterns with the same literal/capture *shape*
-                    # (e.g. /items/<name> and /items/<id>) would match the same
-                    # URLs; first-in-scan-order would win silently. Reject the
-                    # ambiguity at build time, mirroring the exact-alias rule.
-                    shape = re.sub(r"<[^>]+>", "<*>", normalized)
-                    if shape in pattern_shapes:
-                        other_relpath, other_alias = pattern_shapes[shape]
-                        raise ValueError(
-                            f"Ambiguous parameterized aliases: {raw_alias!r} in "
-                            f"{pf.relpath} and {other_alias!r} in {other_relpath} match "
-                            f"the same URLs (shape {shape!r}). Disambiguate the path."
-                        )
-                    pattern_shapes[shape] = (pf.relpath, raw_alias)
-                    patterns.append((compile_route(normalized), canonical_url))
-                else:
-                    alias_map[normalized] = canonical_url
-
-        index = cls()
-        index._map = alias_map
-        index._patterns = patterns
+        # Two patterns of one shape (/items/<name>, /items/<id>) match the same
+        # URLs, and scan order would pick the winner silently.
+        for shape, group in shapes.items():
+            if len(group) > 1:
+                for relpath, alias, _ in group:
+                    others = ", ".join(
+                        f"{a!r} in {r}" for r, a, _ in group if a != alias
+                    )
+                    reject(
+                        relpath,
+                        alias,
+                        f"matches the same URLs as {others} (shape {shape!r}). "
+                        "Disambiguate the path.",
+                    )
+                continue
+            ((_, alias, canonical_url),) = group
+            index._patterns.append((compile_route(alias), canonical_url))
         return index
-
-    def __bool__(self) -> bool:
-        return bool(self._map) or bool(self._patterns)

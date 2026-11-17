@@ -89,13 +89,12 @@ pub(crate) fn shift_vega_payload(
         .get("id")
         .and_then(Value::as_str)
         .unwrap_or("<unknown>");
-    // Production's helper indexes `spec["title"]`: a titled chart is the only
-    // one `chart_title_metrics` hands a shift to.
-    let titled = payload
-        .resolved
-        .get("title")
-        .is_some_and(|t| !t.is_null() && t.as_str() != Some(""));
-    if !titled {
+    // A `cols` row hands a shift only to a titled chart (`chart_title_metrics`); a pie's
+    // top-placed attached table also shifts a subtitle that stands alone.
+    let has_text = |key: &str| {
+        payload.resolved.get(key).is_some_and(|t| !t.is_null() && t.as_str() != Some(""))
+    };
+    if !has_text("title") && !has_text("subtitle") {
         return Err(format!(
             "chart {chart_id}: a title shift needs a title block to move"
         ));
@@ -179,7 +178,7 @@ pub fn chart_title_metrics(
     spark_title: Option<&crate::SparkBarTitle>,
     pie_mode: Option<crate::families::pie::Mode>,
 ) -> Result<Option<TitleMetrics>, String> {
-    // `title_band.py:106`: a subtitle-only chart draws no title block.
+    // `title_band.py:106`: a subtitle-only chart has no title row to align.
     if !chart
         .get("title")
         .and_then(Value::as_str)
@@ -401,7 +400,7 @@ mod tests {
         assert_eq!(shifts(&[with_subtitle, plain]), [(0.0, 0.0), (0.0, 14.0)]);
     }
 
-    // A subtitle-only chart has no title block (`not chart.title`), so it is
+    // A subtitle-only chart has no title row (`not chart.title`), so it is
     // untitled for the band: it takes no shift and adds nothing to the row.
     #[test]
     fn a_row_mixing_a_titled_chart_and_a_subtitle_only_chart_shifts_neither() {

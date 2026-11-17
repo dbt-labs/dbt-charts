@@ -332,7 +332,7 @@ class ProjectSession:
             project=self.project,
             env=self.env if warehouse else None,
         )
-        return _validate.annotate_with_data_lint(results, project=self.project)
+        return _validate.annotate_with_alias_lint(results, project=self.project)
 
     def migrate_paths(
         self, paths: list[PurePosixPath] | None, *, dry_run: bool

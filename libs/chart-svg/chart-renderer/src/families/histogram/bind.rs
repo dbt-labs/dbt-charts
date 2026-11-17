@@ -196,7 +196,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         .y_label
         .as_deref()
         .filter(|s| !s.is_empty())
-        .map_or_else(|| "#".to_string(), crate::common::collapse_title_newlines);
+        .map_or_else(|| "#".to_string(), display_text::collapse_title_newlines);
 
     // A symbol legend's box does not depend on the plot; a gradient's follows
     // the plot's height and is laid out per fit pass.

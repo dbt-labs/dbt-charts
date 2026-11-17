@@ -28,6 +28,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+pytestmark = pytest.mark.usefixtures("placement_scope")
+
 
 def test_inherit_slot_fills_per_family_padding_from_board():
     """apply_inherit fills per-family padding sides from Style.charts.padding."""

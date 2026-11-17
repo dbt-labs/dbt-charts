@@ -30,12 +30,21 @@ from dbt_charts.telemetry.emitter import (
 )
 
 
+class _Received(list[tuple[str, dict[str, str], bytes]]):
+    """Requests the ingest server has handled; ``arrived`` is set on each."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.arrived = threading.Event()
+
+
 class _Ingest(BaseHTTPRequestHandler):
-    requests: list[tuple[str, dict[str, str], bytes]]
+    requests: _Received
 
     def do_POST(self) -> None:
         body = self.rfile.read(int(self.headers["Content-Length"]))
         self.requests.append((self.path, dict(self.headers), body))
+        self.requests.arrived.set()
         self.send_response(202)
         self.end_headers()
 
@@ -51,10 +60,8 @@ def tracking_on(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 @pytest.fixture
-def ingest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> Generator[list[tuple[str, dict[str, str], bytes]], None, None]:
-    received: list[tuple[str, dict[str, str], bytes]] = []
+def ingest(monkeypatch: pytest.MonkeyPatch) -> Generator[_Received, None, None]:
+    received = _Received()
     handler = type("Handler", (_Ingest,), {"requests": received})
     server = HTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -107,12 +114,15 @@ def test_send_maps_none_to_proto3_defaults(
 
 
 def test_run_posts_one_unauthenticated_batch_on_exit(
-    ingest: list[tuple[str, dict[str, str], bytes]], tmp_path: Path
+    ingest: _Received, tmp_path: Path
 ) -> None:
     invocation = begin_invocation("render", no_send_flag=False, project_dir=tmp_path)
     assert invocation is not None
     invocation.end(None)
 
+    # `end` stops waiting after SHUTDOWN_TIMEOUT_SECONDS; a slow first POST
+    # finishes in the background, so wait for the server rather than the clock.
+    assert ingest.arrived.wait(timeout=30)
     [(path, headers, body)] = ingest
     assert path == "/v1/ingest/protobuf"
     assert {name.lower() for name in headers}.isdisjoint(
@@ -124,9 +134,7 @@ def test_run_posts_one_unauthenticated_batch_on_exit(
     assert events[0].invocation_id == events[1].invocation_id
 
 
-def test_consent_off_sends_nothing(
-    ingest: list[tuple[str, dict[str, str], bytes]], tmp_path: Path
-) -> None:
+def test_consent_off_sends_nothing(ingest: _Received, tmp_path: Path) -> None:
     assert begin_invocation("render", no_send_flag=True, project_dir=tmp_path) is None
     assert ingest == []
 

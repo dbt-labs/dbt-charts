@@ -142,8 +142,16 @@ pub fn err_binder_unknown_relation(detail: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_BINDER_UNKNOWN_RELATION, [("detail", detail.into())])
 }
 
+pub fn err_board_alias(alias: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_BOARD_ALIAS, [("alias", alias.into()), ("reason", reason.into())])
+}
+
 pub fn err_board_artifact_invalid(detail: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_BOARD_ARTIFACT_INVALID, [("detail", detail.into())])
+}
+
+pub fn err_board_file_placed_twice(file: impl Into<Value>, first: impl Into<Value>, second: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_BOARD_FILE_PLACED_TWICE, [("file", file.into()), ("first", first.into()), ("second", second.into())])
 }
 
 pub fn err_board_file_unreadable(path: impl Into<Value>) -> Diagnostic {
@@ -1358,6 +1366,10 @@ pub fn err_tool_arguments_invalid(message: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_TOOL_ARGUMENTS_INVALID, [("message", message.into())])
 }
 
+pub fn err_torn_outlier_unsupported(chart_id: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_TORN_OUTLIER_UNSUPPORTED, [("chart_id", chart_id.into()), ("reason", reason.into())])
+}
+
 pub fn err_unknown_chart(chart: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_UNKNOWN_CHART, [("chart", chart.into()), ("available", available.into())])
 }
@@ -1846,12 +1858,20 @@ pub fn warn_temporal_single_point(chart_id: impl Into<Value>, chart_type: impl I
     Diagnostic::new(&codes::WARN_TEMPORAL_SINGLE_POINT, [("chart_id", chart_id.into()), ("chart_type", chart_type.into())])
 }
 
+pub fn warn_text_undeclared_name(field: impl Into<Value>, name: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_TEXT_UNDECLARED_NAME, [("field", field.into()), ("name", name.into())])
+}
+
 pub fn warn_too_many_color_categories(chart_id: impl Into<Value>, field: impl Into<Value>, count: impl Into<Value>, max_categories: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_TOO_MANY_COLOR_CATEGORIES, [("chart_id", chart_id.into()), ("field", field.into()), ("count", count.into()), ("max_categories", max_categories.into())])
 }
 
 pub fn warn_too_many_x_categories(chart_id: impl Into<Value>, field: impl Into<Value>, count: impl Into<Value>, max_categories: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_TOO_MANY_X_CATEGORIES, [("chart_id", chart_id.into()), ("field", field.into()), ("count", count.into()), ("max_categories", max_categories.into())])
+}
+
+pub fn warn_torn_outlier_no_outlier(chart_id: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_TORN_OUTLIER_NO_OUTLIER, [("chart_id", chart_id.into())])
 }
 
 pub fn warn_trend_on_bars(chart_id: impl Into<Value>, index: impl Into<Value>) -> Diagnostic {

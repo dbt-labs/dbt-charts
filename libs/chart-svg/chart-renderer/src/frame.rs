@@ -217,8 +217,8 @@ impl FrameTitle {
 
     /// [`Self::paint`] as nodes; none when there is nothing to paint.
     pub fn nodes(&self, title_pos: Option<(f64, f64)>, origin: (f64, f64)) -> Vec<Node> {
-        match (title_pos, self.block.title_lines.is_empty()) {
-            (Some((tx, ty)), false) => self.nodes_at(origin.0 + tx, origin.1 + ty),
+        match title_pos {
+            Some((tx, ty)) if self.block.ink.is_some() => self.nodes_at(origin.0 + tx, origin.1 + ty),
             _ => Vec::new(),
         }
     }

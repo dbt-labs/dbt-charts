@@ -279,7 +279,7 @@ impl ReadScalar for Enabled {
             Value::String(s) => Some(Self::Expression(s)),
             _ => {
                 let probe = <SingleRowBoolProbe as FromNode>::whole(node, cx)?;
-                match SingleRowBoolProbe::build_authored(probe, "") {
+                match SingleRowBoolProbe::build_authored(probe, &model_core::At::ROOT) {
                     Ok(p) => Some(Self::Probe(p)),
                     Err(unset) => {
                         cx.invalid(node.span, unset.to_string());

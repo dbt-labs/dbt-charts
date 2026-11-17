@@ -111,6 +111,9 @@ notes where a query had to be inferred.
 A screenshot-only bundle has `png/` and `source.json`, nothing else.
 
 A tile or image the import could not fetch is named in `outline.md` with the source's error.
+A page missing from `png/` still needs its picture: with a browser, open the
+source URL (the user signs in), save a full-page screenshot into `png/` and say
+so; without one, ask the user for a screenshot before phase 1.
 
 ## Modes — ask once, before any YAML
 
@@ -187,7 +190,8 @@ it, and say why in the chart's `notes:`. "The source does it" is not a reason.
   its number is the content, so it keeps the source's digits (`currency_whole`,
   `integer`) and is compact only when the source itself abbreviates.
 - No invisible layers or helper columns to fake a feature (an axis floor, stack
-  totals). Note the gap instead.
+  totals). Note the gap instead. A hidden column that feeds a `link:` or a
+  per-row style is not a fake: it is how a table reads them.
 - Never invent data. A table the warehouse will not read, a query that fails,
   a value you can only see in the screenshot: the chart stays blocked with a
   `notes:` naming what is missing. No typed-in values, no `UNNEST([STRUCT(...)])`
@@ -243,7 +247,8 @@ queries:
 **Options to copy deliberately**, each checked against the raw definition, not
 only the PNG: stacking; which column splits series; sort; date
 grain and window; KPI comparison, target and tone; table columns and page size;
-totals; the hover card (a source tile's tooltip columns become the chart's
+totals; column links (every column the outline marks `[link:`; see Rules);
+the hover card (a source tile's tooltip columns become the chart's
 `tooltip:` list on bar, line, area, scatter and pie, in the source's order, with
 the source's format when it differs from the column's). Everything visual
 beyond that starts from the dbt Charts default.
@@ -284,8 +289,16 @@ cannot represent is **flagged to the user now, never silently dropped**.
 With a bundle, `queries/` names the source tables: read from the same model the
 source reads, never rebuild its logic from upstream tables. Read any hidden or
 data-prep element's SQL first; its `WHERE` holds the workbook-wide rules.
-Without SQL, explore the warehouse with `{{ s_execute_sql }}` against
-INFORMATION_SCHEMA.
+
+Without a tile's SQL, the warehouse's query history still has it: the source
+tool ran it. Search the recent history with `{{ s_execute_sql }}` for
+statements run by the tool's service account (BigQuery
+`` `region-us`.INFORMATION_SCHEMA.JOBS `` in the project's region, Snowflake `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY`,
+Databricks `system.query.history`, Redshift `SYS_QUERY_HISTORY`), matching the
+tile's column names, filters and grain. Run the best candidates and check them
+against the phase-1 values the way § Sources → Screenshots says: grain, units and
+magnitude, not the stale numbers. Only when the history is unreadable or holds
+nothing that fits, explore INFORMATION_SCHEMA for tables and columns.
 
 ### 5. Swap tile by tile
 
@@ -360,6 +373,15 @@ Each rule is one a reviewed migration showed being broken.
   its content, with typos fixed.
 - Wide detail tables keep every row and visible column, readable: full width,
   `max_width`s, no `LIMIT` the source lacks.
+- A column the source renders as a hyperlink keeps its link on the same
+  column: `style:` `columns:` `<col>:` `link:`. A URL joined from a fixed
+  prefix and columns is a template over the query's columns
+  (`link: "https://…/Account/{{ account_id }}/view"`); select every column the
+  template names and hide it with `visible: false`. A URL with any other logic
+  (a condition, a lookup) is a column of the query (`… AS account_url`) that
+  the link names (`link: account_url`), hidden; an empty URL leaves the cell
+  plain text. A link that reads its URL from another column names that column.
+  Never drop a link, move it to another column, or print the URL as text.
 - Timestamps keep time of day; dates keep their year.
 - KPI targets carry good/bad tone (`percent_delta` with `tone`); visible KPI
   descriptions are drawn text, never `notes:`.
@@ -455,6 +477,10 @@ Deliver two tables; every mismatch gets a cause.
 | Tile | Rows / series | Matches? | Cause if not |
 |---|---|---|---|
 
+A linked column is a row of its own: `grep -n '\[link:' outline.md` lists every
+one, and each appears in the tile table with the board column that carries its
+`link:`. A linked column without one is a mismatch, not an omission.
+
 Run the board at the source's defaults. Usual causes: late-arriving data since
 the fetch, a different default window, a hidden-page rule you missed, a source
 bug. When the bundle has `queries/`, re-run the source's SQL now and compare
@@ -507,6 +533,10 @@ passes offered.
   above the table (`# Open Tickets = CountDistinct([Url Link])`). Each is a
   KPI over the table's rows with the table's filters, placed in a row directly
   above the table, titled with the column's name. Don't drop them.
+- A column's `link:` in the outline is a hyperlink on that column: `kind:
+  formula` builds the URL from other columns (`Concat(...)`, often inside
+  `If(IsNull(...), "", ...)`); `kind: column` takes the URL from the column
+  whose id it names. Pivot tables carry them too.
 - KPI `comparison.display`: `delta` is value − target; absent means percent
   difference. Carry `dataLabel: shown` and `totals: shown`; skip `values=[]`
   and disabled element filters.
@@ -550,6 +580,7 @@ passes offered.
 | Reworded metric names, or losing time of day | Keep the meaning of every name; read the type per column from the raw definition |
 | Inventing totals, or dropping them | Totals exactly where the source shows them |
 | Truncated wide tables, header tiles without fields and links | Full width, every column, every line and link |
+| A linked column delivered as plain text, or its link on another column | The same column, `link:` from hidden id columns or a URL column |
 | Tab-only filters on every tab | Nested-board `variables:` on that tab |
 | Migrating hidden or graveyard pages | List them as dropped |
 | Copying a forward-looking moving average | Trailing window, and say so |

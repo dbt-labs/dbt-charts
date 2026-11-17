@@ -26,3 +26,14 @@
     whether the file exists.
   summary: Fired when a board import or agent file tool touches a dbt profiles file.
   docs_topic: errors
+- code: ERR-BOARD-ALIAS
+  level: error
+  title: A board alias can't be served
+  template: 'Alias {alias!r} {reason}'
+  doc: Fired when an entry in a board's `aliases:` can't become a redirect, because it isn't
+    absolute, shadows a real board, is claimed by another board too, or matches the same URLs
+    as another parameterized alias. Only the boards involved fail; the rest of the project
+    keeps serving. Two boards claiming one alias both fail and neither gets the redirect, so
+    remove the alias from all but one board.
+  summary: A board's `aliases:` entry is malformed or claimed twice.
+  docs_topic: board

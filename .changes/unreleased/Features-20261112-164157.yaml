@@ -1,0 +1,3 @@
+kind: Features
+body: Line charts break across a large gap in the data instead of drawing a straight line through it; set style.marks.line.connect to true to join every gap.
+time: 2026-11-12T16:41:57.160662-08:00

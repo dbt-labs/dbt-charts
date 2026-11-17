@@ -75,11 +75,23 @@ def normalize_svg_font_families_for_vl_convert(svg_content: str) -> str:
 
 _TAG_PATTERN = re.compile(r"<[a-zA-Z][^>]*>")
 _FONT_FAMILY_VALUE_PATTERN = re.compile(r'(font-family\s*=\s*")([^"]*)(")')
-_COVERED_WEIGHTS = {w for by_weight in WEIGHT_FACE_ALIASES.values() for w in by_weight}
+# `WEIGHT_FACE_ALIASES` plus the one absolute CSS keyword with a static face, keyed
+# as its own weight; `normal` is 400 and needs none, and `bolder`/`lighter` are
+# relative to an inherited weight this rewrite cannot see.
+_ALIASES_BY_WEIGHT = {
+    base_family: {
+        **by_weight,
+        **({"bold": by_weight["700"]} if "700" in by_weight else {}),
+    }
+    for base_family, by_weight in WEIGHT_FACE_ALIASES.items()
+}
+_COVERED_WEIGHTS = {w for by_weight in _ALIASES_BY_WEIGHT.values() for w in by_weight}
 _COVERED_WEIGHT_PATTERN = re.compile(
     rf"""font-weight\s*[=:]\s*"?(?:{"|".join(sorted(_COVERED_WEIGHTS))})\b"""
 )
-_STYLE_FONT_WEIGHT_PATTERN = re.compile(r"font-weight\s*:\s*(\d+)")
+_WEIGHT_VALUE = r"(\d+|[a-z]+)"
+_STYLE_FONT_WEIGHT_PATTERN = re.compile(rf"font-weight\s*:\s*{_WEIGHT_VALUE}")
+_ATTR_FONT_WEIGHT_PATTERN = re.compile(rf'font-weight\s*=\s*"{_WEIGHT_VALUE}"')
 _CLASS_FAMILY_RULE_PATTERN = re.compile(
     r"\.([\w-]+)\s*\{[^}]*?font-family\s*:\s*((?:&#?\w+;|[^;}])+)"
 )
@@ -89,7 +101,7 @@ _TSPAN_OPEN_PATTERN = re.compile(r"<tspan\b[^>]*>")
 
 
 def _weight_aliased_family(family: str, weight: str) -> str | None:
-    for base_family, by_weight in WEIGHT_FACE_ALIASES.items():
+    for base_family, by_weight in _ALIASES_BY_WEIGHT.items():
         target_family = by_weight.get(weight)
         if target_family is not None and base_family in family:
             return family.replace(base_family, target_family)
@@ -97,7 +109,7 @@ def _weight_aliased_family(family: str, weight: str) -> str | None:
 
 
 def _rewrite_weight_face_in_tag(tag: str) -> str:
-    weight_match = re.search(r'font-weight\s*=\s*"(\d+)"', tag)
+    weight_match = _ATTR_FONT_WEIGHT_PATTERN.search(tag)
     if weight_match is None:
         return tag
 

@@ -16,6 +16,17 @@ pub(crate) struct PointRule {
     predicate: crate::conditional::Predicate,
     #[serde(default)]
     marks: Option<PointRuleMarks>,
+    #[serde(default)]
+    axis_x: Option<crate::conditional::RuleAxisX>,
+}
+
+/// A point family's rules as its x-axis labels read them.
+pub(crate) fn axis_label_rules<'a>(
+    family: &'static str,
+    rules: Option<&'a std::collections::BTreeMap<String, Vec<PointRule>>>,
+    x: &'a str,
+) -> crate::conditional::AxisLabelRules<'a, PointRule> {
+    crate::conditional::AxisLabelRules { family, rules, predicate: |r| &r.predicate, axis: |r| r.axis_x.as_ref(), measures: &[], x }
 }
 
 #[derive(Deserialize)]

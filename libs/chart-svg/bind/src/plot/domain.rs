@@ -3,9 +3,10 @@
 //! the one law bind and the renderer share.
 
 use d3rs::measure_axis::{bake_ticks, MeasureAxis};
+use d3rs::scale::Continuous;
 use diagnostic::{diag, Diagnostic};
 
-use crate::bound::{Authored, Bounds, BoundsReason, Extent, Invalid, Ladder, Pin, PinReason, Rung, ValueDomain, Zero};
+use crate::bound::{Authored, Bounds, BoundsReason, Extent, Invalid, Ladder, Pin, PinReason, Rung, ValueDomain, ValueScale, Zero};
 
 /// `ticks.count: auto`.
 pub const AUTO_TICK_TARGET: usize = 6;
@@ -28,6 +29,10 @@ impl Count {
 
 /// What the axis authors and the format implies.
 pub struct Axis<'a> {
+    /// A bent scale (pow, sqrt, symlog) ticks and rounds as a linear one does, in the data's own
+    /// space, and only draws its marks bent: `linear` carries the type through. A log scale has its
+    /// own ladder ([`log`]).
+    pub scale: ValueScale,
     pub zero: Zero,
     /// `scale.headroom`, 0 when unset.
     pub headroom: f64,
@@ -73,6 +78,9 @@ pub fn linear(axis: &Axis, values: &[f64], text: RungText) -> Result<Option<Valu
     ) else {
         return Ok(None);
     };
+    if matches!(axis.scale, ValueScale::Log { .. }) {
+        return Err(Invalid::LogScaleLinearLadder);
+    }
     let authored = authored(axis.domain)?;
     let anchored = axis.zero_anchors();
     let (ladder, min, max) = if axis.independent && axis.values.is_none() && axis.domain.is_none() {
@@ -119,7 +127,7 @@ pub fn linear(axis: &Axis, values: &[f64], text: RungText) -> Result<Option<Valu
     };
     let extent = Extent::new(lo, hi)?;
     let bounds = linear_bounds(axis, anchored, (lo, hi), authored, min, max)?;
-    Ok(Some(ValueDomain { extent, zero: axis.zero, headroom: axis.headroom, authored, ladder, min, max, bounds }))
+    Ok(Some(ValueDomain { scale: axis.scale, extent, zero: axis.zero, headroom: axis.headroom, authored, ladder, min, max, bounds }))
 }
 
 /// A pin stands as is. A bar or a scatter rounds only an unpinned, unauthored extent (zero
@@ -191,24 +199,43 @@ impl Axis<'_> {
     }
 }
 
-/// The domain of a log axis: no ladder and no pins, so no headroom applies. The caller
-/// has refused non-positive values and a count.
-pub fn log(values: &[f64], authored: Option<Authored>) -> Result<Option<ValueDomain>, Invalid> {
+/// The domain of a log axis over `values` at `base`, with the rungs Vega draws on it. Production
+/// bakes no ladder for a log axis, so there are no pins and no headroom: the bounds are the authored
+/// pair verbatim (a descending one keeps its direction), else the data extent rounded out to powers
+/// of the base (`LogAxis::new`, `chart-renderer/src/families/scatter.rs`). The rungs are d3's
+/// loggish ticks over those bounds at `count` (`scale.ticks(count)`), the minor ticks `tickFormat`
+/// blanks (`log_tick_visible`) left unprinted and the others printed together by `text`. The caller
+/// has refused non-positive values.
+pub fn log(base: f64, count: usize, values: &[f64], authored_domain: Option<(f64, f64)>, text: RungText) -> Result<Option<ValueDomain>, Invalid> {
     let (Some(lo), Some(hi)) = (
         values.iter().copied().reduce(f64::min),
         values.iter().copied().reduce(f64::max),
     ) else {
         return Ok(None);
     };
+    let scale = ValueScale::Log { base };
     let extent = Extent::new(lo, hi)?;
+    let authored = authored(authored_domain)?;
     let bounds = match authored {
         Some(authored) => Bounds { extent: authored.extent, reason: BoundsReason::Authored },
         None => {
-            let niced = d3rs::scale::Continuous::log([lo, hi], [0.0, 1.0]).nice(0).domain;
+            let niced = Continuous::new(scale.transform(), [lo, hi], [0.0, 1.0]).nice(0).domain;
             Bounds { extent: Extent::new(niced[0], niced[1])?, reason: BoundsReason::Niced }
         }
     };
-    Ok(Some(ValueDomain { extent, zero: Zero::Free, headroom: 0.0, authored, ladder: Ladder::None, min: None, max: None, bounds }))
+    let (start, stop) = match authored {
+        Some(Authored { reversed: true, .. }) => (bounds.extent.hi(), bounds.extent.lo()),
+        _ => (bounds.extent.lo(), bounds.extent.hi()),
+    };
+    let ticks = Continuous::new(scale.transform(), [start, stop], [0.0, 1.0]);
+    let (values_at, shown) = (ticks.ticks(count), ticks.log_tick_visible(count));
+    let printed: Vec<f64> = values_at.iter().copied().filter(|tick| shown(*tick)).collect();
+    let mut texts = text(&printed).into_iter();
+    let rungs = values_at
+        .iter()
+        .map(|&value| Rung { value, text: if shown(value) { texts.next().unwrap_or_default() } else { String::new() } })
+        .collect();
+    Ok(Some(ValueDomain { scale, extent, zero: Zero::Free, headroom: 0.0, authored, ladder: Ladder::Log(rungs), min: None, max: None, bounds }))
 }
 
 /// A log area with no authored domain draws on the data extent plus the positive
@@ -226,6 +253,7 @@ pub fn normalized(authored: Option<Authored>) -> Result<ValueDomain, Invalid> {
     let unit = Extent::new(0.0, 1.0)?;
     let domain = authored.unwrap_or(Authored { extent: unit, reversed: false });
     Ok(ValueDomain {
+        scale: ValueScale::Linear,
         extent: unit,
         zero: Zero::Anchored,
         headroom: 0.0,
@@ -315,6 +343,20 @@ pub fn require_positive(chart_id: &str, side: Side, field: &str, values: &[f64])
     })
 }
 
+/// Whether `error` is one of the compile errors production raises for a log axis (`require_positive`,
+/// `refuse_log`): the chart's own error card, which the rest of the board draws beside.
+pub fn is_log_error(error: &Diagnostic) -> bool {
+    [
+        diagnostic::codes::ERR_LOG_SCALE_REQUIRES_POSITIVE_DATA.id,
+        diagnostic::codes::ERR_LOG_SCALE_REQUIRES_POSITIVE_X_DATA.id,
+        diagnostic::codes::ERR_BAR_LOG_SCALE_NOT_SUPPORTED.id,
+        diagnostic::codes::ERR_AREA_STACKED_LOG_SCALE_NOT_SUPPORTED.id,
+        diagnostic::codes::ERR_AREA_LOG_SCALE_INDEPENDENT_MULTIPLES.id,
+        diagnostic::codes::ERR_TICKS_COUNT_REQUIRES_NON_LOG_SCALE.id,
+    ]
+    .contains(&error.code)
+}
+
 /// What a family cannot do on a log axis.
 #[derive(Debug, Clone, Copy)]
 pub enum LogUse<'a> {
@@ -352,7 +394,7 @@ mod tests {
     }
 
     fn axis(zero: Zero) -> Axis<'static> {
-        Axis { zero, headroom: 0.0, percent: false, count: None, values: None, domain: None, min_step: None, independent: false, nice: None, mark: Mark::Bar }
+        Axis { scale: ValueScale::Linear, zero, headroom: 0.0, percent: false, count: None, values: None, domain: None, min_step: None, independent: false, nice: None, mark: Mark::Bar }
     }
 
     fn rung_values(domain: &ValueDomain) -> Vec<f64> {
@@ -560,10 +602,54 @@ mod tests {
         assert_eq!(bounds(&domain), (3.5, 90.0, BoundsReason::Authored));
     }
 
+    fn log_rungs(domain: &ValueDomain) -> Vec<(f64, String)> {
+        match &domain.ladder {
+            Ladder::Log(rungs) => rungs.iter().map(|r| (r.value, r.text.clone())).collect(),
+            other => panic!("{other:?}"),
+        }
+    }
+
     #[test]
-    fn a_log_axis_nices_to_powers_unless_authored() {
-        let domain = log(&[3.0, 920.0], None).unwrap().unwrap();
+    fn a_log_axis_nices_to_powers_and_prints_the_minor_ticks_d3_keeps() {
+        let domain = log(10.0, 10, &[3.0, 920.0], None, &digits).unwrap().unwrap();
         assert_eq!(bounds(&domain), (1.0, 1000.0, BoundsReason::Niced));
+        assert_eq!(domain.scale, ValueScale::Log { base: 10.0 });
+        // Under three decades every mantissa ticks; d3's `tickFormat` prints those up to k = 10 * 10 / 28 = 3.57.
+        let rungs = log_rungs(&domain);
+        assert_eq!(rungs.len(), 28);
+        let printed: Vec<f64> = rungs.iter().filter(|(_, text)| !text.is_empty()).map(|r| r.0).collect();
+        assert_eq!(printed, [1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 100.0, 200.0, 300.0, 1000.0]);
+        assert!(rungs.iter().all(|(value, text)| text.is_empty() || *text == value.to_string()));
+    }
+
+    #[test]
+    fn an_authored_log_domain_stands_and_keeps_its_direction() {
+        let domain = log(10.0, 10, &[7.0, 300.0], Some((500.0, 5.0)), &digits).unwrap().unwrap();
+        assert_eq!(bounds(&domain), (5.0, 500.0, BoundsReason::Authored));
+        let rungs = log_rungs(&domain);
+        assert_eq!((rungs.first().unwrap().0, rungs.last().unwrap().0), (500.0, 5.0));
+    }
+
+    #[test]
+    fn a_log_axis_over_a_base_ticks_its_powers() {
+        let domain = log(2.0, 10, &[4.0, 7000.0], None, &digits).unwrap().unwrap();
+        assert_eq!(bounds(&domain), (4.0, 8192.0, BoundsReason::Niced));
+        let values: Vec<f64> = log_rungs(&domain).iter().map(|r| r.0).collect();
+        assert_eq!(values, [4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0]);
+    }
+
+    #[test]
+    fn a_log_scale_has_no_linear_ladder() {
+        let axis = Axis { scale: ValueScale::Log { base: 10.0 }, ..axis(Zero::Free) };
+        assert_eq!(linear(&axis, &[1.0, 10.0], &digits), Err(Invalid::LogScaleLinearLadder));
+    }
+
+    #[test]
+    fn a_bent_scale_ticks_and_rounds_as_a_linear_one() {
+        let linear_domain = linear(&Axis { count: Some(Count::N(5)), ..axis(Zero::Free) }, &[3000.0, 6000.0], &digits).unwrap().unwrap();
+        let sqrt = Axis { scale: ValueScale::Sqrt, count: Some(Count::N(5)), ..axis(Zero::Free) };
+        let bent = linear(&sqrt, &[3000.0, 6000.0], &digits).unwrap().unwrap();
+        assert_eq!(bent, ValueDomain { scale: ValueScale::Sqrt, ..linear_domain });
     }
 
     #[test]

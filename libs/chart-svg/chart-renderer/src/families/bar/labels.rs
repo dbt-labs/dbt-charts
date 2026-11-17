@@ -153,12 +153,18 @@ pub(super) struct LabelSpec {
     pub(super) funnel: Option<FunnelLabels>,
 }
 
-/// The label law of bars joined by ribbons: `percent` reads against the first stage, and a
-/// `middle` label centers on its mark or, where it does not fit, sits just outside the mark's
-/// right edge.
-#[derive(Clone, Copy)]
+/// The label law of bars joined by ribbons: `percent_of_first` reads against the first stage,
+/// `percent_of_previous` against the stage before, and a `middle` label centers on its mark or,
+/// where it does not fit, sits just outside the mark's right edge. A percent whose divisor is 0
+/// or absent is undefined, so only a template that names it errs.
+#[derive(Clone)]
 pub(super) struct FunnelLabels {
-    pub(super) first: f64,
+    /// The first stage's value, the divisor of `percent_of_first`.
+    pub(super) first: Option<f64>,
+    pub(super) cat_field: String,
+    /// Each stage's divisor for `percent_of_previous`: the stage before's value or, for the
+    /// first stage, its own value. A stage whose divisor is 0 or absent has no entry.
+    pub(super) previous: HashMap<String, f64>,
     pub(super) band_width: f64,
     pub(super) max_size: Option<f64>,
 }
@@ -194,15 +200,19 @@ impl LabelSpec {
         position(self.anchor(value)).clamp(0.0, plot_extent)
     }
 
-    /// The `labels.template` text of `row`: its columns, `value`, and on a funnel `percent`.
+    /// The `labels.template` text of `row`: its columns, `value`, and on a funnel
+    /// `percent_of_first` and `percent_of_previous`.
     fn templated(&self, source: &str, row: Option<&serde_json::Map<String, Value>>, value: f64) -> Result<String, String> {
         let row = row.ok_or("bar: a label template needs the row it labels")?;
-        let percent = match self.funnel {
-            Some(funnel) if funnel.first == 0.0 => return Err("bar: a funnel label's percent divides by the first stage, whose value is 0".into()),
-            Some(funnel) => Some(value / funnel.first),
-            None => None,
-        };
-        let names: Vec<(&str, f64)> = std::iter::once(("value", value)).chain(percent.map(|p| ("percent", p))).collect();
+        let mut names = vec![("value", value)];
+        if let Some(funnel) = &self.funnel {
+            if let Some(first) = funnel.first {
+                names.push(("percent_of_first", value / first));
+            }
+            if let Some(previous) = funnel.previous.get(row_str(row, &funnel.cat_field).as_str()) {
+                names.push(("percent_of_previous", value / previous));
+            }
+        }
         let own = |e| ::bind::label_template::owned_by("bar", e);
         let lines = ::bind::label_template::Template::parse(source).map_err(own)?.render(&::bind::label_template::RowScope { row, names: &names }).map_err(own)?;
         match lines.as_slice() {
@@ -249,7 +259,7 @@ pub(super) type LabelDecors = HashMap<(String, String), LabelDecor>;
 /// The ink a label takes before the ground it sits on moves it, when nothing authored or inherited names one.
 pub(super) const NEUTRAL_INK: &str = "#313233";
 /// The least contrast that neutral ink keeps against the canvas.
-const OUTSIDE_INK_CONTRAST: f64 = 4.5;
+pub(super) const OUTSIDE_INK_CONTRAST: f64 = 4.5;
 
 /// One value label before any geometry: where it anchors on the measure axis
 /// and what it prints.
@@ -558,8 +568,11 @@ pub(super) fn value_label_layers(b: &LabelBuild) -> Result<Vec<LabelLayer>, Stri
         let zero_only = authored.is_none();
         let mut spec = LabelSpec::new(ml, b.is_stacked, r.style.label_is_house && !zero_only, b.rows, b.val_field);
         if r.style.mark.ribbons.visible() && !zero_only && b.color_field.is_none() {
+            let (first, previous) = funnel_stages(b)?;
             spec.funnel = Some(FunnelLabels {
-                first: first_stage_value(b)?,
+                first,
+                cat_field: b.cat_field.to_string(),
+                previous,
                 band_width: r.style.mark.band_width,
                 max_size: r.style.mark.max_size,
             });
@@ -625,14 +638,19 @@ pub(super) fn value_label_layers(b: &LabelBuild) -> Result<Vec<LabelLayer>, Stri
     Ok(layers)
 }
 
-/// The value of the first drawn stage, which a funnel label's `percent` divides by.
-fn first_stage_value(b: &LabelBuild) -> Result<f64, String> {
-    let first = b.cat_domain.first().ok_or("bar: a funnel has no stages")?;
-    b.rows
+/// The divisors of a funnel's bar labels: `FunnelLabels::first` and `FunnelLabels::previous`.
+fn funnel_stages(b: &LabelBuild) -> Result<(Option<f64>, HashMap<String, f64>), String> {
+    let value = |cat: &String| b.rows.iter().find(|row| row_str(row, b.cat_field) == *cat).and_then(|row| row_num(row, b.val_field));
+    let values: Vec<Option<f64>> = b.cat_domain.iter().map(value).collect();
+    let first = values.first().ok_or("bar: a funnel has no stages")?.filter(|first| *first != 0.0);
+    let previous = b
+        .cat_domain
         .iter()
-        .find(|row| row_str(row, b.cat_field) == *first)
-        .and_then(|row| row_num(row, b.val_field))
-        .ok_or_else(|| format!("bar: the funnel's first stage {first:?} has no value"))
+        .enumerate()
+        .filter_map(|(at, cat)| Some((cat.clone(), values[at.saturating_sub(1)]?)))
+        .filter(|(_, divisor)| *divisor != 0.0)
+        .collect();
+    Ok((first, previous))
 }
 
 /// One value-label layer: its sites, how they print, and where they sit.

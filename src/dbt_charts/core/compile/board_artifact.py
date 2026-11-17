@@ -17,7 +17,8 @@ correct when a nested board legitimately resolves a *different* style: N distinc
 styles simply produce N table entries, with no special case.
 
 ``dump_resolved_board_artifact`` / ``load_resolved_board_artifact`` wrap the
-codec in the publishable envelope: ``{$id, version, styles, board}``. ``$id``
+codec in the publishable envelope: ``{$id, version, styles, board}`` (the board
+artifact written by ``render.board_replay`` adds ``engine_compile``). ``$id``
 names the schema this document conforms to
 (``board-resolved.schema.json``) and ``version`` is the producing
 ``dbt-charts`` release — metadata a non-Python consumer needs to interpret the

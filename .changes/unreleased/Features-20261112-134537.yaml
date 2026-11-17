@@ -1,0 +1,3 @@
+kind: Features
+body: '`dct cloud projects --json` reports each project''s repository URL.'
+time: 2026-11-12T13:45:37.014638-08:00

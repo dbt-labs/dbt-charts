@@ -14,8 +14,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-import pytest
-
 from dbt_charts.core.project import Project
 from dbt_charts.core.serve.alias_index import AliasIndex
 
@@ -121,39 +119,31 @@ class TestAliasIndexCollisionDetectionViaProject:
     """AliasIndex.build's collision check must see real boards served from a
     non-filesystem Project store, not just ones written to disk."""
 
-    def test_alias_colliding_with_real_board_in_project_store_raises(
+    def test_alias_colliding_with_real_board_in_project_store_is_an_error(
         self, in_memory_project: Callable[[Path, dict[str, str]], Project]
     ) -> None:
-        """An alias that collides with a real board must raise, even when that
-        real board lives only in the Project store (never on disk).
-
-        Failing state: _file_url_exists checks Path.exists()/.is_dir() on disk
-        directly; the colliding board is never written to disk, so the
-        collision check never sees it and AliasIndex.build silently accepts
-        the collision.
-
-        Passing state: _file_url_exists routes through project.exists(),
-        finds the real board, and AliasIndex.build raises ValueError.
-        """
-        with pytest.raises(ValueError, match="collides"):
-            _build(
-                {
-                    "charts/sales.yml": (
-                        "title: Sales\n"
-                        "aliases:\n  - /reports/\n"
-                        "queries: {q: {type: values, rows: [{n: 1}]}}\n"
-                        "charts: {t: {query: q, type: table}}\n"
-                        "rows: [t]\n"
-                    ),
-                    "charts/reports.yml": (
-                        "title: Reports\n"
-                        "queries: {q: {type: values, rows: [{n: 1}]}}\n"
-                        "charts: {t: {query: q, type: table}}\n"
-                        "rows: [t]\n"
-                    ),
-                },
-                in_memory_project,
-            )
+        """The shadow check sees a board that lives only in the Project store."""
+        index = _build(
+            {
+                "charts/sales.yml": (
+                    "title: Sales\n"
+                    "aliases:\n  - /reports/\n"
+                    "queries: {q: {type: values, rows: [{n: 1}]}}\n"
+                    "charts: {t: {query: q, type: table}}\n"
+                    "rows: [t]\n"
+                ),
+                "charts/reports.yml": (
+                    "title: Reports\n"
+                    "queries: {q: {type: values, rows: [{n: 1}]}}\n"
+                    "charts: {t: {query: q, type: table}}\n"
+                    "rows: [t]\n"
+                ),
+            },
+            in_memory_project,
+        )
+        (error,) = index.errors["charts/sales.yml"]
+        assert "shadows" in error.message
+        assert index.lookup("/reports/") is None
 
 
 class TestAliasIndexEscapingAliasDoesNotCrashBuild:

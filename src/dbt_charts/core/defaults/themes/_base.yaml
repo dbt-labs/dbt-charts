@@ -364,7 +364,7 @@ style:
         # inert default.
       ticks:
         visible: false
-        length: 6  # default tick length cascades to all axes; matches VL's geometric idiom
+        length: 4  # cascades to all axes; hangs into the label gap on x, so it must stay under labels.padding
         width: 1.5
         offset: auto
       grid:
@@ -635,7 +635,7 @@ style:
       empty_state:
         font:
           extends: secondary
-          size: 14.0
+          size: 11.0
       spark:
         padding:
           top: 4.0
@@ -757,7 +757,7 @@ style:
           visible: false
           labels:
             visible: false
-            template: "{{ percent | format('.0%') }}"
+            template: "{{ percent_of_previous | format('.0%') }}"
       line:
         stroke:
           color: auto
@@ -917,6 +917,10 @@ style:
       grouped:
         padding_inner: 0.2
         padding_outer: 0.2
+      torn_outlier:
+        enabled: false
+        band: 0.5                # cap band, as a share of the plot; the chart grows by it
+        cap: 1.2                 # cap length, in bar thicknesses
       axis_x:
         grid:
           visible: false

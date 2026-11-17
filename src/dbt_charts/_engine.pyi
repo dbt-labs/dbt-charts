@@ -110,10 +110,13 @@ class RenderedBoard:
     width: float
     height: float
 
+class CellDiagnostic(RenderDiagnostic):
+    chart: str | None
+
 class RenderedCell:
     svg: str
     height: float
-    diagnostics: list[dict[str, Any]]
+    diagnostics: list[CellDiagnostic]
 
 class ShapedFonts: ...
 
@@ -122,6 +125,8 @@ def render_board(
     board: CompiledBoard,
     datasets: str,
     chart_errors: str,
+    empty_filters: str,
+    automatic_links: str,
     variables: str,
     presets: str,
     overridden: list[str],
@@ -129,25 +134,47 @@ def render_board(
     rendered_at: str,
     link_context: str | None,
 ) -> RenderedBoard: ...
-def render_chart_in_cell(
-    board: CompiledBoard,
-    datasets: str,
-    chart_errors: str,
-    variables: str,
-    presets: str,
-    overridden: list[str],
-    fonts: ShapedFonts,
-    rendered_at: str,
-    link_context: str | None,
-    placement: str,
-    width: float,
-    height: float | None,
-    inset: tuple[float, float, float, float],
-) -> RenderedCell:
-    """The chart placed as `placement` (`RenderedBoard.boxes`' keys) drawn in the host's cell: `width`
-    and `height` (`None`: the chart's own) inside the padding `inset` (left, right, top, bottom) the
-    slot was shrunk by, as `render_native` takes them. No other part of the board is laid out."""
-    ...
+
+class PreparedBoard:
+    """One render's board and run, prepared once for every chart the host draws in a cell.
+    The arguments are `render_board`'s, less `empty_filters` and `automatic_links`, which each draw carries, and `datasets`, the
+    results `load_rows` parsed by plan key; `geo` is the geo sources' JSON, `{source: {descriptor, document}}`."""
+
+    def __init__(
+        self,
+        board: CompiledBoard,
+        datasets: dict[str, Rows],
+        chart_errors: str,
+        variables: str,
+        presets: str,
+        overridden: list[str],
+        fonts: ShapedFonts,
+        rendered_at: str,
+        link_context: str | None,
+        geo: str,
+    ) -> None: ...
+    def draw(
+        self,
+        placement: str,
+        empty_filters: list[tuple[str, str]],
+        automatic_link: str | None,
+        width: float,
+        height: float | None,
+        inset: tuple[float, float, float, float],
+        title_shift: tuple[float, float],
+        images: dict[str, str],
+    ) -> RenderedCell:
+        """The chart placed as `placement` (`RenderedBoard.boxes`' keys) drawn in the host's
+        cell: `width` and `height` (`None`: the chart's own) inside the padding `inset`
+        (left, right, top, bottom) the slot was shrunk by, under the cols-row
+        `title_shift` (`title_dy`, `body_dy`), as `render_native` takes them, naming
+        `empty_filters` when it has nothing to show, and `automatic_link` the link production
+        resolved for it (read only for a chart that authors none). `images` holds the `data:` URI of each
+        project image the chart's text writes, by that reference: the engine reads no
+        files. The chart draws at the larger of the cell's height and its natural one, and
+        `RenderedCell.height` is that height.
+        No other part of the board is laid out."""
+        ...
 
 def load_rows(rows_json: str) -> Rows: ...
 def render_chart(
@@ -161,6 +188,7 @@ def table_title_geometry(payload_json: str) -> tuple[float, float]: ...
 def font_loads() -> int: ...
 def geometry_decodes() -> int: ...
 def check_template(source: str) -> None: ...
+def split_line_gaps(runs: list[list[float]], extent: float) -> list[list[float]]: ...
 def languages() -> list[str]: ...
 def language_for_time_locale(name: str | None) -> str: ...
 def number_locales() -> list[str]: ...

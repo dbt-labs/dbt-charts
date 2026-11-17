@@ -25,6 +25,7 @@ from dbt_charts.agent_api import (
 )
 from dbt_charts.agent_api._paths import resolve_board_or_error
 from dbt_charts.agent_api.argument_errors import format_argument_error
+from dbt_charts.agent_api.markdown import render_page
 from dbt_charts.agent_api.query import (
     ExecuteQueryArgs as _ExecuteQueryArgs,
     error_code_of,
@@ -60,13 +61,29 @@ def _handle_render(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
 
     'path' is boards-first resolved to a stored board; 'yaml_content' becomes a
     pathless in-memory board (no meta.yml cascade — matches the deleted
-    agent_api dispatch's yaml_content arm). Exactly one of the two is required.
+    agent_api dispatch's yaml_content arm); 'markdown' renders as the page a
+    host draws. Exactly one of the three is required.
     """
     parsed = _boards.RenderBoardArgs.model_validate(args)
-    if parsed.path is None and parsed.yaml_content is None:
-        raise ValueError("Provide one of 'path' or 'yaml_content'")
-    if parsed.path is not None and parsed.yaml_content is not None:
-        raise ValueError("Provide only one of 'path' or 'yaml_content', not both")
+    given = [parsed.path, parsed.yaml_content, parsed.markdown]
+    if sum(arg is not None for arg in given) != 1:
+        raise ValueError("Provide exactly one of 'path', 'yaml_content' or 'markdown'")
+    variables = (
+        _vars_to_dict(parsed.variables) if parsed.variables is not None else None
+    )
+    format = parsed.format or resolve_render_format(parsed.include_raw_data)
+    if parsed.markdown is not None:
+        if parsed.chart is not None or parsed.as_link:
+            raise ValueError(
+                "'markdown' renders a whole page: drop 'chart' and 'as_link'"
+            )
+        return render_page(
+            ctx.project_session,
+            parsed.markdown,
+            variables,
+            format,
+            MODEL_MAX_ROWS_PER_QUERY,
+        ).model_dump(mode="json", exclude_none=True)
 
     if parsed.path is not None:
         resolved = resolve_board_or_error(parsed.path, ctx.project_session.project)
@@ -82,10 +99,8 @@ def _handle_render(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
     return ctx.project_session.render_board(
         board=board,
         chart=parsed.chart,
-        variables=(
-            _vars_to_dict(parsed.variables) if parsed.variables is not None else None
-        ),
-        format=parsed.format or resolve_render_format(parsed.include_raw_data),
+        variables=variables,
+        format=format,
         as_link=parsed.as_link,
         server_port=ctx.server_port,
         max_rows_per_query=MODEL_MAX_ROWS_PER_QUERY,

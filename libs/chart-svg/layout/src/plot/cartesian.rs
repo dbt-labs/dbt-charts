@@ -11,7 +11,7 @@
 //! twins by `engine/tests/it/plot.rs`.
 
 use bind::formats::locale::NumberLocale;
-use bind::bound::{self, AxisStyle, Face, Family, Line, Mark, Orient, Panels, Scale, ScaleKind, Side as Edge, Ticks, TimeDomain};
+use bind::bound::{self, AxisStyle, Face, Family, Line, Mark, Orient, Panels, Scale, ScaleKind, Side as Edge, Ticks, TimeDomain, ValueScale};
 use bind::plot::time::TimeUnitSetting;
 use bind::table_dates::{strftime, Moment};
 use bind::temporal::TimeUnit;
@@ -20,7 +20,7 @@ use board_model::facet::FontWeightValue;
 use board_model::style::axis::TextAlign;
 use board_model::style::board::EmojiMode;
 use board_model::style::style::Style;
-use d3rs::format::parse_parts;
+use d3rs::format::{format_float, parse_parts};
 use diagnostic::{diag, refuse, Diagnostic};
 use measure::shaped::{Font, FontBook};
 use model_core::Engine;
@@ -31,10 +31,10 @@ use crate::geom::{Insets, Rect, Size};
 use crate::plot::rules;
 use crate::plot::band_axis::{BandAxis, BandGeometry, BandLabels, BandPlan, Overlap};
 use crate::plot::label::{vega_baseline, vega_row, Align, Baseline};
-use crate::plot::legend::SideLegend;
+use crate::plot::legend::Legends;
 use crate::plot::negotiate::{body, negotiate};
-use crate::plot::points::linear;
-use crate::plot::time_axis::{day_extent, Clock, DayLabels, Placement as TimePlacement, TimeAxis, TimeLabels};
+use crate::plot::points::{self, linear};
+use crate::plot::time_axis::{day_extent, padded_extent, Clock, DayLabels, Placement as TimePlacement, TimeAxis, TimeLabels};
 use crate::plot::time_cadence::Crowding;
 use crate::plot::value_axis::{direction, AxisTitle, GutterRule, Placement, Side, ValueAxis, ValueLabels};
 use crate::title::{chart_title, ChartTitle};
@@ -73,7 +73,7 @@ pub struct Heading<'a> {
 }
 
 /// A text face as painted: the family stack with the board's emoji family, size, weight and ink.
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Ink {
     family: String,
     pub(crate) size: f64,
@@ -95,6 +95,10 @@ impl Ink {
             weight,
             color: face.color.clone(),
         })
+    }
+
+    pub(crate) fn family(&self) -> &str {
+        &self.family
     }
 
     pub(crate) fn font(&self) -> Font<'_> {
@@ -120,17 +124,24 @@ struct Planned {
     grid: Option<Line>,
     /// The tick marks an x axis draws.
     ticks: Option<Ticks>,
-    /// The gap between the labels' anchor and the tick's end.
-    label_padding: f64,
+    /// How far the axis group hangs below (or beside) the plot (`ticks.offset`).
+    offset: f64,
+    /// The angle the labels turn to, in degrees (a band axis's; every other axis draws flat).
+    angle: f64,
     labels: Ink,
     title: Option<Ink>,
     placement: Placement,
     caption: String,
+    /// Whether a label the overlap rule hides draws nothing: on a log axis the greedy rule hides
+    /// minor ticks by design. Any other axis refuses it.
+    drops_overlapped: bool,
 }
 
 /// A time x axis as planned: its ticks (the x of each, where a gridline stands) and labels.
 struct PlannedTime {
     grid: Option<Line>,
+    /// The tick stubs the axis draws at each of its `ticks`.
+    stubs: Option<Ticks>,
     /// How far the axis line hangs below the plot (`ticks.offset`).
     offset: f64,
     labels: Ink,
@@ -153,7 +164,7 @@ struct TimeWords {
 /// A planned plot: the cell, the plot box in it, the title block and both axes.
 pub struct PlotPlan {
     size: Size,
-    canvas: String,
+    background: String,
     heading: Option<(ChartTitle, Vec<Node>)>,
     pub plot: Rect,
     x: XPlanned,
@@ -161,7 +172,7 @@ pub struct PlotPlan {
     /// Whether the y label on the plot's bottom edge rises off its gridline.
     rises_bottom_label: bool,
     /// The side legend and its origin in the plot's coordinates.
-    legend: Option<(SideLegend, (f64, f64))>,
+    legend: Option<(Legends, (f64, f64))>,
 }
 
 impl PlotPlan {
@@ -192,11 +203,11 @@ fn discrete_description(count: usize, values: &[String]) -> String {
     format!("{count} value{}: {listed}", if count == 1 { "" } else { "s" })
 }
 
-/// Vega's description of a linear axis. A number format with an affix, a notation or a symbol is
+/// Vega's description of a value axis. A number format with an affix, a notation or a symbol is
 /// refused: production captions those through the axis `format` it leaves unset
 /// (`axis_caption.rs::slot_format`), which this does not model.
 fn caption(channel: &str, title: Option<&str>, scale: &Scale, locale: &NumberLocale) -> Result<String, Diagnostic> {
-    if let ScaleKind::Band(domain) = &scale.kind {
+    if let ScaleKind::Band(domain) | ScaleKind::Point { domain, .. } = &scale.kind {
         return Ok(axis_description(channel, title, "discrete", &discrete_description(domain.keys().len(), domain.text())));
     }
     let axis = linear(scale, channel)?;
@@ -206,8 +217,18 @@ fn caption(channel: &str, title: Option<&str>, scale: &Scale, locale: &NumberLoc
         return Err(Diagnostic::refused("an axis description for a number format with an affix, a notation or a symbol is not supported"));
     }
     let (start, stop) = direction(&axis.domain);
-    let text = |value: f64| linear_value_text(&locale.locale, Some(&format_spec.spec), (start, stop), value).map_err(diag::err_internal);
-    Ok(axis_description(channel, title, "linear", &span_description(&text(start)?, &text(stop)?)))
+    // A log axis's ends print as d3's `format` of the spec; every other scale's as the linear law's.
+    let text = |value: f64| match axis.domain.scale {
+        ValueScale::Log { .. } => format_float(&locale.locale, Some(&format_spec.spec), value),
+        _ => linear_value_text(&locale.locale, Some(&format_spec.spec), (start, stop), value),
+    }
+    .map_err(diag::err_internal);
+    Ok(axis_description(channel, title, axis.domain.scale.name(), &span_description(&text(start)?, &text(stop)?)))
+}
+
+/// Whether `scale` is a value scale on a log domain.
+fn on_log_scale(scale: &Scale) -> bool {
+    matches!(&scale.kind, ScaleKind::Linear(axis) if axis.domain.scale.is_log())
 }
 
 /// An axis laid over `scale` by its walked `style`, with the faces it paints in and the title text.
@@ -241,7 +262,7 @@ fn parts(style: &AxisStyle, scale: &Scale, env: &Env) -> Result<Parts, Diagnosti
     };
     // A band axis's bottom labels have no edge for `inward` to resolve against, which a theme sets
     // for the bars' category axis in general.
-    let band = matches!(scale.kind, ScaleKind::Band(_));
+    let band = matches!(scale.kind, ScaleKind::Band(_) | ScaleKind::Point { .. });
     let align_free = matches!(&labels.align, Engine::Rule(_)) || (band && matches!(&labels.align, Engine::Value(TextAlign::Inward)));
     if !matches!(&labels.angle, Engine::Rule(_)) || !align_free {
         return Err(Diagnostic::refused("a value axis label with an authored angle or alignment is not supported"));
@@ -302,11 +323,14 @@ fn axis<'a>(scale: &'a Scale, parts: &'a Parts, horizontal: bool, env: &'a Env) 
 /// A time x axis over `domain` in a cell of `cell`. Its crowding is judged against the cell's width
 /// by the theme's usable ratio, and a clipped edge period against the cell less the y axis'
 /// width (`edge_width`), which production estimates before its fit settles.
-fn time_axis<'a>(domain: &TimeDomain, style: &'a AxisStyle, parts: &'a Parts, cell: Size, edge_width: f64, env: &Env<'a>, words: &'a TimeWords) -> Result<TimeAxis<'a>, Diagnostic> {
+///
+/// `points`: the marks are points, which draw only the clock's ticks where a line also names the data's end
+/// points and its days (`scatter_axis.rs:675, 908-934`).
+fn time_axis<'a>(domain: &TimeDomain, style: &'a AxisStyle, parts: &'a Parts, cell: Size, edge_width: f64, env: &Env<'a>, words: &'a TimeWords, points: bool) -> Result<TimeAxis<'a>, Diagnostic> {
     if parts.title.is_some() {
         return Err(Diagnostic::refused("a time x axis with a title is not supported"));
     }
-    let time = style.time.as_ref().ok_or_else(|| diag::err_internal("bind hands a temporal x axis its crowding style"))?;
+    let time = style.crowding.as_ref().ok_or_else(|| diag::err_internal("bind hands a temporal x axis its crowding style"))?;
     let inset = env.x_inset.ok_or_else(|| diag::err_internal("a time x axis is planned with its edge pad stated"))?;
     let labels = TimeLabels {
         font: parts.labels.font(),
@@ -328,9 +352,9 @@ fn time_axis<'a>(domain: &TimeDomain, style: &'a AxisStyle, parts: &'a Parts, ce
         inset,
         quarters: &words.quarters,
         cased: false,
-        tick_count: false,
+        tick_count: time.ticks_count,
         date_format: false,
-        clock: Clock { hours24: false, outer_width: cell.width, available_width: cell.width, day_labels: DayLabels::Off, words: &words.clock, points: true },
+        clock: Clock { hours24: false, outer_width: cell.width, available_width: cell.width, day_labels: DayLabels::Off, words: &words.clock, points: !points },
         spans_buckets: false,
         rail: false,
     };
@@ -340,8 +364,9 @@ fn time_axis<'a>(domain: &TimeDomain, style: &'a AxisStyle, parts: &'a Parts, ce
 /// Vega's description of a time axis (`axisCaption`, `domainCaption`): a `utc` scale over the bucket
 /// starts under a calendar grain, a `time` scale over the instants without one, its two ends printed
 /// by the grain's default format (`temporal.rs::time_unit_specifier`) or, with no grain, by
-/// `%A, %d %B %Y, %X`.
-fn time_caption(domain: &TimeDomain) -> Result<String, Diagnostic> {
+/// `%A, %d %B %Y, %X`. `padded` is the inset and the plot's width of a scale that pads its domain
+/// ([`padded_extent`]), which the description then names the ends of.
+fn time_caption(domain: &TimeDomain, padded: Option<(f64, f64)>) -> Result<String, Diagnostic> {
     let spec = match domain.unit {
         Some(TimeUnit::Year) => "%Y",
         Some(TimeUnit::YearQuarter) => "%Y Q%q",
@@ -352,7 +377,8 @@ fn time_caption(domain: &TimeDomain) -> Result<String, Diagnostic> {
     }
     .replace("%a", "%A")
     .replace("%b", "%B");
-    let (first, last) = day_extent(domain, false);
+    let extent = day_extent(domain, false);
+    let (first, last) = padded.map_or(extent, |(inset, width)| padded_extent(extent, inset, width));
     let text = |day: f64| -> Result<String, Diagnostic> {
         let moment = Moment::from_epoch_millis((day * MS_PER_DAY).round() as i64).map_err(diag::err_internal)?;
         // d3-time-format pads `%Y` to four digits; strftime does not below 1000.
@@ -395,52 +421,90 @@ impl XAxis<'_> {
     }
 }
 
-/// A band axis over `scale` for a plot of the bars' `style`: its labels flat in a card of `card`
-/// px, or refused where they would tilt or collide.
-fn band_axis<'a>(plot: &bound::Plane, scale: &Scale, parts: &'a Parts, grid: bool, card: f64, env: &'a Env) -> Result<BandPlan<'a>, Diagnostic> {
-    let ScaleKind::Band(domain) = &scale.kind else {
-        return Err(diag::err_internal("a band axis over a scale that is not a band"));
-    };
-    let Some(bars) = &plot.mark_style().bars else {
-        return Err(diag::err_internal("a band axis on a plot with no bar mark"));
+/// A band or point axis over `scale`, standing `side` of a plot in a card of `card` px. A bar's category
+/// axis (a band) has labels flat and no grid; a scatter's x axis (a point scale) tilts them down the theme's
+/// ladder and draws its grid at each band's center, and its y axis keeps them flat. Labels that still
+/// collide are refused, as production warns of them.
+fn band_axis<'a>(plot: &bound::Plane, scale: &Scale, style: &AxisStyle, parts: &'a Parts, side: Side, card: f64, env: &'a Env) -> Result<BandPlan<'a>, Diagnostic> {
+    let (domain, geometry, points) = match &scale.kind {
+        ScaleKind::Band(domain) => {
+            let Some(bars) = &plot.mark_style().bars else {
+                return Err(diag::err_internal("a band axis on a plot with no bar mark"));
+            };
+            (domain, BandGeometry { padding_inner: bars.padding_inner, padding_outer: bars.padding_outer, align: 0.5, round: false }, false)
+        }
+        ScaleKind::Point { domain, padding } => (domain, BandGeometry::point(*padding), true),
+        _ => return Err(diag::err_internal("a band axis over a scale that is not a band")),
     };
     if parts.flush.is_some() {
         return Err(diag::err_internal("bind refuses a band axis that sets `labels.flush`: a band axis never flushes"));
     }
-    if parts.edge != Edge::Bottom {
+    let below = side == Side::Bottom;
+    if below && parts.edge != Edge::Bottom {
         return Err(Diagnostic::refused(refuse!("a band axis on the top edge is not supported")));
     }
-    if grid {
+    if style.grid.is_some() && !points {
         return Err(Diagnostic::refused(refuse!("a band axis with a grid is not supported")));
     }
-    let labels = BandLabels {
-        text: domain.text(),
-        font: parts.labels.font(),
-        overlap: Overlap::Flat,
-        limit: parts.limit,
-        tilt_width: card * bars.label_usable_ratio,
-        offset: parts.offset + parts.padding,
+    // A y axis' labels stand in a column, never crowd and never tilt.
+    let (overlap, tilt_width) = match (&style.crowding, points) {
+        (Some(crowding), true) if below => (crowding.tilt.as_deref().map_or(Overlap::Flat, Overlap::Tilt), card * crowding.usable_ratio),
+        (Some(crowding), false) if below => (Overlap::Flat, card * crowding.usable_ratio),
+        (None, _) if !below => (Overlap::Unchecked, 0.0),
+        _ => return Err(diag::err_internal("bind hands exactly an x axis over bands its crowding style")),
     };
+    let tick = parts.ticks.as_ref().map_or(0.0, |ticks| ticks.length);
+    let offset = if below { parts.offset + parts.padding } else { tick + parts.padding };
+    let labels = BandLabels { text: domain.text(), font: parts.labels.font(), overlap, limit: parts.limit, tilt_width, offset };
     let axis = BandAxis::new(&labels, env.book).map_err(diag::err_internal)?;
-    if axis.angle() != 0.0 || axis.collision("", "").is_some() {
+    if !points && (axis.angle() != 0.0 || axis.collision("", "").is_some()) {
         return Err(Diagnostic::refused(refuse!("a band axis whose labels do not fit flat is not supported")));
+    }
+    if axis.collision("", "").is_some() {
+        return Err(Diagnostic::refused(refuse!("a point axis whose labels collide at every tilt is not supported")));
     }
     let title = match (&parts.title, &parts.title_text) {
         (Some(ink), Some(text)) => Some(AxisTitle { text, font: ink.font(), padding: parts.title_padding }),
         _ => None,
     };
-    let geometry = BandGeometry { padding_inner: bars.padding_inner, padding_outer: bars.padding_outer, align: 0.5, round: false };
-    Ok(BandPlan { axis, geometry, book: env.book, title, font: parts.labels.font(), offset: parts.offset + parts.padding })
+    Ok(BandPlan { axis, geometry, book: env.book, title, font: parts.labels.font(), side, offset })
 }
 
-/// How far either axis's ink, and the side legend, reach past each edge of a plot of `size`.
-fn reach(x: &XAxis, x_offset: f64, y: &ValueAxis, legend: Option<&SideLegend>, size: Size) -> Result<Insets, Diagnostic> {
+/// The y axis: a value axis over a linear scale, or a band axis over a point scale.
+enum YAxis<'a> {
+    Value(ValueAxis<'a>),
+    Band(BandPlan<'a>),
+}
+
+impl YAxis<'_> {
+    fn place(&self, size: Size) -> Result<Placement, Diagnostic> {
+        match self {
+            YAxis::Value(axis) => axis.place(size),
+            YAxis::Band(band) => band.place(size),
+        }
+    }
+}
+
+/// The y axis as drawn on a plot of `size`; a right value axis stands off the plot by how far its points
+/// overhang it, unless they stand on a point scale. The fit that sizes the plot does not count the
+/// stand-off, as production's does not.
+fn place_y(plot: &bound::Plane, y: &YAxis, size: Size) -> Result<Placement, Diagnostic> {
+    let placement = y.place(size)?;
+    match y {
+        YAxis::Value(axis) if axis.is_right() && !matches!(plot.x().kind, ScaleKind::Point { .. }) => Ok(placement.stood_off(points::edge_overhang(plot, size)?.1)),
+        _ => Ok(placement),
+    }
+}
+
+/// How far either axis's ink, the marks' ink beside the plot and the side legend reach past each edge of a plot of `size`.
+fn reach(plot: &bound::Plane, x: &XAxis, x_offset: f64, y: &YAxis, legend: Option<&Legends>, size: Size) -> Result<Insets, Diagnostic> {
     let (x, y) = (x.gutter(size, x_offset)?, y.place(size)?.gutter);
+    let (ink_left, ink_right) = points::edge_overhang(plot, size)?;
     let axes = Insets {
         top: x.top.max(y.top),
-        right: x.right.max(y.right),
+        right: x.right.max(y.right).max(ink_right),
         bottom: x.bottom.max(y.bottom),
-        left: x.left.max(y.left),
+        left: x.left.max(y.left).max(ink_left),
     };
     Ok(legend.map_or(axes, |legend| legend.widen(axes, size, y)))
 }
@@ -474,14 +538,12 @@ fn lay_out(chart: &bound::Chart, heading: Option<&Heading>, cell: Size, pinned: 
     let baselines = plot.baselines();
     // The zero rule is verified against production under bars alone.
     let bars = plot.layers().iter().all(|layer| layer.mark == Mark::Bars);
+    let points = plot.layers().iter().all(|layer| matches!(layer.mark, Mark::Points { .. }));
     if baselines.unity || baselines.x_threshold || (baselines.zero && !bars) {
         return Err(Diagnostic::refused("a plot with zero, unity or threshold rules is not supported"));
     }
     if plot.support().is_some() || plot.naming().rail.is_some() || plot.naming().asks_top_strip {
         return Err(Diagnostic::refused("a plot with an endpoint rail, a top legend strip or a support strip is not supported"));
-    }
-    if chart.subtitle.is_some() && chart.title.is_none() {
-        return Err(Diagnostic::refused("a plot with a subtitle and no title is not supported"));
     }
     let padding = Insets {
         top: frame.padding.top + env.card_padding,
@@ -495,7 +557,22 @@ fn lay_out(chart: &bound::Chart, heading: Option<&Heading>, cell: Size, pinned: 
     if y_parts.offset != 0.0 {
         return Err(Diagnostic::refused("a y axis with a `ticks.offset` is not supported"));
     }
-    let y_axis = axis(y_scale, &y_parts, false, env)?;
+    // Production rises a y label whose tick is on the plot's bottom edge off its gridline when the
+    // x axis hangs below (`YEdges::baseline`); the draw does so under bars and on a log axis, whose
+    // domain always ends on a tick, where twins pin it, and every other plot refuses it, whether or
+    // not the x labels draw (which only over-refuses).
+    let rises = bars || (on_log_scale(y_scale) && x_parts.edge == Edge::Bottom);
+    let y_axis = match &y_scale.kind {
+        ScaleKind::Point { .. } => {
+            let side = match y_parts.edge {
+                Edge::Left => Side::Left,
+                Edge::Right => Side::RightAway,
+                Edge::Top | Edge::Bottom => unreachable!("a y axis stands on the left or right edge"),
+            };
+            YAxis::Band(band_axis(plot, y_scale, &styles.y[0], &y_parts, side, cell.width, env)?)
+        }
+        _ => YAxis::Value(axis(y_scale, &y_parts, false, env)?.rising_bottom_label(rises)),
+    };
     let words = match &x_scale.kind {
         ScaleKind::Time(_) => Some(TimeWords {
             quarters: bind::time_locale::quarter_words().map_err(diag::err_internal)?,
@@ -508,13 +585,13 @@ fn lay_out(chart: &bound::Chart, heading: Option<&Heading>, cell: Size, pinned: 
             side_of(x_parts.edge, true)?;
             let y_reach = y_axis.place(cell)?.gutter;
             let y_width = if y_parts.edge == Edge::Left { y_reach.left } else { y_reach.right };
-            XAxis::Time(time_axis(domain, &styles.x, &x_parts, cell, (cell.width - y_width).max(1.0), env, words)?)
+            XAxis::Time(time_axis(domain, &styles.x, &x_parts, cell, (cell.width - y_width).max(1.0), env, words, points)?)
         }
-        (ScaleKind::Band(_), _) => XAxis::Band(band_axis(plot, x_scale, &x_parts, styles.x.grid.is_some(), cell.width, env)?),
+        (ScaleKind::Band(_) | ScaleKind::Point { .. }, _) => XAxis::Band(band_axis(plot, x_scale, &styles.x, &x_parts, Side::Bottom, cell.width, env)?),
         _ => XAxis::Value(axis(x_scale, &x_parts, true, env)?),
     };
 
-    let legend = SideLegend::of(plot, &plot.naming().authored, env.emoji, env.book, cell.height - padding.top - padding.bottom)?;
+    let legend = Legends::of(plot, &plot.naming().authored, env.emoji, env.book, cell.height - padding.top - padding.bottom)?;
     let block = heading_block(chart, heading, cell.width, (padding.left, padding.top), padding.right, env.book, env.emoji)?;
     let area = body(
         Rect { x: 0.0, y: 0.0, width: cell.width, height: cell.height },
@@ -529,7 +606,7 @@ fn lay_out(chart: &bound::Chart, heading: Option<&Heading>, cell: Size, pinned: 
     let plot_box = match pinned {
         Some(plot_box) => plot_box,
         None => negotiate(area, |size| {
-            let axes = reach(&x_axis, x_parts.offset, &y_axis, legend.as_ref(), size)?;
+            let axes = reach(plot, &x_axis, x_parts.offset, &y_axis, legend.as_ref(), size)?;
             // The zero rule's full stroke width overhangs every edge (`bar/vertical.rs`'s
             // rule bounds).
             Ok(Insets { top: axes.top.max(rule_overhang), right: axes.right.max(rule_overhang), bottom: axes.bottom.max(rule_overhang), left: axes.left.max(rule_overhang) })
@@ -537,20 +614,22 @@ fn lay_out(chart: &bound::Chart, heading: Option<&Heading>, cell: Size, pinned: 
         .plot,
     };
     let at = plot_box.size();
-    let planned = |placement: Placement, parts: &Parts, scale: &Scale, style: &AxisStyle, channel: &str| -> Result<Planned, Diagnostic> {
+    let planned = |placement: Placement, parts: &Parts, scale: &Scale, style: &AxisStyle, channel: &str, angle: f64| -> Result<Planned, Diagnostic> {
         Ok(Planned {
             grid: style.grid.clone(),
             ticks: parts.ticks.clone(),
-            label_padding: parts.padding,
+            offset: parts.offset,
+            angle,
             caption: caption(channel, parts.title_text.as_deref(), scale, env.locale)?,
+            drops_overlapped: on_log_scale(scale),
             placement,
             labels: parts.labels.clone(),
             title: parts.title.clone(),
         })
     };
     let x = match &x_axis {
-        XAxis::Value(axis) => XPlanned::Value(planned(place_x(axis, at, x_parts.offset)?, &x_parts, x_scale, &styles.x, "X")?),
-        XAxis::Band(band) => XPlanned::Value(planned(band.place(at)?, &x_parts, x_scale, &styles.x, "X")?),
+        XAxis::Value(axis) => XPlanned::Value(planned(place_x(axis, at, x_parts.offset)?, &x_parts, x_scale, &styles.x, "X", 0.0)?),
+        XAxis::Band(band) => XPlanned::Value(planned(band.place(at)?, &x_parts, x_scale, &styles.x, "X", band.axis.angle().rem_euclid(360.0))?),
         XAxis::Time(axis) => {
             let ScaleKind::Time(domain) = &x_scale.kind else {
                 return Err(diag::err_internal("a time axis over a scale that is not a time scale"));
@@ -560,42 +639,43 @@ fn lay_out(chart: &bound::Chart, heading: Option<&Heading>, cell: Size, pinned: 
                 return Err(Diagnostic::refused(refuse!("a time axis whose labels stand between period boundaries draws tick marks, which is not supported")));
             }
             let ticks = placement.ticks.iter().map(|day| axis.x_of(*day, at.width)).collect();
-            XPlanned::Time(PlannedTime { grid: styles.x.grid.clone(), offset: x_parts.offset, labels: x_parts.labels.clone(), placement, ticks, caption: time_caption(domain)? })
+            XPlanned::Time(PlannedTime { grid: styles.x.grid.clone(), stubs: x_parts.ticks.clone(), offset: x_parts.offset, labels: x_parts.labels.clone(), placement, ticks, caption: time_caption(domain, env.x_inset.filter(|_| points).map(|inset| (inset, at.width)))? })
         }
     };
-    let y = planned(y_axis.place(at)?, &y_parts, y_scale, &styles.y[0], "Y")?;
-    // Production rises a y label whose tick is on the plot's bottom edge off its gridline when the
-    // x axis hangs below (`YEdges::baseline`); the draw does so under bars, where a twin pins it,
-    // and every other family refuses it, whether or not the x labels draw (which only over-refuses).
-    if !bars && y.placement.rungs.iter().any(|rung| rung.visible && (rung.y - at.height).abs() <= 0.5) {
+    let y = planned(place_y(plot, &y_axis, at)?, &y_parts, y_scale, &styles.y[0], "Y", 0.0)?;
+    if !rises && y.placement.rungs.iter().any(|rung| rung.visible && (rung.y - at.height).abs() <= 0.5) {
         return Err(Diagnostic::refused("a y axis label on the plot's bottom edge is not supported"));
     }
     let legend = legend.map(|legend| {
         let origin = legend.origin(at, y.placement.gutter);
         (legend, origin)
     });
-    Ok(PlotPlan { size: cell, canvas: opaque_canvas(frame)?, heading: block, plot: plot_box, x, y, legend, rises_bottom_label: bars })
+    Ok(PlotPlan { size: cell, background: marks_background(frame)?, heading: block, plot: plot_box, x, y, legend, rises_bottom_label: rises })
 }
 
-/// The chart's canvas as the hex ink under its drawing, which reaches layout opaque.
-pub(super) fn opaque_canvas(frame: &bound::Frame) -> Result<String, Diagnostic> {
-    let [r, g, b, a] = [frame.canvas.0, frame.canvas.1, frame.canvas.2, frame.canvas.3];
-    if a != 1.0 {
-        return Err(diag::err_internal("a chart canvas reaches layout opaque"));
+/// What the chart's marks root paints behind everything (`frame.card`, the card fill):
+/// `transparent` where the chart has no card of its own, else the fill's hex. A translucent fill
+/// production resolves to `transparent` unless some scope authored it, which a chart's own
+/// translucent `style.background` does not say, so that is refused.
+pub(super) fn marks_background(frame: &bound::Frame) -> Result<String, Diagnostic> {
+    let (r, g, b, a) = frame.card;
+    match a {
+        0.0 => Ok("transparent".to_string()),
+        1.0 => Ok(dbt_charts_color::rgb01_to_hex(r, g, b)),
+        _ => Err(Diagnostic::refused(refuse!("a translucent chart background is not supported"))),
     }
-    Ok(dbt_charts_color::rgb01_to_hex(r, g, b))
 }
 
-/// The chart's title resolved against its heading (present exactly when the chart has a title): the
-/// fitted title and its nodes at the card's padded top left `(left, top)`, `None` when the text is
-/// blank. `width` is the card's outer width, which picks the title's face, and the line may take what
+/// The chart's title resolved against its heading (present exactly when the chart has a title or a
+/// subtitle, which with no title is the block's only row): the fitted block and its nodes at the
+/// card's padded top left `(left, top)`, `None` when the text is blank. `width` is the card's outer width, which picks the title's face, and the line may take what
 /// `right` padding and `left` leave of it.
 pub(super) fn heading_block(chart: &bound::Chart, heading: Option<&Heading>, width: f64, (left, top): (f64, f64), right: f64, book: &FontBook, emoji: &EmojiMode) -> Result<Option<(ChartTitle, Vec<Node>)>, Diagnostic> {
-    if chart.title.is_some() != heading.is_some() {
-        return Err(diag::err_internal("a chart's heading is resolved exactly when the chart has a title"));
+    if (chart.title.is_some() || chart.subtitle.is_some()) != heading.is_some() {
+        return Err(diag::err_internal("a chart's heading is resolved exactly when the chart has a title or a subtitle"));
     }
     let Some(h) = heading else { return Ok(None) };
-    let text = chart.title.as_deref().ok_or_else(|| diag::err_internal("a heading is resolved for a titled chart"))?;
+    let text = chart.title.as_deref().unwrap_or_default();
     let Some(title) = chart_title(h.chart_id, text, chart.subtitle.as_deref(), h.style, width, width - left - right, book)? else {
         return Ok(None);
     };
@@ -638,6 +718,10 @@ fn grid(line: &Line, vertical: bool, extent: f64, positions: impl Iterator<Item 
 fn time_axis_group(planned: &PlannedTime, height: f64) -> Result<Node, Diagnostic> {
     let size = planned.labels.size;
     let mut items = Vec::new();
+    if let Some(stubs) = &planned.stubs {
+        let end = stub_end(height, planned.offset, stubs);
+        items.extend(planned.ticks.iter().map(|x| tick_stub(stubs, *x, height, end)));
+    }
     for label in &planned.placement.labels {
         if !label.visible {
             return Err(Diagnostic::refused("a time axis label hidden by the overlap rule is not supported"));
@@ -654,20 +738,25 @@ fn time_axis_group(planned: &PlannedTime, height: f64) -> Result<Node, Diagnosti
     Ok(axis_frame("x-axis", &planned.caption, (CRISP, CRISP), items))
 }
 
+/// Where an x tick stub ends: its length below the axis group, which hangs `offset` under the plot's
+/// bottom edge `height` (`ticks.offset`). The one law of both x axes' stubs.
+fn stub_end(height: f64, offset: f64, ticks: &Ticks) -> f64 {
+    height + offset + ticks.length + CRISP
+}
+
+/// An x tick stub at `x` from the plot's bottom edge `from` to `to`.
+fn tick_stub(ticks: &Ticks, x: f64, from: f64, to: f64) -> Node {
+    let attrs = Attrs::new().set("stroke", ticks.line.color.as_str()).num("stroke-width", ticks.line.width);
+    let at = x.round() + CRISP;
+    Node::line(Role::Axis, (at, from), (at, to), attrs)
+}
+
 /// The x axis's tick marks: one stub at each rung from the plot's bottom edge to the tick's length below
-/// the axis group's own offset, where the labels' anchor sits `padding` further (`x_tick_marks`).
+/// the axis group's own offset, which sits `padding` above the labels' anchor (`x_tick_marks`): the
+/// tick hangs into the label gap.
 fn tick_marks(planned: &Planned, ticks: &Ticks, plot_height: f64) -> Vec<Node> {
-    let end = planned.placement.rungs.first().map_or(plot_height, |rung| rung.y - planned.label_padding + CRISP);
-    planned
-        .placement
-        .rungs
-        .iter()
-        .map(|rung| {
-            let attrs = Attrs::new().set("stroke", ticks.line.color.as_str()).num("stroke-width", ticks.line.width);
-            let at = rung.x.round() + CRISP;
-            Node::line(Role::Axis, (at, plot_height), (at, end), attrs)
-        })
-        .collect()
+    let end = stub_end(plot_height, planned.offset, ticks);
+    planned.placement.rungs.iter().map(|rung| tick_stub(ticks, rung.x, plot_height, end)).collect()
 }
 
 /// `plot_height` is the plot's height; `rises_bottom_label` is a y axis under an x axis whose labels
@@ -679,12 +768,25 @@ fn axis_group(planned: &Planned, key: &str, authored: &str, plot_height: f64, ri
         items.extend(tick_marks(planned, ticks, plot_height));
     }
     for rung in &planned.placement.rungs {
+        // A blank label (a minor log tick d3's `tickFormat` blanks) draws no text.
+        if rung.text.is_empty() || (!rung.visible && planned.drops_overlapped) {
+            continue;
+        }
         if !rung.visible {
             return Err(Diagnostic::refused("a value axis label hidden by the overlap rule is not supported"));
         }
         let baseline = if rises_bottom_label && (rung.y - plot_height).abs() <= 0.5 { Baseline::Bottom } else { rung.baseline };
-        let at = (rung.x + CRISP, vega_baseline(rung.y, baseline, planned.labels.font().size) + CRISP);
-        items.push(Node::text(Role::Label, at, planned.labels.attrs(Some(anchor(rung.align))), rung.text.as_str()));
+        let size = planned.labels.font().size;
+        let attrs = planned.labels.attrs(Some(anchor(rung.align)));
+        // A turned label is anchored at the origin: moved to its anchor, turned, then dropped by its baseline's shift.
+        items.push(if planned.angle == 0.0 {
+            Node::text(Role::Label, (rung.x + CRISP, vega_baseline(rung.y, baseline, size) + CRISP), attrs, rung.text.as_str())
+        } else {
+            Node::text(Role::Label, (0.0, 0.0), attrs, rung.text.as_str())
+                .translate(rung.x + CRISP, rung.y + CRISP)
+                .with_transform(Transform::Rotate { deg: planned.angle, about: None })
+                .translate(0.0, vega_baseline(0.0, baseline, size))
+        });
     }
     if let (Some(title), Some(ink)) = (&planned.placement.title, &planned.title) {
         // A turned title is anchored on its own x and y, with no baseline shift.
@@ -708,7 +810,7 @@ pub fn draw(
     paint: impl Fn(&bound::Plane, Size) -> Result<Painted, Diagnostic>,
 ) -> Result<Vec<Node>, Diagnostic> {
     let Size { width, height } = plan.size;
-    let mut children = vec![Node::rect(Role::Chrome, (0.0, 0.0, width, height), Attrs::new().set("fill", plan.canvas.as_str()))];
+    let mut children = vec![Node::rect(Role::Chrome, (0.0, 0.0, width, height), Attrs::new().set("fill", plan.background.as_str()))];
     if let Some((_, nodes)) = &plan.heading {
         children.extend(nodes.iter().cloned());
     }
@@ -743,7 +845,7 @@ pub fn draw(
         None => marks.extend([x_axis, y_axis]),
     }
     inner.extend(marks);
-    inner.extend(plan.legend.iter().map(|(legend, origin)| legend.nodes(*origin)));
+    inner.extend(plan.legend.iter().flat_map(|(legend, origin)| legend.nodes(*origin)));
     children.push(Node::group(Role::Chrome, Attrs::new(), inner).translate(plan.plot.x, plan.plot.y));
     let root = Node::new(Role::Chrome, Attrs::new().set("class", "marks"), Shape::Svg { extent: Extent { width, height }, children });
     Ok(vec![root])

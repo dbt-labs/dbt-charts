@@ -895,3 +895,36 @@ fn test_lone_pipe_row_is_a_paragraph_not_a_hang() {
     assert_eq!(doc.len(), 3);
     assert!(doc.iter().all(|block| matches!(block, AnyBlock::Paragraph(_))));
 }
+
+// --- rewrite_text_images ---
+
+fn to_data(url: &str) -> Result<String, std::convert::Infallible> {
+    Ok(if crate::types::is_local_image(url) { format!("data:{url}") } else { url.to_string() })
+}
+
+#[test]
+fn rewrite_text_images_resolves_a_local_image_and_leaves_a_remote_one() {
+    let text = "![a](/img/a.png){width=8} and ![b](https://x.test/b.png \"t\")";
+    let got = rewrite_text_images(text, to_data).unwrap();
+    assert_eq!(got, "![a](data:/img/a.png){width=8} and ![b](https://x.test/b.png \"t\")");
+}
+
+#[test]
+fn rewrite_text_images_leaves_image_syntax_in_a_code_span_or_fence_as_text() {
+    let text = "`![a](/img/a.png)` ![b](/img/b.png)\n\n```\n![c](/img/c.png)\n```";
+    let got = rewrite_text_images(text, to_data).unwrap();
+    assert_eq!(got, "`![a](/img/a.png)` ![b](data:/img/b.png)\n\n```\n![c](/img/c.png)\n```");
+}
+
+#[test]
+fn rewrite_text_images_refuses_a_rewrite_that_reshapes_other_markdown() {
+    // The resolved URL holds a space, so the rewritten text parses to different blocks.
+    let got = rewrite_text_images("![a](/img/a.png)", |_| Ok::<_, std::convert::Infallible>("x y".to_string()));
+    assert!(matches!(got, Err(TextImageError::Reshaped)));
+}
+
+#[test]
+fn rewrite_text_images_surfaces_the_resolvers_refusal() {
+    let got = rewrite_text_images("![a](/img/a.png)", |url| Err::<String, _>(url.to_string()));
+    assert!(matches!(got, Err(TextImageError::Resolve(url)) if url == "/img/a.png"));
+}

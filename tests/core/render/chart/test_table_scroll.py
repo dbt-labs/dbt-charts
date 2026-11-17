@@ -23,7 +23,7 @@ from dbt_charts.core.render.render_result import RenderResult
 from ...._compile import plan_of
 from ..._svg_render import render_board_svg_result
 
-_WIDE_COLUMNS = 16
+_WIDE_COLUMNS = 30
 
 
 def _board(style: str = "", rows: int = 3, columns: int = _WIDE_COLUMNS) -> str:

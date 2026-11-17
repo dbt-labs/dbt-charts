@@ -62,25 +62,6 @@ class TestPlaceholderRendering:
 
         assert svg.startswith("<svg") or "<svg" in svg
 
-    def test_kpi_placeholder_renders(self, make_chart):
-        """KPI placeholder should render with sample value."""
-        from dbt_charts.core.render.chart.vega_lite import render_chart
-
-        chart = make_chart(
-            "kpi", x=None, y=None, value="value", query=None, query_name=None
-        )
-        _rs, _ctx = resolve_style_and_context(get_theme_style())
-        svg = render_chart(
-            chart,
-            _rs,
-            _ctx,
-            data=rows_result([]),
-            format="svg",
-            is_placeholder=True,
-        )
-
-        assert "<svg" in svg or svg.startswith("<svg")
-
 
 class TestPlaceholderIntegration:
     """Integration tests for placeholder in the render pipeline."""

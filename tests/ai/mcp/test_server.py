@@ -662,6 +662,7 @@ class TestMCPInputSchemaShape:
                 {
                     "path",
                     "yaml_content",
+                    "markdown",
                     "chart",
                     "variables",
                     "include_raw_data",

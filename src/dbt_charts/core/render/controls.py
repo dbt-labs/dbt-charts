@@ -135,7 +135,6 @@ _CONTROLS_RUNTIME_WORDS = (
     "show_all",
     "show_only_selected",
     "options_truncated",
-    "sort",
     "sort_count_ascending",
     "sort_count_descending",
     "filter_by_range",

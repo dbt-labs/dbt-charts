@@ -8,7 +8,9 @@ use scene::{Bounds, Transform};
 
 use crate::geom::{Insets, Size};
 use crate::plot::label::{tilted_anchor, vega_baseline, vega_line, vega_space, Align, Baseline};
-use crate::plot::value_axis::{place_across_title, AxisTitle, PlacedRung, Placement as ValuePlacement};
+use crate::plot::value_axis::{
+    place_across_title, place_rotated_title, side_box, side_title_band, AxisTitle, PlacedRung, Placement as ValuePlacement, Side,
+};
 
 /// How an axis's labels may resolve crowding, as the axis style sets it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -99,6 +101,24 @@ pub struct BandGeometry {
     pub padding_outer: f64,
     pub align: f64,
     pub round: bool,
+}
+
+impl BandGeometry {
+    /// A point scale's: every inner gap and `padding` of a step outside the first and last band.
+    pub fn point(padding: f64) -> Self {
+        Self { padding_inner: 1.0, padding_outer: padding, align: 0.5, round: false }
+    }
+
+    /// The scale over `count` bands spread across `extent` px.
+    fn scale(&self, count: usize, extent: f64) -> Band {
+        Band::new(count, [0.0, extent], self.padding_inner, self.padding_outer, self.align, self.round)
+    }
+
+    /// Where band `slot` of `count` stands on an axis `extent` px long: its center.
+    pub fn center(&self, count: usize, slot: usize, extent: f64) -> f64 {
+        let scale = self.scale(count, extent);
+        scale.position(slot) + scale.bandwidth / 2.0
+    }
 }
 
 /// A band axis's labels as resolved: their text in domain order, the face they
@@ -198,14 +218,7 @@ impl BandAxis {
     /// reserves: the full advance capped at the limit by Vega's line, turned
     /// as production turns it.
     pub fn place(&self, geometry: &BandGeometry, plot_width: f64) -> Placement {
-        let scale = Band::new(
-            self.drawn.len(),
-            [0.0, plot_width],
-            geometry.padding_inner,
-            geometry.padding_outer,
-            geometry.align,
-            geometry.round,
-        );
+        let scale = geometry.scale(self.drawn.len(), plot_width);
         let (align, baseline) = tilted_anchor(self.tilt.angle);
         let height = self.ascent + self.descent;
         let turn = Transform::Rotate {
@@ -267,7 +280,7 @@ impl BandAxis {
     }
 }
 
-/// A bottom band axis as the plan lays it out: its labels, the face and title they hang with, and
+/// A band axis as the plan lays it out: its labels, the face and title they hang with, and
 /// how the band scale spreads over the plot.
 pub struct BandPlan<'a> {
     pub axis: BandAxis,
@@ -275,15 +288,69 @@ pub struct BandPlan<'a> {
     pub book: &'a FontBook,
     pub title: Option<AxisTitle<'a>>,
     pub font: Font<'a>,
-    /// How far below the axis line a label's anchor hangs.
+    /// Where the axis stands: below the plot, or beside it on a left axis or a right one whose labels
+    /// start past the tick.
+    pub side: Side,
+    /// How far from the axis line a label's anchor hangs: below it, or off the plot's edge.
     pub offset: f64,
 }
 
 impl BandPlan<'_> {
     /// The axis on a plot of `plot`: the labels as value-axis rungs (a band label is always kept:
-    /// a crowded axis was refused when its tilt was decided) and the title below them, with the
+    /// a crowded axis was refused when its tilt was decided) and the title beyond them, with the
     /// gutter the labels' room and the title's band make, as [`ValueAxis::place`] counts it.
     pub fn place(&self, plot: Size) -> Result<ValuePlacement, Diagnostic> {
+        match self.side {
+            Side::Bottom => self.place_below(plot),
+            Side::Left | Side::RightAway => self.place_beside(plot),
+            Side::Right | Side::Top => unreachable!("a band axis stands below the plot or beside it, its labels starting past a right axis' tick"),
+        }
+    }
+
+    /// A left or right axis: every label centered on its band's row and flat, the widest one (its full
+    /// text capped at the limit) setting the gutter beside the plot, and the title turned past it. A band
+    /// axis hides no label.
+    fn place_beside(&self, plot: Size) -> Result<ValuePlacement, Diagnostic> {
+        let left = self.side == Side::Left;
+        let distance = if left { -self.offset } else { plot.width + self.offset };
+        let height = self.axis.ascent + self.axis.descent;
+        let rungs: Vec<PlacedRung> = self
+            .axis
+            .drawn
+            .iter()
+            .enumerate()
+            .map(|(index, (text, advance, _))| {
+                let y = self.geometry.center(self.axis.drawn.len(), index, plot.height);
+                let ink = side_box(distance, left, y, *advance, height);
+                PlacedRung {
+                    value: index as f64,
+                    text: text.clone(),
+                    x: distance,
+                    y,
+                    align: if left { Align::Right } else { Align::Left },
+                    baseline: Baseline::Middle,
+                    visible: true,
+                    ink,
+                    space: vega_space((ink.x1, ink.x2), (distance, y), Baseline::Middle, self.axis.font_size, 1, 0.0),
+                }
+            })
+            .collect();
+        let reach = self.offset + self.axis.drawn.iter().map(|(.., full)| *full).fold(0.0, f64::max);
+        let (mut top, mut bottom) = (0.0_f64, 0.0_f64);
+        for rung in &rungs {
+            top = top.max(-rung.space.y1);
+            bottom = bottom.max(rung.space.y2 - plot.height);
+        }
+        let past = reach + side_title_band(self.title);
+        let gutter = if left { Insets { top, right: 0.0, bottom, left: past } } else { Insets { top, right: past, bottom, left: 0.0 } };
+        let title = self
+            .title
+            .map(|title| place_rotated_title(self.book, title, plot, if left { -reach } else { plot.width + reach }, left))
+            .transpose()?;
+        Ok(ValuePlacement { rungs, gutter, title })
+    }
+
+    fn place_below(&self, plot: Size) -> Result<ValuePlacement, Diagnostic> {
         let placed = self.axis.place(&self.geometry, plot.width);
         let anchor = plot.height + self.offset;
         let rungs: Vec<PlacedRung> = placed
@@ -305,7 +372,16 @@ impl BandPlan<'_> {
                 }
             })
             .collect();
-        let label_baseline = (!rungs.is_empty()).then(|| (vega_baseline(anchor, Baseline::Top, self.font.size), self.font.size));
+        // Turned labels set the title by the reach of their ink below the anchor (`axisTitleLayout`),
+        // flat ones by their row: the title's baseline sits `label size + padding` past `at`.
+        let label_baseline = (!rungs.is_empty()).then(|| {
+            if self.axis.angle() == 0.0 {
+                return (vega_baseline(anchor, Baseline::Top, self.font.size), self.font.size);
+            }
+            let reach = rungs.iter().map(|r| r.space.y2).fold(anchor, f64::max) - anchor;
+            let title_rise = self.title.map_or(0.0, |title| vega_baseline(0.0, Baseline::Top, title.font.size));
+            (anchor + reach + title_rise - self.font.size, self.font.size)
+        });
         let title = self.title.map(|title| place_across_title(self.book, title, plot, label_baseline, true)).transpose()?;
         let band = self.title.map_or(0.0, |title| title.padding + vega_line(0.0, Baseline::Top, title.font.size).1);
         let reach = rungs.iter().map(|r| r.space.y2).fold(plot.height, f64::max);

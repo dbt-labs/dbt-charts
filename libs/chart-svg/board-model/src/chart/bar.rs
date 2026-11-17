@@ -1,7 +1,7 @@
 //! `chart/authored/bar.py`: bars, and the histogram that bins x. Both tags read one model
 //! (Python's `BarChart`), so the struct cannot see which tag it was read under. A rule that
 //! depends on it names the tag (`read_under = "type"`): the histogram's tooltip, y_start,
-//! annotations, pattern, layers, support_table and legend-edge rules are declared constraints, in
+//! annotations, pattern, torn_outlier, layers, support_table and legend-edge rules are declared constraints, in
 //! the order Python's `BarChart.__constraints__` states them: the first a board breaks is the
 //! message it gets.
 
@@ -26,6 +26,9 @@ use model_derive::Model;
     )),
     constraint(forbids(pattern, "style.pattern", when(is_in(type, "histogram")),
         message = "pattern is not supported on type: histogram: its bars are bins of rows, so a column has no single value to pattern by."
+    )),
+    constraint(forbids("style.torn_outlier", when(is_in(type, "histogram")),
+        message = "style.torn_outlier is not supported on type: histogram: its bars are bins of rows, so there is no bar to tear."
     )),
     constraint(forbids("style.legend.position.edge", when(is_in(type, "histogram"), is_in("style.legend.position.edge", "endpoints")),
         message = "legend position `endpoints` is not supported on type: histogram: it has one series, so there are no endpoint labels to print. Set the edge to `top`, `bottom`, `left` or `right`, or remove it."

@@ -11,13 +11,17 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from collections.abc import Collection
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
+from dbt_charts.agent_api.boards import BoardRenderResult
 from dbt_charts.agent_api.project_session import ProjectSession
 from dbt_charts.core.compile.compiler import compile_file
-from dbt_charts.core.compile.models.board.normalized import LayoutItem
+from dbt_charts.core.compile.models.board.normalized import Board, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized import Chart, KpiChart
+from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.normalize.chart_focus import focus_on_item
 from dbt_charts.core.compile.parse.markdown import (
     ChartFence,
@@ -25,9 +29,17 @@ from dbt_charts.core.compile.parse.markdown import (
     has_chart_fence,
 )
 from dbt_charts.core.diagnostics import Diagnostic
-from dbt_charts.core.project import BoardFile
+from dbt_charts.core.project import CHARTS_SUBDIR, BoardFile, InMemoryBoard, Project
+
+if TYPE_CHECKING:
+    from dbt_charts.core.render_format import RenderFormat
 
 _ROW_PATH_RE = re.compile(r"rows\.(\d+)(?:\.|$)")
+
+# A page with no location of its own (a chat reply, a site's page) is read as a
+# note in the project's charts/ folder, so file paths resolve from there and
+# charts/meta.yml (a default source, the theme, the footer) applies to it.
+_PAGE_RELPATH = f"{CHARTS_SUBDIR}/page.md"
 
 
 class RenderedFence(BaseModel):
@@ -69,6 +81,31 @@ class MarkdownWithImages(BaseModel):
     warnings: list[Diagnostic]
 
 
+def markdown_page(project: Project, text: str) -> InMemoryBoard:
+    """Markdown *text* that has no file of its own, as a page of *project*."""
+    return InMemoryBoard(text, path=project.path(_PAGE_RELPATH))
+
+
+def render_page(
+    session: ProjectSession,
+    text: str,
+    variables: dict[str, Any] | None,
+    format: RenderFormat,
+    max_rows_per_query: int,
+) -> BoardRenderResult:
+    """Markdown *text* rendered whole, as the one board its fences make: what a
+    host draws from it. A compile error inside a fence names that fence's line."""
+    result = session.render_board(
+        board=markdown_page(session.project, text),
+        variables=variables,
+        format=format,
+        max_rows_per_query=max_rows_per_query,
+    )
+    return result.model_copy(
+        update={"validation_errors": _by_fence(result.validation_errors, text)}
+    )
+
+
 def render_chart_fences(
     session: ProjectSession,
     page: BoardFile,
@@ -102,13 +139,14 @@ def render_chart_fences(
     rendered: list[RenderedFence] = []
     errors: list[Diagnostic] = []
     warnings: dict[str, Diagnostic] = {}
+    page_variables = _registry(compiled.board)
     for fence in fences:
         focused = focus_on_item(compiled.board, fence.row)
         result = session.render_board(
             board=page,
             compile_result=dataclasses.replace(compiled, board=focused),
             only_charts=[c.id for c in focused.placed_charts() if c.id],
-            variables=variables,
+            variables=_for_fence(variables, page_variables, _registry(focused)),
             format="svg",
             ignore_codes=ignore_codes,
             max_workers=max_workers,
@@ -143,6 +181,29 @@ def render_chart_fences(
     return ChartFencesRender(
         fences=rendered, errors=[], warnings=list(warnings.values())
     )
+
+
+def _registry(board: Board) -> dict[str, Variable]:
+    registry = board.variable_registry
+    assert registry is not None  # the normalizer builds it on every root board
+    return registry
+
+
+def _for_fence(
+    variables: dict[str, str] | None,
+    page: Collection[str],
+    fence: Collection[str],
+) -> dict[str, str] | None:
+    """The page's *variables* a fence drawn alone is given: those its charts read
+    (*fence*), and any the *page* does not declare, which the render then refuses by
+    name. A variable only another fence reads is not this fence's to take."""
+    if variables is None:
+        return None
+    return {
+        name: value
+        for name, value in variables.items()
+        if name in fence or name not in page
+    }
 
 
 def render_markdown_with_images(

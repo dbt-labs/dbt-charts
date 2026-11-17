@@ -31,7 +31,7 @@ from dbt_charts.core.compile.models.style.theme.kpi import KpiCompactStyle
 from dbt_charts.core.compile.resolve import bind_channels, columns_of
 from dbt_charts.core.compile.resolve.chart.channel import parse_style_channel
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.diagnostics.codes_render import ERR_KPI_MULTIROW, ERR_KPI_NO_DATA
+from dbt_charts.core.diagnostics.codes_render import ERR_KPI_MULTIROW
 from dbt_charts.core.render.chart.kpi_value import kpi_value_text
 from dbt_charts.core.render.utils import normalize_data_types, slug_to_text
 from dbt_charts.core.text.format_d3 import NULL_DISPLAY, d3_format
@@ -339,9 +339,8 @@ def render_kpi_terminal(
     reference (string column name). Raises ``ChartDataError`` when the
     column is not present — same behavior as the SVG renderer.
 
-    The data-shape contract matches the SVG renderer: empty data raises
-    ERR-KPI-NO-DATA and multi-row results ERR-KPI-MULTIROW, so the same
-    authoring mistake fails the same way regardless of output medium.
+    The data-shape contract matches the SVG renderer: empty data or a NULL value
+    prints the empty dash and multi-row results raise ERR-KPI-MULTIROW.
     """
     from dbt_charts.core.render.chart.kpi_value import resolve_kpi_value  # noqa: PLC0415
 
@@ -350,17 +349,16 @@ def render_kpi_terminal(
     chart = bind_channels(chart, columns_of(data))
 
     chart_id = getattr(chart, "id", "unknown")
-    if not data:
-        raise ChartDataError.from_code(ERR_KPI_NO_DATA, chart_id=chart_id)
     if len(data) > 1:
         raise ChartDataError.from_code(
             ERR_KPI_MULTIROW, chart_id=chart_id, row_count=len(data)
         )
 
     raw_value = chart.value
-    assert raw_value is not None, "bind_channels names value or raises"
-    row = data[0]
-    cell = resolve_kpi_value(raw_value, row, chart_id)
+    cell = None
+    if data:
+        assert raw_value is not None, "bind_channels names value or raises"
+        cell = resolve_kpi_value(raw_value, data[0], chart_id)
 
     # chart.style.value is None when a KPI's style: never touches value:, though
     # the patch stub types it non-Optional; the local re-declaration narrows it.
@@ -384,7 +382,7 @@ def render_kpi_terminal(
         else:
             display_value = d3_format(",.2f")(cell)
     else:
-        display_value = "" if cell is None else str(cell)
+        display_value = NULL_DISPLAY if cell is None else str(cell)
 
     title_text = display_title
 
@@ -665,10 +663,10 @@ def _fallback_chart_render(display_title: str, data: list[dict[str, Any]]) -> st
     title = display_title or "Chart"
     if data:
         return f"{title}\n[No numeric values to plot]"
-    return f"{title}\n[No data]"
+    return f"{title}\n[No results]"
 
 
 def _empty_table_output(display_title: str) -> str:
     """Output for empty table."""
     title = display_title or "Table"
-    return f"{title}\n[No data]"
+    return f"{title}\n[No results]"

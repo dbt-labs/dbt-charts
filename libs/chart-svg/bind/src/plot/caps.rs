@@ -20,7 +20,7 @@ pub fn caps_bottom(
     let first = match &domain.ladder {
         Ladder::Authored(rungs) => rungs.first().map(|r| r.value),
         Ladder::Fixed(fixed) => fixed.rungs().first().map(|r| r.value),
-        Ladder::BySize { .. } | Ladder::Counts | Ladder::None => None,
+        Ladder::BySize { .. } | Ladder::Counts | Ladder::Log(_) | Ladder::None => None,
     };
     let Some(first) = first else { return true };
     let anchored = matches!(domain.zero, Zero::Anchored | Zero::Pinned(true));

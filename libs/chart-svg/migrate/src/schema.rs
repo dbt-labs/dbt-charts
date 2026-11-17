@@ -8,7 +8,9 @@
 //! deletions ask on purpose.
 
 use serde_json::Value as Json;
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use yaml::{Kind, Node, Value};
 
@@ -25,6 +27,77 @@ type Branches = Arc<Vec<Pos>>;
 pub struct Schema {
     root: Json,
     cache: Mutex<HashMap<(usize, Vec<String>), Branches>>,
+}
+
+/// Answers [`Schema::plausible`] and [`Schema::child_positions`] once each over one unchanged
+/// document: a recognition pass asks them for every move at the same nodes and positions. Borrowing
+/// the document keeps it from changing, and so the nodes' addresses from being reused, while the
+/// probe lives (`'d` is invariant, so a probe cannot be used for a shorter-lived document); it is
+/// dropped with the pass.
+pub struct Probe<'d> {
+    doc: PhantomData<fn(&'d Node) -> &'d Node>,
+    plausible: RefCell<HashMap<PlausibleKey, Vec<Pos>>>,
+    children: RefCell<HashMap<ChildKey, Vec<Pos>>>,
+}
+
+/// A schema, the positions asked at, and the node.
+type PlausibleKey = (usize, Vec<usize>, usize);
+/// A schema, the positions asked at, and the key.
+type ChildKey = (usize, Vec<usize>, String);
+
+fn addresses(positions: &[Pos]) -> Vec<usize> {
+    positions
+        .iter()
+        .map(|p| *p as *const Json as usize)
+        .collect()
+}
+
+impl<'d> Probe<'d> {
+    pub fn new(_doc: &'d Node) -> Self {
+        Probe {
+            doc: PhantomData,
+            plausible: RefCell::default(),
+            children: RefCell::default(),
+        }
+    }
+
+    pub fn plausible(
+        &self,
+        schema: &'static Schema,
+        positions: &[Pos],
+        node: &'d Node,
+    ) -> Vec<Pos> {
+        let key = (
+            schema as *const Schema as usize,
+            addresses(positions),
+            node as *const Node as usize,
+        );
+        if let Some(found) = self.plausible.borrow().get(&key) {
+            return found.clone();
+        }
+        let found = schema.plausible(positions, node);
+        self.plausible.borrow_mut().insert(key, found.clone());
+        found
+    }
+
+    pub fn child_positions(
+        &self,
+        schema: &'static Schema,
+        positions: &[Pos],
+        key: &str,
+    ) -> Vec<Pos> {
+        let key = (
+            schema as *const Schema as usize,
+            addresses(positions),
+            key.to_string(),
+        );
+        if let Some(found) = self.children.borrow().get(&key) {
+            return found.clone();
+        }
+        let found = schema.child_positions(positions, &key.2);
+        self.children.borrow_mut().insert(key, found.clone());
+        found
+    }
 }
 
 /// The schema without its cross-field rules: the key shapes alone.
@@ -467,4 +540,41 @@ fn could_be(branch: &Json, node: &Node) -> bool {
     declared
         .get("const")
         .is_none_or(|c| c.is_null() || equals(c, actual))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::current_grammar;
+
+    #[test]
+    fn a_probe_answers_as_the_schema_does_and_answers_again_alike() {
+        let doc = yaml::parse_node("charts:\n  c:\n    type: bar\n    x: a\nrows:\n  - c\n")
+            .expect("parses");
+        let Kind::Map(top) = &doc.kind else {
+            panic!("a map")
+        };
+        let charts = &top["charts"].value;
+        let schema = current_grammar().expect("the current grammar");
+        let probe = Probe::new(&doc);
+        let roots = vec![schema.root()];
+        let below = schema.child_positions(&roots, "charts");
+        // Two nodes and two position sets through one probe: a key that left out either would
+        // answer the second question with the first's answer.
+        for _ in 0..2 {
+            for (positions, node) in [(&roots, &doc), (&below, charts)] {
+                assert_eq!(
+                    probe.plausible(schema, positions, node),
+                    schema.plausible(positions, node)
+                );
+                for key in ["charts", "rows", "c", "no_such_key"] {
+                    assert_eq!(
+                        probe.child_positions(schema, positions, key),
+                        schema.child_positions(positions, key),
+                        "{key}"
+                    );
+                }
+            }
+        }
+    }
 }

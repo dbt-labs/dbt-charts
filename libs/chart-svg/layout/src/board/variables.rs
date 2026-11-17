@@ -236,7 +236,9 @@ fn input_width(
     Ok(match sizing {
         Sizing::Slider => widths.range + style.variables.control_gap + value.max(widths.slider_value_min),
         Sizing::Content => boxed,
+        Sizing::Daterange => widths.daterange.max(boxed),
         Sizing::Number => widths.number.max(boxed),
+        Sizing::Summary => widths.text,
         Sizing::Text | Sizing::Checkbox => widths.text.max(boxed),
     })
 }
@@ -418,6 +420,16 @@ struct Ink<'a> {
 impl Ink<'_> {
     fn vars(&self) -> &VariablesStyle {
         &self.style.variables
+    }
+
+    /// `_drawn_value`: a `summary` field's text cut, with an ellipsis, to the slot inside its padding.
+    fn drawn_value(&self, control: &Control) -> Result<String, Diagnostic> {
+        if control.widget.sizing() != Sizing::Summary {
+            return Ok(control.value.clone());
+        }
+        let input = &self.vars().input;
+        let slot = input.widths.text - input.padding.left - input.padding.right;
+        measure::fonts::truncate_by(&control.value, slot, true, |text| text_width(self.book, text, self.font_size))
     }
 
     /// `centered_baseline_offset` of a font stack, the stack as the cascade holds it.
@@ -670,7 +682,7 @@ fn draw_text_field(
                 .set("font-size", px(ink.font_size))
                 .set("font-family", ink.value_family.as_str())
                 .set("fill", color.as_str()),
-            &control.value,
+            &ink.drawn_value(control)?,
         ),
     ];
     let mid = y + height / 2.0;

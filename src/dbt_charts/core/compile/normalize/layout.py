@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field, replace
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +44,7 @@ from dbt_charts.core.compile.normalize.charts import (
 from dbt_charts.core.compile.normalize.variables import validate_authored_name
 from dbt_charts.core.compile.template.listings import check_listing_calls
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_BOARD_FILE_PLACED_TWICE,
     ERR_BOARD_IMPORT_CYCLE,
     ERR_DUPLICATE_CHART_NAME,
     ERR_DUPLICATE_QUERY_NAME,
@@ -106,7 +108,7 @@ def build_unified_layout(
     links: BoardLinks,
     cache_root: CachePatch | None = None,
     path_prefix: AuthoringPathPrefix = "",
-    importing: tuple[str, ...] = (),
+    placements: Placements,
 ) -> Layout:
     """Build a unified Layout from board layout fields.
 
@@ -162,7 +164,7 @@ def build_unified_layout(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
-            importing=importing,
+            placements=placements,
         )
         return Layout(type=LayoutType.ROWS, items=items)
 
@@ -189,7 +191,7 @@ def build_unified_layout(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
-            importing=importing,
+            placements=placements,
         )
         return Layout(type=LayoutType.COLS, items=items)
 
@@ -216,7 +218,7 @@ def build_unified_layout(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
-            importing=importing,
+            placements=placements,
         )
         return Layout(
             type=LayoutType.GRID,
@@ -245,7 +247,7 @@ def build_unified_layout(
             regional=regional,
             links=links,
             path_prefix=path_prefix,
-            importing=importing,
+            placements=placements,
         )
 
         # Compute tab slugs and variable name
@@ -315,7 +317,7 @@ def build_unified_layout(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
-            importing=importing,
+            placements=placements,
         )
         return Layout(type=LayoutType.ROWS, items=items)
 
@@ -347,7 +349,7 @@ def _resolve_layout_items(
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
-    importing: tuple[str, ...] = (),
+    placements: Placements,
 ) -> list[LayoutItem]:
     """Resolve layout items to LayoutItem objects.
 
@@ -400,7 +402,7 @@ def _resolve_layout_items(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
-            importing=importing,
+            placements=placements,
         )
         resolved.append(layout_item)
 
@@ -430,7 +432,7 @@ def _resolve_single_item(
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
-    importing: tuple[str, ...] = (),
+    placements: Placements,
 ) -> LayoutItem:
     """Resolve a single layout item.
 
@@ -474,7 +476,8 @@ def _resolve_single_item(
                 sources=sources,
                 regional=regional,
                 links=links,
-                importing=importing,
+                placements=placements,
+                source_path=_layout_source_path(path_prefix, item_id),
             )
         elif item in charts:
             if chart_registry is None:
@@ -556,7 +559,7 @@ def _resolve_single_item(
                 "regional": regional,
                 "links": links,
                 "variables": parent_variables,
-                "importing": importing,
+                "placements": placements,
             },
             query_registry=query_registry,
             chart_registry=chart_registry,
@@ -621,7 +624,22 @@ def _resolve_single_item(
     raise CompilationError(f"Invalid layout item type: {type(item)}")
 
 
-# Layout keys that should not have templates resolved (processed by layout resolution)
+@dataclass(frozen=True)
+class Placements:
+    """The board files placed by path so far in one compile.
+
+    ``chain`` is the board being compiled, then the files being placed above
+    this point, outermost first. The dicts are shared by every ``Placements`` of the compile: ``placed`` maps a
+    file to where it was first placed, ``charts`` and ``queries`` map a name to
+    the placed file that declared it.
+    """
+
+    chain: tuple[str, ...] = ("this board",)
+    placed: dict[str, str] = field(default_factory=dict)
+    charts: dict[str, str] = field(default_factory=dict)
+    queries: dict[str, str] = field(default_factory=dict)
+
+
 def prefixed(path_prefix: AuthoringPathPrefix, segment: str) -> str:
     """Join a segment onto the enclosing board's path, or "" where there is none."""
     if path_prefix is None:
@@ -671,7 +689,8 @@ def _resolve_board_file_import(
     cache_root: CachePatch | None = None,
     regional: Regional,
     links: BoardLinks,
-    importing: tuple[str, ...] = (),
+    placements: Placements,
+    source_path: str,
 ) -> LayoutItem:
     """Load and resolve a board file import.
 
@@ -721,11 +740,9 @@ def _resolve_board_file_import(
     resolved_path = resolve_jinja_template(file_path, parent_variables, strict=False)
 
     nested_path = resolve_ref(resolved_path, base_dir, "file")
-    if nested_path.relpath in importing:
-        cycle = [
-            *importing[importing.index(nested_path.relpath) :],
-            nested_path.relpath,
-        ]
+    chain = placements.chain
+    if nested_path.relpath in chain:
+        cycle = [*chain[chain.index(nested_path.relpath) :], nested_path.relpath]
         raise CompilationError.from_code(
             ERR_BOARD_IMPORT_CYCLE, chain=" -> ".join(cycle)
         )
@@ -787,7 +804,7 @@ def _resolve_board_file_import(
         "regional": regional,
         "links": links,
         "variables": parent_variables,  # Pass variables to child
-        "importing": (*importing, nested_path.relpath),
+        "placements": replace(placements, chain=(*chain, nested_path.relpath)),
     }
 
     # Chart and query names are board-global, and the registries were built from
@@ -822,9 +839,11 @@ def _resolve_board_file_import(
         cache_root=cache_root,
         board_cache=board_cache,
     )
-    for code, own, outer in (
-        (ERR_DUPLICATE_CHART_NAME, own_charts, chart_registry),
-        (ERR_DUPLICATE_QUERY_NAME, own_queries, query_registry),
+    file = nested_path.relpath
+    placed_by = f"{chain[-1]} at {source_path}" if source_path else chain[-1]
+    for code, own, outer, declared in (
+        (ERR_DUPLICATE_CHART_NAME, own_charts, chart_registry, placements.charts),
+        (ERR_DUPLICATE_QUERY_NAME, own_queries, query_registry, placements.queries),
     ):
         # Both boards' cross-board chart imports can pull in the same source
         # file's query under one reserved-prefix key: equal queries are the same
@@ -834,12 +853,18 @@ def _resolve_board_file_import(
             for n in own.keys() & outer.keys()
             if not (n.startswith(_CROSS_BOARD_QUERY_PREFIX) and own[n] == outer[n])
         ):
-            raise CompilationError.from_code(
-                code,
-                name=name,
-                first=f"the board that places {nested_path.relpath!r}",
-                second=nested_path.relpath,
-            )
+            if file in placements.placed:
+                raise CompilationError.from_code(
+                    ERR_BOARD_FILE_PLACED_TWICE,
+                    file=file,
+                    first=placements.placed[file],
+                    second=placed_by,
+                )
+            # A name no placed file declared came from the board being compiled.
+            first = declared[name] if name in declared else chain[0]
+            raise CompilationError.from_code(code, name=name, first=first, second=file)
+        declared.update(dict.fromkeys(own, file))
+    placements.placed.setdefault(file, placed_by)
     chart_registry.update(own_charts)
     query_registry.update(own_queries)
     # The importing file's queries were checked for cycles before this file was
@@ -888,7 +913,7 @@ def _resolve_grid_items(
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
-    importing: tuple[str, ...] = (),
+    placements: Placements,
 ) -> list[LayoutItem]:
     """Resolve grid layout items.
 
@@ -945,7 +970,7 @@ def _resolve_grid_items(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
-            importing=importing,
+            placements=placements,
         )
 
         # Get span values (default to 1)
@@ -1001,7 +1026,7 @@ def _resolve_tab_items(
     links: BoardLinks,
     cache_root: CachePatch | None = None,
     path_prefix: AuthoringPathPrefix = "",
-    importing: tuple[str, ...] = (),
+    placements: Placements,
 ) -> tuple[list[LayoutItem], list[str]]:
     """Resolve tab layout items.
 
@@ -1062,7 +1087,7 @@ def _resolve_tab_items(
                     "html_policy": html_policy,
                     "regional": regional,
                     "links": links,
-                    "importing": importing,
+                    "placements": placements,
                 },
                 query_registry=query_registry,
                 chart_registry=chart_registry,

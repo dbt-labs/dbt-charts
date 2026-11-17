@@ -167,6 +167,15 @@ pub fn color_at(scale: &CategoryColorScale, value: &str, palette: &[String]) -> 
     }
 }
 
+/// The ink a label on `value`'s fill takes (`category_ink`): a pinned literal's own ink against
+/// `canvas` (`_pin_companions`), else the companion of its palette slot in `companions`.
+pub fn ink_at(scale: &CategoryColorScale, value: &str, companions: &[String], canvas: &str) -> Result<String, String> {
+    match scale.overrides.get(value) {
+        Some(pinned) => color::mark_ink(pinned, canvas).map_err(|e| e.to_string()),
+        None => Ok(companions[slot_for(scale, value, companions.len())?].clone()),
+    }
+}
+
 /// The swatch of an unplanned series at `position` in its chart's series order, wrapping past the
 /// palette's end as an ordinal scale cycles a short range.
 pub fn position_fill(palette: &[String], position: usize) -> Result<&str, String> {

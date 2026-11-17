@@ -43,22 +43,7 @@ fn object(entries: &[(&str, String)]) -> String {
 }
 
 fn text(s: &str) -> String {
-    let mut out = String::from("\"");
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            c if (' '..='~').contains(&c) => out.push(c),
-            c => {
-                let mut units = [0u16; 2];
-                for unit in c.encode_utf16(&mut units) {
-                    out.push_str(&format!("\\u{unit:04x}"));
-                }
-            }
-        }
-    }
-    out + "\""
+    d3rs::py_str::json_string(s)
 }
 
 fn num(v: f64) -> String {

@@ -2828,7 +2828,7 @@ fn fenced_code_with_an_unported_language_refuses_by_name_while_highlighting_is_o
         ..Style::default()
     };
     let md = "```json\n{\"x\": 1}\n```";
-    let want = "mdsvg-rs: fenced code highlighting for language `json` not ported";
+    let want = "mdsvg-rs: fenced code highlighting for language `json` is not supported";
     let err = render_full(md, 400.0, 20.0, style, test_fonts()).unwrap_err();
     assert_eq!(err, want);
 }

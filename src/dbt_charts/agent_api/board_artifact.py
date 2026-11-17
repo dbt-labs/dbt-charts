@@ -47,9 +47,19 @@ from dbt_charts.core.render.board_replay import (
     render_board_from_artifact,
 )
 from dbt_charts.core.render.board_resolve import build_resolved_board
+from dbt_charts.core.render.board_variables import (
+    board_variables,
+    variable_defs,
+    variable_options,
+)
 from dbt_charts.core.render.chart.automatic_link import (
     set_filter_variables_context,
     with_link_schema,
+)
+from dbt_charts.core.render.engine_cell import EngineBoard, engine_board
+from dbt_charts.core.render.variables_resolve import (
+    board_variable_defs,
+    linked_variable_options,
 )
 
 if TYPE_CHECKING:
@@ -119,7 +129,7 @@ def emit_board_artifact(
 
     assert located.path is not None  # resolved from a path, so it has one
     try:
-        plan = plan_for_board(
+        planned = plan_for_board(
             located,
             project,
             variables,
@@ -138,7 +148,7 @@ def emit_board_artifact(
         return EmitBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])
     ctx = make_context(
         board,
-        plan,
+        planned,
         env,
         use_cache=use_cache,
         result_cache=result_cache,
@@ -166,13 +176,32 @@ def emit_board_artifact(
         # Every query the resolve reads, and every one the recording keeps.
         results = execute(
             ctx,
-            plan["queries"],
+            planned.plan["queries"],
             merged_variables,
         )
         results = with_link_schema(results, ctx, board, merged_variables)
-        resolved, _render_cache = build_resolved_board(
-            board, results, merged_variables, resolve_errors=resolve_errors
-        )
+        # Sized as `render()` sizes: a chart the engine draws in its cell is measured
+        # there, from the board's run and variables.
+        with (
+            engine_board(
+                EngineBoard(
+                    ctx.compiled,
+                    ctx.plan,
+                    results.results,
+                    results.errors,
+                    frozenset(variables or {}),
+                    frozenset(),
+                    ctx.rendered_at,
+                    None,
+                )
+            ),
+            board_variables(merged_variables),
+            variable_options(linked_variable_options(board, results, merged_variables)),
+            variable_defs(board_variable_defs(board)),
+        ):
+            resolved, _render_cache = build_resolved_board(
+                board, results, merged_variables, resolve_errors=resolve_errors
+            )
     except DbtChartsError as exc:
         return EmitBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])
     finally:
@@ -191,7 +220,7 @@ def emit_board_artifact(
     recording = record_board(resolved, results, merged_variables)
 
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_path.write_bytes(dump_board_artifact(resolved))
+    artifact_path.write_bytes(dump_board_artifact(resolved, planned.record))
     recording_path.parent.mkdir(parents=True, exist_ok=True)
     recording_path.write_bytes(recording.model_dump_json(indent=2).encode())
 
@@ -217,10 +246,10 @@ def render_board_from_files(
     `render_board_svg` must not.
     """
     try:
-        resolved = load_board_artifact(_read_or_error(artifact_path))
+        artifact = load_board_artifact(_read_or_error(artifact_path))
         recording = load_board_recording(_read_or_error(recording_path))
         svg = render_board_from_artifact(
-            resolved, recording, recording.variables, embed_fonts=standalone
+            artifact, recording, recording.variables, embed_fonts=standalone
         )
     except DbtChartsError as exc:
         return RenderBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])

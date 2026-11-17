@@ -31,9 +31,10 @@ use model_core::{
     bad_item, clash, satisfied, set_keys, Condition, Constraint, ConstraintKind, Doc, Unanswerable,
     Value as Scalar,
 };
-use model_core::{spell_leaves, Leaf, Resolved};
+use model_core::{spell_leaves, spell_leaves_where, Leaf, Resolved};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 use yaml::Node;
 
@@ -188,19 +189,19 @@ fn rule_keys(c: &Constraint) -> Vec<&'static str> {
 }
 
 /// `upper` over `base`, key by key through objects.
-fn overlay(base: &mut Value, upper: Value) {
+fn overlay(base: &mut Value, upper: &Value) {
     match (base, upper) {
         (Value::Object(b), Value::Object(u)) => {
             for (k, v) in u {
-                match b.get_mut(&k) {
+                match b.get_mut(k) {
                     Some(at) => overlay(at, v),
                     None => {
-                        b.insert(k, v);
+                        b.insert(k.clone(), v.clone());
                     }
                 }
             }
         }
-        (b, u) if !u.is_null() => *b = u,
+        (b, u) if !u.is_null() => *b = u.clone(),
         _ => {}
     }
 }
@@ -215,59 +216,102 @@ fn holds(json: &Value, path: &str) -> bool {
 }
 
 /// One rung of an axis's cascade: what it sets, and where it is authored.
-struct Rung {
-    set: Value,
+struct Rung<'a> {
+    set: &'a Value,
     authored: String,
+    /// What the rung is, for [`broken`]'s memo: a scope rung is named by its authored key (its
+    /// value is the scope's), a chart's own rung by its slot and content.
+    ident: String,
+}
+
+/// A scope leaf [`rungs`] can read: an axis slot of `charts`, or of one family under it.
+fn axis_rung_path(path: &str) -> bool {
+    let mut segs = path.split('.');
+    segs.next() == Some("charts") && segs.take(2).any(|seg| seg.starts_with("axis"))
 }
 
 /// The rungs of one axis in Python's order (`resolved_axis_style`, layers 1-6 and 8-10): the
 /// scope's `charts.axis`, `charts.<axis>` and `charts.<t>`, then the family's three, then the
 /// chart's own three. `t` is the channel's slot (`axis_quantitative` or `axis_band`), or none on
 /// an axis that has none (temporal).
-fn rungs(
-    scope: &Value,
-    own: &Value,
+fn rungs<'a>(
+    scope: &'a Value,
+    own: &'a Value,
     (family, own_slot, name): (&str, &str, &str),
     axis: &str,
     t: Option<&str>,
-) -> Vec<Rung> {
+) -> Vec<Rung<'a>> {
     let slots: Vec<&str> = ["axis", axis].into_iter().chain(t).collect();
     let mut out = Vec::new();
     for slot in &slots {
-        out.push((at(scope, &["charts", slot]), format!("style.charts.{slot}")));
+        let authored = format!("style.charts.{slot}");
+        out.extend(at(scope, &["charts", slot]).map(|set| Rung {
+            set,
+            ident: authored.clone(),
+            authored,
+        }));
     }
     for slot in &slots {
-        out.push((
-            at(scope, &["charts", family, slot]),
-            format!("style.charts.{family}.{slot}"),
-        ));
+        let authored = format!("style.charts.{family}.{slot}");
+        out.extend(at(scope, &["charts", family, slot]).map(|set| Rung {
+            set,
+            ident: authored.clone(),
+            authored,
+        }));
     }
     for slot in &slots {
-        out.push((
-            at(own, &["charts", own_slot, slot]),
-            format!("charts.{name}.style.{slot}"),
-        ));
+        out.extend(at(own, &["charts", own_slot, slot]).map(|set| Rung {
+            set,
+            authored: format!("charts.{name}.style.{slot}"),
+            ident: format!("own.{slot}={set}"),
+        }));
     }
-    out.into_iter()
-        .filter_map(|(set, authored)| {
-            set.map(|set| Rung {
-                set: set.clone(),
-                authored,
-            })
-        })
-        .collect()
+    out
 }
 
 /// A `MERGED_ONLY` rule a merged axis breaks: the struct it sits in (by path), its place in that
 /// struct's table, the rule and the struct's authored JSON.
 type Broken = (String, usize, &'static Constraint, Value);
 
-/// Every `MERGED_ONLY` rule a struct of `rungs`' merged `axis` breaks.
-fn broken(spine: &'static Spine, axis: &str, rungs: &[Rung]) -> Result<Vec<Broken>, Diagnostic> {
+/// What [`broken`] found for a scope's axis and its rungs, within one [`refuse_merged`]: the charts
+/// of a scope share its rungs, so the same question comes back once per chart. An entry is keyed
+/// either by the scope's address, the axis and each rung's `ident` (asking costs no merge) or, with
+/// no scope, by the axis and the merged value (scopes and families that merge equally share one
+/// walk).
+type BrokenMemo =
+    RefCell<HashMap<(Option<usize>, String, String), Result<Vec<Broken>, Diagnostic>>>;
+
+/// Every `MERGED_ONLY` rule a struct of `rungs`' merged `axis` breaks. A pure function of the axis
+/// and the merged rungs, so `memo` may answer for it. The memo's key names a scope by its address,
+/// sound because a scope outlives the one `refuse_merged` call that owns the memo.
+fn broken(
+    spine: &'static Spine,
+    memo: &BrokenMemo,
+    scope: usize,
+    axis: &str,
+    rungs: &[Rung<'_>],
+) -> Result<Vec<Broken>, Diagnostic> {
+    let idents: Vec<&str> = rungs.iter().map(|r| r.ident.as_str()).collect();
+    let key = (Some(scope), axis.to_string(), idents.join("\n"));
+    if let Some(found) = memo.borrow().get(&key) {
+        return found.clone();
+    }
     let mut merged = Value::Null;
     for rung in rungs {
-        overlay(&mut merged, rung.set.clone());
+        overlay(&mut merged, rung.set);
     }
+    let by_value = (None, axis.to_string(), merged.to_string());
+    let cached = memo.borrow().get(&by_value).cloned();
+    let found = cached.unwrap_or_else(|| {
+        let found = broken_in(spine, axis, merged);
+        memo.borrow_mut().insert(by_value, found.clone());
+        found
+    });
+    memo.borrow_mut().insert(key, found.clone());
+    found
+}
+
+fn broken_in(spine: &'static Spine, axis: &str, merged: Value) -> Result<Vec<Broken>, Diagnostic> {
     let node = migrate::from_json(
         &json!({ "style": { "charts": { axis: merged } } }),
         migrate::SYNTHETIC,
@@ -319,6 +363,9 @@ pub(crate) fn refuse_merged<'a>(
         }
     };
     let mut out: Vec<Diagnostic> = Vec::new();
+    let memo = BrokenMemo::default();
+    // Charts of one scope share its spelling: the scope is a layer, not the chart.
+    let mut spelled: HashMap<*const Resolved<Style>, Value> = HashMap::new();
     for (pos, name) in &structure.layout.charts {
         let Some(own) = placed_own.get(pos.as_str()) else {
             continue;
@@ -333,16 +380,20 @@ pub(crate) fn refuse_merged<'a>(
             "histogram" => "histogram",
             _ => own_slot,
         };
-        let scope = spell_leaves(&*scope_of(pos.as_str()).folded);
+        let layer = scope_of(pos.as_str());
+        let scope_id = layer as *const Resolved<Style> as usize;
+        let scope = spelled
+            .entry(layer)
+            .or_insert_with(|| spell_leaves_where(&*layer.folded, axis_rung_path));
         let own = spell_leaves(own);
         for axis in ["axis_x", "axis_y"] {
-            let ladder = |t| rungs(&scope, &own, (family, own_slot, name), axis, t);
+            let ladder = |t| rungs(scope, &own, (family, own_slot, name), axis, t);
             let plain = ladder(None);
             let others = [ladder(Some("axis_quantitative")), ladder(Some("axis_band"))];
-            let found = broken(spine, axis, &plain).and_then(|plain_broken| {
+            let found = broken(spine, &memo, scope_id, axis, &plain).and_then(|plain_broken| {
                 let rest = others
                     .iter()
-                    .map(|r| broken(spine, axis, r))
+                    .map(|r| broken(spine, &memo, scope_id, axis, r))
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut common: Vec<Broken> = plain_broken
                     .into_iter()
@@ -375,7 +426,7 @@ pub(crate) fn refuse_merged<'a>(
                     let key = keys
                         .iter()
                         .copied()
-                        .find(|k| holds(&r.set, &join(inner, k)))?;
+                        .find(|k| holds(r.set, &join(inner, k)))?;
                     Some((key, join(&r.authored, inner)))
                 }) else {
                     continue;

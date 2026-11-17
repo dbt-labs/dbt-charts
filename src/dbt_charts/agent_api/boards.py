@@ -130,6 +130,16 @@ class RenderBoardArgs(BaseModel):
     yaml_content: str | None = Field(
         None, description="YAML content to render directly (use this OR path)"
     )
+    markdown: str | None = Field(
+        None,
+        description=(
+            "A markdown page whose ```charts fences you will send, instead of "
+            "path or yaml_content: its fences render together as the one board "
+            "a host draws, "
+            "so each query, chart and variable name is declared once on the "
+            "page. Check a reply before you send it."
+        ),
+    )
     chart: str | None = Field(
         None,
         description=(

@@ -1992,10 +1992,10 @@ pub fn zero_floor_position(scale: &d3rs::scale::Continuous, v: f64) -> f64 {
 }
 
 impl AxisStyle {
-    /// The tick length this axis reserves and draws: `ticks.length` (default 6)
-    /// while its ticks are visible, else 0. A zero length draws and reserves
-    /// nothing, exactly like hidden ticks (Vega's `tickSize` is the mark's
-    /// extent and the label offset, `axis.js:58-66`).
+    /// The tick length of a value axis: `ticks.length` while its ticks are
+    /// visible, else 0, and the value axis reserves it in its width. An x
+    /// axis does not: its ticks hang into the label gap and add no height, so
+    /// read `ticks.length` directly to draw them.
     pub fn tick_len(&self) -> f64 {
         if self.ticks.visible.unwrap_or(true) { self.ticks.length.unwrap_or(6.0) } else { 0.0 }
     }
@@ -3146,8 +3146,8 @@ pub fn format_mark_label(fmt: Option<&FormatSlot>, value: f64, is_house: bool) -
 pub struct TitleBlock {
     pub title_lines: Vec<String>,
     pub sub_lines: Vec<String>,
-    /// `None` when there is no title — VL emits no title block, so nothing
-    /// paints and no band is reserved.
+    /// `None` when there is neither title nor subtitle: nothing paints and
+    /// no band is reserved.
     pub ink: Option<crate::vega_fit::TitleInk>,
     /// Whether production's pre-pass cut the title / subtitle
     /// (`prepare_title_text`'s `truncated`); Vega's native clip below it
@@ -3200,60 +3200,60 @@ pub fn wrap_title_block(
     let sub_style = style.and_then(|ts| ts.subtitle.as_ref());
     // The subtitle falls back to the title's paint size when its slot carries none.
     let sub_fs = sub_style.and_then(|f| f.font.size).unwrap_or(title_font_size);
-    let (wrap_sub_lines, subtitle_truncated) = match (wrap_lines.is_empty(), subtitle, limit) {
-        (false, Some(sub), None) => (vec![sub.to_string()], false),
-        (false, Some(sub), Some(limit)) => {
+    let (wrap_sub_lines, subtitle_truncated) = match (subtitle, limit) {
+        (None, _) => (vec![], false),
+        (Some(sub), None) => (vec![sub.to_string()], false),
+        (Some(sub), Some(limit)) => {
             wrap(sub, sub_style.and_then(|f| f.overflow.as_deref()), sub_fs, limit)?
         }
-        _ => (vec![], false),
     };
     let family = style.and_then(|ts| ts.font.family.as_deref()).unwrap_or("serif");
     let sub_family = sub_style.and_then(|f| f.font.family.as_deref()).unwrap_or("sans-serif");
-    let ink = if wrap_lines.is_empty() {
-        None
-    } else {
-        let offset = style
-            .and_then(|ts| ts.position.as_ref())
-            .and_then(|pos| pos.offset)
-            .unwrap_or(10.0);
-        // An overflowing row reserves the `limit` the spec carries, exactly
-        // — Vega bounds the mark at its limit, not at the ellipsized string
-        // it drew (probe: limit 320, the truncated string measures 314
-        // standalone, the laid-out title reserves 320.0). The wrap measures
-        // in Inter and the ink in the row's own family, so a wider family
-        // can keep one line and still overrun. Measured off `wrap_lines`
-        // (pre-native-clip) — the reservation is unaffected by whether the
-        // DRAWN text below gets shortened further; it was already `min`-ed
-        // to `limit` here regardless.
-        let cap = |w: f64| limit.map_or(w, |l| w.min(l));
+    let offset = style
+        .and_then(|ts| ts.position.as_ref())
+        .and_then(|pos| pos.offset)
+        .unwrap_or(10.0);
+    // An overflowing row reserves the `limit` the spec carries, exactly
+    // — Vega bounds the mark at its limit, not at the ellipsized string
+    // it drew (probe: limit 320, the truncated string measures 314
+    // standalone, the laid-out title reserves 320.0). The wrap measures
+    // in Inter and the ink in the row's own family, so a wider family
+    // can keep one line and still overrun. Measured off the pre-native-clip
+    // lines — the reservation is unaffected by whether the DRAWN text below
+    // gets shortened further; it was already `min`-ed to `limit` here
+    // regardless.
+    let widest = |lines: &[String], family: &str, size: f64| -> Result<f64, String> {
         let mut width = 0.0_f64;
-        for line in &wrap_lines {
-            width = width.max(fonts.measure(line, family, title_font_size)?);
+        for line in lines {
+            width = width.max(fonts.measure(line, family, size)?);
         }
-        width = cap(width);
-        if wrap_sub_lines.is_empty() {
-            Some(crate::vega_fit::TitleInk::with_lines(
-                title_font_size,
-                wrap_lines.len(),
-                offset,
-                width,
-            ))
-        } else {
-            let mut sub_w = 0.0_f64;
-            for line in &wrap_sub_lines {
-                sub_w = sub_w.max(fonts.measure(line, sub_family, sub_fs)?);
-            }
-            let sub_w = cap(sub_w);
-            Some(crate::vega_fit::TitleInk::with_subtitle_lines(
-                title_font_size,
-                wrap_lines.len(),
-                sub_fs,
-                wrap_sub_lines.len(),
-                offset,
-                width,
-                sub_w,
-            ))
-        }
+        Ok(limit.map_or(width, |l| width.min(l)))
+    };
+    let ink = match (wrap_lines.is_empty(), wrap_sub_lines.is_empty()) {
+        (true, true) => None,
+        // A subtitle with no title is the block's only row: the band a title
+        // of the subtitle's size and line count would reserve.
+        (true, false) => Some(crate::vega_fit::TitleInk::with_lines(
+            sub_fs,
+            wrap_sub_lines.len(),
+            offset,
+            widest(&wrap_sub_lines, sub_family, sub_fs)?,
+        )),
+        (false, true) => Some(crate::vega_fit::TitleInk::with_lines(
+            title_font_size,
+            wrap_lines.len(),
+            offset,
+            widest(&wrap_lines, family, title_font_size)?,
+        )),
+        (false, false) => Some(crate::vega_fit::TitleInk::with_subtitle_lines(
+            title_font_size,
+            wrap_lines.len(),
+            sub_fs,
+            wrap_sub_lines.len(),
+            offset,
+            widest(&wrap_lines, family, title_font_size)?,
+            widest(&wrap_sub_lines, sub_family, sub_fs)?,
+        )),
     };
     // Vega draws every title/subtitle text mark with `limit` set and
     // enforces it NATIVELY at render time, in the row's own paint family —
@@ -3483,6 +3483,31 @@ mod title_block_tests {
         assert_eq!(block.ink.expect("titled").width, limit);
     }
 
+    /// A subtitle with no title reserves the band a title of the subtitle's own
+    /// size and line count would, and draws from the title row's top.
+    #[test]
+    fn a_subtitle_without_a_title_is_the_blocks_only_row() {
+        let fonts = fonts();
+        let style: TitleStyle = serde_json::from_value(serde_json::json!({
+            "font": {"family": "Inter", "size": 18.0},
+            "subtitle": {"font": {"family": "Inter", "size": 11.0}}
+        }))
+        .expect("title style");
+        let block = wrap_title_block(None, Some("by region"), Some(&style), 18.0, 300.0, &fonts)
+            .expect("title block");
+        assert!(block.title_lines.is_empty());
+        let width = fonts.measure("by region", "Inter", 11.0).expect("measures");
+        let ink = block.ink.clone().expect("a subtitle reserves a band");
+        let alone = crate::vega_fit::TitleInk::with_lines(11.0, 1, 10.0, width);
+        assert_eq!((ink.ink_h, ink.dy_quirk, ink.offset), (alone.ink_h, alone.dy_quirk, alone.offset));
+        let nodes = title_block_nodes(&block, Some(&style), 0.0, 40.0, 18.0);
+        assert_eq!(nodes.len(), 1);
+        let printed = print::print(&nodes);
+        assert!(printed.contains(r#"data-authored-kind="subtitle""#), "{printed}");
+        let y = 40.0 + measure::baseline_shift("top", 11.0);
+        assert!(printed.contains(&format!(r#"y="{}""#, y)), "{printed}");
+    }
+
     /// The wrap pass above (Inter-measured, mirroring production's own
     /// `prepare_title_text` pre-pass) decides this title needs no
     /// truncation — it fits on one line under Inter's estimate. But Vega
@@ -3608,7 +3633,9 @@ pub fn title_block_nodes(
         .enumerate()
         .map(|(i, line)| title_node(line, style, x, y + i as f64 * advance, i == 0))
         .collect();
-    if !block.sub_lines.is_empty() {
+    if block.title_lines.is_empty() {
+        nodes.extend(subtitle_lines_from(&block.sub_lines, style, x, y, title_font_size));
+    } else if !block.sub_lines.is_empty() {
         let last_title_y = y + (block.title_lines.len() - 1) as f64 * advance;
         nodes.extend(subtitle_nodes(&block.sub_lines, style, x, last_title_y, title_font_size));
     }
@@ -3643,12 +3670,25 @@ pub fn plain_title_node(title: &str, style: Option<&TitleStyle>, x: f64, pad_t: 
     Node::text(Role::Title, (x, y_baseline), Attrs::new().set("class", "role-title-text").vega("font-family", family).num("font-size", size).quick_some("font-style", f.and_then(|f| f.style.as_deref())).set("font-weight", weight).set("fill", color).set("data-authored-kind", "title"), cased_title)
 }
 
-/// The wrapped subtitle lines as nodes.
+/// The wrapped subtitle lines under a title whose last line's top is `title_row_y`.
 pub fn subtitle_nodes(
     subs: &[String],
     style: Option<&TitleStyle>,
     x: f64,
     title_row_y: f64,
+    title_font_size: f64,
+) -> Vec<Node> {
+    let top = title_row_y + title_font_size + crate::constants::layout::VEGA_SUBTITLE_PADDING;
+    subtitle_lines_from(subs, style, x, top, title_font_size)
+}
+
+/// The wrapped subtitle lines with the first line's top at `top`: under a
+/// title, or alone where a title's first line would sit.
+pub fn subtitle_lines_from(
+    subs: &[String],
+    style: Option<&TitleStyle>,
+    x: f64,
+    top: f64,
     title_font_size: f64,
 ) -> Vec<Node> {
     let sf = style.and_then(|ts| ts.subtitle.as_ref());
@@ -3658,10 +3698,7 @@ pub fn subtitle_nodes(
     let sub_family = sf.and_then(|f| f.font.family.as_deref()).unwrap_or("sans-serif");
     let sub_color = sf.and_then(|f| f.font.color.as_deref()).unwrap_or("#8A8C8F");
     let sub_weight = sf.map(|f| f.font.weight_str()).unwrap_or_else(|| "400".into());
-    let sy = title_row_y
-        + title_font_size
-        + crate::constants::layout::VEGA_SUBTITLE_PADDING
-        + measure::baseline_shift("top", sub_fs);
+    let sy = top + measure::baseline_shift("top", sub_fs);
     // Extra lines advance by the Vega text mark's default lineHeight
     // (fontSize + LINE_ADVANCE_EXTRA) — same term the fit margins reserve.
     subs.iter()
@@ -3708,12 +3745,6 @@ pub fn field_display_text(
     }
 }
 
-/// An authored title's newlines read as spaces: only [`wrapped_axis_title`]
-/// puts line breaks in a title.
-pub fn collapse_title_newlines(text: &str) -> String {
-    text.replace('\n', " ")
-}
-
 /// Axis title text: an authored `x_label`/`y_label` wins (production never
 /// case-transforms it either, see `resolve_xy_titles`), else `field_title`
 /// (the `field_labels` entry, else `slug_to_text`). A newline in authored text
@@ -3724,7 +3755,7 @@ pub fn axis_title_text(
     field_labels: &FieldLabels,
 ) -> Result<String, String> {
     match label {
-        Some(label) => Ok(collapse_title_newlines(label)),
+        Some(label) => Ok(display_text::collapse_title_newlines(label)),
         None => display_text::field_title(field, field_labels),
     }
 }

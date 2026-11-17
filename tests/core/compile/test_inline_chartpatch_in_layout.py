@@ -13,7 +13,10 @@ from __future__ import annotations
 
 from dbt_charts.core.compile.models.chart.authored import BarChart
 from dbt_charts.core.compile.models.primitives import BoardLinks, Regional
-from dbt_charts.core.compile.normalize.layout import _resolve_single_item
+from dbt_charts.core.compile.normalize.layout import (
+    Placements,
+    _resolve_single_item,
+)
 
 
 def test_chartpatch_in_layout_omitted_title_stays_empty() -> None:
@@ -29,6 +32,7 @@ def test_chartpatch_in_layout_omitted_title_stays_empty() -> None:
         item_id="row0",
         sources={},
         html_policy="none",
+        placements=Placements(),
         regional=Regional(),
         links=BoardLinks(),
     )
@@ -48,6 +52,7 @@ def test_chartpatch_in_layout_respects_explicit_title() -> None:
         item_id="row0",
         sources={},
         html_policy="none",
+        placements=Placements(),
         regional=Regional(),
         links=BoardLinks(),
     )

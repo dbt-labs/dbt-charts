@@ -169,6 +169,9 @@ def serve_command(
     except _PydanticError as e:
         typer.echo(f"dbt_charts.yml validation error: {e}", err=True)
         raise typer.Exit(1) from None
+    except OSError as e:
+        print_diagnostics([format_startup_failure(e)])
+        raise typer.Exit(1) from None
 
     if isinstance(setup, Diagnostic):
         print_diagnostics([setup])
@@ -188,7 +191,7 @@ def serve_command(
     typer.echo("   Press CTRL+C to stop")
 
     try:
-        setup.server.run()
+        setup.server.run(sockets=[setup.listener])
     except KeyboardInterrupt:
         typer.echo("\n👋 Server stopped")
         raise typer.Exit(0) from None

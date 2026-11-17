@@ -69,6 +69,7 @@ pub fn linear(
     }, axis.nice == Some(true))?;
     let domain = |ladder| -> Result<Option<ValueDomain>, Invalid> {
         Ok(Some(ValueDomain {
+            scale: axis.scale,
             extent: Extent::new(floor, tallest)?,
             zero: Zero::Anchored,
             headroom: axis.headroom,
@@ -116,7 +117,7 @@ mod tests {
     }
 
     fn axis() -> Axis<'static> {
-        Axis { zero: Zero::Anchored, headroom: 0.0, percent: false, count: Some(Count::N(5)), values: None, domain: None, min_step: None, independent: false, nice: None, mark: Mark::Bar }
+        Axis { scale: crate::bound::ValueScale::Linear, zero: Zero::Anchored, headroom: 0.0, percent: false, count: Some(Count::N(5)), values: None, domain: None, min_step: None, independent: false, nice: None, mark: Mark::Bar }
     }
 
     fn rungs(domain: &ValueDomain) -> Vec<f64> {

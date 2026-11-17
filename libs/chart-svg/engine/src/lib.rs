@@ -13,7 +13,7 @@
 //!
 //! The engine draws only what it models, and anything else is refused by name rather than
 //! approximated: failed charts, KPI cards, callout cards, plain tables of text columns and
-//! direct-mode pies and donuts (`slot`). `Slots` and layout's `Facts` are keyed by placement
+//! pies and donuts, the hybrid and full-table modes beside or under their table included (`slot`). `Slots` and layout's `Facts` are keyed by placement
 //! `ItemId`, and each chart is drawn at every placement in the style of the body that places it.
 //! A failed chart reports its error at each placement, as production does.
 
@@ -28,7 +28,7 @@ mod styles;
 mod texts;
 
 pub use facts::EngineFacts;
-pub use plan::plan;
+pub use plan::{plan, plan_on};
 pub use styles::chart_styles;
 
 use bind::board::ChartStyles;
@@ -75,13 +75,14 @@ fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, book: &Fo
     let filled = texts::filled(board, styles, run, &*facts)?;
     let board = &filled;
     let mut bound = bind::bind(board, styles, run)?;
-    // A chart the slots cannot place is that chart's refusal, as one the bind cannot read is: the
-    // rest of the board is placed without it.
-    while let Err(refusal) = slot::plan(board, styles, &bound, &*facts).map(|_| ()) {
-        refuse_chart(board, styles, &mut bound, refusal)?;
-    }
-    let slots = slot::plan(board, styles, &bound, &*facts)?;
-    let laid = layout::board::assemble::lay_out(board, bound.drawn(), &mut slots.facts(&*facts, book))?;
+    // A chart the slots cannot place, or whose family's plan or draw refuses, is that chart's refusal,
+    // as one the bind cannot read is: the rest of the board is laid out and drawn without it.
+    let (laid, boxes, mut nodes, drawn) = loop {
+        match lay_out_and_draw(board, styles, &bound, run, book, &*facts) {
+            Ok(done) => break done,
+            Err(refusal) => refuse_chart(board, styles, &mut bound, refusal)?,
+        }
+    };
     let mut diagnostics: Vec<Diagnostic> = bound
         .charts()
         .values()
@@ -92,8 +93,6 @@ fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, book: &Fo
         .collect();
     diagnostics.extend(laid.diagnostics.iter().cloned());
     diagnostics.extend(bound.diagnostics.iter().cloned());
-    let boxes = compose::boxes(board, &laid, &slots, bound.drawn());
-    let (mut nodes, drawn) = compose::board(board, &bound, &slots, &laid, run, &*facts, book)?;
     diagnostics.extend(drawn);
     layout::board::styles::dedupe_repeated_style_rules(&mut nodes)?;
     Ok(Rendered {
@@ -103,8 +102,31 @@ fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, book: &Fo
     })
 }
 
-/// The refusal `plan` raised for one placement, made that chart's failure; any other error is the
-/// board's.
+type Drawn = (layout::board::assemble::Laid, Vec<(ItemId, ChartId, Rect)>, Vec<scene::Node>, Vec<Diagnostic>);
+
+fn lay_out_and_draw(board: &Board, styles: &ChartStyles, bound: &bind::bound::Board, run: &RunResult, book: &FontBook, facts: &impl EngineFacts) -> Result<Drawn, Diagnostic> {
+    let slots = slot::plan(board, styles, bound, facts)?;
+    let laid = layout::board::assemble::lay_out(board, bound.drawn(), &mut slots.facts(facts, book))?;
+    // A wrapped title the row's band moves after sizing (quirk class Q2g's law) refuses its chart,
+    // whose error card keeps the board drawn. The band is the one this layout measured, so the
+    // refusal comes before any chart draws: a refusal raised while drawing would lay the row out
+    // again without that chart's title, and the band the chart is drawn in would not be production's.
+    if let Some(placed) = laid.charts().into_iter().find(|placed| placed.deferred && !matches!(bound.charts().get(&placed.item).map(|c| &c.family), Some(Err(_)))) {
+        let refusal = diagnostic::refuse!("a title its untitled wrapper board shifts onto its row's title band is not supported");
+        return Err(slot::scoped(&placed.item, Diagnostic::refused(refusal)));
+    }
+    let mut boxes = compose::boxes(board, &laid, &slots, bound.drawn());
+    let (nodes, drawn, pie_heights) = compose::board(board, bound, &slots, &laid, run, facts, book)?;
+    for (item, _, rect) in &mut boxes {
+        if let Some(height) = pie_heights.get(item) {
+            rect.height = *height;
+        }
+    }
+    Ok((laid, boxes, nodes, drawn))
+}
+
+/// The refusal tagged with one placement (`slot::scoped`), made that chart's failure; any other error
+/// is the board's.
 fn refuse_chart(board: &Board, styles: &ChartStyles, bound: &mut bind::bound::Board, refusal: Diagnostic) -> Result<(), Diagnostic> {
     let placement = match refusal.params.get("placement") {
         Some(serde_json::Value::String(placement)) if refusal.code == diagnostic::codes::ERR_ENGINE_REFUSED.id => placement.clone(),
@@ -112,6 +134,6 @@ fn refuse_chart(board: &Board, styles: &ChartStyles, bound: &mut bind::bound::Bo
     };
     let drawn = bound.drawn().charts(board).map_err(|e| diagnostic::diag::err_internal(format!("{e:?}")))?;
     let (at, id) = drawn.into_iter().find(|(at, _)| at.to_string() == placement).ok_or_else(|| diagnostic::diag::err_internal(format!("no chart is placed at {placement}")))?;
-    let diagnostic = refusal.with_sink_param("chart_id", styles.public_id(id)?.into());
-    bound.fail(&at, bind::bound::Failure { chart: id.clone(), diagnostic }).map_err(|e| diagnostic::diag::err_internal(format!("{e:?}")))
+    let failure = bind::board::refusal_failure(styles, id, refusal)?;
+    bound.fail(&at, failure).map_err(|e| diagnostic::diag::err_internal(format!("{e:?}")))
 }

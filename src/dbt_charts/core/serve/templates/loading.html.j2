@@ -1,0 +1,23 @@
+{#- The first chunk of a streamed board page: sent before any query runs, so a
+    slow board shows its nav and a loading state at once. The rendered page
+    follows in the same response as a whole document; the HTML parser folds its
+    second <html>/<head>/<body> into this one and keeps its <style>, <title>
+    and <script> elements. No <title> here: the first one in the document
+    names the tab, and that should be the board's own. `dbt-page-loading`
+    animates the nav strip; nav.js clears it on pageshow. -#}
+<!DOCTYPE html>
+<html class="dbt-page-loading">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body{margin:0;}
+.dbt-page-pending{display:flex;align-items:center;justify-content:center;gap:10px;min-height:50vh;font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;color:#6b7280;}
+.dbt-page-pending::before{content:'';width:16px;height:16px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:dbt-page-pending-spin .8s linear infinite;}
+@keyframes dbt-page-pending-spin{to{transform:rotate(360deg);}}
+@media (prefers-reduced-motion:reduce){.dbt-page-pending::before{animation:none;}}
+</style>
+</head>
+<body>
+{{ chrome | safe }}
+<div class="dbt-page-pending" role="status">Running queries…</div>

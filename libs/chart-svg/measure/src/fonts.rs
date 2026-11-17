@@ -1178,16 +1178,28 @@ pub fn truncate_text_precise(
     } else {
         text
     };
+    match truncate_by(text, max_width, ellipsis, |v| {
+        Ok::<_, std::convert::Infallible>(measure_text_precise(v, font_size, measurer))
+    }) {
+        Ok(cut) => cut,
+        Err(never) => match never {},
+    }
+}
+
+/// `truncate_text_precise`'s law over any measurer: the whole text when it fits, else the longest
+/// prefix whose right-trimmed text plus the ellipsis fits, else the first character.
+pub fn truncate_by<E>(
+    text: &str,
+    max_width: f64,
+    ellipsis: bool,
+    measure: impl Fn(&str) -> Result<f64, E>,
+) -> Result<String, E> {
     if text.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
-
-    let measure = |v: &str| measure_text_precise(v, font_size, measurer);
-
-    if measure(text) <= max_width {
-        return text.to_string();
+    if measure(text)? <= max_width {
+        return Ok(text.to_string());
     }
-
     let suffix = if ellipsis { "…" } else { "" };
     let chars: Vec<char> = text.chars().collect();
     let mut lo = 0usize;
@@ -1203,7 +1215,7 @@ pub fn truncate_text_precise(
                 .trim_end_matches(is_py_space),
             suffix
         );
-        if measure(&candidate) <= max_width {
+        if measure(&candidate)? <= max_width {
             best = candidate;
             lo = mid + 1;
         } else {
@@ -1214,9 +1226,9 @@ pub fn truncate_text_precise(
         }
     }
     if !best.is_empty() {
-        return best;
+        return Ok(best);
     }
-    chars.first().map(|c| c.to_string()).unwrap_or_default()
+    Ok(chars.first().map(|c| c.to_string()).unwrap_or_default())
 }
 
 /// Wrap plain text using precise measurement only.

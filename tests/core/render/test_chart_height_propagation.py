@@ -164,6 +164,7 @@ class TestRenderChartItemReturnsActualHeight:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("placement_scope")
 class TestRowsLayoutUsesActualHeights:
     """render_rows_layout must position the second item at first_actual_height + gap.
 
@@ -297,6 +298,7 @@ rows:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("placement_scope")
 class TestCardPaddingHeightPropagation:
     """Card padding behavior differs by renderer family.
 

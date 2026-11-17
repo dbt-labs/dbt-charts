@@ -63,7 +63,7 @@ def test_fires_when_slot_squeezed_the_page() -> None:
     assert w.chart == chart_id
     assert w.message.endswith(
         "the layout slot fits 1 of the 4 rows a page holds (4 rows total); "
-        "the rest moved onto later pages."
+        "the rest sit on later pages or scroll out of view."
     ), w.message
     assert w.fix is not None
     assert (

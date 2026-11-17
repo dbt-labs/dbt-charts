@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use d3rs::geojson::{Feature, GeoJson};
 use d3rs::topojson::{self, Topology};
+use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -30,10 +31,52 @@ pub type Geometries = HashMap<String, Arc<str>>;
 /// document larger than the cap is decoded for its render and not kept.
 pub const CACHE_CAP_BYTES: usize = 32 * 1024 * 1024;
 
+/// One geo source as the host hands it over: the descriptor Python's resolve bakes for a chart's
+/// `geo:` source (a registry entry, or a raw URL with its fallback spelled out) and the document's
+/// unparsed text. The registry lives in the host until the Rust compile takes it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeoInput {
+    // `feature` and `property` are optional by nature; every other field must be sent.
+    pub url: String,
+    /// `topojson`, `geojson` or `json`: the spellings Python's resolve bakes. The reader draws `topojson` and `json`; `geojson` is refused at decode, as Vega raises on it.
+    pub format_type: String,
+    pub feature: Option<String>,
+    pub property: Option<String>,
+    /// The dotted path a lookup column joins a feature by.
+    pub join_key: String,
+    pub key_format: String,
+    pub key_examples: Vec<String>,
+    /// The registry's name for the source, empty for a raw URL; named in the lookup error.
+    pub source_name: String,
+    pub document: Arc<str>,
+}
+
+/// The host's geo inputs, `{geo source: GeoInput}` as JSON text, each keyed by the source a chart
+/// names. A field the host got wrong is an error naming its source; nothing is defaulted.
+pub fn geo_inputs(text: &str) -> Result<IndexMap<String, GeoInput>, String> {
+    let Value::Object(entries) = serde_json::from_str(text).map_err(|e| format!("geo: {e}"))? else {
+        return Err("geo is not a JSON object".to_string());
+    };
+    entries
+        .into_iter()
+        .map(|(source, entry)| {
+            if entry.get("document").is_some_and(|document| !document.is_string()) {
+                return Err(format!("geo source {source}: document is not text"));
+            }
+            let input = GeoInput::deserialize(entry).map_err(|e| format!("geo source {source}: {e}"))?;
+            if !matches!(input.format_type.as_str(), "topojson" | "geojson" | "json") {
+                return Err(format!("geo source {source}: format_type {:?} is not topojson, geojson or json", input.format_type));
+            }
+            Ok((source, input))
+        })
+        .collect()
+}
+
 /// A geo source as Vega's data reader is told it: the document under `url` in
 /// `payload.geometries`, read as `format_type` (`feature` names a TopoJSON object,
 /// `property` the path to a GeoJSON feature list).
-pub(super) struct GeoSource<'a> {
+pub struct GeoSource<'a> {
     /// What the source draws, named in its errors (`geoshape`, `basemap`).
     pub role: &'a str,
     /// The name the author knows the source by, for the error card; empty for an unnamed one.
@@ -45,7 +88,8 @@ pub(super) struct GeoSource<'a> {
 }
 
 /// What a source decodes to.
-pub(super) struct Decoded {
+#[derive(Debug)]
+pub struct Decoded {
     /// The features, as Vega's `topojson` and `json` readers list them.
     pub features: Vec<Feature>,
     /// A `json` source's items as the document spells them (what a join key reads); empty otherwise.
@@ -99,7 +143,7 @@ pub fn geometry_decodes() -> usize {
 }
 
 /// The features of `source`, from the cache when these exact bytes were already read this way.
-pub(super) fn decode(source: &GeoSource, geometries: &Geometries) -> Result<Arc<Decoded>, Diagnostic> {
+pub fn decode(source: &GeoSource, geometries: &Geometries) -> Result<Arc<Decoded>, Diagnostic> {
     let (role, url) = (source.role, source.url);
     let text = geometries
         .get(url)

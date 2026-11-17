@@ -456,11 +456,7 @@ fn anchor_images(node: &mut Node, dir: &str) -> Result<(), Diagnostic> {
 fn written_image_refs(markdown: &str) -> Vec<String> {
     let mut seen = Vec::new();
     for url in mdsvg::types::image_urls(&mdsvg::parse(markdown)) {
-        let lower = url.to_lowercase();
-        let remote = ["http://", "https://", "//", "data:"]
-            .iter()
-            .any(|p| lower.starts_with(p));
-        if !remote && !url.contains("{{") && !url.contains("{%") && !seen.iter().any(|s| s == url) {
+        if mdsvg::types::is_local_image(url) && !url.contains("{{") && !url.contains("{%") && !seen.iter().any(|s| s == url) {
             seen.push(url.to_string());
         }
     }

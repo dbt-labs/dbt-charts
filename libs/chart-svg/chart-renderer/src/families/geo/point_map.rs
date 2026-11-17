@@ -32,7 +32,7 @@ use d3rs::geojson::{Feature, FeatureCollection, GeoJson, Geometry};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::source::{decode, GeoSource};
+use ::bind::geo_source::{decode, GeoSource};
 use super::js_cell;
 use super::projection;
 use diagnostic::codes;

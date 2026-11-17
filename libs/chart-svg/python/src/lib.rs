@@ -185,6 +185,12 @@ fn table_title_geometry(py: Python<'_>, payload_json: &str) -> PyResult<(f64, f6
     geometry.map_err(|diagnostic| coded_error(py, &diagnostic))
 }
 
+/// A line's drawn runs of day positions, split where the engine breaks the line.
+#[pyfunction]
+fn split_line_gaps(runs: Vec<Vec<f64>>, extent: f64) -> Vec<Vec<f64>> {
+    chart_renderer::families::line::gaps::split_runs(runs, true, extent)
+}
+
 /// Parse a custom chart template in the engine that renders it; the error
 /// message names the line. Compile runs this so a template the engine cannot
 /// parse fails at compile, not at render.
@@ -203,7 +209,7 @@ fn font_loads() -> usize {
 /// engine's content-addressed geometry cache.
 #[pyfunction]
 fn geometry_decodes() -> usize {
-    chart_renderer::families::geo::source::geometry_decodes()
+    bind::geo_source::geometry_decodes()
 }
 
 #[pyfunction]
@@ -309,6 +315,7 @@ fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(font_loads, m)?)?;
     m.add_function(wrap_pyfunction!(geometry_decodes, m)?)?;
     m.add_function(wrap_pyfunction!(check_template, m)?)?;
+    m.add_function(wrap_pyfunction!(split_line_gaps, m)?)?;
     m.add_function(wrap_pyfunction!(languages, m)?)?;
     m.add_function(wrap_pyfunction!(language_for_time_locale, m)?)?;
     m.add_function(wrap_pyfunction!(number_locales, m)?)?;

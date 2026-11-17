@@ -48,11 +48,13 @@ from dbt_charts.core.font_measure import (
 from dbt_charts.core.render.board_variables import (
     board_data_provider,
     board_variables,
+    variable_defs,
     variable_options,
 )
 from dbt_charts.core.render.chart_interactivity import (
     hover_runtime_attributes,
 )
+from dbt_charts.core.render.engine_cell import placements
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.prose import render_prose_svg
 from dbt_charts.core.render.svg_utils import (
@@ -71,6 +73,7 @@ from dbt_charts.core.render.svg_utils import (
     translate_group,
 )
 from dbt_charts.core.render.variables_resolve import (
+    board_variable_defs,
     linked_variable_options,
     resolve_controls,
 )
@@ -1080,6 +1083,7 @@ def render_board_svg(
             language=board.regional.resolved_language,
         ),
         board_clock(board.clock(results.rendered_at)),
+        placements(),
     ):
         return _render_board_svg(
             board,
@@ -1337,6 +1341,7 @@ def _render_board_svg(
     with (
         board_variables(variables),
         variable_options(linked_variable_options(board, results, variables)),
+        variable_defs(board_variable_defs(board)),
         board_data_provider(results),
     ):
         layout_content, actual_layout_height = _render_layout(

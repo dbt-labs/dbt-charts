@@ -1,0 +1,3 @@
+kind: Fixes
+body: Local CSV and Parquet file sources load on DuckDB 2.
+time: 2026-11-12T21:21:51.298031-08:00

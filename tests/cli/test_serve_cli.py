@@ -8,6 +8,7 @@ server. All assertions pin exit codes to the documented values (0, 1, 2, and the
 from __future__ import annotations
 
 import re
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -26,9 +27,11 @@ runner = CliRunner()
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def _run_started(server: uvicorn.Server, _sockets: object = None) -> None:
-    """Stand-in for Server.run(): reports a served lifetime without binding a port."""
+def _run_started(server: uvicorn.Server, sockets: list[socket.socket]) -> None:
+    """Stand-in for Server.run(): reports a served lifetime without serving."""
     server.started = True
+    for sock in sockets:
+        sock.close()
 
 
 # Every URL the startup banner prints, reduced to its path+query. The bare-path
@@ -179,6 +182,45 @@ class TestDftServeDiagnostics:
 
 class TestDftServeStartupFailure:
     """A server that never started must not report success."""
+
+    def test_taken_explicit_port_reports_startup_failure(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        with socket.socket() as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            port = taken.getsockname()[1]
+            result = runner.invoke(
+                app,
+                [
+                    "serve",
+                    "--project-dir",
+                    str(tmp_path),
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                ],
+            )
+        assert result.exit_code == 1, result.output
+        assert "ERR-STARTUP-FAILED" in result.output + (result.stderr or "")
+
+    def test_server_runs_on_the_socket_already_listening(self, tmp_path: Path) -> None:
+        """The banner's URL already accepts connections; the server inherits them."""
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        served: list[object] = []
+
+        def run(server: uvicorn.Server, sockets: list[socket.socket]) -> None:
+            served.extend(sockets)
+            server.started = True
+
+        with patch("uvicorn.Server.run", run):
+            result = runner.invoke(app, ["serve", "--project-dir", str(tmp_path)])
+        assert result.exit_code == 0, result.output
+        assert len(served) == 1
+        listener = served[0]
+        assert isinstance(listener, socket.socket)
+        assert f":{listener.getsockname()[1]}" in result.output
+        listener.close()
 
     def test_server_that_never_started_exits_3(self, tmp_path: Path) -> None:
         """A lifespan startup exception returns from run() without raising."""

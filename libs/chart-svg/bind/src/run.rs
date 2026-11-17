@@ -28,10 +28,30 @@ pub struct RunResult {
     pub presets: IndexMap<String, String>,
     /// The charts whose query failed, each with its execute error: that chart's card.
     pub chart_errors: IndexMap<ChartId, Diagnostic>,
+    /// For each chart, by its public id, that can draw empty, the filters that reach it and hold a value: the variable bar's label and the
+    /// text it displays, as the host resolved them. A chart with no entry names none.
+    pub empty_filters: IndexMap<String, Vec<(String, String)>>,
+    /// For each chart, by its public id, the link production resolved for it at run time (an
+    /// authored `link:`, or the one the project's data source synthesizes when the chart authors none,
+    /// `automatic_link.py`), as its template. A chart with no entry has none. The engine reads it only
+    /// for a chart that authors no `link:` (`links::chart_link`). Run input: the compiled board cannot
+    /// know the synthesized one.
+    pub automatic_links: IndexMap<String, String>,
+    /// The geo sources the host resolved, by the source a chart names: its descriptor and document
+    /// text. Empty for a board that draws no map.
+    pub geo: IndexMap<String, crate::geo_source::GeoInput>,
     pub env: RenderEnv,
 }
 
 impl RunResult {
+    /// The filters that reach chart `public_id` and hold a value, as `Label: value` joined by ` · `
+    /// (`no_results::context_line`); `None` when it names none.
+    pub fn empty_filters_line(&self, public_id: &str) -> Option<String> {
+        let filters = self.empty_filters.get(public_id).filter(|filters| !filters.is_empty())?;
+        let named: Vec<String> = filters.iter().map(|(label, text)| format!("{label}: {text}")).collect();
+        Some(named.join(" \u{b7} "))
+    }
+
     /// The result of `query` for the chart `id` reading it; a run without one needs the data
     /// before the chart can bind.
     pub fn dataset(&self, query: &QueryId, id: &ChartId) -> Result<&Dataset, Diagnostic> {

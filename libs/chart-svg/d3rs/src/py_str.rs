@@ -64,3 +64,43 @@ mod tests {
         assert_eq!(normalize_whitespace("  a   b\tc\n"), "a b c");
     }
 }
+
+/// `json.dumps(text)` with its defaults: double-quoted, `ensure_ascii` (every code point outside
+/// ` `..`~` a `\uXXXX` escape in lowercase hex, an astral one as a surrogate pair), and the short
+/// escapes for `"`, `\`, `\n`, `\r`, `\t`, `\b` and `\f`.
+pub fn json_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            ' '..='~' => out.push(c),
+            _ => {
+                let mut units = [0u16; 2];
+                for unit in c.encode_utf16(&mut units) {
+                    out.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+        }
+    }
+    out.push('"');
+    out
+}
+
+#[cfg(test)]
+mod json_string_tests {
+    use super::json_string;
+
+    #[test]
+    fn it_escapes_as_json_dumps_does() {
+        assert_eq!(json_string("a\"b\\c\n\r\t\u{8}\u{c}"), r#""a\"b\\c\n\r\t\b\f""#);
+        assert_eq!(json_string("\u{1}\u{7f}\u{fc}"), r#""\u0001\u007f\u00fc""#);
+        assert_eq!(json_string("\u{1f600}"), r#""\ud83d\ude00""#);
+    }
+}

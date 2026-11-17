@@ -36,7 +36,8 @@ static CSS_VAR_STYLE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// `fonts.py::WEIGHT_FACE_ALIASES` — a static engine constant (unlike the
+/// `font_support.py::_ALIASES_BY_WEIGHT` (`fonts.py::WEIGHT_FACE_ALIASES` plus a `bold` row
+/// beside each `700`) — a static engine constant (unlike the
 /// embed-fonts registry's own DERIVED emoji unicode-range, this table is
 /// hand-authored and stable), mirrored as a literal the same way other
 /// small engine constants already are in this crate (`spark_bar.rs`'s
@@ -48,18 +49,22 @@ const WEIGHT_FACE_ALIASES: &[(&str, &str, &str)] = &[
     ("Source Serif 4", "600", "dbt Serif SemiBold"),
     ("dbt Sans Tabular", "500", "dbt Sans Tabular Medium"),
     ("dbt Sans Tabular", "600", "dbt Sans Tabular SemiBold"),
+    ("dbt Sans Tabular", "700", "dbt Sans Tabular Bold"),
+    ("dbt Sans Tabular", "bold", "dbt Sans Tabular Bold"),
     ("Inter Variable", "500", "Inter Variable Medium"),
     ("Inter Variable", "600", "Inter Variable SemiBold"),
+    ("Inter Variable", "700", "Inter Variable Bold"),
+    ("Inter Variable", "bold", "Inter Variable Bold"),
 ];
 
-/// `{w for by_weight in WEIGHT_FACE_ALIASES.values() for w in by_weight}`.
-const COVERED_WEIGHTS: &[&str] = &["500", "600"];
+/// `{w for by_weight in _ALIASES_BY_WEIGHT.values() for w in by_weight}`.
+const COVERED_WEIGHTS: &[&str] = &["500", "600", "700", "bold"];
 
 static TAG_PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[a-zA-Z][^>]*>").unwrap());
 static FONT_FAMILY_VALUE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(font-family\s*=\s*")([^"]*)(")"#).unwrap());
 static FONT_WEIGHT_ATTR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"font-weight\s*=\s*"(\d+)""#).unwrap());
+    LazyLock::new(|| Regex::new(r#"font-weight\s*=\s*"(\d+|[a-z]+)""#).unwrap());
 /// `font_support.py:76` (`_COVERED_WEIGHT_PATTERN`) — the cheap gate: no covered
 /// weight spelled as an attribute or as inline style means nothing to rewrite.
 static COVERED_WEIGHT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -71,7 +76,7 @@ static COVERED_WEIGHT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 });
 /// `font_support.py:79-85` — the inline-weight rewrite's patterns.
 static STYLE_FONT_WEIGHT_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"font-weight\s*:\s*(\d+)").unwrap());
+    LazyLock::new(|| Regex::new(r"font-weight\s*:\s*(\d+|[a-z]+)").unwrap());
 static CLASS_FAMILY_RULE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\.([\w-]+)\s*\{[^}]*?font-family\s*:\s*((?:&#?\w+;|[^;}])+)").unwrap()
 });
@@ -190,6 +195,20 @@ pub fn normalize_svg_font_families_for_rasterization(svg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A table cell's conditional `font.weight: bold` arrives as the CSS keyword;
+    /// both it and `700` must reach the static Bold face, as `font_support.py` does.
+    #[test]
+    fn bold_keyword_and_700_rewrite_to_the_bold_face() {
+        for weight in ["700", "bold"] {
+            let svg = format!(r#"<text font-family="Inter Variable, Noto Emoji" font-weight="{weight}">w</text>"#);
+            let out = normalize_svg_font_families_for_rasterization(&svg);
+            assert!(out.contains(r#"font-family="Inter Variable Bold, Noto Emoji""#), "{out}");
+        }
+        let tspan = r#"<text font-family="Inter Variable"><tspan style="font-weight: bold">b</tspan></text>"#;
+        let out = normalize_svg_font_families_for_rasterization(tspan);
+        assert!(out.contains(r#"<tspan font-family="Inter Variable Bold""#), "{out}");
+    }
 
     #[test]
     fn public_inter_attr_rewrites_to_the_internal_variable_family() {
@@ -311,7 +330,7 @@ mod tests {
     #[test]
     fn an_inline_weight_with_no_alias_or_no_text_family_is_left_alone() {
         for svg in [
-            r#"<text font-family="Inter Variable"><tspan style="font-weight: 700">T</tspan></text>"#,
+            r#"<text font-family="Inter Variable"><tspan style="font-weight: 800">T</tspan></text>"#,
             r#"<text font-family="Georgia"><tspan style="font-weight: 600">T</tspan></text>"#,
             r#"<text><tspan style="font-weight: 600">T</tspan></text>"#,
         ] {

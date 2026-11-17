@@ -29,6 +29,31 @@ impl ResolvedFormat {
         self.paint_as(locale, &self.spec, self.notation, value)
     }
 
+    /// `format_mark_label` with production's house register (`_house_register_expr`,
+    /// `value_labels.py`): a predefined SI format paints a sub-1 value through its plain
+    /// significant-digit sibling, or its exponential one below `SUB_UNIT_SCIENTIFIC_FLOOR`, and
+    /// from 1 up at its notation, else the narrative register. Any other format is [`Self::paint`].
+    pub fn paint_house(&self, locale: &NumberLocale, value: f64) -> Result<String, Diagnostic> {
+        if !self.is_house_si() {
+            return self.paint(locale, value);
+        }
+        if value.abs() < 1.0 {
+            return self.paint_as(locale, &self.sub_unit_band(value)?, None, value);
+        }
+        self.paint_as(locale, &self.spec, Some(self.notation.unwrap_or(Notation::Narrative)), value)
+    }
+
+    /// The spec a house SI format prints `value` in (`sub_unit_guarded_format`): its own from 1 up,
+    /// else its plain significant-digit sibling, or its exponential one below
+    /// `SUB_UNIT_SCIENTIFIC_FLOOR`.
+    fn sub_unit_band(&self, value: f64) -> Result<String, Diagnostic> {
+        if value.abs() >= 1.0 {
+            return Ok(self.spec.clone());
+        }
+        let (digit, scientific) = d3rs::format::sub_unit_specs(&self.spec).map_err(Diagnostic::refused)?;
+        Ok(if value != 0.0 && value.abs() < d3rs::format::SUB_UNIT_SCIENTIFIC_FLOOR { scientific } else { digit })
+    }
+
     /// [`Self::paint`] with the digits' spec and notation overridden: the house
     /// register's sub-unit and narrative variants of one format.
     pub fn paint_as(
@@ -93,14 +118,7 @@ impl ResolvedFormat {
                 _ => self.paint_tick(locale, value),
             };
         }
-        let (digit, scientific) = d3rs::format::sub_unit_specs(&self.spec).map_err(Diagnostic::refused)?;
-        let band = if value.abs() >= 1.0 {
-            &self.spec
-        } else if value != 0.0 && value.abs() < d3rs::format::SUB_UNIT_SCIENTIFIC_FLOOR {
-            &scientific
-        } else {
-            &digit
-        };
+        let band = &self.sub_unit_band(value)?;
         let wears = match rung {
             Some((index, count)) if anchored => index == if extent_hi <= 0.0 { 0 } else { count - 1 },
             _ => true,

@@ -245,10 +245,10 @@ impl Leaf for Visible {
 }
 
 impl Build for Visible {
-    fn build(slot: Self::Patch, at: &str) -> Result<Self, Unset> {
+    fn build(slot: Self::Patch, at: &model_core::At<'_>) -> Result<Self, Unset> {
         Self::build_authored(slot, at)
     }
-    fn build_authored(slot: Self::Authored, at: &str) -> Result<Self, Unset> {
+    fn build_authored(slot: Self::Authored, at: &model_core::At<'_>) -> Result<Self, Unset> {
         match slot {
             None => Err(Unset {
                 paths: vec![at.to_string()],

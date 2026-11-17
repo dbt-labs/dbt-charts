@@ -25,6 +25,8 @@ from dbt_charts.core.text.format_d3 import regional_scope
 
 from .._run import Run
 
+pytestmark = pytest.mark.usefixtures("placement_scope")
+
 
 def _regional(**fields: object) -> Regional:
     return Regional.model_validate(fields)

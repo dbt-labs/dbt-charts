@@ -2,6 +2,7 @@
 
 pub mod callout;
 pub mod failed;
+pub mod geo;
 pub mod kpi;
 pub mod pie;
 pub mod spark_bar;

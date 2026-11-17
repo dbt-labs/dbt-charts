@@ -3288,7 +3288,10 @@ pub(super) fn title_band(
         0.0
     };
 
-    let has_subtitle = has_title && subtitle.is_some();
+    let has_subtitle = subtitle.is_some();
+    // A subtitle with no title is the band's only row: its first baseline
+    // sits where a title's would at the subtitle's size.
+    let subtitle_leads = has_subtitle && !has_title;
     // `table.py:340-355`: the size is asserted only when a subtitle paints;
     // production's own unpainted value is 0.0.
     let subtitle_font_size = if has_subtitle {
@@ -3333,7 +3336,11 @@ pub(super) fn title_band(
                 + subtitle_font_size * 0.8,
         )
     };
-    let subtitle_text_y = subtitle_baseline_below(last_title_text_y);
+    let subtitle_text_y = if subtitle_leads {
+        crate::sizing::title_ascent(subtitle_font_size)
+    } else {
+        subtitle_baseline_below(last_title_text_y)
+    };
     // `title.py`'s title_bottom/subtitle_bottom tail term (+8) plus the
     // subtitle's own descent (font_size * 0.5). Raw/gap-free, same scale as
     // `natural_title_area_h_raw` and `th.title_row.height` below.
@@ -3353,7 +3360,9 @@ pub(super) fn title_band(
     // the subtitle arm lands on x.5 at the shipped 11px subtitle size, and
     // painting the band un-truncated shifts every header/row/rule 0.5px
     // below production.
-    let title_area_h = if has_subtitle {
+    let title_area_h = if subtitle_leads {
+        subtitle_area_h_raw.floor()
+    } else if has_subtitle {
         natural_title_area_h_raw
             .max(th.title_row.height.floor())
             .max(subtitle_area_h_raw.floor())
@@ -3366,7 +3375,11 @@ pub(super) fn title_band(
     // as `_subtitle_baseline_below_title` does — and the header and rows move
     // down `body_dy`. The band's own natural height above stays the unshifted
     // `compute_table_title_block_layout` height.
-    let subtitle_drawn_y = subtitle_baseline_below(last_title_text_y + shift.title_dy);
+    let subtitle_drawn_y = if subtitle_leads {
+        subtitle_text_y + shift.title_dy
+    } else {
+        subtitle_baseline_below(last_title_text_y + shift.title_dy)
+    };
     Ok(TitleBand {
         has_title,
         cased_title,
@@ -3463,30 +3476,80 @@ pub(super) fn emit_title_band(tree: &mut Tree, band: &TitleBand, outer: f64) {
             tree.tspan(Span::at(outer, title_text_y + i as f64 * title_line_h), Attrs::new(), line);
         }
         tree.close(Open::Text);
-        if let (true, Some(subtitle_text)) = (band.has_subtitle, band.subtitle.as_deref()) {
-            tree.open_text(
-                Role::Title,
-                (outer, subtitle_text_y),
-                Attrs::new()
-                    .num("font-size", subtitle_font_size)
-                    .quick_some("font-style", band.subtitle_style.as_deref())
-                    .quick("fill", subtitle_color.as_str())
-                    .quick("font-family", subtitle_family.as_str())
-                    .quick("class", "role-title-subtitle")
-                    .quick("data-authored-kind", "subtitle"),
-            );
-            if band.subtitle_lines.join(" ") != subtitle_text {
-                tree.title(subtitle_text);
-            }
-            for (i, line) in band.subtitle_lines.iter().enumerate() {
-                tree.tspan(
-                    Span::at(outer, subtitle_text_y + i as f64 * (subtitle_font_size + 2.0)),
-                    Attrs::new(),
-                    line,
-                );
-            }
-            tree.close(Open::Text);
+    }
+    if let (true, Some(subtitle_text)) = (band.has_subtitle, band.subtitle.as_deref()) {
+        tree.open_text(
+            Role::Title,
+            (outer, subtitle_text_y),
+            Attrs::new()
+                .num("font-size", subtitle_font_size)
+                .quick_some("font-style", band.subtitle_style.as_deref())
+                .quick("fill", subtitle_color.as_str())
+                .quick("font-family", subtitle_family.as_str())
+                .quick("class", "role-title-subtitle")
+                .quick("data-authored-kind", "subtitle"),
+        );
+        if band.subtitle_lines.join(" ") != subtitle_text {
+            tree.title(subtitle_text);
         }
+        for (i, line) in band.subtitle_lines.iter().enumerate() {
+            tree.tspan(
+                Span::at(outer, subtitle_text_y + i as f64 * (subtitle_font_size + 2.0)),
+                Attrs::new(),
+                line,
+            );
+        }
+        tree.close(Open::Text);
+    }
+}
+
+/// The filter line under an empty table body's "No results", in the subtitle's face: its text cut
+/// to `max_width`, the face, and the height it adds below the headline.
+struct EmptyLine {
+    text: String,
+    size: f64,
+    ink: String,
+    family: String,
+}
+
+/// Between the headline and the filter line.
+const EMPTY_LINE_GAP: f64 = 6.0;
+
+impl EmptyLine {
+    fn of(
+        line: Option<&str>,
+        title_style: Option<&TableTitleStyle>,
+        max_width: f64,
+        fonts: &FontBook,
+    ) -> Result<Option<EmptyLine>, Diagnostic> {
+        let Some(line) = line else { return Ok(None) };
+        let font = &title_style
+            .and_then(|t| t.subtitle.as_ref())
+            .ok_or("table: title_style.subtitle absent (theme required)")?
+            .font;
+        let size = font.size.ok_or("table: title_style.subtitle.font.size absent (theme required)")?;
+        let family = font.family.as_deref().ok_or("table: title_style.subtitle.font.family absent (theme required)")?;
+        let ink = font.color.as_deref().ok_or("table: title_style.subtitle.font.color absent (theme required)")?;
+        let text = crate::common::truncate_label(line, max_width, family, size, fonts, false)?;
+        Ok(Some(EmptyLine { text, size, ink: ink.to_string(), family: svg_font_family(family) }))
+    }
+
+    fn height(line: &Option<EmptyLine>) -> f64 {
+        line.as_ref().map_or(0.0, |l| l.size + EMPTY_LINE_GAP)
+    }
+
+    /// The line `baseline` below the headline's own, centered on `x`.
+    fn paint(&self, tree: &mut Tree, x: f64, headline_y: f64) {
+        tree.text_el(
+            Role::Label,
+            (x, headline_y + EMPTY_LINE_GAP + self.size),
+            Attrs::new()
+                .num("font-size", self.size)
+                .quick("fill", self.ink.as_str())
+                .quick("text-anchor", "middle")
+                .quick("font-family", self.family.as_str()),
+            self.text.as_str(),
+        );
     }
 }
 
@@ -3508,6 +3571,7 @@ fn lay_out_empty(
         resolved: r,
         padding,
         title_shift,
+        empty_line: _,
     } = blank;
     let th = &r.style.table;
     let band = title_band(
@@ -3532,8 +3596,9 @@ fn lay_out_empty(
     } else {
         (0.0, 0.0)
     };
+    let line = EmptyLine::of(blank.empty_line.as_deref(), r.title_style.as_ref(), width - 2.0 * outer, measure.fonts)?;
     let body_bottom = band.area_h + header_height + header_body_gap;
-    let table_height = body_bottom + outer + th.bottom_padding.trunc();
+    let table_height = body_bottom + outer + th.bottom_padding.trunc() + EmptyLine::height(&line);
     if let Some(slot_h) = slot.filter(|&h| h < table_height) {
         return Err(format!(
             "table: empty result set in a {slot_h}px slot shorter than its {table_height}px content \
@@ -3572,16 +3637,20 @@ fn lay_out_empty(
         tree.rounded(Role::Chrome, (bx, by, bw, bh), 4.0, Attrs::new().quick("fill", bg));
     }
     emit_title_band(&mut tree, &band, outer);
+    let headline_y = (table_height - EmptyLine::height(&line)) / 2.0;
     tree.text_el(
         Role::Label,
-        (width / 2.0, table_height / 2.0),
+        (width / 2.0, headline_y),
         Attrs::new()
             .num("font-size", size)
             .quick("fill", ink)
             .quick("text-anchor", "middle")
             .quick("font-family", family.as_str()),
-        "\u{2014}",
+        crate::families::no_results::headline()?.as_str(),
     );
+    if let Some(line) = &line {
+        line.paint(&mut tree, width / 2.0, headline_y);
+    }
     tree.close(Open::Svg);
     Ok(Layout {
         data_box: Rect {
@@ -3600,6 +3669,28 @@ fn lay_out_empty(
         diagnostics,
         title_pos: None,
     })
+}
+
+/// A header this short stays on one line: the fit cascade shrinks padding and
+/// font before it lets one wrap, and a scrolling table never wraps one.
+const SHORT_HEADER_CHARS: usize = 12;
+
+/// The narrowest content width that holds `header` on two lines, as
+/// `wrap_text_with` sums a line: its words' widths plus a space between each.
+/// Infinite for a one-word header, which has no second line.
+fn two_line_width(header: &str, family: &str, size: f64, fonts: &FontBook) -> Result<f64, String> {
+    let space = fonts.measure(" ", family, size)?;
+    let words: Vec<f64> = header
+        .split_whitespace()
+        .map(|word| fonts.measure(word, family, size))
+        .collect::<Result<_, _>>()?;
+    let line = |words: &[f64]| words.iter().sum::<f64>() + space * (words.len() - 1) as f64;
+    let narrowest = (1..words.len())
+        .map(|split| line(&words[..split]).max(line(&words[split..])))
+        .fold(f64::INFINITY, f64::min);
+    // `wrapped_headers` truncates the content area, so a fraction would wrap
+    // the header onto a third line.
+    Ok(narrowest.ceil())
 }
 
 /// Header lines past which a header is too much for its column. Two is the
@@ -4004,13 +4095,15 @@ pub(crate) fn lay_out(
     // allocates them the width they need instead, and the table scrolls
     // inside its slot rather than squeezing. A table that fits keeps the
     // usual allocation. One that does not pins its compact columns at their
-    // natural width, header included; a wrapping text column stays elastic
-    // down to the compact ceiling (or its longest word), so the budget grows
-    // past the slot only once the text columns are down to that floor.
+    // natural width, a long header on two lines; a wrapping text column stays
+    // elastic down to the compact ceiling (or its longest word), so the budget
+    // grows past the slot only once the headers have wrapped and the text
+    // columns are down to that floor.
     let scroll_x_mode = th.column_layout.overflow == ColumnOverflow::Scroll;
     let no_pins = BTreeMap::new();
     let scroll_plan = |inputs: &ColumnInputs,
                        slot_budget: f64,
+                       header_now: f64,
                        pad_now: f64|
      -> Result<(f64, BTreeMap<String, f64>), String> {
         if !scroll_x_mode {
@@ -4026,10 +4119,30 @@ pub(crate) fn lay_out(
         {
             return Ok((slot_budget, BTreeMap::new()));
         }
+        let one_line: BTreeMap<String, f64> = cols
+            .iter()
+            .zip(&natural)
+            .map(|(col, column)| (col.name.to_string(), column.header_demand + 2.0 * pad_now))
+            .collect();
+        if header_visible {
+            for (col, column) in cols.iter().zip(natural.iter_mut()) {
+                let wraps = matches!(header_overflow_mode(&r, th, col)?, "wrap-two" | "wrap");
+                if wraps && col.header.chars().count() > SHORT_HEADER_CHARS {
+                    let two_lines =
+                        two_line_width(&col.header, header_measure_family, header_now.trunc(), fonts)?;
+                    column.header_demand = column.header_demand.min(two_lines);
+                }
+            }
+        }
         let mut pins = BTreeMap::new();
+        let mut elastic_columns = false;
         for (col, layout) in cols.iter().zip(width::natural_auto_layout(&natural, headroom, pad_now)) {
-            if let Some((w, true)) = layout {
-                pins.insert(col.name.to_string(), w);
+            match layout {
+                Some((w, true)) => {
+                    pins.insert(col.name.to_string(), w);
+                }
+                Some((_, false)) => elastic_columns = true,
+                None => {}
             }
         }
         if th.wrap {
@@ -4042,13 +4155,25 @@ pub(crate) fn lay_out(
                 }
             }
         }
-        let budget = width::natural_content_width(&natural, headroom, pad_now)
-            .map_or(slot_budget, |n| n.max(slot_budget));
-        Ok((budget, pins))
+        let needed = width::natural_content_width(&natural, headroom, pad_now);
+        // Wrapped headers that leave the slot room to spare get it back,
+        // unless a text column is there to take it. A `%` column takes its
+        // share of the slot, so the pins grow by the rest.
+        if let Some(spare) = needed.map(|n| slot_budget - n).filter(|&s| s > 0.0 && !elastic_columns) {
+            let percent: f64 = natural
+                .iter()
+                .filter_map(|c| match c.pin {
+                    Some(width::Pin::Percent(share)) => Some(share),
+                    _ => None,
+                })
+                .sum();
+            grow_toward_header_width(&mut pins, &one_line, spare * (1.0 - percent));
+        }
+        Ok((needed.map_or(slot_budget, |n| n.max(slot_budget)), pins))
     };
     let (mut inputs, mut pins, mut caps, mut col_ws) =
         allocate(font_size, header_size, pad, table_w - rn_w, &no_pins)?;
-    let (scroll_alloc, scroll_pins) = scroll_plan(&inputs, table_w - rn_w, pad)?;
+    let (scroll_alloc, scroll_pins) = scroll_plan(&inputs, table_w - rn_w, header_size, pad)?;
     if !scroll_pins.is_empty() {
         (inputs, pins, caps, col_ws) =
             allocate(font_size, header_size, pad, scroll_alloc, &scroll_pins)?;
@@ -4077,7 +4202,7 @@ pub(crate) fn lay_out(
             let content_area = cw - 2.0 * pad_now - 4.0;
             if header_visible
                 && cols.len() > 1
-                && col.header.chars().count() <= 12
+                && col.header.chars().count() <= SHORT_HEADER_CHARS
                 && fonts
                     .measure(&col.header, measure_family, header_now)
                     .unwrap_or(0.0)
@@ -4126,7 +4251,7 @@ pub(crate) fn lay_out(
         rn_w = row_number_width(font_size)?;
         (inputs, pins, caps, col_ws) =
             allocate(font_size, header_size, pad, table_w - rn_w, &no_pins)?;
-        let (scroll_alloc, scroll_pins) = scroll_plan(&inputs, table_w - rn_w, pad)?;
+        let (scroll_alloc, scroll_pins) = scroll_plan(&inputs, table_w - rn_w, header_size, pad)?;
         if !scroll_pins.is_empty() {
             (inputs, pins, caps, col_ws) =
                 allocate(font_size, header_size, pad, scroll_alloc, &scroll_pins)?;
@@ -4733,16 +4858,31 @@ pub(crate) fn lay_out(
                 // The row total takes the pager's band under the rows.
                 scroll_y = true;
                 // The viewport is `n_shown` rows and half the next, with the
-                // pinned summary rows and the pager band under it.
+                // pinned summary rows and the pager band under it. It scrolls,
+                // so it holds the rows from the top as they stand (the height
+                // the unbounded layout reserves), never the tallest any sort
+                // could gather.
                 let rows_avail = available - pagination_control_height - pinned_h;
-                n_shown = safe_page_rows(rows_avail - row_h / 2.0);
                 let n_data = n_rows - pinned_n;
+                n_shown = page_rows.min(n_data);
                 while n_shown > 1
-                    && n_shown < n_data
-                    && row_heights[..n_shown].iter().sum::<f64>() + row_heights[n_shown] / 2.0
+                    && row_heights[..n_shown].iter().sum::<f64>()
+                        + if n_shown < n_data { row_heights[n_shown] / 2.0 } else { 0.0 }
                         > rows_avail
                 {
                     n_shown -= 1;
+                }
+                let requested = page_rows.min(n_data);
+                if th.pagination.page_rows.is_some() && n_shown < requested {
+                    diagnostics.push(Diagnostic::new(
+                        &codes::WARN_TABLE_PAGE_SQUEEZED,
+                        [
+                            ("chart_id", json!(chart_id)),
+                            ("drawn_rows", json!(n_shown)),
+                            ("page_rows", json!(requested)),
+                            ("total_rows", json!(n_rows)),
+                        ],
+                    ));
                 }
             }
         } else {
@@ -4881,10 +5021,15 @@ pub(crate) fn lay_out(
     // A pool's pager, x scrollbar and frozen edge end under the open page;
     // the runtime moves them by how far a sort or filter moves this bottom.
     let pool_rows_end = rows_start_y + shown_rows_h + last_gap;
-    // A zero-row table holds one row of body for its "No data" label, so the
-    // label sits below the header instead of over it.
+    // A zero-row table holds one row of body for its "No results" label, and the filters'
+    // line under it, so the label sits below the header instead of over it.
+    let empty_line = if n_rows == 0 {
+        EmptyLine::of(drawn.empty_line.as_deref(), r.title_style.as_ref(), width - 2.0 * outer, fonts)?
+    } else {
+        None
+    };
     let canvas_rows_h: f64 = if n_rows == 0 {
-        row_h
+        row_h + EmptyLine::height(&empty_line)
     } else if pool_page_rows.is_some() && paginated {
         // A sort can bring the tallest rows onto one page.
         let mut tallest = row_heights.clone();
@@ -5685,8 +5830,11 @@ pub(crate) fn lay_out(
                 .quick("fill", ink)
                 .quick("text-anchor", "middle")
                 .quick("font-family", body_family.as_str()),
-            "\u{2014}",
+            crate::families::no_results::headline()?.as_str(),
         );
+        if let Some(line) = &empty_line {
+            line.paint(&mut tree, svg_w / 2.0, rows_start_y + row_h / 2.0);
+        }
     }
     if pool_page_rows.is_some() {
         tree.close(Open::Group);

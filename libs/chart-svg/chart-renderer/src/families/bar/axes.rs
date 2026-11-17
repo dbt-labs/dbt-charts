@@ -310,6 +310,17 @@ pub(crate) struct BandXAxis {
     /// labels are painted rotated; the title then follows Vega's
     /// `axisTitleLayout` (`s + titlePadding`) instead of the flat row's law.
     pub(super) cat_title_reach: Option<f64>,
+    /// `style.conditional`'s label colors: per category, and per interval label.
+    pub(super) fills: BandLabelFills,
+}
+
+/// The colors `style.conditional` gives a band axis's labels.
+#[derive(Clone, Default)]
+pub(crate) struct BandLabelFills {
+    pub(super) by_cat: std::collections::HashMap<String, String>,
+    pub(super) interval: Vec<Option<String>>,
+    /// Per temporal label, when the labels stand on buckets: each names the buckets up to the next label.
+    pub(super) temporal: Vec<Option<String>>,
 }
 
 /// The x a band axis tick at plot position `x` snaps to: the pixel `x` falls in, centered. One snap for every band tick
@@ -358,7 +369,6 @@ pub(crate) struct ContinuousXAxis {
     /// The stroke of the baseline rule on the plot edge this axis hangs from, which its ticks continue.
     pub(super) floor_rule: Option<String>,
     pub(super) edge: crate::common::XEdge,
-    pub(super) x_tick_eff: f64,
     pub(super) x_label_pad: f64,
     pub(super) x_family: String,
     pub(super) x_font_size: f64,
@@ -375,13 +385,13 @@ impl ContinuousXAxis {
     pub(crate) fn nodes(&self, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, (plot_bottom, floor_y): (f64, f64)) -> Result<Vec<Node>, String> {
         let Self { x_ticks, x_labels, .. } = self;
         let (x_family, x_title_text) = (self.x_family.as_str(), self.x_title_text.as_str());
-        let Self { x_lo, x_span, x_ticks_visible, x_tick_len, x_axis_drop, x_tick_eff, x_label_pad, x_font_size, .. } =
+        let Self { x_lo, x_span, x_ticks_visible, x_tick_len, x_axis_drop, x_label_pad, x_font_size, .. } =
             *self;
         let x_pos = |tv: f64| plot_left + (tv - x_lo) / x_span * plot_w;
         let sign = self.edge.sign();
         let x_label_y = plot_bottom
             + x_axis_drop
-            + sign * (x_tick_eff + x_label_pad)
+            + sign * x_label_pad
             + measure::baseline_shift(self.edge.baseline(), x_font_size);
         let mut items: Vec<Node> = Vec::new();
         if x_ticks_visible {
@@ -409,7 +419,7 @@ impl BandXAxis {
     /// position alone): a rotated `<text>`'s `y` is its baseline shift in the
     /// rotated frame, so the facet composer cannot read this off the painted footer.
     pub(crate) fn rotated_footer_reach(&self) -> Option<f64> {
-        self.cat_title_reach.map(|reach| self.ax_off_x + self.x_tick_len + self.cat_pad + reach)
+        self.cat_title_reach.map(|reach| self.ax_off_x + self.cat_pad + reach)
     }
 
     /// Which temporal labels `labelOverlap: parity` leaves visible, in drawn
@@ -450,7 +460,7 @@ impl BandXAxis {
         let sign = self.edge.sign();
         // `plot_bottom` is the y of the plot edge the axis hangs from; Vega's crisp half pixel shifts the group down on either edge.
         let group_y = plot_bottom + sign * ax_off_x + 0.5;
-        let cat_label_y = group_y + sign * (x_tick_len + cat_pad) + measure::baseline_shift(self.edge.baseline(), cat_font_size);
+        let cat_label_y = group_y + sign * cat_pad + measure::baseline_shift(self.edge.baseline(), cat_font_size);
         // The rotated labels' anchor, and the pivot the rotated title measures from.
         let anchor_y = cat_label_y - measure::baseline_shift(self.edge.baseline(), cat_font_size);
         let rows_at = |anchor: f64, two: bool| match (self.edge, two) {
@@ -481,24 +491,34 @@ impl BandXAxis {
             items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y))?);
         }
         let hidden_at = |k: usize| !parity_shown.get(k).copied().unwrap_or(true);
-        let label = |x: f64, y: f64, hidden: bool, text: &str| {
-            crate::text::label(Role::Axis, (x, y), Attrs::new().set("text-anchor", "middle").vega("font-family", cat_family).num("font-size", cat_font_size).quick_some("font-style", ax_x.labels.font.style.as_deref()).set("font-weight", cat_weight.as_str()).set("fill", cat_color).set_if(hidden, "opacity", "0"), text)
+        let cat_fill = |cat: &str| self.fills.by_cat.get(cat).map_or(cat_color, String::as_str);
+        let temporal_fill = |k: usize| self.fills.temporal.get(k).and_then(|f| f.as_deref()).unwrap_or(cat_color);
+        let label = |x: f64, y: f64, hidden: bool, text: &str, fill: &str| {
+            crate::text::label(Role::Axis, (x, y), Attrs::new().set("text-anchor", "middle").vega("font-family", cat_family).num("font-size", cat_font_size).quick_some("font-style", ax_x.labels.font.style.as_deref()).set("font-weight", cat_weight.as_str()).set("fill", fill).set_if(hidden, "opacity", "0"), text)
         };
         if let Some(tlabels) = temporal_labels.filter(|_| cat_angle == 0.0 && ax_x.labels.visible != Some(false)) {
-            let placed: Vec<(usize, f64, &TemporalLabel)> = match &self.interval {
-                Some(iv) => iv.labels.iter().enumerate().map(|(k, (tl, x))| (k, plot_left + x, tl)).collect(),
+            let placed: Vec<(usize, f64, &TemporalLabel, &str)> = match &self.interval {
+                Some(iv) => iv
+                    .labels
+                    .iter()
+                    .enumerate()
+                    .map(|(k, (tl, x))| (k, plot_left + x, tl, self.fills.interval.get(k).and_then(|f| f.as_deref()).unwrap_or(cat_color)))
+                    .collect(),
                 None => tlabels
                     .iter()
                     .enumerate()
-                    .filter_map(|(k, tl)| Some((k, plot_left + band.position(&cat_domain[tl.domain_idx])? + band.bandwidth() / 2.0, tl)))
+                    .filter_map(|(k, tl)| {
+                        let cat = &cat_domain[tl.domain_idx];
+                        Some((k, plot_left + band.position(cat)? + band.bandwidth() / 2.0, tl, temporal_fill(k)))
+                    })
                     .collect(),
             };
-            for (k, label_x, tl) in placed {
+            for (k, label_x, tl, fill) in placed {
                 let hidden = hidden_at(k);
                 let (row1_y, row2_y) = rows_at(cat_label_y, !tl.row2.is_empty());
-                items.push(label(label_x, row1_y, hidden, &tl.row1));
+                items.push(label(label_x, row1_y, hidden, &tl.row1, fill));
                 if !tl.row2.is_empty() {
-                    items.push(label(label_x, row2_y, hidden, &tl.row2));
+                    items.push(label(label_x, row2_y, hidden, &tl.row2, fill));
                 }
             }
         } else if ax_x.labels.visible == Some(false) {
@@ -517,11 +537,12 @@ impl BandXAxis {
                 None => cat_domain.iter().zip(cat_labels.iter()).map(|(cat, label)| (cat, label.as_str(), "")).collect(),
             };
             for (k, (cat, row1, row2)) in drawn.into_iter().enumerate() {
+                let fill = if temporal_labels.is_some() { temporal_fill(k) } else { cat_fill(cat) };
                 let Some(band_x) = band.position(cat) else { continue };
                 let label_x = plot_left + band_x + band.bandwidth() / 2.0;
                 items.push(crate::families::heatmap::rotated_label(
                     (label_x, anchor_y, cat_angle, dy),
-                    &crate::families::heatmap::LabelFace { anchor: text_anchor, family: cat_family, size: cat_font_size, weight: &cat_weight, style: ax_x.labels.font.style.as_deref(), fill: cat_color },
+                    &crate::families::heatmap::LabelFace { anchor: text_anchor, family: cat_family, size: cat_font_size, weight: &cat_weight, style: ax_x.labels.font.style.as_deref(), fill },
                     (row1, row2),
                     hidden_at(k),
                 ));
@@ -530,7 +551,7 @@ impl BandXAxis {
             for (cat, label_text) in cat_domain.iter().zip(cat_labels.iter()) {
                 let Some(band_x) = band.position(cat) else { continue };
                 let label_x = plot_left + band_x + band.bandwidth() / 2.0;
-                items.push(label(label_x, cat_label_y, false, label_text));
+                items.push(label(label_x, cat_label_y, false, label_text, cat_fill(cat)));
             }
         }
         let title_center_x = plot_left + plot_w / 2.0;

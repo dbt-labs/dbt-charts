@@ -54,6 +54,11 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
         "from the variable file, see fonts/README.md",
     ),
     (
+        "dbt_charts/core/render/fonts/InterVariable-Bold.ttf",
+        "Inter Variable weight-700 static face — vl-convert cannot bind wght=700 "
+        "from the variable file, see fonts/README.md",
+    ),
+    (
         "dbt_charts/core/render/fonts/DBTSansTabular-Regular.ttf",
         "dbt sans tabular (figure-width digits)",
     ),
@@ -69,6 +74,11 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
     (
         "dbt_charts/core/render/fonts/DBTSansTabular-SemiBold.ttf",
         "dbt Sans Tabular weight-600 static board — vl-convert cannot bind wght=600 "
+        "from the variable file, see fonts/README.md",
+    ),
+    (
+        "dbt_charts/core/render/fonts/DBTSansTabular-Bold.ttf",
+        "dbt Sans Tabular weight-700 static face — vl-convert cannot bind wght=700 "
         "from the variable file, see fonts/README.md",
     ),
     (

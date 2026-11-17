@@ -18,9 +18,10 @@ use model_core::{DropNulls, Engine, Patch, Resolved, SetLeaves, Tri};
 
 use super::axis::{AxisLadder, AxisName, AxisRung, TicksShown};
 use crate::column_kind::ChannelType;
-use crate::families::cartesian::unsupported;
+use crate::families::cartesian::{count, unsupported};
+use crate::plot::domain::Count;
 use crate::walk::sparse;
-use crate::bound::{AxisStyle, Side, Face, Labels, Line, Ticks, TimeLabelStyle, Title};
+use crate::bound::{AxisStyle, Side, Face, LabelCrowding, Labels, Line, Ticks, Title};
 
 /// The leaves of the x axis that act only on a time axis. Every theme sets them, so a rung may
 /// hold them only at the theme's value; `time_unit` may hold `none`, the one value
@@ -274,23 +275,27 @@ impl AxisLadder<'_> {
             _ => None,
         };
         let mut parts = parts_of(&resolved.total.charts.axis, self.side(y_auto_right), family, ticks_drawn, labeled)?;
-        if self.axis == AxisName::X && self.channel == ChannelType::Temporal {
-            parts.time = Some(time_label_style(&resolved.total.charts)?);
+        if self.axis == AxisName::X && self.channel != ChannelType::Quantitative {
+            let ticks_count = match count(self)? {
+                Some(Count::N(count)) => Some(count),
+                Some(Count::Auto) | None => None,
+            };
+            parts.crowding = Some(label_crowding(&resolved.total.charts, ticks_count)?);
         }
         Ok(parts)
     }
 }
 
-/// How a time axis crowds its labels: the walked `labels.overlap` switches and the theme's tilt
+/// How an x axis crowds its labels: the walked `labels.overlap` switches and the theme's tilt
 /// ladder (`labels.tilt_increments`, which no rung may move off the theme's value) and usable ratio.
-fn time_label_style(charts: &ChartsStyle) -> Result<TimeLabelStyle, Diagnostic> {
+fn label_crowding(charts: &ChartsStyle, ticks_count: Option<usize>) -> Result<LabelCrowding, Diagnostic> {
     let overlap = &charts.axis.labels.overlap;
     let tilt = match (overlap.tilt, charts.axis_x.labels.tilt_increments.as_ref()) {
         (true, Tri::Value(angles)) => Some(angles.0.clone()),
         (true, _) => return Err(diag::err_internal("`labels.overlap.tilt` is on but the theme leaves `labels.tilt_increments` unset")),
         (false, _) => None,
     };
-    Ok(TimeLabelStyle { skip: overlap.skip, tilt, usable_ratio: charts.label_usable_ratio })
+    Ok(LabelCrowding { skip: overlap.skip, tilt, usable_ratio: charts.label_usable_ratio, ticks_count })
 }
 
 fn lay(scope: &Resolved<Style>, axis: Patch<BaseAxisStyle>) -> Result<Resolved<Style>, Diagnostic> {
@@ -373,6 +378,6 @@ fn parts_of(axis: &BaseAxisStyle, side: Side, family: &str, ticks_drawn: Option<
                 })
             })
             .transpose()?,
-        time: None,
+        crowding: None,
     })
 }

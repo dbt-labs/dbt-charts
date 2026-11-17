@@ -34,9 +34,12 @@ fn plan(
     };
     let given = object("given", given)?;
     let builtins = object("builtins", builtins)?;
-    let board = &board.get().0;
-    py.detach(|| engine::plan(board, &given, &builtins, now_epoch, all_queries, active_tab_only, strict, only_charts.as_deref()))
-        .map_err(|d| coded_error(py, &d))
+    let board = board.get();
+    py.detach(|| {
+        let built = board.1.board(&board.0)?;
+        engine::plan_on(&board.0, &built, &given, &builtins, now_epoch, all_queries, active_tab_only, strict, only_charts.as_deref())
+    })
+    .map_err(|d| coded_error(py, &d))
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

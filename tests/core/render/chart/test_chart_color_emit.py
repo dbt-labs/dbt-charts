@@ -16,7 +16,6 @@ from dbt_charts.core.compile.config import (
 from dbt_charts.core.compile.models.chart.normalized import (
     BarChart,
     Chart,
-    KpiChart,
     TableChart,
 )
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -25,6 +24,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
 from ...._results import rows_result
+from ..._kpi_board import kpi_svg
 
 _BOARD_STYLE, _BOARD_CONTEXT = resolve_style_and_context(get_theme_style())
 
@@ -113,17 +113,8 @@ def test_heatmap_chart_local_palette_overrides_theme_for_colorless_rect_fill():
 
 def test_kpi_color_when():
     """KPI chart with style.conditional evaluates a value.font.color rule against the data row."""
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
-
-    from ..._engine_render import render_kpi_svg
-
-    _kpi_data = [{"revenue": 2_500_000}]
-    chart = TypeAdapter(Chart).validate_python(
+    svg = kpi_svg(
         {
-            "id": "kpi1",
-            "query": _DUMMY_QUERY,
-            "query_name": "q",
-            "type": "kpi",
             "value": "revenue",
             "style": {
                 "conditional": {
@@ -133,13 +124,8 @@ def test_kpi_color_when():
                     ]
                 }
             },
-        }
-    )
-    resolved = resolve(chart, _kpi_data, chart_style_context=_BOARD_CONTEXT)
-    svg = render_kpi_svg(
-        resolved,
-        _kpi_data,
-        board_style=resolve_style(get_theme_style()),
+        },
+        [{"revenue": 2_500_000}],
     )
     # Revenue is 2.5M > 2M → should use #00ff00
     assert "#00ff00" in svg
@@ -307,37 +293,20 @@ def test_kpi_channel_overrides_style_font_color():
     """A matched style.conditional value color takes priority
     over chart.style.font.color — the whole-card fallback lever now that
     style.color is gone."""
-    from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
-
-    from ..._engine_render import render_kpi_svg
-
-    _kpi_data = [{"revenue": 3_000_000}]
-    chart = TypeAdapter(Chart).validate_python(
+    svg = kpi_svg(
         {
-            "id": "kpi_cascade",
-            "query": _DUMMY_QUERY,
-            "query_name": "q",
-            "type": "kpi",
             "value": "revenue",
-            "style": KpiChartStylePatch.model_validate(
-                {
-                    "font": {"color": "#aaaaaa"},  # would be used as fallback
-                    "conditional": {
-                        "revenue": [
-                            # should win
-                            {"gt": 2_000_000, "value": {"font": {"color": "#00ff00"}}},
-                        ]
-                    },
-                }
-            ),
-        }
-    )
-    resolved = resolve(chart, _kpi_data, chart_style_context=_BOARD_CONTEXT)
-    svg = render_kpi_svg(
-        resolved,
-        _kpi_data,
-        board_style=resolve_style(get_theme_style()),
+            "style": {
+                "font": {"color": "#aaaaaa"},  # would be used as fallback
+                "conditional": {
+                    "revenue": [
+                        # should win
+                        {"gt": 2_000_000, "value": {"font": {"color": "#00ff00"}}},
+                    ]
+                },
+            },
+        },
+        [{"revenue": 3_000_000}],
     )
     assert "#00ff00" in svg
     assert "#aaaaaa" not in svg
@@ -345,31 +314,10 @@ def test_kpi_channel_overrides_style_font_color():
 
 def test_kpi_style_font_color_used_as_fallback():
     """chart.style.font.color flows through the cascade and lands as the KPI
-    value fill — the whole-card lever every other family already uses.
-
-    Renderer reads from resolved_style — never from a Patch. The chart-local
-    font color is merged onto resolved_style.kpi.font.color by
-    build_chart_style_context (consumed by the KPI card's value-color cascade).
-    """
-    from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
-
-    from ..._engine_render import render_kpi_svg
-
-    _kpi_data = [{"revenue": 3_000_000}]
-    chart = KpiChart(
-        id="kpi_style_fallback",
-        query=_DUMMY_QUERY,
-        query_name="q",
-        type="kpi",
-        value="revenue",
-        style=KpiChartStylePatch.model_validate({"font": {"color": "#cccccc"}}),
-    )
-    resolved = resolve(chart, _kpi_data, chart_style_context=_BOARD_CONTEXT)
-    svg = render_kpi_svg(
-        resolved,
-        _kpi_data,
-        board_style=resolve_style(get_theme_style()),
+    value fill — the whole-card lever every other family already uses."""
+    svg = kpi_svg(
+        {"value": "revenue", "style": {"font": {"color": "#cccccc"}}},
+        [{"revenue": 3_000_000}],
     )
     assert "#cccccc" in svg
 

@@ -174,6 +174,18 @@ pub(crate) fn with_flat_column(rows: Vec<serde_json::Map<String, Value>>) -> Vec
         .collect()
 }
 
+/// A heatmap's rules as its x-axis labels read them.
+pub(crate) fn axis_label_rules(r: &HeatmapResolved) -> crate::conditional::AxisLabelRules<'_, crate::conditional::MarkRule> {
+    crate::conditional::AxisLabelRules {
+        family: "heatmap",
+        rules: r.style.conditional.as_ref(),
+        predicate: |rule| &rule.predicate,
+        axis: |rule| rule.axis_x.as_ref(),
+        measures: &[],
+        x: &r.x,
+    }
+}
+
 impl HeatmapResolved {
     /// A heatmap authored with no `color:` paints every cell in one fill.
     pub(crate) fn flatten_color(&mut self, rows: Vec<serde_json::Map<String, Value>>) -> Vec<serde_json::Map<String, Value>> {
@@ -1511,9 +1523,9 @@ mod tests {
         let left = 16.0 + own_side_padding().ceil();
         let right = 16.0 + 18.0 + legend_box_w();
         let plot_w = 600.0 - left - right;
-        // Title 18px + offset 10 above; x band = offset 1 + tick 6 +
-        // padding 6 + one 11px label row below.
-        let plot_h = 432.0 - 32.0 - 28.0 - 24.0;
+        // Title 18px + offset 10 above; x band = offset 1 + padding 6 +
+        // one 11px label row below (ticks hang into the padding).
+        let plot_h = 432.0 - 32.0 - 28.0 - 18.0;
         assert_eq!(plot_origin(&svg), (left, 44.0), "{svg}");
         let cells = cells(&svg);
         assert_eq!(cells.len(), 12, "{svg}");
@@ -1600,7 +1612,7 @@ mod tests {
             attr(&tag, "height")
         };
         assert_eq!(bar_h(432.0), 200.0);
-        assert_eq!(bar_h(200.0), 116.0);
+        assert_eq!(bar_h(200.0), 122.0);
         assert_eq!(bar_h(140.0), 64.0);
     }
 
@@ -1612,14 +1624,14 @@ mod tests {
     #[test]
     fn the_legend_box_never_deepens_the_bottom_margin() {
         let svg = render_json(heatmap_payload(|j| j["height"] = json!(140.0)));
-        // 140 − 32 padding − 28 title band − 24 x-label band.
+        // 140 − 32 padding − 28 title band − 18 x-label band.
         assert_eq!(plot_origin(&svg).1, 44.0, "{svg}");
         let line = svg.split("<line ").nth(1).unwrap().split("/>").next().unwrap();
-        assert_eq!(attr(line, "y1"), 44.0 + 56.0, "{svg}");
+        assert_eq!(attr(line, "y1"), 44.0 + 62.0, "{svg}");
     }
 
     /// H7 — Vega translates each axis group by `config.axis.translate` 0.5:
-    /// the x labels' baseline lands at `ph + offset + 0.5 + tick +
+    /// the x labels' baseline lands at `ph + offset + 0.5 +
     /// padding + round(0.79 · fs)`, and every tick snaps to `floor(center)
     /// + 0.5` (probed over 64 band centers at widths 600–615).
     #[test]
@@ -1630,7 +1642,7 @@ mod tests {
         let (cell_w, cell_h) = (cells[0].2, cells[0].3);
         let plot_bottom = plot_top + cell_h * 3.0;
         let tag = text_tag(&svg, "East");
-        assert!((attr(&tag, "y") - (plot_bottom + 1.0 + 0.5 + 6.0 + 6.0 + 9.0)).abs() < 0.01, "{tag}");
+        assert!((attr(&tag, "y") - (plot_bottom + 1.0 + 0.5 + 6.0 + 9.0)).abs() < 0.01, "{tag}");
         assert!((attr(&tag, "x") - (plot_left + cell_w / 2.0)).abs() < 0.01, "{tag}");
         // Every tick snaps in PLOT coordinates, before the group translate —
         // `floor`, not `round`: the four centers here are 52.375 / 157.125 /

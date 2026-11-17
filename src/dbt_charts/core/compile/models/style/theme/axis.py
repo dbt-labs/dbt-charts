@@ -30,6 +30,7 @@ from dbt_charts.core.compile.models.markers import (
     Absent,
     AutoUnset,
     Color,
+    Conditionable,
     Format,
     InheritSlot,
     Merge,
@@ -536,6 +537,13 @@ class DimensionLabelStyle(AxisLabelStyle):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    font: Annotated[
+        FontStyle,
+        InheritSlot(from_path="Style.charts.font"),
+        Conditionable(only=("color",), name="AxisLabelFontConditional"),
+    ] = Field(
+        default_factory=FontStyle, description="Axis element font style overrides."
+    )
     # Optional label cadence for temporal axes. None inherits from the parent
     # axis time_unit, except yearweek defaults to month labels.
     time_unit: _TIME_UNIT_LITERAL | None = Field(
@@ -744,8 +752,10 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
     type: Literal["linear", "log", "pow", "sqrt", "symlog", "temporal"] | None = Field(
         default=None,
         description=(
-            "Scale type override; a bar rejects 'log', so use 'symlog'. 'linear'/'log'/'pow'/'sqrt'/'symlog' pass "
-            "straight through to Vega-Lite's quantitative scale.type. "
+            "Scale type override; pow, sqrt and symlog bend only a scatter's axes. "
+            "'log' draws on a scatter's x and y and on a line or area chart's y; a bar "
+            "rejects it. On a line, area, bar or histogram, 'pow'/'sqrt'/'symlog' leave "
+            "the measure axis linear. "
             "'temporal' is a dbt charts escape hatch for a cartesian x-axis: it "
             "forces a continuous temporal scale instead of the auto-inferred "
             "ordinal/nominal bucketed type, which is required before an "

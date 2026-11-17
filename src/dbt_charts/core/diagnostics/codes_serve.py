@@ -39,3 +39,15 @@ ERR_DBT_PROFILES_FORBIDDEN = REGISTRY.register(
         docs_topic="errors",
     )
 )
+
+ERR_BOARD_ALIAS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BOARD-ALIAS",
+        domain="serve",
+        title="A board alias can't be served",
+        message_template="Alias {alias!r} {reason}",
+        doc="Fired when an entry in a board's `aliases:` can't become a redirect, because it isn't absolute, shadows a real board, is claimed by another board too, or matches the same URLs as another parameterized alias. Only the boards involved fail; the rest of the project keeps serving. Two boards claiming one alias both fail and neither gets the redirect, so remove the alias from all but one board.",
+        summary="A board's `aliases:` entry is malformed or claimed twice.",
+        docs_topic="board",
+    )
+)

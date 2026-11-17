@@ -27,14 +27,15 @@ Included assets:
   - The served web fonts, subsetted to the shared text recipe (see "The subset
     recipe" below) and committed alongside the source TTFs. Rebuild both with
     `just rebuild-text-font-subsets`.
-- `InterVariable-Medium.ttf`, `InterVariable-SemiBold.ttf`
-  - Static wght=500/600 instances of `InterVariable.ttf`, renamed to their own
+- `InterVariable-Medium.ttf`, `InterVariable-SemiBold.ttf`, `InterVariable-Bold.ttf`
+  - Static wght=500/600/700 instances of `InterVariable.ttf`, renamed to their own
     families. Same vl-convert-only role and mechanism as the Source Serif
     Medium/SemiBold pair below — see "Select figure style by family". Built
     with `just rebuild-weight-faces`.
 - `InterVariable-MediumItalic.ttf`, `InterVariable-SemiBoldItalic.ttf`,
-  `SourceSerif4-MediumItalic.ttf`, `SourceSerif4-SemiBoldItalic.ttf`
-  - Static wght=500/600 instances of the two vendored italics, named into the
+  `InterVariable-BoldItalic.ttf`, `SourceSerif4-MediumItalic.ttf`,
+  `SourceSerif4-SemiBoldItalic.ttf`
+  - Static wght=500/600 (Inter also 700) instances of the two vendored italics, named into the
     same alias family as their upright sibling (`Inter Variable Medium` Italic,
     `dbt Serif SemiBold` Italic, …). resvg never synthesizes an oblique, so
     without them the weight rewrite drops `font-style: italic` on the floor.
@@ -53,8 +54,8 @@ Included assets:
     tick columns render in tabular figures (instead of falling back to
     system-ui proportional digits) in the browser. Subsetted to the shared text
     recipe below; rebuild with `just rebuild-text-font-subsets`.
-- `DBTSansTabular-Medium.ttf`, `DBTSansTabular-SemiBold.ttf`
-  - Static wght=500/600 instances of `DBTSansTabular-Regular.ttf`, renamed to
+- `DBTSansTabular-Medium.ttf`, `DBTSansTabular-SemiBold.ttf`, `DBTSansTabular-Bold.ttf`
+  - Static wght=500/600/700 instances of `DBTSansTabular-Regular.ttf`, renamed to
     their own families. Same vl-convert-only role and mechanism as the Source
     Serif Medium/SemiBold pair above — see "Select figure style by family".
     Built with `just rebuild-weight-faces`.
@@ -320,9 +321,12 @@ dedicated static face selected by family name, and
 `font_support.normalize_svg_font_weights_for_vl_convert` rewrites the vl-convert-bound
 SVG copy only. `tests/core/render/test_theme_weight_face_coverage.py` walks
 every built-in theme and fails if one starts cascading a weight with no row in
-`WEIGHT_FACE_ALIASES` — the covered set is closed (currently 500 and 600 across all
-three variable families) and is meant to stay that way; a new weight needs a new
-static face, not a broader fallback.
+`WEIGHT_FACE_ALIASES` — the covered set is closed (500 and 600 across all three
+variable families, plus 700 on Inter and dbt Sans Tabular for an authored `bold`,
+which the rewrite reads as 700) and is meant to stay that way; a new weight needs a
+new static face, not a broader fallback. Source Serif 4 has no 700 face yet: its
+instances must be cut from Adobe's full release, so a bold serif still rasterizes as
+Regular.
 
 **A new family name sharing a string prefix with an already-registered family is not
 safe by default — verify it, don't assume it.** `Source Serif 4 Medium`/

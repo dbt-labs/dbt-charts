@@ -230,7 +230,7 @@ def test_a_funnel_labels_its_bars_in_the_middle_and_its_ribbons_by_percent_lost(
     assert bars.position == "middle"
     assert bars.template is None
     assert ribbons.visible is True
-    assert ribbons.template == "{{ percent | format('.0%') }}"
+    assert ribbons.template == "{{ percent_of_previous | format('.0%') }}"
 
 
 _TABLE = "    support_table:\n      entries:\n        - source: n\n"
@@ -276,15 +276,15 @@ def _template(template: str) -> str:
 
 
 def test_a_secondary_value_in_parens_is_allowed() -> None:
-    both = "{{ value | format(',d') }} ({{ percent | format('.0%') }})"
+    both = "{{ value | format(',d') }} ({{ percent_of_first | format('.0%') }})"
     assert _labels(_template(both))[0].template == both
 
 
 @pytest.mark.parametrize(
     "template",
     [
-        "{{ value | format('(,d') }} ({{ percent | format('.0%') }})",
-        "{{ value | format(',d') }} ({{ percent | format('(.0%') }})",
+        "{{ value | format('(,d') }} ({{ percent_of_first | format('.0%') }})",
+        "{{ value | format(',d') }} ({{ percent_of_first | format('(.0%') }})",
     ],
 )
 def test_accounting_parens_beside_a_secondary_value_are_refused(template: str) -> None:

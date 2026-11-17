@@ -42,7 +42,7 @@ from dbt_charts.core.execute.cache_backend import QueryResultCache
 from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.plan_names import plan_key
 from dbt_charts.core.execute.plan_sources import resolve_source_config
-from dbt_charts.core.execute.query_plan import QueryPlan
+from dbt_charts.core.execute.planned import Planned
 from dbt_charts.core.execute.query_result import QueryResult
 from dbt_charts.core.execute.run import run_query
 from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME
@@ -329,7 +329,7 @@ def lookup_board_query_sql(
             strict=True,
             active_tab_only=False,
             all_queries=True,
-        )
+        ).plan
     except _engine.CompileError as refusal:
         diagnostics = refusal_diagnostics(refusal, str(loaded.path))
         return BoardQueryLookupResult(
@@ -757,7 +757,7 @@ def _fail(
 
 def _run_over_memory_cache(
     board: Board,
-    plan: QueryPlan,
+    planned: Planned,
     env: ExecEnv,
     name: str,
     limit: int,
@@ -776,8 +776,8 @@ def _run_over_memory_cache(
     result_cache = open_cache(None) if cache is None else cache
     try:
         # The sample limit bounds *name* alone: a shared cache holds each upstream whole.
-        ctx = make_context(board, plan, env, result_cache=result_cache)
-        variables = plan_variables(plan)
+        ctx = make_context(board, planned, env, result_cache=result_cache)
+        variables = plan_variables(planned.plan)
         held = execute(ctx, [name], variables).execute_query_result(name, variables)
     finally:
         if cache is None:
@@ -826,7 +826,7 @@ def query_board(
     resolved_display = loaded.path
 
     try:
-        plan = plan_for_board(
+        planned = plan_for_board(
             loaded.board_file,
             project,
             vars,
@@ -836,6 +836,7 @@ def query_board(
             active_tab_only=False,
             all_queries=True,
         )
+        plan = planned.plan
     except _engine.CompileError as refusal:
         diagnostics = refusal_diagnostics(refusal, str(resolved_display))
         return _fail(
@@ -874,7 +875,7 @@ def query_board(
         with board_clock(planned_clock(plan)):
             if composes_cache:
                 exec_result = _run_over_memory_cache(
-                    loaded.board, plan, env, key, limit + 1, cache
+                    loaded.board, planned, env, key, limit + 1, cache
                 )
             else:
                 exec_result = run_planned(

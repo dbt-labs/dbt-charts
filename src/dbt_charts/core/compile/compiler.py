@@ -99,7 +99,7 @@ from dbt_charts.core.compile.normalize.dispatch import (
     normalize_board,
     normalize_query,
 )
-from dbt_charts.core.compile.normalize.layout import prefixed
+from dbt_charts.core.compile.normalize.layout import Placements, prefixed
 from dbt_charts.core.compile.normalize.variables import VariableReferenceErrors
 from dbt_charts.core.compile.parse.meta import (
     MetaLintConfig,
@@ -470,7 +470,7 @@ def compile_authored_board(
                     "default_source": default_source,
                     "sources": sources_registry,
                     "cache_root": project_cache,
-                    "importing": (file,) if file else (),
+                    "placements": Placements((file,)) if file else Placements(),
                 },
                 query_registry=query_registry,
                 chart_registry=chart_registry,

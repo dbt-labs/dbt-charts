@@ -27,7 +27,7 @@ use serde_json::{json, Map, Value};
 
 use super::js_cell;
 use super::projection;
-use super::source::{decode, Decoded, GeoSource};
+use ::bind::geo_source::{decode, Decoded, GeoSource};
 use diagnostic::codes;
 use crate::conditional::{MarkKind, MarkPatch};
 use crate::common::{

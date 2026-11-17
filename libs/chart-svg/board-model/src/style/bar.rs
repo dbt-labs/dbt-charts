@@ -12,6 +12,7 @@ use crate::style::marks::{
     BarMarkStyle, BarMarkStyleConditional, TextMarkStyle, TextMarkStyleConditional,
 };
 use crate::chart::conditional_formatting::Predicate;
+use crate::style::axis::AxisXConditional;
 use diagnostic::{diag, Diagnostic};
 use model_core::{Authored, Tri};
 use indexmap::IndexMap;
@@ -71,13 +72,20 @@ pub struct BarChartMarksStyleConditional {
     )),
     constraint(at_most_one_of(eq, ne, lt, lte, gt, gte, between, "in", is_null, default,
         message = "A conditional rule requires exactly one condition operator, got: {set}"
+    )),
+    constraint(at_least_one_of(axis_x, marks,
+        message = "A conditional rule requires at least one style to apply"
     ))
 )]
 pub struct BarChartStyleConditional {
     #[flatten]
     pub predicate: Predicate,
-    /// Bar-family mark overrides; a rule that restyles nothing is a mistake, so they are required.
-    pub marks: BarChartMarksStyleConditional,
+    /// Restyles the x-axis labels the rule matches. A rule on the x column tests each label's own value; a rule on another column tests the rows the label names, which must agree.
+    #[model(absent = "the axis's own style")]
+    pub axis_x: Option<AxisXConditional>,
+    /// Mark overrides.
+    #[model(absent = "the marks' own style")]
+    pub marks: Option<BarChartMarksStyleConditional>,
 }
 
 /// Band-scale padding for grouped (side-by-side) bars.
@@ -92,6 +100,30 @@ pub struct BarGroupedStyle {
     pub padding_inner: f64,
     /// Margin at both plot edges, as a share of the band step.
     pub padding_outer: f64,
+}
+
+/// Tear an outlier bar at a break and float its end above the plot.
+///
+/// Bars longer than the break are cut with a jagged edge; each cut end is
+/// redrawn as a labeled cap in a band above the plot, outside the shared
+/// scale, so the smaller bars stay legible.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(
+    constraint(range(at, gt = 0)),
+    constraint(range(band, gt = 0, le = 1)),
+    constraint(range(cap, gt = 0))
+)]
+#[allow(clippy::duplicated_attributes)]
+pub struct BarTornOutlierStyle {
+    /// Tear outlier bars at the break.
+    pub enabled: bool,
+    /// Break value in data units; unset picks it from the data.
+    #[model(absent = "the break picked from the data")]
+    pub at: Option<f64>,
+    /// Cap band length above the tear, as a share of the plot.
+    pub band: f64,
+    /// Cap length, as a multiple of bar thickness.
+    pub cap: f64,
 }
 
 /// Required wrapper for bar-layer mark overrides.
@@ -128,6 +160,8 @@ pub struct BarChartStyle {
     pub endpoint_labels: EndpointLabelsConfig,
     /// Band-scale padding for grouped bars.
     pub grouped: BarGroupedStyle,
+    /// Tear bars far longer than the rest and float their ends as caps.
+    pub torn_outlier: BarTornOutlierStyle,
     /// How the `pattern:` channel paints fills.
     pub pattern: PatternStyle,
     /// Bar-family mark overrides.

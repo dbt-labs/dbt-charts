@@ -1,0 +1,3 @@
+kind: Features
+body: dct serve shows the board's nav and a loading state at once while a slow board runs its queries, and its URL accepts requests as soon as it is printed.
+time: 2026-11-11T09:48:47.000506-08:00

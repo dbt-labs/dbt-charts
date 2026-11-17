@@ -410,6 +410,25 @@ def extract_query_result_references(template_str: str) -> set[str]:
     return names
 
 
+def extract_text_undeclared_names(template_str: str) -> set[str]:
+    """Names board text reads that its render context does not supply.
+
+    Everything here resolves only through a declared variable; ``set`` and
+    ``for`` targets, the Jinja globals and the helpers are the context's own.
+    Fenced code is not Jinja. A template that does not parse yields none;
+    rendering reports the syntax error.
+    """
+    masked, _ = mask_fenced_code(template_str)
+    if "{{" not in masked and "{%" not in masked:
+        return set()
+    try:
+        ast = _jinja_env_text.parse(masked)
+    except TemplateSyntaxError:
+        return set()
+    undeclared = meta.find_undeclared_variables(ast)
+    return undeclared - RESERVED_VARIABLE_NAMES - set(_jinja_env_text.globals)
+
+
 def text_query_references(texts: Iterable[str | None]) -> set[str]:
     """Query names read by ``queries.<name>`` in any of the given display texts."""
     names: set[str] = set()

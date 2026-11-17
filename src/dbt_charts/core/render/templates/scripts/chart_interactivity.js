@@ -483,6 +483,39 @@
         return nearest;
     }
 
+    /*{# Screen px within which two marks' centers count as the same x. #}*/
+    const SAME_X_TOLERANCE_PX = 0.5;
+
+    /*{# The datum under a cursor that sits on an unlabeled fill or stroke #}*/
+    /*{# (an area, a line path): the mark whose center is nearest the cursor's #}*/
+    /*{# x, with vertical distance only choosing among series at that x. Plain #}*/
+    /*{# 2D distance fails deep inside an area: far below the line, a dense #}*/
+    /*{# series' nearest point is whichever neighbor dips lowest, so the hover #}*/
+    /*{# sticks on local minima and then jumps several data at once. Centers, #}*/
+    /*{# not box edges: neighboring hover targets overlap on a dense series, #}*/
+    /*{# so several boxes contain the cursor's x. #}*/
+    function markAtCursorX(scope, x, y) {
+        let nearest = null;
+        let nearestDx = Infinity;
+        let nearestDy = Infinity;
+
+        scope.querySelectorAll('[aria-label]').forEach(function (mark) {
+            if (!isDataMark(mark) || !isSnappableMark(mark)) return;
+
+            const rect = mark.getBoundingClientRect();
+            const dx = Math.abs((rect.left + rect.right) / 2 - x);
+            const dy = Math.max(rect.top - y, 0, y - rect.bottom);
+            const sameX = Math.abs(dx - nearestDx) <= SAME_X_TOLERANCE_PX;
+            if ((sameX && dy < nearestDy) || (!sameX && dx < nearestDx)) {
+                nearest = mark;
+                nearestDx = dx;
+                nearestDy = dy;
+            }
+        });
+
+        return nearest;
+    }
+
     function escapeHtml(value) {
         if (value === null || value === undefined) return '';
 
@@ -750,17 +783,17 @@
     /*{# clear: still solid colors only, never an opacity. One clone per #}*/
     /*{# (pattern, background, alpha), in the same <defs>, found again by #}*/
     /*{# its id. #}*/
-    function recededPattern(el, paint, background, alpha) {
+    function recededPattern(el, paint, background, alpha, soft) {
         const source = el.ownerDocument.getElementById(patternPaint(paint).id);
         if (!source) return null;
-        const id = source.id + '-recede-' + background.replace(/[^\w]/g, '') + (alpha === 1 ? '' : '-' + String(alpha).replace(/\W/g, ''));
+        const id = source.id + '-recede-' + background.replace(/[^\w]/g, '') + (alpha === 1 ? '' : '-' + String(alpha).replace(/\W/g, '')) + (soft ? '-soft' : '');
         if (!el.ownerDocument.getElementById(id)) {
             const clone = source.cloneNode(true);
             clone.id = id;
             clone.querySelectorAll('*').forEach(function (child) {
                 RECEDABLE_PAINT.forEach(function (prop) {
                     const value = child.getAttribute(prop);
-                    if (isColor(value)) child.style.setProperty(prop, recededPaint(value, background, alpha));
+                    if (isColor(value)) child.style.setProperty(prop, recededPaint(value, background, alpha, soft));
                 });
             });
             source.parentNode.appendChild(clone);
@@ -828,20 +861,25 @@
     /*{# keeps everything -- receding never makes a mark louder. The scan #}*/
     /*{# runs from the full color down, so a mix whose channels move in #}*/
     /*{# opposite directions cannot land on a far branch of the curve. Same #}*/
-    /*{# algorithm as the engine's baked recede, which takes no alpha. #}*/
+    /*{# algorithm as the engine's baked recede, which takes no alpha. A #}*/
+    /*{# `soft` recede stops halfway, on a log scale, between the paint's own #}*/
+    /*{# contrast and the theme's: the middle tier of a chart whose board #}*/
+    /*{# has faded around it. #}*/
     const recedeShares = {};
-    function recedeShare(paint, background, alpha) {
-        const key = paint + '|' + background + '|' + alpha;
+    function recedeShare(paint, background, alpha, soft) {
+        const key = paint + '|' + background + '|' + alpha + '|' + !!soft;
         if (key in recedeShares) return recedeShares[key];
         const mark = rgbOf(paint);
         const ground = rgbOf(background);
         const groundLuminance = luminanceOf(ground);
-        const target = active.hoverEmphasis.recedeContrast;
         const contrastAt = function (share) {
             const kept = share * alpha;
             const lum = luminanceOf(mark.map(function (v, i) { return kept * v + (1 - kept) * ground[i]; }));
             return (Math.max(lum, groundLuminance) + 0.05) / (Math.min(lum, groundLuminance) + 0.05);
         };
+        const target = soft
+            ? Math.sqrt(contrastAt(1) * active.hoverEmphasis.recedeContrast)
+            : active.hoverEmphasis.recedeContrast;
         let share = 1;
         if (contrastAt(1) > target) {
             const steps = 64;
@@ -862,14 +900,14 @@
         return share;
     }
 
-    function recededPaint(paint, background, alpha) {
-        const share = recedeShare(paint, background, alpha);
+    function recededPaint(paint, background, alpha, soft) {
+        const share = recedeShare(paint, background, alpha, soft);
         return share === 1 ? paint : 'color-mix(in srgb, ' + paint + ' ' + Number((share * 100).toFixed(2)) + '%, ' + background + ')';
     }
 
     /*{# Plans `el`'s paint into `next` (element -> {prop: paint}); repaint() #}*/
     /*{# writes it. False when there is nothing to paint. #}*/
-    function emphasize(next, el, background, kept) {
+    function emphasize(next, el, background, kept, soft) {
         const baked = isBakedReceded(el);
         if (kept && !baked) return false;
         const paints = {};
@@ -877,12 +915,12 @@
             const paint = baked ? restPaint(el, prop) : el.getAttribute(prop);
             const alpha = paintAlpha(el, prop);
             if (prop === 'fill' && isPatternUrl(paint)) {
-                const receded = kept ? paint : recededPattern(el, paint, background, alpha);
+                const receded = kept ? paint : recededPattern(el, paint, background, alpha, soft);
                 if (receded) paints[prop] = receded;
                 return;
             }
             if (!isColor(paint)) return;
-            paints[prop] = kept ? paint : recededPaint(paint, background, alpha);
+            paints[prop] = kept ? paint : recededPaint(paint, background, alpha, soft);
         });
         if (!Object.keys(paints).length) return false;
         next.set(el, paints);
@@ -979,6 +1017,9 @@
         if (!active.hoverEmphasis.visible) return;
         const chartEl = mark.closest('.dbt-chart');
         if (!chartEl || isMagnitudeColored(chartEl)) return;
+        /*{# A chart with bars off the chart has the board faded around it #}*/
+        /*{# (showOffChart), so its own marks recede only part way. #}*/
+        const soft = !!chartEl.querySelector(OFF_CHART);
         const background = chartBackground(mark);
         if (!background) return;
 
@@ -993,10 +1034,10 @@
             const kept = !!keptLabels[el.getAttribute('aria-label')];
             const inkedMark = el.hasAttribute('data-dbt-ink');
             if (kept && inkedMark) inked.push(el);
-            if (!emphasize(next, el, background, kept)) return;
+            if (!emphasize(next, el, background, kept, soft)) return;
             if (!kept && inkedMark) {
                 outlineNodes(el).forEach(function (outline) {
-                    next.set(outline, { stroke: recededPaint(outline.getAttribute('stroke'), background, paintAlpha(outline, 'stroke')) });
+                    next.set(outline, { stroke: recededPaint(outline.getAttribute('stroke'), background, paintAlpha(outline, 'stroke'), soft) });
                 });
             }
         });
@@ -1008,7 +1049,7 @@
         /*{# is kept, so the eye can follow the hovered bar into and out of it. #}*/
         panelScope(mark, chartEl).querySelectorAll('[data-dbt-ribbon-from]').forEach(function (el) {
             const kept = !!(keptLabels[el.getAttribute('data-dbt-ribbon-from')] || keptLabels[el.getAttribute('data-dbt-ribbon-to')]);
-            emphasize(next, el, background, kept);
+            emphasize(next, el, background, kept, soft);
         });
         /*{# Whatever else the selection receded -- a pie slice label, an area's #}*/
         /*{# endpoint label -- sits in the same flagged link as its mark, so #}*/
@@ -2083,6 +2124,385 @@
         applyHoverMarkers(state, mark, useXUnified ? matches : [{ mark: lone.mark }]);
     }
 
+    /*{# Off the chart: a bar past its chart's authored axis maximum is cut at #}*/
+    /*{# its card's top edge, and carries its true length in chart pixels #}*/
+    /*{# (`data-dbt-off-chart`). Hovering that chart draws each such bar at #}*/
+    /*{# true length over the board and fades everything but the chart. A bar #}*/
+    /*{# that fits straight up to near the board's top edge stays straight; #}*/
+    /*{# otherwise it climbs to a turn and winds into an inward circular #}*/
+    /*{# spiral, whose length grows with the square of its radius. Several #}*/
+    /*{# spirals in one chart curl apart (the left half counterclockwise) and #}*/
+    /*{# turn lower, largest first, to keep clear, never into their plot #}*/
+    /*{# (`data-dbt-off-chart-plot`, the plot's height in chart pixels). #}*/
+    /*{# Where they cannot, each turns at the board's top and they overlap, #}*/
+    /*{# each on a halo of the chart's canvas so the bars read apart; a #}*/
+    /*{# circle too big to sit above its plot may reach down over it, never #}*/
+    /*{# below the bars' base. A bar too long for any spiral runs straight #}*/
+    /*{# off the top of the board, which cuts it as its card did: a shorter #}*/
+    /*{# spiral would state a smaller value. #}*/
+    /*{# The paths exist from mount, hidden, so hover only sets attributes. #}*/
+    /*{# Geometry is read at hover time, in the board root's own units: only #}*/
+    /*{# the page knows where the card sits on the board, and at what scale. #}*/
+    const OFF_CHART = '[data-dbt-off-chart]';
+    const OFF_CHART_LABEL = '[data-dbt-off-chart-label]';
+    const OFF_CHART_LAYER = 'dbt-off-chart-hover';
+    const OFF_CHART_FADE = 0.15;
+    const OFF_CHART_CEILING = 8;
+    const OFF_CHART_LANE_GAP = 3;
+    const OFF_CHART_HALO = 2;
+    /*{# Below this outer radius, in bar widths, the lane overlaps itself and #}*/
+    /*{# the spiral reads as a blob. #}*/
+    const OFF_CHART_MIN_RADIUS = 1.5;
+    const offChartStates = new WeakMap();
+
+    /*{# Header content of a chart with torn bars (`data-dbt-lifted`: one #}*/
+    /*{# band, then the title, subtitle and legend lines on it). The engine #}*/
+    /*{# draws it behind the bars, which is what an export shows; it lifts #}*/
+    /*{# over them only while the chart is hovered and its bars are drawn at #}*/
+    /*{# true length. A hovered outlier is drawn over it (showFront). #}*/
+    const LIFTED = '[data-dbt-lifted]';
+
+    function placeContent(chartEl, lift) {
+        chartEl.querySelectorAll(LIFTED).forEach(function (node) {
+            const parent = node.parentNode;
+            const plot = Array.prototype.find.call(parent.children, function (child) { return child !== node && child.querySelector(OFF_CHART); });
+            if (!plot) return;
+            if (lift) parent.appendChild(node);
+            else parent.insertBefore(node, plot);
+        });
+    }
+
+    function mountOffChart(svg) {
+        if (!svg.querySelector(OFF_CHART) || svg.querySelector('.' + OFF_CHART_LAYER)) return;
+        const layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        layer.setAttribute('class', OFF_CHART_LAYER);
+        layer.setAttribute('pointer-events', 'none');
+        layer.setAttribute('aria-hidden', 'true');
+        /*{# A unit: one outlier drawn whole, base to tip, on its halo, with #}*/
+        /*{# its label copied on top, so bar and curl stack as one piece. #}*/
+        const unit = function (parent, cls) {
+            const g = document.createElementNS(SVG_NS, 'g');
+            g.setAttribute('class', cls);
+            g.setAttribute('display', 'none');
+            ['dbt-off-chart-halo', 'dbt-off-chart-bar'].forEach(function (pathCls) {
+                const path = document.createElementNS(SVG_NS, 'path');
+                path.setAttribute('class', pathCls);
+                path.setAttribute('fill', 'none');
+                path.setAttribute('stroke-linecap', 'butt');
+                path.setAttribute('stroke-linejoin', 'round');
+                g.appendChild(path);
+            });
+            g.appendChild(document.createElementNS(SVG_NS, 'use'));
+            parent.appendChild(g);
+        };
+        svg.querySelectorAll(OFF_CHART).forEach(function () { unit(layer, 'dbt-off-chart-unit'); });
+        /*{# Lifted content shows over the drawings through copies, and a #}*/
+        /*{# hovered outlier over the content through the front slot. #}*/
+        const copies = document.createElementNS(SVG_NS, 'g');
+        copies.setAttribute('class', 'dbt-off-chart-content');
+        copies.setAttribute('display', 'none');
+        svg.querySelectorAll(LIFTED).forEach(function (node) {
+            const use = document.createElementNS(SVG_NS, 'use');
+            use.setAttribute('href', '#' + ensureId(node));
+            use.setAttribute('display', 'none');
+            copies.appendChild(use);
+        });
+        layer.appendChild(copies);
+        svg.querySelectorAll(OFF_CHART_LABEL).forEach(ensureId);
+        unit(layer, 'dbt-off-chart-front');
+        svg.appendChild(layer);
+    }
+
+    let offChartIds = 0;
+    function ensureId(el) {
+        if (!el.id) el.setAttribute('id', 'dbt-off-chart-' + (++offChartIds));
+        return el.id;
+    }
+
+    /*{# The transform that draws `el`, copied into the board root, where #}*/
+    /*{# it sits: its own frame's map to the screen, undone by the root's. #}*/
+    function frameOf(svg, el) {
+        const root = svg.getScreenCTM();
+        const own = el.parentNode.getScreenCTM();
+        return 'matrix(' + [own.a / root.a, 0, 0, own.d / root.d, (own.e - root.e) / root.a, (own.f - root.f) / root.d].join(' ') + ')';
+    }
+
+    /*{# A box in the board root's units, from the page's own layout. #}*/
+    function rootBox(svg, el) {
+        const root = svg.getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        const view = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width
+            ? svg.viewBox.baseVal
+            : { x: 0, y: 0, width: root.width, height: root.height };
+        const scale = root.width / view.width;
+        return {
+            left: view.x + (box.left - root.left) / scale,
+            right: view.x + (box.right - root.left) / scale,
+            top: view.y + (box.top - root.top) / scale,
+            bottom: view.y + (box.bottom - root.top) / scale,
+            scale: scale,
+            view: view,
+        };
+    }
+
+    /*{# Straight up from (cx, base) to y0, then an inward spiral of outer #}*/
+    /*{# radius r0 curling right (turn 1) or left (turn -1), until the path is #}*/
+    /*{# `length` long. Null when the spiral runs out of turns first. #}*/
+    function spiralPoints(cx, base, y0, r0, turn, width, length) {
+        const pitch = (width + OFF_CHART_LANE_GAP) / (2 * Math.PI);
+        const points = [[cx, base], [cx, y0]];
+        let left = length - (base - y0);
+        let t = 0;
+        let px = cx;
+        let py = y0;
+        const ox = cx + turn * r0;
+        while (left > 0) {
+            const r = r0 - pitch * t;
+            if (r < width / 2) return null;
+            t += Math.min(0.05, 1 / r);
+            const nr = r0 - pitch * t;
+            const angle = turn === 1 ? Math.PI + t : -t;
+            let x = ox + nr * Math.cos(angle);
+            let y = y0 + nr * Math.sin(angle);
+            const step = Math.hypot(x - px, y - py);
+            if (step >= left) {
+                x = px + (x - px) * left / step;
+                y = py + (y - py) * left / step;
+            }
+            left -= step;
+            points.push([x, y]);
+            px = x;
+            py = y;
+        }
+        return points;
+    }
+
+    /*{# The smallest spiral whose circle's top is `top` that holds `length`, #}*/
+    /*{# stays on the board and keeps its circle above `floor`, or null. #}*/
+    function fitSpiral(bar, length, top, turn, bounds, floor) {
+        const w = bar.width;
+        for (let r0 = OFF_CHART_MIN_RADIUS * w; r0 <= (bounds.right - bounds.left) / 2; r0 += 1) {
+            const y0 = top + w / 2 + r0;
+            if (y0 + r0 + w / 2 + OFF_CHART_HALO > floor) return null;
+            const lo = turn === 1 ? bar.cx - w / 2 : bar.cx - 2 * r0 - w / 2;
+            const hi = turn === 1 ? bar.cx + 2 * r0 + w / 2 : bar.cx + w / 2;
+            if (lo < bounds.left || hi > bounds.right) return null;
+            const capacity = Math.PI * (r0 * r0 - w * w / 4) / (w + OFF_CHART_LANE_GAP);
+            if (capacity < length - (bar.base - y0)) continue;
+            const points = spiralPoints(bar.cx, bar.base, y0, r0, turn, w, length);
+            if (points) return { circle: { cx: bar.cx + turn * r0, cy: y0, r: r0 + w / 2 }, lane: lane(bar, y0), points: points };
+        }
+        return null;
+    }
+
+    /*{# The straight climb from a bar's base up to `y`, as a box. #}*/
+    function lane(bar, y) {
+        return { left: bar.cx - bar.width / 2, right: bar.cx + bar.width / 2, top: y, bottom: bar.base };
+    }
+
+    /*{# Whether a drawn bar (a lane, and a circle if it winds) keeps clear of #}*/
+    /*{# another by a lane gap: circle to circle, and each circle to each lane. #}*/
+    function clearOf(a, b) {
+        const g = OFF_CHART_LANE_GAP;
+        const circleBox = function (c, box) {
+            const dx = Math.max(box.left - c.cx, 0, c.cx - box.right);
+            const dy = Math.max(box.top - c.cy, 0, c.cy - box.bottom);
+            return Math.hypot(dx, dy) >= c.r + g;
+        };
+        if (a.circle && b.circle && Math.hypot(a.circle.cx - b.circle.cx, a.circle.cy - b.circle.cy) < a.circle.r + b.circle.r + g) return false;
+        if (a.circle && !circleBox(a.circle, b.lane)) return false;
+        if (b.circle && !circleBox(b.circle, a.lane)) return false;
+        return true;
+    }
+
+    function offChartPlan(svg, chartEl) {
+        const bars = Array.prototype.slice.call(chartEl.querySelectorAll(OFF_CHART)).map(function (el) {
+            const box = rootBox(svg, el);
+            const ctm = el.getScreenCTM();
+            const toRoot = ctm.d / box.scale;
+            /*{# The canvas outline knocked out of the bar's edges: the bar shows #}*/
+            /*{# half of it narrower on each side, and its tear half of it deeper. #}*/
+            const edge = parseFloat(el.getAttribute('data-dbt-off-chart-edge')) * toRoot;
+            const length = parseFloat(el.getAttribute('data-dbt-off-chart')) * toRoot;
+            return {
+                el: el,
+                cx: (box.left + box.right) / 2,
+                width: box.right - box.left - edge,
+                base: box.bottom,
+                plotTop: box.bottom - parseFloat(el.getAttribute('data-dbt-off-chart-plot')) * toRoot,
+                length: length,
+                view: box.view,
+            };
+        }).sort(function (a, b) { return a.cx - b.cx; });
+        if (!bars.length) return [];
+        const view = bars[0].view;
+        const bounds = { left: view.x + OFF_CHART_CEILING, right: view.x + view.width - OFF_CHART_CEILING };
+        const ceiling = view.y + OFF_CHART_CEILING;
+        bars.forEach(function (bar, i) {
+            bar.turn = bars.length === 1
+                ? (bar.cx - bounds.left > bounds.right - bar.cx ? -1 : 1)
+                : (i < bars.length / 2 ? -1 : 1);
+        });
+        const placed = [];
+        /*{# Straight bars first, since they cannot move; then spirals, largest first. #}*/
+        const straight = function (bar) { return bar.length <= bar.base - ceiling; };
+        bars.slice().sort(function (a, b) {
+            return (straight(b) - straight(a)) || (b.length - a.length);
+        }).forEach(function (bar) {
+            if (straight(bar)) {
+                bar.points = [[bar.cx, bar.base], [bar.cx, bar.base - bar.length]];
+                placed.push({ lane: lane(bar, bar.base - bar.length) });
+                return;
+            }
+            const fit = function (top, floor) {
+                return fitSpiral(bar, bar.length, top, bar.turn, bounds, floor)
+                    || fitSpiral(bar, bar.length, top, -bar.turn, bounds, floor);
+            };
+            for (let top = ceiling; top < bar.plotTop; top += 4) {
+                const spiral = fit(top, bar.plotTop);
+                if (!spiral) continue;
+                const clear = placed.every(function (other) { return clearOf(spiral, other); });
+                if (!clear) continue;
+                placed.push(spiral);
+                bar.points = spiral.points;
+                return;
+            }
+            const spiral = fit(ceiling, bar.plotTop) || fit(ceiling, bar.base);
+            if (!spiral) {
+                bar.points = [[bar.cx, bar.base], [bar.cx, bar.base - bar.length]];
+                placed.push({ lane: lane(bar, view.y) });
+                return;
+            }
+            placed.push(spiral);
+            bar.points = spiral.points;
+        });
+        return bars;
+    }
+
+    /*{# Fades every sibling of the chart and of each of its ancestors up to #}*/
+    /*{# the root, except the root's background and the hover layer. #}*/
+    function fadeAround(svg, chartEl, faded) {
+        let node = chartEl;
+        while (node && node !== svg) {
+            const parent = node.parentNode;
+            Array.prototype.forEach.call(parent.children, function (sibling) {
+                if (sibling === node || sibling.classList.contains(OFF_CHART_LAYER)) return;
+                if (parent === svg && sibling.tagName.toLowerCase() === 'rect') return;
+                faded.push([sibling, sibling.style.opacity]);
+                sibling.style.opacity = String(OFF_CHART_FADE);
+            });
+            node = parent;
+        }
+    }
+
+    function showOffChart(svg, state, chartEl) {
+        if (state.offChart.chart === chartEl) return;
+        clearOffChart(state);
+        const layer = svg.querySelector('.' + OFF_CHART_LAYER);
+        if (!layer || !chartEl.querySelector(OFF_CHART)) return;
+        const units = layer.querySelectorAll('.dbt-off-chart-unit');
+        const canvas = chartEl.getAttribute('data-dbt-chart-canvas');
+        const plan = offChartPlan(svg, chartEl);
+        plan.forEach(function (bar, i) {
+            if (!bar.points) return;
+            paintUnit(svg, chartEl, units[i], bar, canvas, bar.el.getAttribute('fill'));
+            state.offChart.shown.push(units[i]);
+            state.offChart.spirals.push([bar.el, units[i].children[1], units[i]]);
+        });
+        const copies = layer.querySelector('.dbt-off-chart-content');
+        copies.querySelectorAll('use').forEach(function (use) {
+            const node = svg.querySelector(use.getAttribute('href'));
+            if (!node || !chartEl.contains(node)) return;
+            use.setAttribute('transform', frameOf(svg, node));
+            use.removeAttribute('display');
+            state.offChart.shown.push(use);
+        });
+        copies.removeAttribute('display');
+        state.offChart.shown.push(copies);
+        fadeAround(svg, chartEl, state.offChart.faded);
+        placeContent(chartEl, true);
+        state.offChart.chart = chartEl;
+        state.offChart.svg = svg;
+        state.offChart.plan = plan;
+    }
+
+    function pathData(points) {
+        return 'M' + points.map(function (p) { return p[0].toFixed(2) + ',' + p[1].toFixed(2); }).join('L');
+    }
+
+    /*{# One bar drawn whole along its plan, on its halo, its label copied on #}*/
+    /*{# top. The halo starts a little above the base: an end on the bar's #}*/
+    /*{# own end shows through its antialiased edge as a seam. #}*/
+    function paintUnit(svg, chartEl, unit, bar, canvas, ink) {
+        const [halo, path, use] = unit.children;
+        const points = bar.points;
+        const [from, to] = points;
+        const run = Math.hypot(to[0] - from[0], to[1] - from[1]);
+        const t = Math.min(2 * OFF_CHART_HALO, run / 2) / run;
+        const haloPoints = [[from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]].concat(points.slice(1));
+        [[halo, canvas, bar.width + 2 * OFF_CHART_HALO, haloPoints], [path, ink, bar.width, points]].forEach(function (paint) {
+            if (!paint[1]) return;
+            paint[0].setAttribute('d', pathData(paint[3]));
+            paint[0].setAttribute('stroke', paint[1]);
+            paint[0].setAttribute('stroke-width', paint[2].toFixed(2));
+        });
+        const label = Array.prototype.find.call(chartEl.querySelectorAll(OFF_CHART_LABEL), function (el) {
+            const box = rootBox(svg, el);
+            return Math.abs((box.left + box.right) / 2 - bar.cx) <= bar.width / 2;
+        });
+        if (label) {
+            use.setAttribute('href', '#' + label.id);
+            use.setAttribute('transform', frameOf(svg, label));
+            use.removeAttribute('display');
+        } else {
+            use.setAttribute('display', 'none');
+        }
+        unit.removeAttribute('display');
+    }
+
+    /*{# The hovered outlier's unit, drawn again over the lifted content. #}*/
+    function showFront(state, target) {
+        const svg = state.offChart.svg;
+        const chartEl = state.offChart.chart;
+        const bar = state.offChart.plan.find(function (b) { return b.el === target; });
+        if (!bar || !bar.points) return;
+        paintUnit(svg, chartEl, svg.querySelector('.dbt-off-chart-front'), bar, chartEl.getAttribute('data-dbt-chart-canvas'), target.getAttribute('fill'));
+    }
+
+    function clearOffChart(state) {
+        if (state.offChart.chart) {
+            placeContent(state.offChart.chart, false);
+            state.offChart.svg.querySelector('.dbt-off-chart-front').setAttribute('display', 'none');
+        }
+        state.offChart.shown.forEach(function (path) { path.setAttribute('display', 'none'); });
+        state.offChart.faded.forEach(function (entry) {
+            if (entry[1]) entry[0].style.opacity = entry[1];
+            else entry[0].style.removeProperty('opacity');
+        });
+        state.offChart = { chart: null, shown: [], faded: [], spirals: [], target: null };
+    }
+
+    /*{# A spiral wears its bar's current paint, so it recedes with it. A #}*/
+    /*{# hovered outlier's unit moves to the front slot, over the lifted #}*/
+    /*{# content; every other unit stays where it is. #}*/
+    function syncOffChart(state, hovered) {
+        const chartEl = state.offChart.chart;
+        if (!chartEl) return;
+        state.offChart.spirals.forEach(function (entry) {
+            const paint = entry[0].style.getPropertyValue('fill') || entry[0].getAttribute('fill');
+            if (entry[1].getAttribute('stroke') !== paint) entry[1].setAttribute('stroke', paint);
+        });
+        const target = hovered && hovered.matches(OFF_CHART) && chartEl.contains(hovered) ? hovered : null;
+        if (target === state.offChart.target) return;
+        state.offChart.target = target;
+        state.offChart.spirals.forEach(function (entry) {
+            if (target && entry[0] === target) entry[2].setAttribute('display', 'none');
+            else entry[2].removeAttribute('display');
+        });
+        if (target) showFront(state, target);
+        else state.offChart.svg.querySelector('.dbt-off-chart-front').setAttribute('display', 'none');
+    }
+
     /*{# Bound once, at the board root: each chart is a nested standalone <svg> #}*/
     /*{# whose events bubble up to it. #}*/
     function initializeSvg(svg) {
@@ -2093,6 +2513,9 @@
         svg.dataset.dbtHoverInitialized = 'true';
         useBoard(svg);
         const state = ensureState();
+        mountOffChart(svg);
+        const offChart = { offChart: { chart: null, shown: [], faded: [], spirals: [], target: null } };
+        offChartStates.set(svg, offChart);
         const on = function (type, handler) {
             svg.addEventListener(type, function (event) {
                 useBoard(svg);
@@ -2123,10 +2546,14 @@
             /*{# Vega area paths are aria-hidden because one path represents every #}*/
             /*{# datum; their labeled point siblings carry the correct values. #}*/
             /*{# Layered marks can have the same visible-mark/labeled-sibling split. #}*/
+            /*{# Only an area or line reads its datum by x: another unlabeled mark #}*/
+            /*{# (a horizontal bar's baseline rule) sits on the datum it belongs to. #}*/
             if (!mark && target && target.closest && target.closest(MARK_GROUP_SELECTOR)) {
                 const chart = target.closest('.dbt-chart');
                 if (chart) {
-                    mark = nearestDataMark(chart, event.clientX, event.clientY);
+                    mark = target.closest('.mark-area, .mark-line')
+                        ? markAtCursorX(panelScope(target, chart), event.clientX, event.clientY)
+                        : nearestDataMark(chart, event.clientX, event.clientY);
                 }
             }
 
@@ -2178,6 +2605,20 @@
 
         on('mouseleave', function () {
             hideTooltip(state);
+        });
+
+        on('mouseover', function (event) {
+            const chartEl = event.target && event.target.closest && event.target.closest('.dbt-chart');
+            if (chartEl && chartEl.querySelector(OFF_CHART)) showOffChart(svg, offChart, chartEl);
+            else clearOffChart(offChart);
+        });
+
+        on('mouseleave', function () {
+            clearOffChart(offChart);
+        });
+
+        on('mousemove', function () {
+            syncOffChart(offChart, state.activeMark);
         });
 
         on('mousemove', function (event) {
@@ -2317,8 +2758,10 @@
             /*{# No hover state means no preview to clear; building one would #}*/
             /*{# need tooltip styles an embed host may not ship. #}*/
             if (window.__dbtChartsChartHoverState) clearHoverEmphasis(window.__dbtChartsChartHoverState);
+            if (offChartStates.has(svg)) clearOffChart(offChartStates.get(svg));
             const copy = svg.cloneNode(true);
             copy.querySelectorAll('.dbt-chart-toolbar').forEach(function (el) { el.remove(); });
+            copy.querySelectorAll('.' + OFF_CHART_LAYER).forEach(function (el) { el.remove(); });
             copy.querySelectorAll('.dbt-chart').forEach(function (chart) { chart.style.removeProperty('cursor'); });
             copy.querySelectorAll('[' + ARMED + ']').forEach(disarmHidingItem);
             pictureSteps.forEach(function (step) { step(svg, copy); });

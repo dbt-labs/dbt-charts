@@ -32,6 +32,7 @@ from dbt_charts.core.diagnostics import (
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
     ERR_NO_BOARD_FILES,
+    ERR_UNKNOWN_QUERY,
     Diagnostic,
 )
 from dbt_charts.core.diagnostics.codes_compile import ERR_CUSTOM_TEMPLATE
@@ -372,6 +373,7 @@ def _describe_resolved(
     """Describe an already-resolved board or template path — no re-resolution."""
     from dbt_charts.core.compile.compiler import compile_file
     from dbt_charts.core.compile.normalize.chart_focus import focus_on_chart
+    from dbt_charts.core.compile.template.jinja import detect_query_dependencies
     from dbt_charts.core.diagnostics.base import DbtChartsError
     from dbt_charts.core.execute.collect import collect_all_query_names
 
@@ -451,7 +453,29 @@ def _describe_resolved(
             )
         charts = {chart: board.charts[chart]}
         all_queries = {**board.queries, **result.query_registry}
-        queries = {k: all_queries[k] for k in collect_all_query_names(focused)}
+        deps = detect_query_dependencies(all_queries)
+        reached: set[str] = set()
+        pending = list(collect_all_query_names(focused))
+        while pending:
+            name = pending.pop()
+            if name in reached:
+                continue
+            if name not in deps:
+                return DescribeBoardResult(
+                    success=False,
+                    path=resolved.relpath,
+                    errors=[
+                        DbtChartsError.from_code(
+                            ERR_UNKNOWN_QUERY,
+                            chart_name=chart,
+                            query_name=name,
+                            available=sorted(all_queries),
+                        ).to_diagnostic(file=resolved.relpath)
+                    ],
+                )
+            reached.add(name)
+            pending.extend(deps[name])
+        queries = {k: q for k, q in all_queries.items() if k in reached}
         variables = focused.variables
 
     query_descs = [

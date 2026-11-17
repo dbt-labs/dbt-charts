@@ -28,7 +28,6 @@ use board_model::chart::{BarChart, ColorColumn, Columns};
 use board_model::ids::ChartId;
 use board_model::style::marks::labels_drawn;
 use board_model::style::bar::{Orientation, StackMode};
-use board_model::style::style::Style;
 use color::Rgba;
 use diagnostic::{codes, diag, py_str_repr, refuse, Diagnostic};
 use model_core::{Engine, SetLeaves, Tri};
@@ -45,7 +44,7 @@ use crate::bound::{self,
     Panels, Pos, RowRef, Scale, ScaleKind, Series, SeriesKey, Tooltip, TooltipEntry,
 };
 use crate::plot::band::band_domain;
-use crate::plot::domain;
+use crate::plot::domain::{self, LogUse};
 use crate::plot::zero::{self, Family};
 use crate::effective_palette;
 use crate::run::RunResult;
@@ -171,9 +170,6 @@ fn refuse_unported(chart: &BarChart, placed: &Placed<'_>) -> Result<(), Diagnost
     if fields.shared.base.link.is_some() {
         return Err(unsupported(refuse!("a bar with `link:` is not supported")));
     }
-    if fields.x_label.is_some() || fields.y_label.is_some() {
-        return Err(unsupported(refuse!("a bar with `x_label:` or `y_label:` is not supported")));
-    }
     if chart.y_start.is_some() {
         return Err(unsupported(refuse!("a bar with `y_start:` is not supported")));
     }
@@ -185,6 +181,9 @@ fn refuse_unported(chart: &BarChart, placed: &Placed<'_>) -> Result<(), Diagnost
     }
     if !chart.style.conditional.is_empty() {
         return Err(unsupported(refuse!("a bar with `style.conditional` is not supported")));
+    }
+    if chart.style.torn_outlier.enabled {
+        return Err(unsupported(refuse!("a bar with `style.torn_outlier` is not supported")));
     }
     Ok(())
 }
@@ -201,7 +200,7 @@ fn refuse_legend_values(chart: &BarChart, derived: &DerivedChart) -> Result<(), 
 /// The bar mark as production draws it: the chart's total `marks.bar` and the theme's label room. A
 /// single series sits on a band scale with no padding; grouped bars (which pad) are refused downstream. A `none` border color or a
 /// border of no width draws no outline.
-fn bar_style(chart: &BarChart, style: &Style, canvas: Rgba) -> Result<BarStyle, Diagnostic> {
+fn bar_style(chart: &BarChart, canvas: Rgba) -> Result<BarStyle, Diagnostic> {
     let bar = &chart.style.marks.bar;
     let color = bar.border.color.as_ref();
     // `theme.background` is the canvas the chart's frame settled on.
@@ -229,7 +228,6 @@ fn bar_style(chart: &BarChart, style: &Style, canvas: Rgba) -> Result<BarStyle, 
         opacity,
         padding_inner: 0.0,
         padding_outer: 0.0,
-        label_usable_ratio: style.charts.label_usable_ratio,
     })
 }
 
@@ -243,7 +241,11 @@ pub fn bars(
     placed: &Placed<'_>,
     scales: &[CategoryColorScale],
 ) -> Result<Option<Bars>, Diagnostic> {
-    let p = Prelude::of(&chart.cartesian, ChannelType::Nominal, placed)?;
+    let p = Prelude::of(&chart.cartesian, ChannelType::Nominal, ChannelType::Quantitative, placed)?;
+    if p.y_scale.is_log() {
+        domain::refuse_log(placed.public_id, LogUse::Bar, None)?;
+    }
+    cartesian::refuse_scale(p.y_scale, "bar", "y", false)?;
     let (x_field, y_field) = (p.x_field, p.y_field);
     if p.x_ladder.labels_format().is_some() {
         return Err(unsupported(refuse!("a bar band axis with a label format is not supported")));
@@ -341,7 +343,7 @@ pub fn bars(
     // A layer joining the bars' scale makes it round like any shared scale (`nice_shared_scale`).
     let nice = (!layers.is_empty()).then_some(true);
     let y_axis = cartesian::measure_axis(&p.y_ladder, y_zero, &spanned, y_format, domain::Mark::VerticalBar, nice)?;
-    let (axis_styles, [x_shown, y_shown]) = cartesian::axes((&p.x_ladder, p.x_title.clone(), false), (&p.y_ladder, p.y_title.clone(), false), &y_axis.domain, placed.scope, "bar", false, true)?;
+    let (axis_styles, [x_shown, y_shown]) = cartesian::axes(&p, Some(&y_axis.domain), placed.scope, "bar", false, true)?;
 
     let tooltip_format = p.tooltip_format(&drawn)?;
     let locale = active_number_locale();
@@ -363,7 +365,7 @@ pub fn bars(
                     series: series_of(row),
                     row: RowRef(row),
                     label: None,
-                    tooltip: Tooltip { header: None, entries },
+                    tooltip: Tooltip { heads: Vec::new(), entries },
                     href: None,
                     defined: y.is_some(),
                 })
@@ -417,7 +419,7 @@ pub fn bars(
             names.push(name);
         }
         let entries = series.iter().enumerate().map(|(series, s)| LegendEntry { series, label: s.display.clone() });
-        legend = Some(Legend { title: None, entries: entries.collect(), toggle: None });
+        legend = Some(Legend { title: None, entries: entries.collect(), toggle: None, stamps_series: false });
     }
     Ok(Some(Bars {
         x: Scale { kind: ScaleKind::Band(categories), title: x_shown },
@@ -428,7 +430,7 @@ pub fn bars(
         lines,
         baselines,
         axis_styles,
-        style: bar_style(chart, p.style, derived.frame.canvas)?,
+        style: bar_style(chart, derived.frame.canvas)?,
         derived,
         diagnostics: crate::restated::axes(&p.tiers, [&p.x_ladder, &p.y_ladder], placed.public_id),
     }))
@@ -457,8 +459,7 @@ pub fn bind(
     let Some(bars) = bars else {
         let derived = placed.derive()?;
         refuse_legend_values(chart, &derived)?;
-        let frame = Some(derived.frame);
-        return Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(no_data(placed, "bar")?)) });
+        return Ok(no_data(derived, placed.public_id, run, title, subtitle));
     };
     let frame = Some(bars.derived.frame.clone());
     let plot = bound::Plane::new(bound::PlaneParts {

@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.conditional_predicate import (
-    ConditionalPredicate,
     default_rule_last,
 )
 from dbt_charts.core.compile.models.factories import build_conditional_model
@@ -30,6 +29,9 @@ from dbt_charts.core.compile.models.style.theme._chart_base import (
     _CartesianChartStyle,
     _LegendedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
+)
+from dbt_charts.core.compile.models.style.theme.axis_conditional import (
+    AxisConditionalPredicate,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     LineMarkStyle,
@@ -97,12 +99,14 @@ class _LineChartStyleBase(
 
 if TYPE_CHECKING:
 
-    class LineConditionalRule(ConditionalPredicate):
+    class LineConditionalRule(AxisConditionalPredicate):
         marks: LineChartMarksStyle | None
 
 else:
     LineConditionalRule = build_conditional_model(
-        _LineChartStyleBase, name="LineChartStyleConditional"
+        _LineChartStyleBase,
+        AxisConditionalPredicate,
+        name="LineChartStyleConditional",
     )
 
 

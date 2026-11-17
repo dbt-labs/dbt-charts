@@ -354,13 +354,14 @@ class FileSourceMaterializer:
                 described = scratch.execute(f"DESCRIBE {shard.name}").fetchall()
                 columns = [row[0] for row in described]
                 types = [row[1] for row in described]
-                counts = scratch.execute(
+                counts = _first_row(
+                    scratch,
                     "SELECT count(*), "
                     + ", ".join(
                         f"count({quote_identifier(column)})" for column in columns
                     )
-                    + f" FROM {shard.name}"
-                ).fetchone()
+                    + f" FROM {shard.name}",
+                )
                 assert counts is not None
                 if counts[0] == 0:
                     continue
@@ -410,7 +411,7 @@ class FileSourceMaterializer:
                 ingest(
                     conn, quote_identifier(physical), RelationStream(scratch.sql(union))
                 )
-            except duckdb.Error as exc:
+            except (duckdb.ConversionException, duckdb.NotImplementedException) as exc:
                 raise DbtChartsError.from_code(
                     ERR_FILE_SOURCE_UNSUPPORTED_TYPE,
                     table_name=load.table_name,
@@ -450,7 +451,7 @@ class FileSourceMaterializer:
             conn.execute(
                 f"CREATE OR REPLACE TABLE {quote_identifier(physical)} AS SELECT * FROM {staging}"
             )
-        except duckdb.Error as exc:
+        except (duckdb.ConversionException, duckdb.NotImplementedException) as exc:
             raise DbtChartsError.from_code(
                 ERR_FILE_SOURCE_UNSUPPORTED_TYPE,
                 table_name=table_name,
@@ -517,11 +518,12 @@ class TableLoad:
         DuckDB reads such a column as DOUBLE, and at some precisions as wrong
         values, so it is never read at all.
         """
-        wide = scratch.execute(
+        wide = _first_row(
+            scratch,
             "SELECT name, precision, scale FROM parquet_schema($1) "
             "WHERE precision > 38 LIMIT 1",
             [path],
-        ).fetchone()
+        )
         if wide is not None:
             raise DbtChartsError.from_code(
                 ERR_FILE_SOURCE_DECIMAL_TOO_WIDE,
@@ -573,14 +575,29 @@ def _as_utf8(file_bytes: bytes, encoding: str) -> bytes:
     return file_bytes.decode(encoding).encode("utf-8")
 
 
+def _first_row(
+    scratch: duckdb.DuckDBPyConnection,
+    sql: str,
+    params: list[Any] | None = None,  # type-state: explicit_any — bound SQL values
+) -> tuple[Any, ...] | None:  # type-state: explicit_any — DB row cells
+    """The first row of *sql*, or None, with the result fully drained.
+
+    ``fetchone`` leaves the result open, and DuckDB 2 refuses to share the
+    connection's relations with another connection until it is closed.
+    """
+    rows = scratch.execute(sql, params).fetchall()
+    return rows[0] if rows else None
+
+
 def _parquet_bytes(scratch: duckdb.DuckDBPyConnection, path: str) -> int:
     """A Parquet file's uncompressed size from its footer: the quantity
     ``len()`` gives for CSV and JSON, so one byte cap means one thing."""
-    row = scratch.execute(
+    row = _first_row(
+        scratch,
         "SELECT coalesce(sum(row_group_bytes), 0) FROM "
         "(SELECT DISTINCT row_group_id, row_group_bytes FROM parquet_metadata($1))",
         [path],
-    ).fetchone()
+    )
     assert row is not None
     return int(row[0])
 
@@ -588,10 +605,11 @@ def _parquet_bytes(scratch: duckdb.DuckDBPyConnection, path: str) -> int:
 def _csv_header(
     scratch: duckdb.DuckDBPyConnection, path: str, delimiter: str
 ) -> list[str]:
-    row = scratch.execute(
+    row = _first_row(
+        scratch,
         "SELECT * FROM read_csv($1, delim=$2, header=false, all_varchar=true) LIMIT 1",
         [path, delimiter],
-    ).fetchone()
+    )
     return [] if row is None else [str(name) for name in row]
 
 
@@ -651,9 +669,10 @@ def _load_csv(
     ]
     if not text:
         return
-    counts = scratch.execute(
-        f"SELECT {', '.join(f'count({quote_identifier(c)})' for c in text)} FROM {table}"
-    ).fetchone()
+    counts = _first_row(
+        scratch,
+        f"SELECT {', '.join(f'count({quote_identifier(c)})' for c in text)} FROM {table}",
+    )
     assert counts is not None
     text = [column for column, count in zip(text, counts, strict=True) if count]
     if not text:
@@ -740,10 +759,11 @@ def _refuse_lossy_nanoseconds(
         for column, typed in shard.types.items():
             if typed != "TIMESTAMP_NS" or merged[column] != "TIMESTAMP":
                 continue
-            row = scratch.execute(
+            row = _first_row(
+                scratch,
                 f"SELECT count(*) FROM {shard.name} "
-                f"WHERE epoch_ns({quote_identifier(column)}) % 1000 <> 0"
-            ).fetchone()
+                f"WHERE epoch_ns({quote_identifier(column)}) % 1000 <> 0",
+            )
             if row is not None and row[0]:
                 raise load.mismatch(
                     shard.relpath,

@@ -25,12 +25,14 @@
 //! (the bound model, spec § 5.2: `Chart.family`, `Family`, `Cartesian`, `Plane`, `Kpi`, `Callout`, its domains and `Key`, the
 //! decoded-cell value; only the engine calls it); `multiples` (the small-multiples partition and
 //! `regroup`); `layers` (a layer's row scope and color grouping); `legend` (`legend.values`
-//! resolution and the symbol-limit fold); `callout`, `pie`, `table`, `kpi`, `variables` and
-//! `failed` (each chart family's or card's data and text); `time_locale`, `time_zone` and
+//! resolution and the symbol-limit fold); `callout`, `pie`, `geoshape`, `table`, `kpi`, `variables` and
+//! `failed` (each chart family's or card's data and text); `geo_source` (a geo source's decode and
+//! cache, and the host's `geo_inputs`); `time_locale`, `time_zone` and
 //! `label_template`. `data/` holds the en-US number-locale JSON; the de-DE locale is a
 //! test-support builder in `formats::locale`.
 //!
-//! `feature = "test-support"` exposes the scope guards and locale builders engine tests use.
+//! `feature = "test-support"` exposes the scope guards and locale builders engine tests use, and
+//! `fixtures::run_result`, the one constructor of a test's `RunResult`.
 //! Tests replay recorded production answers (`tests/it/*_production.json`) and Python's
 //! recorded style cascade (`tests/oracle/walks.rs`, from `chart_svg_dev/_bind_walks.py`;
 //! `tests/oracle/walks.json` from `tests/test_bind_walks_fixture.py`).
@@ -41,14 +43,20 @@ pub mod category_colors;
 pub mod channels;
 pub mod checks;
 pub mod conditional;
+pub mod color_scale;
 pub mod column_kind;
+pub mod column_refs;
 pub mod decode;
 pub mod derived;
 pub mod display_text;
 pub mod failed;
 pub mod families;
+#[cfg(feature = "test-support")]
+pub mod fixtures;
 pub mod font_stack;
 pub mod formats;
+pub mod geo_source;
+pub mod geoshape;
 pub mod kpi;
 pub mod label_template;
 pub mod layers;
@@ -70,6 +78,7 @@ pub mod temporal;
 pub mod time_axis;
 pub mod time_locale;
 pub mod time_zone;
+pub mod tooltip;
 pub mod variables;
 pub mod walk;
 pub mod wide;
@@ -81,7 +90,7 @@ pub use board::bind;
 
 use board::ChartStyles;
 use board_model::board::{items, Board, BoardBody, LayoutItem};
-use board_model::chart::{Chart, ChartBase, ChartQuery, ColorColumn};
+use board_model::chart::{Chart, ChartQuery, ColorColumn};
 use board_model::ids::{ChartId, ItemId, QueryId};
 use board_model::primitives::PaletteChoice;
 use board_model::style::style::Style;
@@ -286,25 +295,6 @@ pub(crate) fn placed_charts(board: &Board) -> Result<Vec<(&ChartId, ItemId, &Cha
     Ok(out)
 }
 
-fn base(chart: &Chart) -> Option<&ChartBase> {
-    Some(match chart {
-        Chart::Bar(c) | Chart::Histogram(c) | Chart::Funnel(c) => &c.cartesian.shared.base,
-        Chart::Line(c) => &c.cartesian.shared.base,
-        Chart::Area(c) => &c.cartesian.shared.base,
-        Chart::Scatter(c) => &c.cartesian.shared.base,
-        Chart::Heatmap(c) => &c.cartesian.shared.base,
-        Chart::Pie(c) | Chart::Donut(c) => &c.radial.shared.base,
-        Chart::SparkBar(c) => &c.shared.base,
-        Chart::Table(c) => &c.shared.base,
-        Chart::Kpi(c) => &c.base,
-        Chart::Geoshape(c) | Chart::Map(c) => &c.geo.shared.base,
-        Chart::PointMap(c) | Chart::BubbleMap(c) => &c.geo.shared.base,
-        Chart::Custom(c) => &c.shared.base,
-        // A callout reads no query.
-        Chart::Callout(_) => return None,
-    })
-}
-
 /// The name of the query `chart` reads, as `bind_board` looks its dataset up; `None` for a chart
 /// that reads none.
 pub fn query_name(chart: &Chart) -> Result<Option<&str>, Diagnostic> {
@@ -315,7 +305,7 @@ pub fn query_name(chart: &Chart) -> Result<Option<&str>, Diagnostic> {
 /// Normalize hoists every query; one still in its authored form is an internal error: it
 /// breaks normalize's contract.
 pub fn query_id(chart: &Chart) -> Result<Option<&QueryId>, Diagnostic> {
-    match base(chart).and_then(|base| base.query.as_ref()) {
+    match chart.base().and_then(|base| base.query.as_ref()) {
         None => Ok(None),
         Some(ChartQuery::Hoisted(id)) => Ok(Some(id)),
         Some(_) => Err(diag::err_internal(

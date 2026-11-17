@@ -9,6 +9,7 @@ markdown boards after their translation to YAML.
 from __future__ import annotations
 
 import difflib
+import re
 from collections.abc import Iterator, Mapping
 
 from pydantic import BaseModel
@@ -31,9 +32,16 @@ from dbt_charts.core.compile.normalize.query_references import (
     defined_query_names,
     referenced_query_names,
 )
+from dbt_charts.core.compile.parse.yaml_error_formatter import suggest_similar_value
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
     AUTO_AXIS_FORMAT,
     decided_axis_format,
+)
+from dbt_charts.core.compile.template.jinja import extract_text_undeclared_names
+from dbt_charts.core.compile.template.markdown_fence import (
+    MASKED_FENCE_RE,
+    mask_fenced_code,
+    unescape_jinja,
 )
 from dbt_charts.core.compile.validate.formats import format_names_used
 from dbt_charts.core.diagnostics import (
@@ -44,6 +52,7 @@ from dbt_charts.core.diagnostics import (
     WARN_FORMAT_UNUSED_NAME,
     WARN_RETIRED_IGNORE_CODE,
     WARN_SINGLE_CHART_REDUNDANT_TITLE,
+    WARN_TEXT_UNDECLARED_NAME,
     WARN_UNREFERENCED_CHART,
     WARN_UNREFERENCED_QUERY,
     Diagnostic,
@@ -72,6 +81,7 @@ def detect_board_warnings(
     _detect_adjacent_text_rows(board, warnings)
     _detect_orphan_charts(board, warnings)
     _detect_unreferenced_queries(board, warnings)
+    _detect_undeclared_text_names(board, warnings)
     _detect_retired_ignore_codes(board, warnings)
     _detect_axis_align_discarded(board, chart_styles, warnings)
     _detect_unused_format_names(board, own_format_names, chart_styles, warnings)
@@ -228,7 +238,9 @@ def _opening_heading(body: str | None) -> tuple[int, str, str] | None:
     first_block = next(iter(blocks), None)
     if not isinstance(first_block, Heading):
         return None
-    text = "".join(span.text for span in first_block.spans)
+    # An escaped opener (how a markdown document's Jinja is kept literal) renders
+    # as the bare opener; name the heading the way it renders.
+    text = unescape_jinja("".join(span.text for span in first_block.spans))
     return first_block.level, text, heading_line
 
 
@@ -494,6 +506,62 @@ def _detect_unreferenced_queries(board: Board, warnings: list[Diagnostic]) -> No
                 fix=WARN_UNREFERENCED_QUERY.fix_template,
             )
         )
+
+
+def _detect_undeclared_text_names(board: Board, warnings: list[Diagnostic]) -> None:
+    """Warn for each name a board's `text:` or `title:` reads that nothing declares.
+
+    Board text renders an unknown name as nothing so that it can render before
+    a variable has a value; "unknown" therefore means declared by no variable
+    anywhere in the tree, never "unset". An imported subtree has no path in
+    this file and is checked when its own file compiles.
+    """
+    if board.variable_registry is None:
+        raise ValueError("board text names are checked on the root board")
+    declared = set(board.variable_registry)
+    queries = defined_query_names(board)
+    candidates = [*sorted(declared), *(f"queries.{name}" for name in sorted(queries))]
+
+    def check(section: Board, prefix: str) -> None:
+        for key, text in (("title", section.title), ("text", section.text)):
+            for name in sorted(extract_text_undeclared_names(text) - declared):
+                suggestion = (
+                    f"queries.{name}"
+                    if name in queries
+                    else suggest_similar_value(name, candidates)
+                )
+                line = _line_reading(text, name)
+                warnings.append(
+                    Diagnostic.from_code(
+                        WARN_TEXT_UNDECLARED_NAME,
+                        path=f"{prefix}{key}",
+                        fields={"source_needle": line} if line else None,
+                        message=WARN_TEXT_UNDECLARED_NAME.message_template.format(
+                            field=key, name=name
+                        ),
+                        hint=f"Did you mean {suggestion!r}?" if suggestion else None,
+                        fix=WARN_TEXT_UNDECLARED_NAME.fix_template,
+                    )
+                )
+        for item in section.layout.items:
+            if item.board is not None and item.source_path:
+                check(item.board, f"{item.source_path}.")
+
+    check(board, "")
+
+
+def _line_reading(text: str, name: str) -> str | None:
+    """The first line outside fenced code with a Jinja tag naming *name*.
+
+    It narrows the mark to that line; a tag spanning lines keeps the block's.
+    """
+    tag = re.compile(r"\{[{%][^}]*\b" + re.escape(name) + r"\b")
+    masked, _ = mask_fenced_code(text)
+    for line in masked.splitlines():
+        line = MASKED_FENCE_RE.sub("", line)
+        if tag.search(line):
+            return line
+    return None
 
 
 def _detect_retired_ignore_codes(board: Board, warnings: list[Diagnostic]) -> None:

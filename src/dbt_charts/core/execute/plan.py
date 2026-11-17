@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from pydantic import ValidationError
 
+from dbt_charts import _engine
 from dbt_charts.cli.filesystem_project import (
     FilesystemProject,  # tach-ignore(core->cli: host-type guard; needs a non-cli signal on Project — deferred)
 )
@@ -89,6 +90,7 @@ from dbt_charts.core.execute.plan_reader import (
     resolve_planned_source,
 )
 from dbt_charts.core.execute.plan_sources import effective_source
+from dbt_charts.core.execute.planned import Planned
 from dbt_charts.core.execute.query_plan import JsonValue, PlannedQuery, QueryPlan
 from dbt_charts.core.execute.query_result import RowFetchLimit, handle_adapter_error
 from dbt_charts.core.execute.sql_literals import (
@@ -147,10 +149,12 @@ class ExecContext:
 
     The plan is what queries read: its entries, variable values, time zone and
     sources. ``board`` is the compiled board for column formats, link settings and the board's
-    identity."""
+    identity; ``compiled`` is the engine's compile the plan was made from, which the engine
+    draws from."""
 
     board: Board
     plan: QueryPlan
+    compiled: _engine.CompiledBoard
     env: "ExecEnv"
     result_cache: "QueryResultCache | None"
     # Default *persistent-store* participation. False is no-store: nothing is
@@ -181,7 +185,7 @@ def utc_now() -> datetime:
 
 def make_context(
     board: Board,
-    plan: QueryPlan,
+    planned: Planned,
     env: "ExecEnv",
     use_cache: bool = True,
     result_cache: "QueryResultCache | None" = None,
@@ -193,7 +197,8 @@ def make_context(
 
     Args:
         board: Compiled board.
-        plan: The plan of the board's queries under the render's variables.
+        planned: The engine's compile of the board and the plan of its queries under
+            the render's variables.
         env: Build at the entry point with
             ``build_exec_env(FilesystemProject(root), ...)``; nothing
             invents one from cwd.
@@ -212,7 +217,8 @@ def make_context(
     """
     return ExecContext(
         board=board,
-        plan=plan,
+        plan=planned.plan,
+        compiled=planned.compiled,
         env=env,
         result_cache=result_cache,
         use_cache=use_cache,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from importlib_resources import files
 from pydantic import BaseModel, ConfigDict
@@ -19,6 +19,8 @@ from dbt_charts.core.project_roots import infer_dialect_from_dbt
 
 if TYPE_CHECKING:
     from importlib_resources.abc import Traversable
+
+INIT_SKILL_TARGETS: Final = ("agents", "claude")
 
 GITIGNORE_ENTRIES = ("renders/", ".venv/", "__pycache__/", "*.duckdb")
 

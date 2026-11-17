@@ -15,9 +15,9 @@
 //! A display text or expression that does not parse reads no variable: rendering reports the
 //! syntax error, as Python's extraction leaves it to.
 
+use crate::index::BoardIndex;
 use crate::sql::{query_id, QueryFacts};
 use crate::tree::nested;
-use crate::index::BoardIndex;
 use board_model::ids::{ItemId, QueryId};
 use board_model::variable::{Enabled, OptionsQuery, VariableAuthored, VariablePatch};
 use model_core::Tri;
@@ -234,8 +234,13 @@ pub fn dependencies(
                 true => seed,
                 false => {
                     // The root's own variables, for a chart of the root (or an imported one).
-                    let board = index.chart_boards.get(key).filter(|b| **b != ItemId::root());
-                    closure_within(seed, &direct, |name| index.variable_boards.get(name) == board)
+                    let board = index
+                        .chart_boards
+                        .get(key)
+                        .filter(|b| **b != ItemId::root());
+                    closure_within(seed, &direct, |name| {
+                        index.variable_boards.get(name) == board
+                    })
                 }
             };
             Some((key.clone(), widened))

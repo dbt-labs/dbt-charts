@@ -476,6 +476,7 @@ def _conditional_class(
                 marker.only if marker is not None else (),
                 keep_whole,
                 FontSlotBase if issubclass(nested, FontSlotBase) else _PatchBase,
+                marker.name if marker is not None else None,
             )
             if kept is None:
                 continue

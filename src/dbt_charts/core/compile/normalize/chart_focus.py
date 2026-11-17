@@ -36,12 +36,15 @@ Use cases:
 - Embed a single chart in another page
 """
 
+from collections.abc import Collection
+
 from dbt_charts.core.compile.models.board.authored import LayoutType
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
     Layout,
     LayoutItem,
 )
+from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.normalize.chart_styles import attach_chart_styles
 from dbt_charts.core.compile.normalize.query_references import (
     referenced_query_names,
@@ -143,6 +146,38 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
     return focused_board
 
 
+def _kept(
+    variables: dict[str, Variable], names: Collection[str]
+) -> dict[str, Variable]:
+    """*variables* narrowed to *names*. The plan holds the queries of only the
+    variables a focused board's charts read, so any other left in would ask for a
+    query nobody planned."""
+    return {name: var for name, var in variables.items() if name in names}
+
+
+def _kept_registry(board: Board, names: Collection[str]) -> dict[str, Variable] | None:
+    """The root's whole-tree registry narrowed like its variables; None on a board
+    that has none."""
+    registry = board.variable_registry
+    return None if registry is None else _kept(registry, names)
+
+
+def _reading(board: Board, names: Collection[str]) -> Board:
+    """*board* and the boards nested in it, each keeping only the variables in *names*."""
+    items = [
+        item.model_copy(update={"board": _reading(item.board, names)})
+        if item.board is not None
+        else item
+        for item in board.layout.items
+    ]
+    return board.model_copy(
+        update={
+            "variables": _kept(board.variables, names),
+            "layout": board.layout.model_copy(update={"items": items}),
+        }
+    )
+
+
 def focus_on_item(board: Board, index: int) -> Board:
     """*board* narrowed to its top-level layout item at *index*, drawn alone.
 
@@ -158,11 +193,12 @@ def focus_on_item(board: Board, index: int) -> Board:
         assert item.board is not None  # a layout item holds a chart or a board
         charts = item.board.placed_charts()
     needed = {name for chart in charts for name in chart.variable_dependencies}
+    if item.board is not None:
+        item = item.model_copy(update={"board": _reading(item.board, needed)})
     focused_board = board.model_copy(
         update={
-            "variables": {
-                name: var for name, var in board.variables.items() if name in needed
-            },
+            "variables": _kept(board.variables, needed),
+            "variable_registry": _kept_registry(board, needed),
             "layout": Layout(type=LayoutType.ROWS, items=[item]),
             "title": "",
             "authored_width": None,

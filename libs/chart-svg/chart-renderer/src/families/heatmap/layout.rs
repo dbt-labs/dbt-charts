@@ -492,7 +492,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         b.union(&Bounds::new(-reach, -reach, pw + reach, ph + reach));
         let mut x_axis = Bounds::new(0.0, 0.0, pw, ph);
         let xs = BandScale::new(x_domain.clone(), 0.0, pw, 0.0, 0.0);
-        let row_y = x_edge.at(ph, x_axis_offset + x_tick_len + x_label_pad);
+        let row_y = x_edge.at(ph, x_axis_offset + x_label_pad);
         if let Some(axis) = &x_dates {
             axis.union_ink(&mut x_axis, pw, ph);
         }
@@ -540,7 +540,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             register_axis("x", axis.item_axis(ax_x)?);
         } else {
             let (align, baseline) = (anchor(x_align)?, anchor(x_baseline)?);
-            let spec = AxisSpec { orient: Orient::Bottom, offset: x_tick_len + x_label_pad, shift: -0.5, align: Some(align), baseline: Some(baseline), angle: x_angle, flush: None, style: ax_x.labels.item_style()? };
+            let spec = AxisSpec { orient: Orient::Bottom, offset: x_label_pad, shift: -0.5, align: Some(align), baseline: Some(baseline), angle: x_angle, flush: None, style: ax_x.labels.item_style()? };
             register_axis("x", spec);
         }
         if y_dates.is_none() {
@@ -570,7 +570,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     // (`floor(center) + 0.5` -- probed over 64 band centers, widths 600-615).
     let x_sign = x_edge.sign();
     let x_axis_top = plot_top + x_edge.at(plot_h, x_axis_offset) + AXIS_TRANSLATE;
-    let x_label_row = x_axis_top + x_sign * (x_tick_len + x_label_pad);
+    let x_label_row = x_axis_top + x_sign * x_label_pad;
     let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let x_label_weight = ax_x.labels.font.weight_str();
     let x_title_y = x_label_row
@@ -598,7 +598,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                 size: x_label_fs,
                 weight: &x_label_weight,
                 style: ax_x.labels.font.style.as_deref(),
-                fill: x_label_color,
+                fill: bound.x_label_fills.get(&x_domain[i]).map_or(x_label_color, String::as_str),
             };
             items.push(if x_angle == 0.0 {
                 flat_label(Role::Axis, (label_x, x_label_row + dy), &face, false, band_text)

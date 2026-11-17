@@ -192,7 +192,7 @@ def _inner(model: Any, field: str) -> Any:
 
 def test_the_line_rule_type_keeps_point_text_font_and_the_line_stroke() -> None:
     body = build_conditional_model(LineChartStyle, name="LineChartStyle")
-    marks = body.model_fields["marks"].annotation
+    marks = _inner(body, "marks")
     assert set(marks.model_fields) == {"line", "point", "text"}
     point = _inner(marks, "point")
     assert set(point.model_fields) == {
@@ -213,7 +213,7 @@ def test_the_line_rule_type_keeps_point_text_font_and_the_line_stroke() -> None:
 
 def test_the_area_rule_type_keeps_point_the_fill_and_the_edge_stroke() -> None:
     body = build_conditional_model(AreaChartStyle, name="AreaChartStyle")
-    marks = body.model_fields["marks"].annotation
+    marks = _inner(body, "marks")
     assert set(marks.model_fields) == {"area", "line", "point"}
     assert set(_inner(marks, "area").model_fields) == {"color", "opacity"}
     line = _inner(marks, "line")

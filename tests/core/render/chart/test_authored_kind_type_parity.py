@@ -26,7 +26,6 @@ import pytest
 import yaml
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-from dbt_charts.core.compile.models.chart.normalized.callout import CalloutChart
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.query.normalized import ValuesQuery
 from dbt_charts.core.compile.normalize.charts import normalize_chart
@@ -36,6 +35,8 @@ from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 from dbt_charts.core.render.converters.chart import render_chart_artifact
 
 from ...._results import rows_result
+from ..._kpi_board import kpi_svg
+from ..._one_chart_board import chart_svg
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures" / "parity"
 # Every fixture-backed family renders at the same slot the VL parity fixtures
@@ -123,15 +124,31 @@ def _render_svg(chart_type: str) -> str:
     """
     board_rs, board_ctx = _board_style()
     if chart_type == "callout":
-        # No fixture: CalloutChart is a minimal static model with no query.
-        compiled: Any = CalloutChart(
-            id="chart1", type="callout", message="hi", title="Chart Title"
-        )
-        data: list[dict[str, Any]] = []
+        # No fixture: CalloutChart is a minimal static model with no query. A
+        # callout is drawn only inside a board render.
+        return chart_svg({"type": "callout", "message": "hi", "title": "Chart Title"})
     else:
         chart_id, chart_def, query_registry, data = _load_fixture(chart_type)
+        if chart_type == "spark_bar":
+            # A spark_bar is drawn only inside a board render.
+            raw = yaml.safe_load(
+                (_FIXTURE_DIR / "spark_bar.yml").read_text(encoding="utf-8")
+            )
+            queries = {
+                name: {"type": "values", **query}
+                for name, query in raw["queries"].items()
+            }
+            spark = {
+                **chart_def,
+                "title": "Chart Title",
+                "subtitle": "Chart Subtitle",
+            }
+            return chart_svg(spark, queries)
         if chart_type == "kpi":
+            # A KPI is drawn only inside a board render.
             chart_def["label"] = "Chart Title"
+            del chart_def["query"]
+            return kpi_svg(chart_def, data)
         else:
             chart_def["title"] = "Chart Title"
             if _supports_subtitle(chart_type):

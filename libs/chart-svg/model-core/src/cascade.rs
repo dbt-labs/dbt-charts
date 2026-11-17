@@ -20,6 +20,7 @@
 
 use crate::{Build, Empty, Leaf, Lift, Refused, SetLeaves, Slot, Tri, Unset};
 use std::fmt;
+use std::sync::Arc;
 
 /// Lists of node or link ids per node, flat: the items of node `n` are `items[start[n]..start[n + 1]]`.
 pub struct Csr {
@@ -110,16 +111,18 @@ impl fmt::Display for CascadeError {
 
 impl std::error::Error for CascadeError {}
 
-/// A resolved style with the patches it came from. Boxed: a style patch is tens of kilobytes.
+/// A resolved style with the patches it came from. Shared: a style patch is tens of kilobytes, and
+/// a compile holds a scope's style for every chart in it, so a clone is four reference counts, and
+/// `apply` copies the four patches it changes.
 pub struct Resolved<T: Leaf + 'static> {
     tables: &'static Tables<T>,
     /// What the cascade's layers set; inherit's record of which leaves were set anywhere.
-    pub folded: Box<T::Patch>,
+    pub folded: Arc<T::Patch>,
     /// The layers as merged, named fonts unexpanded: what a font change has to start again from.
-    pub raw: Box<T::Patch>,
+    pub raw: Arc<T::Patch>,
     /// `folded` with every inherited leaf filled.
-    pub inherited: Box<T::Patch>,
-    pub total: Box<T>,
+    pub inherited: Arc<T::Patch>,
+    pub total: Arc<T>,
 }
 
 /// A set of node ids.
@@ -274,20 +277,20 @@ where
         folded: T::Patch,
         with: &T::Patch,
     ) -> Result<Self, CascadeError> {
-        let raw = Box::new(folded.clone());
-        let mut folded = Box::new(folded);
+        let raw = Arc::new(folded.clone());
+        let mut folded = folded;
         (tables.resolve_colors)(&mut folded, with).map_err(CascadeError::Refused)?;
         (tables.expand)(&mut folded).map_err(CascadeError::Refused)?;
         let mut inherited = folded.clone();
         (tables.inherit)(&mut inherited).map_err(CascadeError::Refused)?;
         (tables.fill)(&mut inherited, &mut |_| {}).map_err(CascadeError::Refused)?;
-        let total = T::build((*inherited).clone(), "").map_err(CascadeError::Unset)?;
+        let total = T::build(inherited.clone(), &crate::At::ROOT).map_err(CascadeError::Unset)?;
         Ok(Self {
             tables,
-            folded,
+            folded: Arc::new(folded),
             raw,
-            inherited,
-            total: Box::new(total),
+            inherited: Arc::new(inherited),
+            total: Arc::new(total),
         })
     }
 
@@ -296,8 +299,8 @@ where
     /// below it. Color tokens only: named fonts (`extends`) are not expanded here, as `apply`
     /// expands them on its way to the total.
     pub fn resolved_layer(&self, upper: &T::Patch) -> Result<T::Patch, CascadeError> {
-        let mut raw = self.raw.clone();
-        (*raw).merge(upper.clone());
+        let mut raw = (*self.raw).clone();
+        raw.merge(upper.clone());
         self.resolve_tokens(&raw, upper)
     }
 
@@ -327,17 +330,17 @@ where
                 });
         });
         if renames {
-            let mut raw = self.raw.clone();
-            (*raw).merge(upper.clone());
-            return Self::base(t, *raw);
+            let mut raw = (*self.raw).clone();
+            raw.merge(upper.clone());
+            return Self::base(t, raw);
         }
-        let mut raw = self.raw.clone();
-        (*raw).merge(upper.clone());
+        let mut raw = (*self.raw).clone();
+        raw.merge(upper.clone());
         let upper = self.resolve_tokens(&raw, upper)?;
-        let mut folded = self.folded.clone();
-        (*folded).merge(upper.clone());
-        let mut inherited = self.inherited.clone();
-        let mut total = self.total.clone();
+        let mut folded = (*self.folded).clone();
+        folded.merge(upper.clone());
+        let mut inherited = (*self.inherited).clone();
+        let mut total = (*self.total).clone();
 
         let n = t.paths.len();
         let mut pass = Pass::<T> {
@@ -398,10 +401,10 @@ where
         }
         Ok(Self {
             tables: t,
-            folded,
-            raw,
-            inherited,
-            total,
+            folded: Arc::new(folded),
+            raw: Arc::new(raw),
+            inherited: Arc::new(inherited),
+            total: Arc::new(total),
         })
     }
 }
@@ -416,7 +419,7 @@ pub fn rebuild_nullable<T: Build>(
     T::Patch: Lift,
     <T::Patch as Lift>::Value: Clone,
 {
-    if let Some(v) = crate::build_nullable::<T>(slot.clone(), at, unset) {
+    if let Some(v) = crate::build_nullable::<T>(slot.clone(), &crate::At::of(at), unset) {
         *out = v;
     }
 }
@@ -459,7 +462,7 @@ pub fn rebuild_omitted<T: Build>(
 {
     if slot.is_empty() {
         *out = None;
-    } else if let Some(v) = crate::build_field::<T>(slot.clone(), at, unset) {
+    } else if let Some(v) = crate::build_field::<T>(slot.clone(), &crate::At::of(at), unset) {
         *out = Some(v);
     }
 }
@@ -475,7 +478,7 @@ pub fn rebuild_defaulted<T: Build + Default>(
 {
     if slot.is_empty() {
         *out = T::default();
-    } else if let Some(v) = crate::build_field::<T>(slot.clone(), at, unset) {
+    } else if let Some(v) = crate::build_field::<T>(slot.clone(), &crate::At::of(at), unset) {
         *out = v;
     }
 }
@@ -485,7 +488,7 @@ pub fn rebuild_field<T: Build>(slot: &T::Patch, at: &str, out: &mut T, unset: &m
 where
     T::Patch: Clone,
 {
-    if let Some(v) = crate::build_field::<T>(slot.clone(), at, unset) {
+    if let Some(v) = crate::build_field::<T>(slot.clone(), &crate::At::of(at), unset) {
         *out = v;
     }
 }

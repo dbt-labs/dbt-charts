@@ -8,6 +8,7 @@ Resolution order:
 5. Auto-increment fallback if chosen port is occupied
 """
 
+import errno
 import hashlib
 import os
 import socket
@@ -199,3 +200,26 @@ def resolve_port(
     return find_available_port(
         preferred_port(project_dir=project_dir, default_port=default_port), host
     )
+
+
+def resolve_listener(
+    *,
+    project_dir: Path,
+    explicit_port: int | None = None,
+    host: str = "localhost",
+) -> socket.socket:
+    """Listen on the port ``resolve_port`` would pick, before the server starts.
+
+    The server takes this socket rather than binding its own after startup, so
+    a request sent while startup still loads the project waits in the backlog
+    instead of being refused. An explicit port that is taken raises ``OSError``.
+    """
+    if explicit_port is None:
+        return bind_available_port(preferred_port(project_dir=project_dir), host)
+    _validate_port(explicit_port, "--port")
+    listener = _listen(explicit_port, host)
+    if listener is None:
+        raise OSError(
+            errno.EADDRINUSE, f"Port {explicit_port} on {host} is already in use"
+        )
+    return listener

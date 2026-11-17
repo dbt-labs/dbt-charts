@@ -44,6 +44,33 @@ impl Raised {
     }
 }
 
+/// The results each `queries.<name>` in `text` reads, by that name, as production's `text_queries`
+/// resolves them: a chart another file declares reads that file's queries (`ChartStyles.text_queries`),
+/// any other chart and a board's text (`chart` None) the root's map, which holds a nested board's
+/// queries under their written names. A computed name, or a name the map does not hold, is refused by
+/// name.
+pub fn text_datasets(text: &str, chart: Option<&board_model::ids::ChartId>, styles: &crate::board::ChartStyles, run: &crate::run::RunResult) -> Result<IndexMap<String, Dataset>, Diagnostic> {
+    let mut queries = IndexMap::new();
+    // A text that does not parse reads nothing: `render_text` refuses it.
+    let Ok(info) = template::parse(text, Kind::Text) else { return Ok(queries) };
+    if info.queries_nonliteral {
+        return Err(Diagnostic::refused(refuse!("display text that reads a query by a computed name is not supported")));
+    }
+    for name in &info.queries {
+        let query = match chart.and_then(|id| styles.text_queries.get(id)) {
+            Some(read) => read.get(name),
+            None => styles.root_queries.get(name),
+        };
+        let query = query.ok_or_else(|| Diagnostic::refused(refuse!("display text that reads a query the board does not define is not supported")))?;
+        let needs = || match chart {
+            Some(id) => diag::err_engine_needs_data(query.to_string()).with_sink_param("chart_id", serde_json::json!(id.as_str())),
+            None => diag::err_engine_needs_data(query.to_string()),
+        };
+        queries.insert(name.clone(), run.datasets.get(query).ok_or_else(needs)?.clone());
+    }
+    Ok(queries)
+}
+
 /// Renders `text` against the board's `variables` and the results of the queries it
 /// references, keyed by the name the text reads them under.
 pub fn render_text(
@@ -743,7 +770,7 @@ fn is_format_spec(spec: &str, formats: Formats<'_>) -> bool {
 }
 
 /// `is_temporal_value` over text: an ISO date or timestamp on a real calendar day.
-fn is_temporal_text(text: &str) -> bool {
+pub(crate) fn is_temporal_text(text: &str) -> bool {
     text.len() >= 10 && matches!(table_dates::parse_temporal(text.trim(), &ColumnType::String), Ok(Some(_)))
 }
 
@@ -783,7 +810,7 @@ fn cell_text(cell: &CellText, format: &AuthoredFormat, formats: Formats<'_>) -> 
         _ => None,
     };
     if let Some((wire, declared)) = temporal {
-        return temporal_text(wire, &declared, format, formats);
+        return temporal_text(wire, &declared, Tiers { own: Some(format), ..Tiers::default() }, formats);
     }
     let resolved = resolve_format(format, formats)?;
     let number = match cell {
@@ -810,8 +837,9 @@ fn cell_text(cell: &CellText, format: &AuthoredFormat, formats: Formats<'_>) -> 
     format_value(number, format, formats, &active_number_locale())
 }
 
-fn temporal_text(wire: &str, declared: &ColumnType, format: &AuthoredFormat, formats: Formats<'_>) -> Result<String, Diagnostic> {
-    let dated = column_format(FormatKind::Time, Tiers { own: Some(format), ..Tiers::default() }, formats, None, None, &[])?;
+/// A temporal cell as `format_table_cell_value` prints it: through the time format `tiers` name, `date_short` by default.
+pub(crate) fn temporal_text(wire: &str, declared: &ColumnType, tiers: Tiers<'_>, formats: Formats<'_>) -> Result<String, Diagnostic> {
+    let dated = column_format(FormatKind::Time, tiers, formats, None, None, &[])?;
     if !is_time_format(&dated.spec) {
         return Err(diag::err_table_format_kind_mismatch(dated.spec, table_dates::STRFTIME_REMEDY));
     }

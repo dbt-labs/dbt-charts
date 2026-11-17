@@ -1,8 +1,9 @@
 """Board-resolved JSON Schema renderer — the resolved-board artifact schema.
 
 Emits the JSON Schema for the publishable artifact envelope
-(``board_artifact.dump_resolved_board_artifact``): ``{$id, version, styles,
-board}``, where ``board`` is a ``ResolvedBoard`` (the frozen render contract
+(``board_artifact.dump_resolved_board_artifact`` plus the ``engine_compile`` that
+``board_replay.dump_board_artifact`` adds): ``{$id, version, styles, board,
+engine_compile}``, where ``board`` is a ``ResolvedBoard`` (the frozen render contract
 produced by ``build_resolved_board`` / ``build_resolved_board_static``) with
 every ``style`` occurrence replaced by a ``$style_ref`` pointer into
 ``styles``. Unlike the authored-side board schema (``json_schema.py``, built
@@ -27,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
 
 from dbt_charts.core.compile.board_artifact import SCHEMA_ID
+from dbt_charts.core.compile.engine import CompileRecord
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
 
 
@@ -53,11 +55,14 @@ def render_board_resolved_schema() -> JsonSchemaValue:
 
     Returns:
         A self-contained JSON Schema dict describing the envelope
-        ``{$id, version, styles, board}``: draft-2020-12 ``$schema``, a
+        ``{$id, version, styles, board, engine_compile}``: draft-2020-12 ``$schema``, a
         stable ``$id``, and a Pydantic-derived ``$defs`` body with
         ``ResolvedBoard.style`` rewritten to a ``StyleRef`` pointer.
     """
     defs = TypeAdapter(ResolvedBoard).json_schema(mode="serialization")["$defs"]
+    record = TypeAdapter(CompileRecord).json_schema(mode="serialization")
+    defs.update(record.pop("$defs", {}))
+    defs["CompileRecord"] = record
     defs["StyleRef"] = TypeAdapter(StyleRef).json_schema(mode="serialization")
     defs["ResolvedBoard"]["properties"]["style"] = {"$ref": "#/$defs/StyleRef"}
 
@@ -66,7 +71,7 @@ def render_board_resolved_schema() -> JsonSchemaValue:
         "$id": SCHEMA_ID,
         "type": "object",
         "additionalProperties": False,
-        "required": ["$id", "version", "styles", "board"],
+        "required": ["$id", "version", "styles", "board", "engine_compile"],
         "properties": {
             "$id": {
                 "type": "string",
@@ -87,6 +92,14 @@ def render_board_resolved_schema() -> JsonSchemaValue:
                 ),
             },
             "board": {"$ref": "#/$defs/ResolvedBoard"},
+            "engine_compile": {
+                "$ref": "#/$defs/CompileRecord",
+                "description": (
+                    "The engine compile the board came from: its arguments and "
+                    "the project files it read. Replay recompiles from it, so "
+                    "a replayed chart is drawn as a live render draws it."
+                ),
+            },
         },
         "$defs": defs,
     }

@@ -2,9 +2,9 @@
 //! holds, as Python's `_resolve_board_file_import` places it: the file is read anchored at the
 //! placing board's directory, its own refs anchor at its own directory, and what it declares
 //! (charts, queries, source, variables) is then an ordinary nested board's, so hoisting, ownership
-//! and tree-position ids apply to it unchanged. A board file that is a cycle, or is missing, is
-//! refused by Python's code. A nested board's `extends:` is inert, as in Python: it is not folded
-//! here.
+//! and tree-position ids apply to it unchanged. A board file that is a cycle, is missing, or
+//! declares charts or queries and is placed a second time, is refused by Python's code. A nested
+//! board's `extends:` is inert, as in Python: it is not folded here.
 //!
 //! A placement this pass does not read (a templated path, a markdown board, a file that does not
 //! parse or holds no content) is left a file name, and the layout facts refuse it by name.
@@ -126,6 +126,21 @@ fn read(
              source is not ported yet"
         )));
     }
+    if names(&body) {
+        // Python names the spot only for a placement written in the file being compiled.
+        let by = match chain.len() {
+            1 => format!("{placer} at {}", crate::board_warnings::authored(at)),
+            _ => placer.to_string(),
+        };
+        if let Some(first) = imports.placed.get(&path) {
+            return Err(HoistError::refused(diag::err_board_file_placed_twice(
+                path.as_str(),
+                first.as_str(),
+                by,
+            )));
+        }
+        imports.placed.insert(path.clone(), by);
+    }
     chain.push(path);
     let inlined = match &mut body.layout {
         Some(l) => inline(l, at, chain, external, imports),
@@ -142,14 +157,23 @@ fn read(
 /// Whether a board, or a board written inline in its layout, holds anything whose relative paths
 /// anchor at its own directory.
 fn declares(body: &BoardBodyAuthored) -> bool {
-    !body.charts.is_empty()
-        || !body.queries.is_empty()
-        || !matches!(body.source, Tri::Unset)
-        || body.layout.as_ref().is_some_and(layout_declares)
+    names(body) || !matches!(body.source, Tri::Unset) || inline_boards(body, declares)
 }
 
-fn layout_declares(layout: &LayoutAuthored) -> bool {
-    let nested = |item: &LayoutItemAuthored| matches!(item, LayoutItemAuthored::Board(n) if declares(&n.body));
+/// Whether a board, or a board written inline in its layout, declares a chart or a query: names
+/// the whole board shares.
+fn names(body: &BoardBodyAuthored) -> bool {
+    !body.charts.is_empty() || !body.queries.is_empty() || inline_boards(body, names)
+}
+
+/// Whether `holds` is true of a board written inline in the layout of `body`.
+fn inline_boards(body: &BoardBodyAuthored, holds: fn(&BoardBodyAuthored) -> bool) -> bool {
+    body.layout.as_ref().is_some_and(|l| layout_holds(l, holds))
+}
+
+fn layout_holds(layout: &LayoutAuthored, holds: fn(&BoardBodyAuthored) -> bool) -> bool {
+    let nested =
+        |item: &LayoutItemAuthored| matches!(item, LayoutItemAuthored::Board(n) if holds(&n.body));
     match layout {
         LayoutAuthored::Rows(items) | LayoutAuthored::Cols(items) => items.iter().any(nested),
         LayoutAuthored::Grid(g) => g
@@ -163,6 +187,6 @@ fn layout_declares(layout: &LayoutAuthored) -> bool {
             .iter()
             .flatten()
             .filter_map(|tab| tab.layout.as_ref())
-            .any(layout_declares),
+            .any(|l| layout_holds(l, holds)),
     }
 }

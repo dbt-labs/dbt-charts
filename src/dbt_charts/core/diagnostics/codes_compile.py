@@ -377,6 +377,18 @@ ERR_BOARD_IMPORT_CYCLE = REGISTRY.register(
     )
 )
 
+ERR_BOARD_FILE_PLACED_TWICE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BOARD-FILE-PLACED-TWICE",
+        domain="compile",
+        title="A board places the same file twice",
+        message_template="Board file {file!r} is placed twice: by {first} and by {second}. A file that declares charts or queries can be placed once in a board, because every file a board places shares one set of chart and query names. Keep one placement.",
+        doc="A rows item, or a `charts` fence, can place another board file or Markdown page by its path. Fired when a file that declares its own charts or queries is placed a second time in one board, from the same file or through two different files that both place it. The message names the file and both places.",
+        summary="A board places the same file twice.",
+        docs_topic="board",
+    )
+)
+
 ERR_JINJA_ERROR = REGISTRY.register(
     ErrorCode(
         code="ERR-JINJA-ERROR",
@@ -708,9 +720,21 @@ ERR_BAR_LOG_SCALE_NOT_SUPPORTED = REGISTRY.register(
         code="ERR-BAR-LOG-SCALE-NOT-SUPPORTED",
         domain="compile",
         title="Log scale is not supported on bar charts",
-        message_template="Chart {chart_id!r} (bar): axis_y.scale.continuous.type: log is not supported: a bar's length encodes magnitude from zero, which a log scale makes meaningless. Use axis_y.scale.continuous.type: symlog on the bar chart, or switch to a line or area chart for a log scale.",
-        doc="Fired when a bar chart's y axis is set to `axis_y.scale.continuous.type: log`. A bar's length encodes magnitude from zero, which a log scale makes meaningless. Use `axis_y.scale.continuous.type: symlog` on the bar chart, or switch to a line or area chart for a log scale.",
+        message_template="Chart {chart_id!r} (bar): axis_y.scale.continuous.type: log is not supported: a bar's length encodes magnitude from zero, which a log scale makes meaningless. Switch to a line or area chart for a log scale.",
+        doc="Fired when a bar chart's y axis is set to `axis_y.scale.continuous.type: log`. A bar's length encodes magnitude from zero, which a log scale makes meaningless. Switch to a line or area chart for a log scale.",
         summary="Fired when a bar chart's y-axis uses a log scale, which magnitude-from-zero bars can't represent.",
+        docs_topic="charts",
+    )
+)
+
+ERR_TORN_OUTLIER_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TORN-OUTLIER-UNSUPPORTED",
+        domain="compile",
+        title="Torn outlier bars are not supported here",
+        message_template="Chart {chart_id!r}: style.torn_outlier.enabled is not supported {reason}. Set style.torn_outlier.enabled: false, or change the chart.",
+        doc="Fired when `style.torn_outlier.enabled` is on for a chart the tear cannot draw truthfully: a normalized, ranged (`y_start`), layered, small-multiples or histogram chart; one with an authored `axis_y` domain or `zero: false`; one with a negative bar; or one with an annotation past the break. A torn bar's cap is positioned by its end value above a zero-based break, so these shapes have no honest tear.",
+        summary="Fired when torn outlier bars are enabled on a chart shape that cannot be torn.",
         docs_topic="charts",
     )
 )
@@ -1677,6 +1701,19 @@ WARN_BODY_HEADING_NO_TITLE = REGISTRY.register(
         fix_template="Set `title: {heading}` and delete the heading line from the text; section titles belong on the board, not in the markdown. If this text isn't a new section, it shouldn't be its own row: merge it into the text before it.",
         doc="Fires when a board or `rows:` item has no `title:` and its `text:` opens with a markdown heading at any level. A prose row is a section, and a section's title is the board's `title:`: it renders above the columns at the title size and spacing, where a markdown heading renders inside the prose. Headings further down a block stay in the markdown. A `cols:` or `grid:` cell is not checked, because its opening heading titles the card beside its neighbors, and neither is a tab pane's own text, which opens under its tab label. Heading detection uses the same markdown parser that renders the text, so a fenced code block opening with a `#` comment is not mistaken for a heading. Emitted by `compile/validate/board_warnings.py`.",
         docs_topic="board",
+    )
+)
+
+WARN_TEXT_UNDECLARED_NAME = REGISTRY.register(
+    WarningCode(
+        code="WARN-TEXT-UNDECLARED-NAME",
+        domain="compile",
+        title="Board text reads a name nothing declares",
+        message_template="Board {field} reads {name!r}, which no variable declares, so it renders as nothing.",
+        fix_template="Fix the name, or declare it under `variables:`.",
+        doc="Fires at compile time when a board's `text:` or `title:` reads a Jinja name that no variable anywhere in the board declares and that is not a built-in (`queries`, `glob_boards`, `glob_folders`, `range`, a `{% set %}` or `{% for %}` name). Board text renders an unknown name as nothing, so a typo would otherwise vanish without a trace. A declared variable that has no value yet does not fire. The hint names the closest variable, or `queries.<name>` when the name is a query's. Fenced code is not Jinja and is not read. Emitted by `compile/validate/board_warnings.py`.",
+        summary="A board's text or title reads a name that no variable declares.",
+        docs_topic="variables",
     )
 )
 

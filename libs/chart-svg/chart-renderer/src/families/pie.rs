@@ -121,6 +121,9 @@ struct Resolved {
     link: Option<String>,
     /// How `link` opens (`ResolvedChart.link_open`).
     link_open: crate::href::LinkOpen,
+    /// Where the host serves boards: each expanded href resolves in it, as a bar's does.
+    #[serde(skip)]
+    link_context: Option<crate::href::LinkContext>,
     /// The slices a held link variable selects.
     #[serde(skip)]
     selection: crate::selected::Selection,
@@ -151,6 +154,7 @@ impl Resolved {
         let keys: Vec<(&str, &str)> = bind::color_field_of(&r).map(|field| ("color", field)).into_iter().collect();
         r.selection = crate::selected::Selection::of(payload, r.link.as_deref(), &keys)?.viewing(r.legend_view.clone());
         r.patterns = crate::pattern::PatternPlan::from_resolved(&payload.resolved)?;
+        r.link_context = payload.link_context.clone();
         Ok(r)
     }
 }
@@ -228,11 +232,6 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let mode = sized_mode(payload, fonts)?;
     warn_when_sized_mode_starves_wheel(payload, mode, fonts)?;
     draw(&bind::bind(payload, mode)?, fonts)
-}
-
-/// A pie over no rows: the empty arc and label layers inside the negotiated frame.
-pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
-    draw(&bind::bind_empty(payload)?, fonts)
 }
 
 /// How much of a pie the box it is sized in lets it draw. The size stage
@@ -1930,6 +1929,30 @@ mod tests {
         svg.split("<a href=\"").skip(1).map(|s| s.split('"').next().unwrap()).collect()
     }
 
+    /// The host's link context rewrites a pie's board link as it does a bar's: each wedge's href is
+    /// resolved after its channel placeholders are filled.
+    #[test]
+    fn a_pie_link_is_rewritten_through_the_host_link_context() {
+        let mut p = linked_pie_payload("./detail.yml?c={{ color }}");
+        p["resolved"]["resolved_channels"] = json!({"color": {"channel": "color", "mode": "series", "data_field": "category"}});
+        p["link_context"] = json!({"root": "/org/proj/d", "current_board_slug": "home", "origin": ""});
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let hrefs = hrefs(&svg);
+        assert!(!hrefs.is_empty(), "{svg}");
+        assert!(hrefs.iter().all(|h| h.starts_with("/org/proj/d/detail?c=")), "{hrefs:?}");
+    }
+
+    /// A link a row fills with a navigable script scheme is refused, as a table cell's or a map's is
+    /// (`checked_href`).
+    #[test]
+    fn a_pie_link_filled_with_an_unsafe_scheme_is_refused() {
+        let mut p = linked_pie_payload("{{ color }}");
+        p["resolved"]["resolved_channels"] = json!({"color": {"channel": "color", "mode": "series", "data_field": "category"}});
+        p["rows"][0]["category"] = json!("javascript:alert(1)");
+        let err = render(&make_payload(p), &test_fonts()).expect_err("an unsafe href is refused");
+        assert!(err.to_string().contains("javascript"), "{err}");
+    }
+
     /// `_HREF_PLACEHOLDER` matches only `x|y|color|theta`, so an authored
     /// `{{ category }}` passes through verbatim (`charts/sector-charts_2`):
     /// one `<a>` per wedge, opening right inside the arc's `.role-mark` group
@@ -2415,17 +2438,6 @@ mod tests {
         }
     }
 
-    /// An empty result draws no legend rows: a visible legend over none refuses by name. (A
-    /// legend and an attached table are alternative keys: only the direct mode draws the
-    /// legend.)
-    #[test]
-    fn a_visible_legend_over_no_rows_refuses() {
-        let mut empty = legend_pie_payload("right", "start", "vertical");
-        empty["rows"] = json!([]);
-        let err = render_empty(&make_payload(empty), &test_fonts()).unwrap_err();
-        assert!(err.contains("empty result set"), "{err}");
-    }
-
     /// An authored `legend.values` (`apply_legend_entry_order`) orders and
     /// filters the entries drawn; each keeps the swatch its own value has in
     /// the scale, and a token that matches nothing is dropped.
@@ -2595,6 +2607,30 @@ mod tests {
         }
     }
 
+    /// A subtitle with no title is a title block of its own, so a top-placed table lands
+    /// under it as it lands under a title.
+    #[test]
+    fn a_subtitle_without_a_title_sits_above_a_top_attached_table() {
+        let table_top = |subtitle: Option<&str>| -> (f64, String) {
+            let mut json = make_pie_payload_with_attached_table("top", "Heading");
+            json["resolved"]["subtitle"] = json!(subtitle);
+            json["resolved"]["title_style"] = json!({
+                "font": {"family": TEST_FONT, "size": 14.0, "weight": "500"},
+                "position": {"offset": 10.0},
+                "subtitle": {"font": {"family": TEST_FONT, "size": 11.0}}
+            });
+            let svg = render(&make_payload(json), &test_fonts()).expect("renders");
+            let heading = svg.find(">Heading<").expect("the table heading draws");
+            let group = &svg[svg[..heading].rfind("<g transform=\"translate(").expect("in a group")..heading];
+            let y = group.split(',').nth(1).expect("translate y");
+            (y[..y.find(')').expect("translate closes")].parse().expect("numeric y"), svg)
+        };
+        let (bare, _) = table_top(None);
+        let (under_subtitle, svg) = table_top(Some("Subtitle alone"));
+        assert!(svg.contains(r#"data-authored-kind="subtitle">Subtitle alone"#), "{svg}");
+        assert!(under_subtitle > bare, "the table moves down by the subtitle's band ({bare} -> {under_subtitle})");
+    }
+
     #[test]
     fn a_patterned_pie_with_an_attached_table_counts_the_fallbacks_of_one_layout() {
         let mut json = make_pie_payload_with_attached_table("bottom", "Heading");
@@ -2660,17 +2696,6 @@ mod tests {
             diagnostic::collect(|| layout::layout(&bound, cell(220.0, 14.0), &Measure { fonts: &fonts }));
         assert!(laid_out.is_err());
         assert_eq!(warnings.len(), 1, "{warnings:?}");
-    }
-
-    #[test]
-    fn an_empty_result_binds_no_slices_and_is_never_faded() {
-        let mut json = make_pie_payload(Value::Null);
-        json["rows"] = json!([]);
-        json["is_placeholder"] = json!(true);
-        let payload = make_payload(json);
-        let bound = bind::bind_empty(&payload).expect("binds");
-        assert!(bound.wheel.slices.is_empty() && bound.thetas.is_empty());
-        assert!(!bound.faded);
     }
 
     #[test]

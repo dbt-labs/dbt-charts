@@ -382,7 +382,9 @@ impl Structure {
             let text = |name: &str| spelled.get(name).and_then(Value::as_str).map(String::from);
             let label = crate::sql::query_id(key, &self.file)
                 .map(|id| id.label(&self.file))
-                .map_err(|e| diag::err_internal(format!("query key {key:?} is no query id: {e:?}")))?;
+                .map_err(|e| {
+                    diag::err_internal(format!("query key {key:?} is no query id: {e:?}"))
+                })?;
             queries.insert(
                 key.clone(),
                 HostQuery {

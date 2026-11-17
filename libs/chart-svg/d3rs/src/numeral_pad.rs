@@ -10,7 +10,7 @@ use std::collections::HashSet;
 /// decimal value as wide as its untrimmed sibling. `missing_len` is
 /// `len(full_text) - len(trimmed_text)` for the same spec with/without
 /// `~`; `has_dot` is whether the decimal point itself survived trimming.
-fn decimal_reservation_pad(
+pub fn decimal_reservation_pad(
     missing_len: usize,
     has_dot: bool,
     digit_unit: &str,

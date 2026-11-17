@@ -23,9 +23,12 @@ use model_core::{Leaf, Tri};
 
 use crate::board::band::TitleShift;
 use crate::board::height::{boxes, measure, Boxed, NaturalPlan};
+use crate::board::prose::Source;
+use crate::board::prose_plan::{plan_board_prose, ProsePlans};
 use crate::board::tree::{Chart, Content, Details, Dim, Item, Kind, Node, Place, Title};
 use crate::board::width::IntrinsicWidth as Width;
-use crate::board::width::{container_width, intrinsic, item_widths, Frame, IntrinsicWidth};
+use crate::board::width::{container_width, intrinsic, item_widths, Frame, IntrinsicWidth, Placed as PlacedWidth};
+use std::collections::BTreeMap;
 
 /// A body's effective style patch: the theme, its `extends:` and its own `style:`.
 pub type StylePatch = <Style as Leaf>::Patch;
@@ -61,8 +64,10 @@ pub trait Facts {
     /// the tree decides (the hug), so it is asked after the container width is known.
     fn root_band(&mut self, body: &BoardBody, content_width: f64) -> Result<f64, Diagnostic>;
     /// The own band of the nested board at `at` (a tab's pane has none) at its content width, known
-    /// once the container's widths are placed.
-    fn nested_band(&mut self, at: &ItemId, content_width: f64, has_items: bool) -> Result<NestedBand, Diagnostic>;
+    /// once the container's widths are placed. `prose` is where every board's text sits on its card grid.
+    fn nested_band(&mut self, at: &ItemId, content_width: f64, has_items: bool, prose: &ProsePlans) -> Result<NestedBand, Diagnostic>;
+    /// The text `body` draws with the style and fonts it is measured in; `None` when it has none.
+    fn prose<'a>(&'a self, body: &'a BoardBody) -> Result<Option<Source<'a>>, Diagnostic>;
     /// The width facts of the chart `id` drawn at `at`.
     fn chart(&mut self, at: &ItemId, id: &ChartId) -> Result<Chart, Diagnostic>;
     /// A drawn chart's natural plan at a width.
@@ -103,6 +108,8 @@ pub struct Placed {
     pub nested: bool,
     /// Where its `cols` row moves its title and body.
     pub shift: TitleShift,
+    /// Whether that move is one production makes after sizing (`height::Boxed::deferred`).
+    pub deferred: bool,
 }
 
 /// One board's drawn items in layout order, each in the box its layout gives it.
@@ -141,6 +148,8 @@ pub struct Laid {
     pub width: f64,
     pub height: f64,
     pub root: LaidBoard,
+    /// Where each board's text sits on its card grid: decided once, ahead of sizing and drawing.
+    pub prose: ProsePlans,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -177,7 +186,7 @@ pub fn opens_with_text(body: &BoardBody, at: &ItemId, drawn: &DrawnSet) -> bool 
     }
     let first = items(body, at).find(|placement| !drawn.is_hidden(&placement.id));
     match first.map(|placement| placement.item) {
-        Some(LayoutItem::Board(nested)) => nested.body.text.is_some() && nested.body.title.as_ref().is_none_or(|title| title.as_str().is_empty()) && nested.body.details.is_none(),
+        Some(LayoutItem::Board(nested)) => crate::board::prose::board_text(&nested.body).is_some() && nested.body.title.as_ref().is_none_or(|title| title.as_str().is_empty()) && nested.body.details.is_none(),
         _ => false,
     }
 }
@@ -199,25 +208,42 @@ pub fn lay_out(board: &Board, drawn: &DrawnSet, facts: &mut impl Facts) -> Resul
     if band > 0.0 {
         root.band = band + root.hug_gap + card_gap;
     }
-    fill_nested_bands(&mut root, &ids, available, card_gap, facts)?;
+    let mut slots = BTreeMap::from([(ItemId::root(), available)]);
+    content_widths(&root, &ids, &item_widths(&root, available, card_gap), &mut slots);
+    let prose = plan_board_prose(body, &slots, available, card_gap, drawn, &*facts)?;
+    fill_nested_bands(&mut root, &ids, available, card_gap, &prose, facts)?;
     let mut natural = |chart: &Chart, at: f64| facts.natural(chart, at);
     let measured = measure(&root, available, card_gap, &mut natural)?;
     let laid = boxes(&root, &measured, measured.height, card_gap);
     let root = collect(&root, &ItemId::root(), &ids, &laid.items, card_gap, false);
-    Ok(Laid { width, height: measured.height, root, diagnostics: laid.diagnostics })
+    Ok(Laid { width, height: measured.height, root, prose, diagnostics: laid.diagnostics })
+}
+
+/// The content width each drawn nested board's box gives it, under no collapsed details section.
+fn content_widths(board: &Node, ids: &Ids, placed: &[Option<PlacedWidth>], out: &mut BTreeMap<ItemId, f64>) {
+    for ((item, (at, held)), placed) in board.items.iter().zip(&ids.items).zip(placed) {
+        let (Content::Board(inner), Held::Board(inner_ids), Some(placed)) = (&item.content, held, placed) else { continue };
+        if inner.details.is_some_and(|details| details.collapsed) {
+            continue;
+        }
+        out.insert(at.clone(), placed.width - inner.chrome);
+        if let Some(nested) = &placed.board {
+            content_widths(inner, inner_ids, nested, out);
+        }
+    }
 }
 
 /// Gives every nested board its own band at the content width its box gets: the widths are placed
 /// before any height, and a band moves none of them.
-fn fill_nested_bands(board: &mut Node, ids: &Ids, available: f64, card_gap: f64, facts: &mut impl Facts) -> Result<(), Diagnostic> {
+fn fill_nested_bands(board: &mut Node, ids: &Ids, available: f64, card_gap: f64, prose: &ProsePlans, facts: &mut impl Facts) -> Result<(), Diagnostic> {
     let placed = item_widths(board, available, card_gap);
     for ((item, (at, held)), placed) in board.items.iter_mut().zip(&ids.items).zip(placed) {
         let (Content::Board(inner), Held::Board(inner_ids), Some(placed)) = (&mut item.content, held, placed) else { continue };
         let width = placed.width - inner.chrome;
-        let own = facts.nested_band(at, width, !inner.items.is_empty())?;
+        let own = facts.nested_band(at, width, !inner.items.is_empty(), prose)?;
         inner.band = own.band;
         inner.title = own.title;
-        fill_nested_bands(inner, inner_ids, width, card_gap, facts)?;
+        fill_nested_bands(inner, inner_ids, width, card_gap, prose, facts)?;
     }
     Ok(())
 }
@@ -236,6 +262,7 @@ fn collect(node: &Node, at: &ItemId, ids: &Ids, boxes: &[Option<Boxed>], card_ga
                 height: boxed.height,
                 nested,
                 shift: boxed.shift,
+                deferred: boxed.deferred,
             })),
             (Content::Board(inner_node), Held::Board(inner_ids), Some(inner_boxes)) => {
                 items.push(LaidItem::Board(PlacedBoard {

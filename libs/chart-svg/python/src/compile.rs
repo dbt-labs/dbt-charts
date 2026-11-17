@@ -63,7 +63,7 @@ impl ProjectFiles for HostFiles<'_> {
 
 /// A compiled board. Opaque: it carries no board model to Python.
 #[pyclass(frozen, module = "dbt_charts._engine")]
-pub struct CompiledBoard(pub(crate) normalize::CompiledBoard);
+pub struct CompiledBoard(pub(crate) normalize::CompiledBoard, pub(crate) engine::host::Derived);
 
 #[pymethods]
 impl CompiledBoard {
@@ -264,7 +264,7 @@ fn compile(
     if let Some(interrupt) = escaped.take() {
         return Err(interrupt);
     }
-    compiled.map(CompiledBoard).map_err(|r| {
+    compiled.map(|compiled| CompiledBoard(compiled, Default::default())).map_err(|r| {
         let wire = match &board {
             Board::At(path) => Ok((
                 r.error.wire_diagnostics(&files, path, today),

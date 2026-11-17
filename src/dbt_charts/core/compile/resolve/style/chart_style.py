@@ -7,6 +7,7 @@ one merged context and never the chart-local patch.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from pydantic import BaseModel
@@ -127,6 +128,17 @@ _TABLE_CARRIES_THE_NUMBERS = BarChartStylePatch.model_validate(
     },
     context=AUTHORED_INPUT,
 )
+
+
+def funnel_context(board_ctx: ChartStyleContext) -> ChartStyleContext:
+    """The board context a funnel resolves against: its bar family with the
+    funnel recipe on top, so every family-tier read (the axis cascade's
+    ``charts.bar.*`` layers among them) sees the recipe."""
+    if board_ctx.funnel is None:
+        return board_ctx
+    return dataclasses.replace(
+        board_ctx, bar=merge_onto_base(board_ctx.bar, board_ctx.funnel)
+    )
 
 
 def _funnel_patch(

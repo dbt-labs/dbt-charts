@@ -38,6 +38,7 @@ from dbt_charts.core.render.chart.rendering import render_chart_item
 
 from ...._results import rows_result
 from ...._run import Run
+from ..._kpi_board import kpi_svg
 
 _DUMMY_QUERY = SqlQuery(sql="SELECT 1", source="test")
 _RESOLVED_STYLE = resolve_style(get_theme_style())
@@ -180,16 +181,7 @@ def test_vega_chart_data_error_fallback_has_no_nested_svg() -> None:
 
 
 def test_kpi_render_chart_item_uses_aria_label_not_title() -> None:
-    chart = _chart("kpi", value="revenue", label="Total Revenue")
-    svg, _ = render_chart_item(
-        _rc(chart),
-        _executor([{"revenue": 42000}]),
-        {},
-        300,
-        200,
-        resolved_style=_RESOLVED_STYLE,
-        render_cache={},
-    )
+    svg = kpi_svg({"value": "revenue", "label": "Total Revenue"}, [{"revenue": 42000}])
     # aria-label on the wrapper <g> carries the accessible label.
     # The wrapper must NOT emit a <title> as its first child (triggers browser native tooltip).
     assert 'aria-label="Total Revenue"' in svg
@@ -218,18 +210,10 @@ def test_chart_notes_not_in_aria_label() -> None:
     tooltip. The accessible label carries only the chart title; the note is
     stored solely in data-chart-notes for programmatic access.
     """
-    chart = _chart("kpi", value="revenue", label="Revenue", notes="some text")
-    svg, _ = render_chart_item(
-        _rc(chart),
-        _executor([{"revenue": 42000}]),
-        {},
-        300,
-        200,
-        resolved_style=_RESOLVED_STYLE,
-        render_cache={},
+    svg = kpi_svg(
+        {"value": "revenue", "label": "Revenue", "notes": "some text"},
+        [{"revenue": 42000}],
     )
-    import re
-
     # aria-label carries the title only — no notes.
     assert 'aria-label="Revenue"' in svg
     aria_labels = re.findall(r'aria-label="([^"]*)"', svg)
@@ -247,6 +231,7 @@ def test_chart_notes_not_in_aria_label() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("placement_scope")
 def test_render_layout_item_notes_no_tooltip() -> None:
     """Layout-item notes must be stored in data-layout-notes only.
 
@@ -260,7 +245,7 @@ def test_render_layout_item_notes_no_tooltip() -> None:
     from dbt_charts.core.compile.models.board.resolved import ResolvedLayoutItem
     from dbt_charts.core.render.chart.rendering import render_layout_item
 
-    chart = _chart("kpi", value="revenue", label="Revenue")
+    chart = _chart("table", title="Revenue")
     rc = _rc(chart)
     item = ResolvedLayoutItem(
         type="chart",
@@ -317,16 +302,7 @@ def test_kpi_title_block_emits_inner_title_when_truncated() -> None:
     """Long KPI title truncated to '…' must emit <title> with the full text so
     users can hover to see the complete title."""
     long_title = "Total Revenue for Enterprise Segment by Partner Region Q4 2025"
-    chart = _chart("kpi", value="revenue", label=long_title)
-    svg, _ = render_chart_item(
-        _rc(chart),
-        _executor([{"revenue": 42000}]),
-        {},
-        120,
-        200,
-        resolved_style=_RESOLVED_STYLE,
-        render_cache={},
-    )
+    svg = kpi_svg({"value": "revenue", "label": long_title}, [{"revenue": 42000}])
     assert "…" in svg, "title should be truncated at this width"
     assert f"<title>{long_title}</title>" in svg
 
@@ -407,27 +383,15 @@ def test_kpi_title_block_clip_mode_emits_inner_title_when_clipped() -> None:
     """KPI with label.overflow=clip must emit inner <title> when text is clipped
     (no ellipsis emitted, but text IS shortened — the old '…' sniff misses this)."""
     long_title = "Total Revenue for Enterprise Segment by Partner Region Q4 2025"
-    chart = _chart(
-        "kpi",
-        value="revenue",
-        label=long_title,
-        style={"label": {"overflow": "clip"}},
-    )
-    clip_rs, clip_ctx = _clip_resolved_style()
-    svg, _ = render_chart_item(
-        _rc(chart, clip_ctx),
-        _executor([{"revenue": 42000}]),
-        {},
-        120,
-        200,
-        resolved_style=clip_rs,
-        render_cache={},
+    svg = kpi_svg(
+        {
+            "value": "revenue",
+            "label": long_title,
+            "style": {"label": {"overflow": "clip"}},
+        },
+        [{"revenue": 42000}],
     )
     assert "…" not in svg, "clip mode must not emit ellipsis"
-    # Clipped text is shorter than the original title
-    assert long_title not in svg or f"<title>{long_title}</title>" in svg, (
-        "full title text should only appear inside inner <title>, not as visible text"
-    )
     assert f"<title>{long_title}</title>" in svg, (
         "clip mode must emit inner <title> so users can hover to read full title"
     )

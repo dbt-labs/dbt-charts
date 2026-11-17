@@ -994,7 +994,7 @@ pub(super) fn format_magnitudes(
     // symbol_mode == "anchors" limits a numeric cell's currency prefix and
     // unit suffix to the first non-null detail row plus any summary/total
     // row. A magnitude suffix carries the number's value, so it stays on
-    // every row. Under "all" (the default) every row is its own anchor.
+    // every row. Under "all" every row is its own anchor.
     let symbol_anchor_row = (0..n).find(|&i| raw[i].is_some() && !is_summary_role(row_roles[i]));
     let is_symbol_anchor = |i: usize| -> bool {
         symbol_mode != "anchors" || Some(i) == symbol_anchor_row || is_summary_role(row_roles[i])
@@ -2651,6 +2651,7 @@ pub(super) fn bind_drawn(chart: &Chart, payload: &Payload) -> Result<Drawn, Diag
         link_context: payload.link_context.clone(),
         title_shift: payload.title_shift,
         pagination_control_height,
+        empty_line: crate::families::no_results::context_line(payload),
     })
 }
 
@@ -2669,6 +2670,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
                 resolved,
                 padding: payload.padding,
                 title_shift: payload.title_shift,
+                empty_line: crate::families::no_results::context_line(payload),
             }));
         }
     }

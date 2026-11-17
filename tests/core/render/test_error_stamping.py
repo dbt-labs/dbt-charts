@@ -28,8 +28,6 @@ _RENDER_ROOT = DBT_CHARTS_PKG_DIR / "core" / "render"
 # code yet, so they still fall back to ERR-INTERNAL. Shrinks only.
 ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
-        # engine.py: invariants between the engine and the code registry
-        ("engine.py", "_render_payload"),
         # warnings/legend_position_width_fallback.py: sizing records a mode on
         # every placed pie, so a pie without one is a sizing bug, not a finding.
         ("warnings/legend_position_width_fallback.py", "detect"),
@@ -73,8 +71,10 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # engine.py: the engine emitting a non-error code as an error, or a
         # warning with no sink, is an engine/registry contract break, never
         # author input.
-        ("engine.py", "_render_payload"),
-        ("engine.py", "_chart_data_error"),
+        ("engine.py", "chart_data_error"),
+        ("engine.py", "record_engine_warnings"),
+        # engine_cell.py: an execute error with no code is a host bug, never author input.
+        ("engine_cell.py", "failure_wire"),
         # conditions.py
         ("conditions.py", "eval_bool_condition"),
     }

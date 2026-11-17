@@ -50,6 +50,7 @@ def render_resolved_chart(
     measuring: bool = False,
     authored_height: float | None = None,
     pie_mode: PieMode | None = None,
+    placement: str | None = None,
 ) -> RenderArtifact:
     """Render an already-resolved chart to a RenderArtifact.
 
@@ -68,6 +69,8 @@ def render_resolved_chart(
 
     ``pie_mode`` is a pie's mode as the size stage decided it. Omitted (a pie no
     sizing pass placed), it is decided here, once, in the pie's own box.
+    ``placement`` is the key of the board placement being drawn (``id``, ``id#2``),
+    which a family the engine draws in its cell needs.
     """
     if isinstance(resolved, ResolvedPieChart):
         if width is not None and width != resolved.resolution_width:
@@ -121,6 +124,7 @@ def render_resolved_chart(
         measuring=measuring,
         authored_height=authored_height,
         pie_mode=pie_mode,
+        placement=placement,
     )
     return RenderArtifact(kind="svg", payload=svg)
 

@@ -836,18 +836,13 @@ pub(super) fn fit(
     // EXISTS with a null measure — see `series_points`'s doc comment below
     // for why the two draw differently. Built here (ahead of `series_points`,
     // its other consumer) because the stack accumulation below needs it too.
-    // A layer moves the base line off the facet's own dataset: over a temporal
-    // x it draws every row of the chart in each panel, a sawtooth through
-    // every panel's points.
-    let base_walks_every_row = facet.is_some() && has_layers && law.vl_type == VegaType::Temporal;
-    let base_rows: &[serde_json::Map<String, Value>] = if base_walks_every_row { domain_rows } else { rows };
-    let data = stack_data(base_rows, x_field, color_field, y_field);
+    let data = stack_data(rows, x_field, color_field, y_field);
     // `ends` is each series' last datum, whose value the rail prints.
     let anchored_only = r.style.point_mark.as_ref().is_some_and(|pm| pm.anchored_only);
     let anchors = value_labels.map_or(&[][..], |ml| &ml.anchors);
     let mut anchor_points: Vec<(String, usize, f64)> = Vec::new();
     if !anchors.is_empty() {
-        for row in ::bind::rows::x_ranked_rows(base_rows, x_field, &x_domain)? {
+        for row in ::bind::rows::x_ranked_rows(rows, x_field, &x_domain)? {
             let (Some(at), Some(value)) = (row.get(x_field).and_then(Value::as_u64), row_num(&row, y_field)) else { continue };
             anchor_points.push((color_field.map(|cf| row_str(&row, cf)).unwrap_or_default(), at as usize, value));
         }
@@ -856,7 +851,7 @@ pub(super) fn fit(
     let ends = crate::common::anchored_points(&[crate::common::LabelAnchor::Last], &anchor_points);
     // The row each datum reads, for a caption printing another column.
     let mut label_rows: HashMap<(String, String), &serde_json::Map<String, Value>> = HashMap::new();
-    for row in base_rows {
+    for row in rows {
         let sv = color_field.map(|cf| row_str(row, cf)).unwrap_or_default();
         label_rows.insert((row_str(row, x_field), sv), row);
     }
@@ -900,7 +895,7 @@ pub(super) fn fit(
     // raw y domain from payload or data extent
     let tick_count = ax_y.ticks.count.unwrap_or(6.0) as usize;
     // The y extent follows the panel under an independent scale; x stays shared.
-    let y_domain_rows: &[serde_json::Map<String, Value>] = if independent_scale { base_rows } else { domain_rows };
+    let y_domain_rows: &[serde_json::Map<String, Value>] = if independent_scale { rows } else { domain_rows };
     let data_min = y_domain_rows
         .iter()
         .filter_map(|row| row_num(row, y_field))
@@ -942,8 +937,8 @@ pub(super) fn fit(
     // mark ink reads `rows`, never a facet's shared domain). Equal to
     // `data_min`/`data_max` off the single-chart path (`domain_rows ==
     // rows` whenever `facet` is `None`).
-    let own_min = base_rows.iter().filter_map(|row| row_num(row, y_field)).fold(f64::INFINITY, f64::min);
-    let own_max = base_rows.iter().filter_map(|row| row_num(row, y_field)).fold(f64::NEG_INFINITY, f64::max);
+    let own_min = rows.iter().filter_map(|row| row_num(row, y_field)).fold(f64::INFINITY, f64::min);
+    let own_max = rows.iter().filter_map(|row| row_num(row, y_field)).fold(f64::NEG_INFINITY, f64::max);
     let headroom = ax_y.scale.get("headroom").and_then(Value::as_f64).unwrap_or(0.0);
 
     // BaselineFeature's zero rule is a `datum: 0` layer, so whenever it
@@ -1438,7 +1433,7 @@ pub(super) fn fit(
     let y_title_text = if r.wide_measures.is_empty() {
         axis_title_text(y_field, r.y_label.as_deref(), &r.field_labels)?
     } else {
-        match r.y_label.as_deref() { Some(l) => crate::common::collapse_title_newlines(l), None => crate::common::wide_measures_title(&r.wide_measures, &r.field_labels)? }
+        match r.y_label.as_deref() { Some(l) => display_text::collapse_title_newlines(l), None => crate::common::wide_measures_title(&r.wide_measures, &r.field_labels)? }
     };
     let y_axis_title = if y_sides.is_none() {
         let layer_titles = overlays
@@ -3455,7 +3450,7 @@ pub(super) fn fit(
                     y_visible = Some(visible);
                     // Bottom axis labels — the VL x.axis.offset shifts the whole
                     // gutter down; drawn set resolved at THIS candidate width.
-                    let row_y = x_edge.at(ph, X_AXIS_OFFSET + x_tick_eff + x_label_pad);
+                    let row_y = x_edge.at(ph, X_AXIS_OFFSET + x_label_pad);
                     // Vega's text bounds grow a second row downward on either edge, so over a top axis the row
                     // reserves nothing above it.
                     let grow_row2 = |ink: &mut vega_fit::Bounds| ink.y2 += x_font_size + 2.0;
@@ -3758,7 +3753,7 @@ pub(super) fn fit(
                         let inner = (pw - 2.0 * x_scale_pad).max(0.0);
                         (x_scale_pad + inner * first, (x_scale_pad + inner * last).max(x_scale_pad))
                     };
-                    if !base_rows.is_empty() {
+                    if !rows.is_empty() {
                         b.union(
                             &vega_fit::Bounds::new(datum_x0, ph * frac_hi, datum_x1, ph * frac_lo)
                                 .expand(line_stroke_w.max(point_reach).max(shared_layer_reach)),
@@ -3877,9 +3872,9 @@ pub(super) fn fit(
                     }
                     let strip_ink = composed.as_ref().map(|(rows, _, style)| {
                         let mut ink = vega_fit::Bounds::empty_new();
-                        // The fit sizes what the strip paints: its skipped rows, labels cleared.
+                        // The fit sizes what the strip paints: its rows thinned to the labeled buckets.
                         let mut rows = if detected_data_tu.is_some() || bare_temporal {
-                            support_table_strip::thinned_strip(rows, strip_labeled.as_deref(), style.row.padding.horizontal).0
+                            support_table_strip::thinned_strip(rows, strip_labeled.as_deref()).0
                         } else {
                             rows.clone()
                         };
@@ -4758,7 +4753,6 @@ pub(super) fn fit(
         // only the extent the pane's bottom band reserves changes.
         let x_band_of = |tilt_extent: f64| {
             X_AXIS_OFFSET
-                + x_tick_eff
                 + x_label_pad
                 + if rail_x_angle != 0.0 {
                     tilt_extent
@@ -5182,13 +5176,19 @@ pub(super) fn fit(
     // RUNS: a bucket carrying a row whose measure is null fails Vega-Lite's
     // default `defined` predicate, so the line/area generator closes the
     // current subpath and opens a new one after it, while a bucket with no
-    // row for this series is invisible to d3 and joins its neighbors
+    // row for this series is invisible to d3 and joins its neighbors unless
+    // the gap is large on a continuous x (`breaks_large_gaps`, `line/gaps.rs`)
     // (`area_won_stacked`'s reference: `Download` draws runs of 5/8/5/8/2 —
     // the run lengths a null-only break gives, not the 1/1/3/7/1/5/8/1/1 a
     // missing row would also break into).
     // `style.conditional` patches, per datum; a rule's `size` may draw a point where the chart
     // has none, or none where it has one.
     let patch_at = |data_key: &str, i: usize| patches.get(&(x_domain[i].clone(), data_key.to_string()));
+    // A continuous x draws a gap at its true width, so only there can a gap be large;
+    // a path in data order (`connect`) is not monotone in x, and `marks.line.connect:
+    // true` joins every gap.
+    let breaks_large_gaps = utc_fracs.is_some() && !use_band_positions && !data_order && r.style.line_mark.connect != Some(true);
+    let gap_days = x_time_ext.as_ref().map(|t| t.pos.as_slice());
     // The domain index of every point of each defined run: the datum a point draws.
     let domain_runs_of = |series: &str| -> Vec<Vec<usize>> {
         let mut runs: Vec<Vec<usize>> = Vec::new();
@@ -5207,15 +5207,15 @@ pub(super) fn fit(
                 }
             }
         }
-        runs
+        if breaks_large_gaps { super::gaps::split_at_large_gaps(runs, |i| i, fit_x_at, gap_days, plot_w) } else { runs }
     };
     let runs_of = |series: &str| -> Vec<Vec<(f64, f64)>> {
-        let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
-        let mut open = false;
-        if base_walks_every_row || data_order {
+        if data_order {
+            let mut runs: Vec<Vec<(usize, f64)>> = Vec::new();
+            let mut open = false;
             // One vertex per row, in x order with ties in query order, or in the order bind sorted them to.
             let x_at: HashMap<&str, usize> = x_domain.iter().enumerate().map(|(i, x)| (x.as_str(), i)).collect();
-            let mut walk: Vec<(usize, Option<f64>)> = base_rows
+            let mut walk: Vec<(usize, Option<f64>)> = rows
                 .iter()
                 .filter(|row| color_field.map(|cf| row_str(row, cf)).unwrap_or_default() == series)
                 .map(|row| (x_at[row_str(row, x_field).as_str()], row_num(row, y_field)))
@@ -5232,11 +5232,14 @@ pub(super) fn fit(
                             runs.push(Vec::new());
                             open = true;
                         }
-                        runs.last_mut().unwrap().push((fit_x_at(i), y_at(yv)));
+                        runs.last_mut().unwrap().push((i, yv));
                     }
                 }
             }
-            return runs;
+            if breaks_large_gaps {
+                runs = super::gaps::split_at_large_gaps(runs, |(i, _)| i, fit_x_at, gap_days, plot_w);
+            }
+            return runs.into_iter().map(|run| run.into_iter().map(|(i, yv)| (fit_x_at(i), y_at(yv))).collect()).collect();
         }
         domain_runs_of(series)
             .iter()
@@ -5342,7 +5345,7 @@ pub(super) fn fit(
         // A1: paint order, so the spatial domain — `series_fill` still
         // indexes the palette by the alphabetical one.
         paint_order.iter().map(|s| (s.clone(), runs_of(s))).collect()
-    } else if base_rows.is_empty() {
+    } else if rows.is_empty() {
         // Vega draws no line mark over a base query with no rows.
         Vec::new()
     } else {
@@ -5367,7 +5370,7 @@ pub(super) fn fit(
     // the order their hrefs first appear.
     // A gap-filled row has no datum and so no link: it is one more href group, after the data's own.
     let impute_groups = (!hrefs.is_empty()).then(|| {
-        let datum_cells = base_rows.iter().filter_map(|row| {
+        let datum_cells = rows.iter().filter_map(|row| {
             let key = (row_str(row, x_field), color_field.map(|cf| row_str(row, cf)).unwrap_or_default());
             matches!(data.get(&key), Some(Some(_))).then(|| Some((key.0.clone(), Some(key.1.clone()), hrefs.get(&key)?.clone())))
         });
@@ -5450,7 +5453,7 @@ pub(super) fn fit(
         if is_band_step {
             return Err(diagnostic::refuse!("{fam}: a conditional line or area style on a step curve over a categorical x axis is not supported").into());
         }
-        if data_order || base_walks_every_row {
+        if data_order {
             return Err(diagnostic::refuse!("{fam}: a conditional line or area style on a chart that draws every row is not supported").into());
         }
         if is_stacked && !hrefs.is_empty() {
@@ -7075,7 +7078,8 @@ pub(super) fn fit(
         let nested = layer_zero_rules.iter().enumerate().filter(|(_, width)| width.is_some()).map(|(i, _)| layer_linear[i].scale(0.0));
         crate::common::rule_on_edge(shared.chain(nested), x_edge.edge_y(plot_h)).then(|| zl.stroke().to_string())
     });
-    let x_axis = LineXAxis {
+    let mut x_axis = LineXAxis {
+        label_fills: Vec::new(),
         ad,
         x_inset: x_scale_pad,
         use_band_positions,
@@ -7135,6 +7139,113 @@ pub(super) fn fit(
             LineXAxisBody::Nominal { labels: domain, xs, left_reach, angle, align: x_label_align }
         },
     };
+    // A rule on the x column tests each tick's own value: a bare tick's instant, a label's domain value.
+    // A label's value is the start of the period it names: an interval label's span, a tick's day, a domain bucket.
+    let label_day = |i: usize| -> Option<f64> {
+        if x_ordinal_calendar {
+            return *x_dates.day.get(*label_slots.get(i)?)?;
+        }
+        if edge_points && i >= edge_base {
+            // An edge label names the data's first or last point.
+            let mut data_days = x_dates.day.iter().flatten().copied();
+            return if i == edge_base { data_days.reduce(f64::min) } else { data_days.reduce(f64::max) };
+        }
+        match (&interval_axis, &x_tick_days) {
+            (Some(ia), _) => Some(ia.label_spans.get(i)?.0),
+            (None, Some(days)) => days.get(i).copied(),
+            (None, None) => *label_domain.day.get(i)?,
+        }
+    };
+    let axis_rules = r.axis_label_rules(x_field);
+    if quant_x.is_some() {
+        axis_rules.refuse_all("a numeric x axis draws its labels per tick")?;
+    }
+    let reads_rows = axis_rules.reads_rows();
+    // A label names the rows its period holds: one bucket when it labels the data's own grain, every bucket from
+    // its start to the next label's when it labels a coarser period.
+    let coarse = reads_rows
+        && matches!((detected_data_tu, vega_x_labels.as_ref()), (Some(data_tu), Some(v)) if (v.visibility_tu as u8) < (data_tu as u8));
+    // Each row's day, read off the axis's own dates for its x text.
+    let row_days: Vec<(f64, &serde_json::Map<String, Value>)> = if reads_rows {
+        let day_of: HashMap<&str, f64> =
+            x_dates.text.iter().zip(&x_dates.day).filter_map(|(text, day)| Some((text.as_str(), (*day)?))).collect();
+        rows.iter().filter_map(|row| Some((*day_of.get(row_str(row, x_field).as_str())?, row))).collect()
+    } else {
+        Vec::new()
+    };
+    let rows_from = |from: f64, to: f64| -> Vec<&serde_json::Map<String, Value>> {
+        row_days.iter().filter(|(day, _)| from <= *day && *day < to).map(|(_, row)| *row).collect()
+    };
+    let label_fills: Vec<Option<String>> = {
+        let days: Vec<Option<f64>> = match &x_axis.body {
+            LineXAxisBody::Bare { ticks, .. } => ticks.iter().map(|t| Some(t.day)).collect(),
+            LineXAxisBody::Tilted { labels, .. } | LineXAxisBody::FlatTemporal { labels, .. } => {
+                labels.iter().map(|tl| label_day(tl.domain_idx)).collect()
+            }
+            LineXAxisBody::Nominal { .. } => Vec::new(),
+        };
+        match &x_axis.body {
+            LineXAxisBody::Nominal { labels, .. } => {
+                if quant_x_ticks.is_some() {
+                    axis_rules.refuse_all("a numeric x axis draws its labels per tick")?;
+                    Vec::new()
+                } else {
+                    labels
+                        .iter()
+                        .zip(&x_domain)
+                        .map(|(label, cat)| axis_rules.category_fill(label, std::slice::from_ref(cat), rows))
+                        .collect::<Result<_, _>>()?
+                }
+            }
+            _ => {
+                if matches!(x_axis.body, LineXAxisBody::Bare { .. }) {
+                    axis_rules.refuse_rows("this time axis's ticks name instants, not rows")?;
+                }
+                let texts: Vec<String> = match &x_axis.body {
+                    LineXAxisBody::Bare { ticks, .. } => ticks.iter().map(|t| t.text.clone()).collect(),
+                    LineXAxisBody::Tilted { labels, .. } | LineXAxisBody::FlatTemporal { labels, .. } => labels.iter().map(|tl| tl.row1.clone()).collect(),
+                    LineXAxisBody::Nominal { .. } => unreachable!("handled above"),
+                };
+                let mut starts: Vec<f64> = days.iter().flatten().copied().collect();
+                starts.sort_by(f64::total_cmp);
+                days.iter()
+                    .zip(&texts)
+                    .map(|(day, text)| {
+                        let Some(day) = *day else { return Ok(None) };
+                        let rows = if !reads_rows {
+                            Vec::new()
+                        } else if coarse {
+                            let next = starts.iter().copied().find(|s| *s > day).unwrap_or(f64::INFINITY);
+                            rows_from(day, next)
+                        } else {
+                            // A label at the data's own grain names the bucket starting on its day. With no row there, it
+                            // is a gap only when the day falls where the data's buckets start (a weekly series of Mondays
+                            // under Sunday ticks has no row at any tick).
+                            let bucket = day.floor();
+                            let rows = rows_from(bucket, bucket + 1.0);
+                            let phase = |tu, d: f64| d - ::bind::temporal::floor_day(d as i64, tu) as f64;
+                            // With no cadence no phase check can excuse a missing row, so a label without one is refused.
+                            let off_buckets = match (detected_data_tu, row_days.first()) {
+                                (Some(tu), Some((first, _))) => phase(tu, *first) != phase(tu, bucket),
+                                (None, _) => true,
+                                (Some(_), None) => false,
+                            };
+                            if rows.is_empty() && off_buckets {
+                                return Err(format!(
+                                    "line: the x-axis label {text:?} sits between two of the data's buckets, so a rule on a column other \
+                                     than x cannot color it; key the rule on the x column instead"
+                                )
+                                .into());
+                            }
+                            rows
+                        };
+                        axis_rules.fill(text, Some(&crate::conditional::iso_day(day)), &rows)
+                    })
+                    .collect::<Result<_, _>>()?
+            }
+        }
+    };
+    x_axis.label_fills = label_fills;
     if ::layout::labels_expr::view::active() && facet.is_none() {
         use ::layout::labels_expr::view::{register_axis, AxisSpec, Orient};
         let band_shift = if use_band_positions { -0.5 } else { 0.0 };
@@ -7159,7 +7270,7 @@ pub(super) fn fit(
             _ => None,
         };
         if let Some((shift, flush, (align, baseline), angle)) = laid {
-            let offset = x_tick_eff + x_label_pad;
+            let offset = x_label_pad;
             register_axis("x", AxisSpec { orient: Orient::Bottom, offset, shift, align, baseline, angle, flush, style: ax_x.labels.item_style()? });
         }
     }

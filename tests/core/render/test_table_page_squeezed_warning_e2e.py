@@ -68,6 +68,16 @@ def test_a_slot_too_short_for_the_page_warns() -> None:
     assert "40 rows total" in warning.message
 
 
+def test_a_scrolling_table_whose_viewport_is_shorter_than_its_page_warns() -> None:
+    """The default scroll mode draws fewer rows than page_rows in a short slot."""
+    board = _board("300px").replace("        mode: pages\n", "        mode: scroll\n")
+    warnings = _warnings(board, 40)
+
+    warning = next(w for w in warnings if w.code == "WARN-TABLE-PAGE-SQUEEZED")
+    assert warning.chart == "orgs"
+    assert "of the 20 rows a page holds" in warning.message
+
+
 def test_a_slot_that_fits_the_page_is_silent() -> None:
     """Room for every row the page holds — nothing was squeezed."""
     warnings = _warnings(_board("900px"), 40)

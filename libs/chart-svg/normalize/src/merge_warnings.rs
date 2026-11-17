@@ -184,12 +184,12 @@ pub(crate) fn leaves(patch: &impl model_core::LeafValues) -> Vec<(String, Value)
     let mut all = Vec::new();
     patch.leaf_values("", &mut |p, v| all.push((p.to_string(), v.spell())));
     // A model's own path is reported beside its leaves: only a path nothing extends is a leaf.
-    let paths: BTreeSet<&str> = all.iter().map(|(p, _)| p.as_str()).collect();
+    let mut extended = std::collections::HashSet::new();
+    for (p, _) in &all {
+        extended.extend(p.match_indices('.').map(|(i, _)| &p[..i]));
+    }
     all.iter()
-        .filter(|(p, _)| {
-            let below = format!("{p}.");
-            !paths.iter().any(|q| q.starts_with(&below))
-        })
+        .filter(|(p, _)| !extended.contains(p.as_str()))
         .cloned()
         .collect()
 }

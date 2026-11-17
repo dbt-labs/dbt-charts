@@ -51,13 +51,18 @@ def schema_wire(schema: dict[str, ColumnType]) -> JsonDict:
     return {name: declared.model_dump(mode="json") for name, declared in schema.items()}
 
 
+def dataset_wire(
+    rows: list[dict[str, Any]],  # type-state: explicit_any — query cells
+    schema: dict[str, ColumnType],
+) -> JsonDict:
+    """A result as the engine's dataset: its rows, cells tagged, and its schema;
+    `json.dumps` it with `json_default` and `allow_nan=False`."""
+    return {"rows": encode_cells(rows), "schema": schema_wire(schema)}
+
+
 def dumps_rows(
     rows: list[dict[str, Any]],  # type-state: explicit_any — query cells
     schema: dict[str, ColumnType],
 ) -> str:
     """The JSON `_engine.load_rows` parses."""
-    return json.dumps(
-        {"rows": encode_cells(rows), "schema": schema_wire(schema)},
-        default=json_default,
-        allow_nan=False,
-    )
+    return json.dumps(dataset_wire(rows, schema), default=json_default, allow_nan=False)

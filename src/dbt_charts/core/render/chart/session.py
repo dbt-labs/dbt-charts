@@ -30,8 +30,16 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.primitives import PieMode
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
+from dbt_charts.core.diagnostics import ERR_INTERNAL
 from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.render.engine import render_native
+from dbt_charts.core.render.engine_cell import (
+    cell_args,
+    draw_in_cell,
+    in_cell,
+    placement_ordinal,
+)
+from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.pie_layout import pie_box
 from dbt_charts.core.render.sizing import custom_chart_height
 
@@ -61,6 +69,7 @@ class BoardRenderSession:
         measuring: bool = False,
         authored_height: float | None = None,
         pie_mode: PieMode | None = None,
+        placement: str | None = None,
     ) -> str:
         """The chart's SVG, drawn by the engine.
 
@@ -69,18 +78,31 @@ class BoardRenderSession:
         ``padding`` is the padding a custom chart frames itself inside at the
         full ``width``/``height``, as a Vega-Lite chart does.
         """
+        if in_cell(chart):
+            if placement is None:
+                raise RenderError.from_code(
+                    ERR_INTERNAL,
+                    message=f"chart {chart.id!r} is drawn outside a board placement",
+                )
+            return draw_in_cell(
+                chart,
+                placement,
+                cell_args(chart, self.board_style, width, height, padding, title_shift),
+            )
+        # A chart drawn outside a board layout is its own first placement.
+        ordinal = 0 if placement is None else placement_ordinal(chart.id, placement)
         match chart:
-            case ResolvedKpiChart() | ResolvedSparkBarChart():
-                # No slot height is the card's own: a KPI's `default_height`, a
-                # spark_bar's natural one (the engine's `0.0`).
-                if height:
-                    slot_height = height
-                elif isinstance(chart, ResolvedKpiChart):
-                    kpi_style = chart.style.kpi
-                    assert kpi_style is not None, "resolve() must populate style.kpi"
-                    slot_height = kpi_style.default_height
-                else:
-                    slot_height = 0.0
+            case ResolvedKpiChart():
+                raise RenderError.from_code(
+                    ERR_INTERNAL,
+                    message=f"KPI {chart.id!r} is drawn only by the engine's cell",
+                )
+            case ResolvedSparkBarChart():
+                # No slot height is the spark_bar's natural one (the engine's `0.0`).
+                slot_height = (
+                    height
+                    or 0.0  # type-state: silent_fallback — 0 asks the engine for natural height
+                )
                 svg, _ = render_native(
                     chart,
                     data,
@@ -90,6 +112,7 @@ class BoardRenderSession:
                     board_style=self.board_style,
                     title_shift=title_shift,
                     is_placeholder=is_placeholder,
+                    placement=ordinal,
                 )
                 return svg
             case ResolvedTableChart():
@@ -102,6 +125,7 @@ class BoardRenderSession:
                     padding=inset,
                     board_style=self.board_style,
                     title_shift=title_shift,
+                    placement=ordinal,
                 )[0]
             case ResolvedCustomChart():
                 # A missing slot height means "no slot": the chart's own
@@ -122,6 +146,7 @@ class BoardRenderSession:
                     padding=padding,
                     board_style=self.board_style,
                     title_shift=title_shift,
+                    placement=ordinal,
                 )
                 return svg
             case ResolvedPieChart():
@@ -145,6 +170,7 @@ class BoardRenderSession:
                     # The mode is the size stage's; a slot an author pinned
                     # smaller keeps it.
                     pie_mode=pie_mode,
+                    placement=ordinal,
                 )
                 return svg
             case (
@@ -170,6 +196,7 @@ class BoardRenderSession:
                     datasets=datasets,
                     measuring=measuring,
                     authored_height=authored_height,
+                    placement=ordinal,
                 )
                 return svg
             case ResolvedCalloutChart():
@@ -180,5 +207,6 @@ class BoardRenderSession:
                     height=0.0 if height is None else height,
                     padding=None,
                     board_style=self.board_style,
+                    placement=ordinal,
                 )
                 return svg

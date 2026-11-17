@@ -26,8 +26,8 @@ import importlib.util
 import logging
 import os
 import threading
-from collections import Counter
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections import Counter, defaultdict
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib.metadata import metadata
@@ -58,6 +58,7 @@ from dbt_charts.core.board import (
     BoardRenderResult,
     prefetch_dashboard,
     render_dashboard,
+    window_dashboard,
 )
 from dbt_charts.core.compile.config import (
     get_project_markdown_metadata_table,
@@ -65,10 +66,12 @@ from dbt_charts.core.compile.config import (
     resolve_cache_boot,
 )
 from dbt_charts.core.compile.template.variables import variables_from_query_pairs
+from dbt_charts.core.constants.window import WINDOW_MAX_ROWS
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.registry import ERROR_GUIDE_PATH, REGISTRY
 from dbt_charts.core.execute.cache_backend import QueryResultCache
+from dbt_charts.core.execute.cache_composition import CompositionError
 from dbt_charts.core.execute.env import (
     LOCAL_AUTHORING_ENV_KWARGS,
     ExecEnv,
@@ -77,6 +80,7 @@ from dbt_charts.core.execute.env import (
 )
 from dbt_charts.core.execute.plan import utc_now
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+from dbt_charts.core.execute.window import Window, WindowError
 from dbt_charts.core.fonts import get_fonts_dir
 from dbt_charts.core.inspect import INSPECT_TEMPLATES
 from dbt_charts.core.inspect.renderer import (
@@ -99,6 +103,7 @@ from dbt_charts.core.project import (
     reserves_charts_url,
     resolve_directory_url,
 )
+from dbt_charts.core.utils import normalize_data_for_json
 
 if TYPE_CHECKING:
     from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -466,9 +471,112 @@ def _error_nav(
     )
 
 
+_WINDOW_KEYS = frozenset(
+    {"_window", "_search", "_search_in", "_order", "_offset", "_limit"}
+)
+_WINDOW_EQUALS = "_equals."
+
+
+def _is_window_key(key: str) -> bool:
+    return key in _WINDOW_KEYS or key.startswith(_WINDOW_EQUALS)
+
+
+def _int_param(params: defaultdict[str, list[str]], key: str, default: int) -> int:
+    values = params[key]
+    if not values:
+        return default
+    try:
+        return int(values[-1])
+    except ValueError:
+        raise WindowError(
+            f"{key} must be a whole number, got {values[-1]!r}."
+        ) from None
+
+
+def _parse_window(pairs: list[tuple[str, str]]) -> Window:
+    """The window a board URL's ``_``-prefixed parameters ask for.
+
+    ``_search`` / ``_search_in`` (repeatable): the needle and the columns it
+    looks in. ``_order`` (repeatable): a column, ``-column`` for descending.
+    ``_equals.<column>`` (repeatable): exact values. ``_offset`` defaults to 0
+    and ``_limit`` to the largest window, ``WINDOW_MAX_ROWS``.
+    """
+    params: defaultdict[str, list[str]] = defaultdict(list)
+    for key, value in pairs:
+        params[key].append(value)
+    order = tuple(
+        (o[1:], "desc") if o.startswith("-") else (o, "asc") for o in params["_order"]
+    )
+    equals = tuple(
+        (key.removeprefix(_WINDOW_EQUALS), tuple(values))
+        for key, values in params.items()
+        if key.startswith(_WINDOW_EQUALS)
+    )
+    return Window(
+        params["_search"][-1] if params["_search"] else "",
+        tuple(params["_search_in"]),
+        equals,
+        order,
+        _int_param(params, "_offset", 0),
+        _int_param(params, "_limit", WINDOW_MAX_ROWS),
+    )
+
+
+def _window_response(
+    file_path: ProjectPath,
+    pairs: list[tuple[str, str]],
+    variables: dict[str, str],
+    project: FilesystemProject,
+    env: ExecEnv,
+    clock: Callable[[], datetime],
+    result_cache: QueryResultCache | None,
+) -> Response:
+    """JSON for a window of one board query: ``columns``, ``rows`` (one list
+    per row), the matching ``total``, whether ``more`` follow, and whether the
+    result was ``truncated`` at a fetch cap before it was searched. A failure is
+    JSON too, ``{"error": ...}``: a bad window is a 400, a board that does not
+    compile or a query that fails a 422, a failed slice a 500."""
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404, detail=f"Board file not found: {file_path.relpath}"
+        )
+    window_pairs = [(k, v) for k, v in pairs if _is_window_key(k)]
+    query_name = dict(window_pairs)["_window"]
+    try:
+        window = _parse_window(window_pairs)
+        found = window_dashboard(
+            file_path.read_board(),
+            query_name,
+            {k: v for k, v in variables.items() if not _is_window_key(k)},
+            window,
+            project=project,
+            env=env,
+            result_cache=result_cache,
+            url_mount_dir=_url_mount_dir(file_path.relpath, project),
+            clock=clock,
+        )
+    except WindowError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except DbtChartsError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except CompositionError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    columns = list(found.schema)
+    rows = normalize_data_for_json(found.rows)
+    return JSONResponse(
+        {
+            "columns": columns,
+            "rows": [[row[c] for c in columns] for row in rows],
+            "total": found.total,
+            "more": found.more,
+            "truncated": found.truncated,
+        }
+    )
+
+
 def _render_board_file(
     file_path: ProjectPath,
-    variables: dict[str, Any],
+    variables: dict[str, str],
     project: FilesystemProject,
     env: ExecEnv,
     clock: Callable[[], datetime],
@@ -477,8 +585,15 @@ def _render_board_file(
     result_cache: QueryResultCache | None = None,
     download_format: str | None = None,
     include_nav: bool = True,
+    stream: bool = False,
 ) -> Response:
-    """Render a board file to HTML (or, when download_format is set, as a download)."""
+    """Render a board file to HTML (or, when download_format is set, as a download).
+
+    ``stream`` sends the nav and a loading state before any query runs, then the
+    rendered page in the same response, so a slow board is never a blank tab.
+    Only a browser navigation asks for it: a streamed page is a 200 before its
+    render can fail, and any other client keeps the page's real status.
+    """
     if not file_path.exists():
         raise HTTPException(
             status_code=404, detail=f"Board file not found: {file_path.relpath}"
@@ -534,59 +649,92 @@ def _render_board_file(
         else ""
     )
 
-    result = render_dashboard(
-        board=board,
-        variables=variables,
-        strict_variables=False,
-        project=project,
-        env=env,
-        format="html",
-        link_context=link_context,
-        url_mount_dir=url_mount_dir,
-        result_cache=result_cache,
-        max_workers=max_workers,
-        compile_result=compile_result,
-        chrome=nav_fragment,
-        livereload=True,
-        # A served board can re-run its queries, so it gets live controls.
-        controls=True,
-        clock=clock,
-    )
+    def page(chrome: str, error_chrome: str) -> HTMLResponse:
+        result = render_dashboard(
+            board=board,
+            variables=variables,
+            strict_variables=False,
+            project=project,
+            env=env,
+            format="html",
+            link_context=link_context,
+            url_mount_dir=url_mount_dir,
+            result_cache=result_cache,
+            max_workers=max_workers,
+            compile_result=compile_result,
+            chrome=chrome,
+            livereload=True,
+            # A served board can re-run its queries, so it gets live controls.
+            controls=True,
+            clock=clock,
+        )
 
-    if result.status == "ok":
-        data = result.data
-        html = data.decode("utf-8") if isinstance(data, bytes) else str(data)
-        # Runs after the response is sent.
-        prefetch = BackgroundTasks()
-        if result.prefetch_query_names and result_cache is not None:
-            prefetch.add_task(
-                prefetch_dashboard,
-                board,
-                variables,
-                project=project,
-                env=env,
-                result_cache=result_cache,
-                max_workers=max_workers,
-                compile_result=compile_result,
-                clock=clock,
+        if result.status == "ok":
+            data = result.data
+            html = data.decode("utf-8") if isinstance(data, bytes) else str(data)
+            # Runs after the response is sent.
+            prefetch = BackgroundTasks()
+            if result.prefetch_query_names and result_cache is not None:
+                prefetch.add_task(
+                    prefetch_dashboard,
+                    board,
+                    variables,
+                    project=project,
+                    env=env,
+                    result_cache=result_cache,
+                    max_workers=max_workers,
+                    compile_result=compile_result,
+                    clock=clock,
+                )
+            return HTMLResponse(content=html, background=prefetch)
+
+        # Structured board errors and validation/chart errors all share the same
+        # served error page.
+        return _render_structured_errors_html(
+            result,
+            request_path=board_name.name,
+            error_palette=_error_palette_for_theme(board_theme),
+            chrome=error_chrome,
+            chart_errors_status=500,
+        )
+
+    if not stream:
+        return page(
+            nav_fragment,
+            _error_nav(
+                file_path.parent,
+                url_mount_dir,
+                board_name.stem,
+                include_nav,
+                board_theme,
+            ),
+        )
+
+    background = BackgroundTasks()
+
+    def streamed() -> Iterator[str]:
+        yield _serve_template("loading.html.j2").render(chrome=nav_fragment)
+        # The 200 is already on the wire, so a failure from here on can only be
+        # reported in the page: the error page takes the loading state's place.
+        try:
+            response = page("", "")
+        except DbtChartsError as exc:
+            logger.exception("Error rendering %s", file_path.relpath)
+            response = _render_structured_errors_html(
+                BoardRenderResult(status="failed", board_error=exc.to_diagnostic()),
+                request_path=board_name.name,
             )
-        return HTMLResponse(content=html, background=prefetch)
+        except Exception as exc:  # noqa: BLE001 — HTTP boundary: a raise after the first chunk would leave the page loading forever
+            logger.exception("Error rendering %s", file_path.relpath)
+            response = _render_structured_errors_html(
+                _synthetic_error(str(exc)), request_path=board_name.name
+            )
+        if response.background is not None:
+            background.tasks.append(response.background)
+        yield _serve_template("loaded.html.j2").render()
+        yield bytes(response.body).decode("utf-8")
 
-    # Structured board errors and validation/chart errors all share the same
-    # served error page.
-    return _render_structured_errors_html(
-        result,
-        request_path=board_name.name,
-        error_palette=_error_palette_for_theme(board_theme),
-        chrome=_error_nav(
-            file_path.parent,
-            url_mount_dir,
-            board_name.stem,
-            include_nav,
-            board_theme,
-        ),
-        chart_errors_status=500,
-    )
+    return StreamingResponse(streamed(), media_type="text/html", background=background)
 
 
 _DOWNLOAD_FORMATS: frozenset[str] = frozenset({"svg", "png", "pdf"})
@@ -601,7 +749,7 @@ _DOWNLOAD_MEDIA_TYPE: dict[str, str] = {
 def _render_board_download(
     file_path: ProjectPath,
     fmt: str,
-    variables: dict[str, Any],
+    variables: dict[str, str],
     project: FilesystemProject,
     env: ExecEnv,
     clock: Callable[[], datetime],
@@ -695,7 +843,7 @@ def _resolve_inspect_source_config(
 
 def _handle_inspect_route(
     template_name: str,
-    variables: dict[str, Any],
+    variables: dict[str, str],
     project: FilesystemProject,
 ) -> Response:
     """Handle /inspect/* routes with custom template fallback.
@@ -1097,6 +1245,7 @@ def create_server(
     app.state.duckdb_config = duckdb_config
     # Fallbacks until the lifespan sets the real signatures on startup.
     app.state.alias_index_mtime = (0.0, frozenset())
+    app.state.alias_index = AliasIndex()
     app.state.config_mtime = 0.0
     # Built here so shutdown.py can take it before the app runs. Watches the
     # root, not charts_dir, which lives under it and need not exist yet.
@@ -1122,7 +1271,7 @@ def create_server(
     @app.middleware("http")
     async def _reload_on_change(
         request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
+        call_next: Callable[[Request], Awaitable[StreamingResponse]],
     ) -> Response:
         path = request.url.path
         if path.startswith("/static/fonts/") or path in _SKIP_REFRESH_PATHS:
@@ -1160,9 +1309,23 @@ def create_server(
             leases.acquire(env)
         request.state.env = env
         try:
-            return await call_next(request)
-        finally:
+            response = await call_next(request)
+        except BaseException:
             leases.release(env)
+            raise
+        # call_next returns once the headers are ready; a streamed page renders
+        # while its body is sent, so the lease lasts until the last chunk.
+        body = response.body_iterator
+
+        async def _leased_body() -> AsyncGenerator[str | bytes | memoryview, None]:
+            try:
+                async for chunk in body:
+                    yield chunk
+            finally:
+                leases.release(env)
+
+        response.body_iterator = _leased_body()
+        return response
 
     # Mount the bundled webfonts at /static/fonts so the @font-face URLs
     # injected into rendered HTML/SVG (Inter Variable, dbt Sans Tabular,
@@ -1407,14 +1570,14 @@ def create_server(
         # ?_embed renders the board without nav chrome, for a host's modal iframe.
         embed = raw_params.pop("_embed", None) is not None
         variables = raw_params
+        # A top-level page load; a frame, fetch, or script sends another value.
+        navigation = request.headers.get("sec-fetch-dest") == "document"
 
         # Alias resolution: before any board lookup, check whether this URL is an
         # alias that should redirect to a board's canonical file-path URL.
         # Runs after the /charts/ prefix guard above (infra routes like /health and
         # /static are matched by their dedicated routes before this catch-all fires).
-        alias_index: AliasIndex = (
-            getattr(app.state, "alias_index", None) or AliasIndex()
-        )
+        alias_index: AliasIndex = app.state.alias_index
         request_url = "/" + clean_path + ("/" if clean_path else "")
         canonical_url = alias_index.lookup(request_url)
         if canonical_url is not None:
@@ -1432,9 +1595,33 @@ def create_server(
 
         project: FilesystemProject = app.state.project
         resolved = resolve_directory_url(project, clean_path)
-        if isinstance(resolved, ProjectPath):
+
+        def serve_board(file_path: ProjectPath) -> Response:
+            alias_errors = alias_index.errors.get(file_path.relpath)
+            if alias_errors:
+                name = PurePosixPath(file_path.relpath)
+                return _render_structured_errors_html(
+                    BoardRenderResult(status="failed", validation_errors=alias_errors),
+                    request_path=name.name,
+                    chrome=_error_nav(
+                        file_path.parent,
+                        _url_mount_dir(file_path.relpath, project),
+                        name.stem,
+                        app.state.server_nav and not embed,
+                    ),
+                )
+            if "_window" in request.query_params:
+                return _window_response(
+                    file_path,
+                    request.query_params.multi_items(),
+                    variables,
+                    project,
+                    env=request.state.env,
+                    clock=clock,
+                    result_cache=app.state.result_cache,
+                )
             return _render_board_file(
-                resolved,
+                file_path,
                 variables,
                 project,
                 env=request.state.env,
@@ -1444,7 +1631,11 @@ def create_server(
                 result_cache=app.state.result_cache,
                 download_format=download_format,
                 include_nav=app.state.server_nav and not embed,
+                stream=navigation,
             )
+
+        if isinstance(resolved, ProjectPath):
+            return serve_board(resolved)
         if resolved:
             return _render_directory_listing(
                 resolved,
@@ -1509,17 +1700,6 @@ def create_server(
                 redirect_url = canonical + ("?" + urlencode(merged) if merged else "")
                 return RedirectResponse(url=redirect_url, status_code=302)
 
-        return _render_board_file(
-            file_path,
-            variables,
-            app.state.project,
-            env=request.state.env,
-            serve_storage_prefix=app.state.serve_storage_prefix,
-            max_workers=app.state.max_workers,
-            clock=clock,
-            result_cache=app.state.result_cache,
-            download_format=download_format,
-            include_nav=app.state.server_nav and not embed,
-        )
+        return serve_board(file_path)
 
     return app

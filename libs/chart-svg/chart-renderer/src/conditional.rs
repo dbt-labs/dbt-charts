@@ -179,6 +179,8 @@ pub(crate) struct MarkRule {
     pub(crate) predicate: Predicate,
     #[serde(default)]
     marks: Option<RuleMarks>,
+    #[serde(default)]
+    pub(crate) axis_x: Option<RuleAxisX>,
 }
 
 #[derive(Deserialize, Default)]
@@ -286,6 +288,202 @@ impl MarkPatch {
             }
         }
         Ok(patch)
+    }
+}
+
+/// A rule's `axis_x`: the style it gives the x-axis labels it matches.
+#[derive(Deserialize)]
+pub(crate) struct RuleAxisX {
+    #[serde(default)]
+    labels: Option<RuleAxisLabels>,
+}
+
+#[derive(Deserialize)]
+struct RuleAxisLabels {
+    #[serde(default)]
+    font: Option<RuleAxisFont>,
+}
+
+#[derive(Deserialize)]
+struct RuleAxisFont {
+    #[serde(default)]
+    color: Option<String>,
+}
+
+/// The x column's rules with the label color each sets, owned so an axis that places its labels late can test them.
+#[derive(Clone, Default)]
+pub(crate) struct XLabelRules {
+    column: String,
+    rules: Vec<(Predicate, Option<String>)>,
+}
+
+impl XLabelRules {
+    pub(crate) fn any(&self) -> bool {
+        self.rules.iter().any(|(_, color)| color.is_some())
+    }
+
+    /// The color of a label whose own value is `tick`, the later match winning.
+    pub(crate) fn fill(&self, tick: &Value) -> Result<Option<String>, Diagnostic> {
+        let mut fill = None;
+        for (_, color) in matching(&self.rules, |r| &r.0, &self.column, Some(tick))? {
+            fill = color.clone().or(fill);
+        }
+        Ok(fill)
+    }
+}
+
+/// A day since the epoch as the `YYYY-MM-DD` text a date rule tests.
+pub(crate) fn iso_day(day: f64) -> Value {
+    let (y, m, d) = d3rs::calendar::civil_from_days(day.floor() as i64);
+    Value::String(format!("{y:04}-{m:02}-{d:02}"))
+}
+
+/// A chart's `style.conditional` as its x-axis labels read it. A rule on the x column tests a label's own value; a
+/// rule on any other column tests the one row of its series the label names, and a label naming several is refused.
+pub(crate) struct AxisLabelRules<'a, R> {
+    pub(crate) family: &'static str,
+    pub(crate) rules: Option<&'a std::collections::BTreeMap<String, Vec<R>>>,
+    pub(crate) predicate: fn(&R) -> &Predicate,
+    pub(crate) axis: fn(&R) -> Option<&RuleAxisX>,
+    /// A multi-y chart's measures: a rule on one reads only that measure's rows.
+    pub(crate) measures: &'a [String],
+    pub(crate) x: &'a str,
+}
+
+impl<R> AxisLabelRules<'_, R> {
+    fn color_of(&self, rule: &R) -> Option<String> {
+        (self.axis)(rule).and_then(|a| a.labels.as_ref()?.font.as_ref()?.color.clone())
+    }
+
+    fn axis_columns(&self) -> impl Iterator<Item = (&String, &Vec<R>)> {
+        self.rules.into_iter().flatten().filter(|(_, rules)| rules.iter().any(|r| self.color_of(r).is_some()))
+    }
+
+    /// Whether any rule restyles the labels.
+    pub(crate) fn any(&self) -> bool {
+        self.axis_columns().next().is_some()
+    }
+
+    /// Whether a rule on a column other than x restyles the labels: such a rule reads the row a label names.
+    pub(crate) fn reads_rows(&self) -> bool {
+        self.axis_columns().any(|(column, _)| column != self.x)
+    }
+
+    /// Refuses a rule that reads rows on an axis whose labels name none (`why`).
+    pub(crate) fn refuse_rows(&self, why: &str) -> Result<(), Diagnostic> {
+        match self.axis_columns().find(|(column, _)| *column != self.x) {
+            Some((column, _)) => Err(format!(
+                "{}: {why}, so style.conditional.{column} cannot color the x-axis labels; key the rule on the x column instead",
+                self.family
+            )
+            .into()),
+            None => Ok(()),
+        }
+    }
+
+    /// Refuses every rule that restyles the labels, on an axis that does not draw them per value (`why`).
+    pub(crate) fn refuse_all(&self, why: &str) -> Result<(), Diagnostic> {
+        match self.axis_columns().next() {
+            Some((column, _)) => Err(format!("{}: {why}, so style.conditional.{column} cannot color the x-axis labels", self.family).into()),
+            None => Ok(()),
+        }
+    }
+
+    /// The color of the label `label`, whose own value is `tick` and which names `rows`. The later match wins.
+    pub(crate) fn fill(
+        &self,
+        label: &str,
+        tick: Option<&Value>,
+        rows: &[&serde_json::Map<String, Value>],
+    ) -> Result<Option<String>, Diagnostic> {
+        let mut fill = None;
+        for (column, rules) in self.axis_columns() {
+            let value: Option<&Value> = if column == self.x {
+                tick
+            } else {
+                // A label reads its rows' value of the column only when they all agree: several rows that
+                // disagree would need combining, which a label never does.
+                let mut values = rows.iter().filter(|row| !other_series(row, column, self.measures)).map(|row| row.get(column));
+                let Some(first) = values.next() else { continue };
+                if values.any(|value| value != first) {
+                    return Err(format!(
+                        "{}: the x-axis label {label:?} names several rows whose {column} differs (its period spans several x \
+                         values, or several series share it), so style.conditional.{column} cannot color it; key the rule on the \
+                         x column instead",
+                        self.family
+                    )
+                    .into());
+                }
+                first
+            };
+            for rule in matching(rules, self.predicate, column, value)? {
+                fill = self.color_of(rule).or(fill);
+            }
+        }
+        Ok(fill)
+    }
+
+    /// The color of a label naming the x categories `cats` (one, or a run a coarser label spans): its value is the
+    /// first category, its rows every row on them.
+    pub(crate) fn category_fill(
+        &self,
+        label: &str,
+        cats: &[String],
+        rows: &[serde_json::Map<String, Value>],
+    ) -> Result<Option<String>, Diagnostic> {
+        // The label's value as its rows carry it, so a number category compares as a number.
+        let first = cats.first();
+        let tick = rows
+            .iter()
+            .find(|row| first.is_some_and(|cat| ::bind::rows::row_str(row, self.x) == *cat))
+            .and_then(|row| row.get(self.x).cloned())
+            .or_else(|| first.cloned().map(Value::String));
+        self.span_fill(label, tick.as_ref(), cats, rows)
+    }
+
+    /// The color of a label whose own value is `tick` and which names the rows on the x categories `cats`.
+    pub(crate) fn span_fill(
+        &self,
+        label: &str,
+        tick: Option<&Value>,
+        cats: &[String],
+        rows: &[serde_json::Map<String, Value>],
+    ) -> Result<Option<String>, Diagnostic> {
+        let named: Vec<&serde_json::Map<String, Value>> = rows
+            .iter()
+            .filter(|row| {
+                let text = ::bind::rows::row_str(row, self.x);
+                cats.iter().any(|cat| *cat == text)
+            })
+            .collect();
+        self.fill(label, tick, &named)
+    }
+
+    /// The x column's rules, for an axis that tests each label's own value only.
+    pub(crate) fn x_rules(&self) -> XLabelRules {
+        let rules = self.rules.and_then(|r| r.get(self.x)).into_iter().flatten();
+        XLabelRules {
+            column: self.x.to_string(),
+            rules: rules.map(|r| ((self.predicate)(r).clone(), self.color_of(r))).collect(),
+        }
+    }
+
+    /// Each category's label color, for an axis that draws one label per category.
+    pub(crate) fn category_fills(
+        &self,
+        cats: &[String],
+        rows: &[serde_json::Map<String, Value>],
+    ) -> Result<std::collections::HashMap<String, String>, Diagnostic> {
+        let mut fills = std::collections::HashMap::new();
+        if !self.any() {
+            return Ok(fills);
+        }
+        for cat in cats {
+            if let Some(fill) = self.category_fill(cat, std::slice::from_ref(cat), rows)? {
+                fills.insert(cat.clone(), fill);
+            }
+        }
+        Ok(fills)
     }
 }
 

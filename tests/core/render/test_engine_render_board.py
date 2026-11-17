@@ -54,6 +54,8 @@ def render(
         json.dumps(datasets),
         json.dumps(chart_errors or {}),
         "{}",
+        "{}",
+        "{}",
         presets,
         [],
         _engine.load_shaped_fonts(str(get_fonts_dir())),
@@ -63,7 +65,7 @@ def render(
 
 
 def test_a_scatter_board_renders_with_its_chart_cell(tmp_path: Path) -> None:
-    rendered = render(compiled(tmp_path), {"a.yml#q": ROWS})
+    rendered = render(compiled(tmp_path), {"q": ROWS})
     assert "<svg" in rendered.svg
     assert rendered.boxes["dots"]["height"] > 0
     assert rendered.height >= rendered.boxes["dots"]["height"]
@@ -156,7 +158,7 @@ def test_a_chart_authored_in_a_nested_board_wrapper_carries_its_authored_path(
     rendered = render(
         board,
         {
-            "a.yml#q": {
+            "q": {
                 "rows": [{"a": 1}],
                 "schema": {"a": {"kind": "integer", "element": None, "fields": None}},
             }
@@ -192,7 +194,7 @@ def test_a_chart_defined_at_the_root_keeps_its_path_in_a_nested_board(
     rendered = render(
         board,
         {
-            "a.yml#q": {
+            "q": {
                 "rows": [{"a": 1}],
                 "schema": {"a": {"kind": "integer", "element": None, "fields": None}},
             }
@@ -236,9 +238,9 @@ def in_cell(
     placement: str,
     height: float | None,
 ) -> _engine.RenderedCell:
-    return _engine.render_chart_in_cell(
+    return _engine.PreparedBoard(
         board,
-        json.dumps({"a.yml#q": KPI_ROWS}),
+        {"q": _engine.load_rows(json.dumps(KPI_ROWS))},
         "{}",
         "{}",
         "{}",
@@ -246,11 +248,8 @@ def in_cell(
         _engine.load_shaped_fonts(str(get_fonts_dir())),
         "2026-11-06T00:00:00Z",
         None,
-        placement,
-        268.0,
-        height,
-        (16.0, 16.0, 16.0, 16.0),
-    )
+        "{}",
+    ).draw(placement, [], None, 268.0, height, (16.0, 16.0, 16.0, 16.0), (0.0, 0.0), {})
 
 
 def test_a_kpi_draws_in_the_cell_the_host_sizes(tmp_path: Path) -> None:
@@ -277,7 +276,7 @@ def test_a_preset_for_a_variable_the_board_does_not_declare_is_refused(
     with pytest.raises(_engine.RenderDiagnosticError) as raised:
         render(
             compiled(tmp_path),
-            {"a.yml#q": ROWS},
+            {"q": ROWS},
             presets='{"span": "last_7_days"}',
         )
     assert raised.value.code == "ERR-INTERNAL"

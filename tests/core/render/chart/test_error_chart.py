@@ -33,12 +33,10 @@ from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.query_results import QueryResults
 from dbt_charts.core.project import Project
 from dbt_charts.core.render.chart.rendering import render_chart_item
-from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.engine import render_callout_card
-from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
 from dbt_charts.core.render.svg_utils import extract_svg_dimensions
 
-from ...._results import rows_result
+from ..._one_chart_board import chart_svg
 from ._callout_test_helpers import resolved_callout
 
 
@@ -75,23 +73,12 @@ def test_default_theme_callout_uses_tone_info_palette() -> None:
     )
 
 
-def test_default_theme_callout_chart_resolves_tone_colors_in_svg(make_chart) -> None:
-    chart = make_chart(
-        "callout",
-        x=None,
-        y=None,
-        query=None,
-        query_name=None,
-        message="Info tone palette should resolve to concrete SVG colors",
-    )
-
-    svg = render_chart(
-        chart,
-        resolved_style=resolve_style(get_theme_style("clarity")),
-        chart_style_context=resolve_chart_style_context(get_theme_style("clarity")),
-        data=rows_result([]),
-        format="svg",
-        width=220,
+def test_default_theme_callout_chart_resolves_tone_colors_in_svg() -> None:
+    svg = chart_svg(
+        {
+            "type": "callout",
+            "message": "Info tone palette should resolve to concrete SVG colors",
+        }
     )
 
     assert resolve_palette_color("info.bg") in svg
@@ -102,27 +89,16 @@ def test_default_theme_callout_chart_resolves_tone_colors_in_svg(make_chart) -> 
     assert "info.border" not in svg
 
 
-def test_explicit_callout_chart_renders_wrapped_message(make_chart) -> None:
-    chart = make_chart(
-        "callout",
-        x=None,
-        y=None,
-        query=None,
-        query_name=None,
-        title="Inline Failure",
-        message=(
-            "This is a deliberately long error message for compact cards so the "
-            "renderer has to wrap multiple lines instead of overflowing sideways."
-        ),
-    )
-
-    svg = render_chart(
-        chart,
-        resolved_style=resolve_style(get_theme_style()),
-        chart_style_context=resolve_chart_style_context(get_theme_style()),
-        data=rows_result([]),
-        format="svg",
-        width=220,
+def test_explicit_callout_chart_renders_wrapped_message() -> None:
+    svg = chart_svg(
+        {
+            "type": "callout",
+            "title": "Inline Failure",
+            "message": (
+                "This is a deliberately long error message for compact cards so the "
+                "renderer has to wrap multiple lines instead of overflowing sideways."
+            ),
+        }
     )
 
     assert "Inline Failure" in svg
@@ -177,40 +153,6 @@ def test_explicit_callout_chart_message_does_not_emit_overflowing_line() -> None
     assert all(full_sentence not in line for line in text_lines)
 
 
-def test_explicit_callout_chart_skips_query_execution(make_chart) -> None:
-    chart = make_chart(
-        "callout",
-        query_name=None,
-        title="Execution Not Needed",
-        message="Rendered directly from authored message",
-    )
-    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
-    executor.execute_query.side_effect = AssertionError(
-        "callout charts should not execute queries"
-    )
-
-    rs, ctx = resolve_style_and_context(get_theme_style())
-    svg, height = render_chart_item(
-        resolve(chart, [], chart_style_context=ctx),
-        executor,
-        variables={},
-        available_width=220,
-        available_height=300,
-        resolved_style=rs,
-        render_cache={},
-    )
-
-    executor.execute_query.assert_not_called()
-    svg_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", svg)).strip()
-    assert "Rendered directly from" in svg_text
-    assert "authored message" in svg_text
-    assert (
-        '<svg xmlns="http://www.w3.org/2000/svg" class="dbt-chart-callout"' not in svg
-    )
-    assert height > 60
-    assert svg.count('id="chart-') == 1
-
-
 def test_explicit_callout_chart_never_shrinks_below_layout_slot_height() -> None:
     from dbt_charts.core.compile.models.chart.normalized import (
         CalloutChart as CalloutChart,
@@ -249,58 +191,38 @@ def test_explicit_callout_chart_never_shrinks_below_layout_slot_height() -> None
 
 
 def test_explicit_callout_chart_static_layout_height_matches_rendered_height() -> None:
-    result = compile(
-        """
-charts:
-  explicit_callout_sentence:
-    type: callout
-    message: >
-      The renderer should use as much of the visible card width as it safely can,
-      while still keeping the error block readable and visually balanced inside a
-      multi-column layout, even when the sentence is long enough to force a more
-      obvious wrap pattern than a short status message would.
-rows:
-  - explicit_callout_sentence
-"""
+    """The engine sizes the slot of a callout to the height the card draws at."""
+    message = (
+        "The renderer should use as much of the visible card width as it safely can, "
+        "while still keeping the error block readable and visually balanced inside a "
+        "multi-column layout, even when the sentence is long enough to force a more "
+        "obvious wrap pattern than a short status message would."
     )
-    assert result.success
+    svg = chart_svg({"type": "callout", "message": message})
 
-    board = result.board
-    assert board is not None
-    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
-
-    pre_resolved = {
-        name: resolve(v2, [], chart_style_context=board.chart_style_context)
-        for name, v2 in board.charts.items()
-    }
-    sized_board, _ = calculate_data_aware_layout(
-        board, executor, {}, render_first=False, pre_resolved=pre_resolved
-    )
-    item = sized_board.layout.items[0]
-
+    slot_width = float(re.search(r'data-chart-width="([\d.]+)"', svg).group(1))
+    slot_height = float(re.search(r'data-chart-height="([\d.]+)"', svg).group(1))
     # Render without a title to match the YAML chart (which has no title:).
     rendered = render_callout_card(
-        message=(
-            "The renderer should use as much of the visible card width as it safely can, "
-            "while still keeping the error block readable and visually balanced inside a "
-            "multi-column layout, even when the sentence is long enough to force a more "
-            "obvious wrap pattern than a short status message would."
-        ),
-        width=item.width,
-        style=board.chart_style_context.callout_error,
+        message=message,
+        width=slot_width,
+        style=resolved_callout(resolve_chart_style_context(get_theme_style())),
         chart_id="callout",
     )
 
-    assert item.height == pytest.approx(extract_svg_dimensions(rendered).height)
+    assert slot_height == pytest.approx(extract_svg_dimensions(rendered).height)
 
 
+@pytest.mark.usefixtures("placement_scope")
 def test_chart_data_error_fallback_wraps_message(make_chart) -> None:
-    chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+
+    chart = make_chart("bar", x="x", y="y", title="Broken chart")
     executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
-    executor.execute_query.return_value = [{"value": 1}, {"value": 2}]
-    executor.execute_query_result.return_value = rows_result(
-        executor.execute_query.return_value
+    executor.execute_query.side_effect = ChartDataError(
+        "expects exactly 1 row", chart_id=chart.id
     )
+    executor.execute_query_result.side_effect = executor.execute_query.side_effect
 
     rs, ctx = resolve_style_and_context(get_theme_style())
     svg, height = render_chart_item(
@@ -323,10 +245,10 @@ def test_chart_data_error_fallback_wraps_message(make_chart) -> None:
     )
 
 
-def test_kpi_error_fallback_layout_item_matches_authored_callout_padding(
+@pytest.mark.usefixtures("placement_scope")
+def test_chart_error_fallback_layout_item_matches_authored_callout_padding(
     local_project: Callable[..., Project],
 ) -> None:
-    from dbt_charts.core.compile import compile
     from dbt_charts.core.compile.resolve.style.board import resolve_style
     from dbt_charts.core.render.chart.rendering import render_layout_item
 
@@ -342,9 +264,10 @@ queries:
       - [98000]
 charts:
   implicit_error_revenue:
-    type: kpi
+    type: bar
     query: kpi_bad
-    value: revenue
+    x: missing_column
+    y: revenue
 rows:
   - implicit_error_revenue
 """
@@ -374,14 +297,15 @@ rows:
         painted_canvas=None,
     )
 
+    assert "dbt-chart-callout" in svg
     assert f'data-chart-width="{item.width}"' in svg
     assert f'width="{item.width}"' in svg
 
 
+@pytest.mark.usefixtures("placement_scope")
 def test_callout_chart_layout_item_uses_full_item_width_without_outer_card_padding(
     local_project: Callable[..., Project],
 ) -> None:
-    from dbt_charts.core.compile import compile
     from dbt_charts.core.compile.resolve.style.board import resolve_style
     from dbt_charts.core.render.chart.rendering import render_layout_item
 

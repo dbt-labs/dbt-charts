@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.conditional_predicate import (
-    ConditionalPredicate,
     default_rule_last,
 )
 from dbt_charts.core.compile.models.factories import build_conditional_model
@@ -34,6 +33,9 @@ from dbt_charts.core.compile.models.style.theme._chart_base import (
     _CartesianChartStyle,
     _LegendedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
+)
+from dbt_charts.core.compile.models.style.theme.axis_conditional import (
+    AxisConditionalPredicate,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     BarMarkStyle,
@@ -69,6 +71,31 @@ class BarGroupedStyle(BaseModel):
         lt=1,
         description="Margin at both plot edges, as a share of the band step.",
     )
+
+
+class BarTornOutlierStyle(BaseModel):
+    """Tear an outlier bar at a break and float its end above the plot.
+
+    Bars longer than the break are cut with a jagged edge; each cut end is
+    redrawn as a labeled cap in a band above the plot, outside the shared
+    scale, so the smaller bars stay legible.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = Field(description="Tear outlier bars at the break.")
+    # Cascade-managed sentinel: None means the break is picked from the data.
+    at: float | None = Field(
+        default=None,
+        gt=0,
+        description="Break value in data units; unset picks it from the data.",
+    )
+    band: float = Field(
+        gt=0,
+        le=1,
+        description="Cap band length above the tear, as a share of the plot.",
+    )
+    cap: float = Field(gt=0, description="Cap length, as a multiple of bar thickness.")
 
 
 class BarLayerStyle(BaseModel):
@@ -137,6 +164,9 @@ class _BarChartStyleBase(
         description="Styling of the series names printed on stacked bars (`legend.position.edge: endpoints`)."
     )
     grouped: BarGroupedStyle = Field(description="Band-scale padding for grouped bars.")
+    torn_outlier: BarTornOutlierStyle = Field(
+        description="Tear bars far longer than the rest and float their ends as caps."
+    )
     pattern: PatternStyle = Field(
         description="How the `pattern:` channel paints fills."
     )
@@ -150,12 +180,14 @@ class _BarChartStyleBase(
 
 if TYPE_CHECKING:
 
-    class BarConditionalRule(ConditionalPredicate):
+    class BarConditionalRule(AxisConditionalPredicate):
         marks: BarChartMarksStyle | None
 
 else:
     BarConditionalRule = build_conditional_model(
-        _BarChartStyleBase, name="BarChartStyleConditional"
+        _BarChartStyleBase,
+        AxisConditionalPredicate,
+        name="BarChartStyleConditional",
     )
 
 

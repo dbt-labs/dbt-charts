@@ -19,7 +19,13 @@ def test_board_resolved_schema_has_expected_metadata() -> None:
     assert schema["$id"] == "https://dbtcharts.com/schemas/board-resolved.schema.json"
     assert "version" not in schema
     assert "$defs" in schema
-    assert sorted(schema["required"]) == ["$id", "board", "styles", "version"]
+    assert sorted(schema["required"]) == [
+        "$id",
+        "board",
+        "engine_compile",
+        "styles",
+        "version",
+    ]
     assert schema["properties"]["board"] == {"$ref": "#/$defs/ResolvedBoard"}
 
 

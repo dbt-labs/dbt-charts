@@ -15,7 +15,7 @@ use crate::locate::{
     positions_along,
 };
 use crate::pyrepr::py_repr;
-use crate::schema::{Pos, Schema};
+use crate::schema::{Pos, Probe, Schema};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MigrationError {
@@ -362,7 +362,7 @@ pub fn apply_move(
     if m.expansion.is_some() {
         return apply_expansion(doc, m, out);
     }
-    for loc in move_source_locations(doc, m) {
+    for loc in move_source_locations(&Probe::new(doc), doc, m) {
         let destination =
             move_path(m, &m.new_path, &loc.bindings).map_err(MigrationError::Other)?;
         let Some((_, parent_path)) = loc.path.split_last() else {
@@ -442,7 +442,7 @@ fn apply_expansion(doc: &mut Node, m: &Move, out: &mut Applied) -> Result<(), Mi
     let (Some(expansion), Some(target)) = (&m.expansion, grammar(m.target)) else {
         return Ok(());
     };
-    for (board_at, loc) in expansion_locations(doc, m) {
+    for (board_at, loc) in expansion_locations(&Probe::new(doc), doc, m) {
         let destination =
             move_path(m, &m.new_path, &loc.bindings).map_err(MigrationError::Other)?;
         let Some(board) = at(doc, &board_at) else {
@@ -454,7 +454,8 @@ fn apply_expansion(doc: &mut Node, m: &Move, out: &mut Applied) -> Result<(), Mi
         }) else {
             return other("expansion source is not a string".into());
         };
-        let positions = positions_along(board, &destination, target, vec![target.root()]);
+        let probe = Probe::new(board);
+        let positions = positions_along(&probe, board, &destination, target, vec![target.root()]);
         let mut expanded = indexmap::IndexMap::new();
         let mut notes = Vec::new();
         for (leaf, leaf_value) in expansion.get(&value).map(Vec::as_slice).unwrap_or_default() {

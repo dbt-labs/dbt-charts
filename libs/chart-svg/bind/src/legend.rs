@@ -78,6 +78,9 @@ pub fn resolve_legend_values(
     }
 }
 
+/// Vega's default `symbolLimit` (`VEGA_LEGEND_SYMBOL_LIMIT`): the entries a legend lists before it folds the rest.
+pub const SYMBOL_LIMIT: usize = 30;
+
 /// `symbolLimit`: vega-encode's `LegendEntries` keeps the first `limit - 1` of `count` entries and
 /// folds the rest into one "+N more" note, which draws no swatch of its own. `None` where
 /// the entries fit.

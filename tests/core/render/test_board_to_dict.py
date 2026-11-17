@@ -171,6 +171,7 @@ def test_render_chart_item_error_diagnostic_carries_authored_path(
         error_collector=collector,
         filter_variables=frozenset(),
         link_open="page",
+        filters_of=lambda _chart: [],
     )
 
     assert collector[0].path == f"charts.{chart.id}"
@@ -247,6 +248,7 @@ _OMITTED_FROM_PROJECTION = {
     "requested_alias_substitute": "resolved palette input",
     "resolved_channels": "internal channel bindings",
     "stacked_domain_max": "derived at resolve time",
+    "torn_break": "derived at resolve time",
     "panel_axes": "derived small-multiples partition; no authored counterpart (see `multiples`)",
     "variable_dependencies": "internal dependency set",
     "dark_companion_stops": "derived dark-mode palette companion",
@@ -362,7 +364,7 @@ def test_y_range_display_takes_the_standalone_sign_placement(config, expected):
     fmt = resolve_format_parts(FormatConfig(spec=",.0f", **config), None)
     chart = SimpleNamespace(y="v")
     data = [{"v": -500}, {"v": 1000}]
-    assert _cartesian_y_range_display(chart, data, fmt, None) == expected
+    assert _cartesian_y_range_display(chart, data, fmt, None, None) == expected
 
 
 @pytest.mark.parametrize(

@@ -6,3 +6,5 @@ pub const HOVER_BAND_EXTEND_FRACTION: f64 = 0.05;
 pub const LABEL_FIT_LINE_HEIGHT_MULTIPLIER: f64 = 1.15;
 pub const TOP_RAIL_LABEL_GAP_SPACES: usize = 1;
 pub const CONTINUOUS_BAR_MAX_SIZE: f64 = 20.0;
+pub const TORN_OUTLIER_MIN_RATIO: f64 = 3.0;
+pub const TORN_OUTLIER_MIN_BARS: usize = 4;

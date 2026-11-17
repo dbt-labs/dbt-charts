@@ -375,7 +375,6 @@ pub(super) fn render_vertical_continuous_x_panel(
     let x_axis_offset = ax_x.ticks.offset.unwrap_or(0.0);
     let x_ticks_visible = ax_x.ticks.visible.unwrap_or(true);
     let x_tick_len = ax_x.ticks.length.unwrap_or(6.0);
-    let x_tick_eff = if x_ticks_visible { x_tick_len } else { 0.0 };
     let x_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     let x_fmt = ax_x.labels.format.as_ref();
     let x_tick_count = ax_x.ticks.count.unwrap_or(6.0) as usize;
@@ -740,7 +739,7 @@ pub(super) fn render_vertical_continuous_x_panel(
                 let mut x_axis_y2 = ph;
                 let mut x_axis_y1 = 0.0_f64;
                 if !suppress_x_axis {
-                    let row_y = x_edge.at(ph, x_axis_offset + x_tick_eff + x_label_pad);
+                    let row_y = x_edge.at(ph, x_axis_offset + x_label_pad);
                     for tv in d3rs::ticks::d3_ticks(x_lo, x_hi, x_tick_count) {
                         let lbl = ax_x.format_only_label(x_fmt.expect("gated above"), tv).map_err(|e| format!("bar x label format: {e}"))?;
                         let pos = (tv - x_lo) / x_span * pw;
@@ -1013,6 +1012,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         let nested = layer_axes.iter().zip(&layer_zero_rules).filter(|(_, width)| width.is_some()).map(|(la, _)| la.scale(plot_h).scale(0.0));
         crate::common::rule_on_edge(base.chain(nested), x_edge.edge_y(plot_h)).then(|| zl.stroke().to_string())
     });
+    r.axis_label_rules().refuse_all("a numeric x axis draws its labels per tick")?;
     let x_axis = facet_compose::PanelXAxis::Continuous(ContinuousXAxis {
         x_ticks,
         x_labels,
@@ -1023,7 +1023,6 @@ pub(super) fn render_vertical_continuous_x_panel(
         x_axis_drop: x_edge.sign() * x_axis_offset + 0.5,
         floor_rule,
         edge: x_edge,
-        x_tick_eff,
         x_label_pad,
         x_family: x_family.to_string(),
         x_font_size,
@@ -1054,7 +1053,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         String::new()
     };
     let bars_from = plot.len();
-    let mut ribbons = RibbonDraft::new(&r.style.mark.ribbons, false, None)?;
+    let mut ribbons = RibbonDraft::new(&r.style.mark.ribbons, false, false, None)?;
     for ((((&(_, yv), x_text), cat), p), extra) in bars_data.iter().zip(&bar_x_text).zip(&bar_cat).zip(&placed).zip(&bar_extra) {
         let yt = y_pos(yv);
         let (top, h) = if yt <= y0 { (yt, y0 - yt) } else { (y0, yt - y0) };

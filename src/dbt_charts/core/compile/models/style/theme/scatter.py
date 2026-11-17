@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.conditional_predicate import (
-    ConditionalPredicate,
     default_rule_last,
 )
 from dbt_charts.core.compile.models.factories import build_conditional_model
@@ -21,6 +20,9 @@ from dbt_charts.core.compile.models.style.theme._chart_base import (
     _CartesianChartStyle,
     _QuantitativeAxisChartStyleMixin,
     _SideLegendedChartStyleBaseAllOptional,
+)
+from dbt_charts.core.compile.models.style.theme.axis_conditional import (
+    AxisConditionalPredicate,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     PointMarkStyle,
@@ -73,12 +75,14 @@ class _ScatterChartStyleBase(
 
 if TYPE_CHECKING:
 
-    class ScatterConditionalRule(ConditionalPredicate):
+    class ScatterConditionalRule(AxisConditionalPredicate):
         marks: ScatterChartMarksStyle | None
 
 else:
     ScatterConditionalRule = build_conditional_model(
-        _ScatterChartStyleBase, name="ScatterChartStyleConditional"
+        _ScatterChartStyleBase,
+        AxisConditionalPredicate,
+        name="ScatterChartStyleConditional",
     )
 
 

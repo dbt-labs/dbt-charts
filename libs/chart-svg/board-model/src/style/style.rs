@@ -8,8 +8,8 @@
 //! `palettes`, `roles`) are Python's `dict | None`: `None` there is "nothing at this cascade level",
 //! which an empty map says (the patch twin keeps unset apart from empty).
 //!
-//! `Style.charts` and the chart families are `Box`ed so the total builds on a 512 KiB stack
-//! (`a_total_style_builds_on_a_512_kib_stack`). The built `Style` stays total: `omit` (a scalar
+//! `Style.charts` and the chart families are `Box`ed so the total builds on a 576 KiB stack
+//! (`a_total_style_builds_on_a_576_kib_stack`). The built `Style` stays total: `omit` (a scalar
 //! or model, `Option` in the built type, twins are its own) is only for a leaf some mount really
 //! leaves unset (the value-label font leaves, which no total builds; a stroke's `color` and
 //! `width` are plain `Engine<_, Auto>` leaves, `fill_at(.. = "auto")` on the mounts whose `_base`

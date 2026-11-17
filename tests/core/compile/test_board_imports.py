@@ -414,6 +414,100 @@ class TestImportedBoardContent:
         )
         assert [e.code for e in result.errors] == ["ERR-DUPLICATE-CHART-NAME"]
 
+    def test_two_tabs_placing_one_file_is_its_own_error(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        parent = """\
+tabs:
+  items:
+    - title: One
+      rows:
+        - ./child.yml
+    - title: Two
+      rows:
+        - ./child.yml
+"""
+        result = self._compile(
+            tmp_path,
+            local_project,
+            {"child.yml": _CHILD_BOARD, "parent.yml": parent},
+            "parent.yml",
+        )
+        (error,) = result.errors
+        assert error.code == "ERR-BOARD-FILE-PLACED-TWICE"
+        assert "'charts/child.yml'" in error.message
+        assert "charts/parent.yml at tabs.items.0.rows.0" in error.message
+        assert "charts/parent.yml at tabs.items.1.rows.0" in error.message
+
+    def test_a_file_of_queries_placed_twice_is_its_own_error(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        queries = "queries:\n  shared:\n    columns: [k]\n    values:\n      - [a]\n"
+        result = self._compile(
+            tmp_path,
+            local_project,
+            {
+                "q.yml": queries + "text: Note.\n",
+                "parent.yml": "cols:\n  - ./q.yml\n  - ./q.yml\n",
+            },
+            "parent.yml",
+        )
+        (error,) = result.errors
+        assert error.code == "ERR-BOARD-FILE-PLACED-TWICE"
+        assert "charts/parent.yml at cols.0 " in error.message
+        assert "charts/parent.yml at cols.1." in error.message
+
+    def test_a_diamond_is_its_own_error(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        result = self._compile(
+            tmp_path,
+            local_project,
+            {
+                "a.yml": "rows:\n  - ./b.yml\n  - ./c.yml\n",
+                "b.yml": "rows:\n  - ./d.yml\n",
+                "c.yml": "rows:\n  - ./d.yml\n",
+                "d.yml": _CHILD_BOARD,
+            },
+            "a.yml",
+        )
+        (error,) = result.errors
+        assert error.code == "ERR-BOARD-FILE-PLACED-TWICE"
+        assert "'charts/d.yml'" in error.message
+        assert "charts/b.yml" in error.message
+        assert "charts/c.yml" in error.message
+
+    def test_a_name_two_placed_files_declare_names_the_file_that_declared_it(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        result = self._compile(
+            tmp_path,
+            local_project,
+            {
+                "a.yml": "rows:\n  - ./b.yml\n  - ./c.yml\n",
+                "b.yml": _CHILD_BOARD,
+                "c.yml": _CHILD_BOARD,
+            },
+            "a.yml",
+        )
+        (error,) = result.errors
+        assert error.code == "ERR-DUPLICATE-CHART-NAME"
+        assert "declared in charts/b.yml and charts/c.yml" in error.message
+
+    def test_a_file_with_no_names_of_its_own_is_placed_twice(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        result = self._compile(
+            tmp_path,
+            local_project,
+            {
+                "note.yml": "text: Shared note.\n",
+                "parent.yml": "rows:\n  - ./note.yml\n  - ./note.yml\n",
+            },
+            "parent.yml",
+        )
+        assert result.errors == []
+
     def test_a_board_places_a_markdown_page(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:

@@ -26,6 +26,8 @@ from dbt_charts.core.render.layouts import (
 from .._run import Run
 from ._board_utils import apply_static_layout
 
+pytestmark = pytest.mark.usefixtures("placement_scope")
+
 # Import the layouts module using importlib to avoid name shadowing issues
 layouts_module = importlib.import_module("dbt_charts.core.render.layouts")
 

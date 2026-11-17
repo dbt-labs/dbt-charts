@@ -71,7 +71,9 @@ def _code(exc_info: pytest.ExceptionInfo[ChartDataError]) -> str:
     return exc_info.value.code.code
 
 
-def test_a_heatmap_color_without_a_number_raises_instead_of_painting_nan() -> None:
+def test_a_heatmap_color_without_a_number_draws_no_results_instead_of_painting_nan() -> (
+    None
+):
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.models.chart.normalized import HeatmapChart
     from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -91,10 +93,8 @@ def test_a_heatmap_color_without_a_number_raises_instead_of_painting_nan() -> No
     )
     data = [{"x": None, "grp": "a"}, {"x": None, "grp": "b"}]
     resolved = resolve(chart, data, chart_style_context=context)
-    with pytest.raises(ChartDataError) as exc:
-        render_resolved_chart(resolved, rows_result(data), board_style)
-    assert _code(exc) == "ERR-HEATMAP-COLOR-NO-VALUES"
-    assert exc.value.fields == {"field": "x"}
+    artifact = render_resolved_chart(resolved, rows_result(data), board_style)
+    assert ">No results</text>" in str(artifact.payload)
 
 
 @pytest.mark.parametrize("stack", ["none", "zero"])

@@ -55,8 +55,12 @@ from dbt_charts.core.text.case import inferred_display_name
 from dbt_charts.core.text.format_d3 import active_time_locale, board_word
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
     from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+    from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
     from dbt_charts.core.compile.models.style.theme.variables import VariablesStyle
     from dbt_charts.core.compile.models.variable.authored import Variable
     from dbt_charts.core.execute.cache_backend import CacheRows
@@ -162,6 +166,11 @@ class ResolvedControl:
         )
 
 
+def variable_label(name: str, var_def: Variable, label_font: ResolvedFontStyle) -> str:
+    """The label the variable bar shows for a variable."""
+    return var_def.label or inferred_display_name(name, font=label_font)
+
+
 def resolve_controls(
     variable_defs: dict[str, Variable],
     current_values: VariableValues,
@@ -229,7 +238,7 @@ def resolve_controls(
                 name=name,
                 var_def=var_def,
                 input=refined.input_type,
-                label=var_def.label or inferred_display_name(name, font=label_font),
+                label=variable_label(name, var_def, label_font),
                 display_value=format_variable_display_value(
                     var_def, current, refined.input_type
                 ),
@@ -409,6 +418,66 @@ def _option_query(var_def: Variable) -> str | None:
     return None
 
 
+def board_tree(board: Board | ResolvedBoard) -> list[Board | ResolvedBoard]:
+    """The board and every board nested under it, breadth first."""
+    boards: list[Board | ResolvedBoard] = [board]
+    for each in boards:
+        boards.extend(  # noqa: B909 — queue growth: BFS over the board tree
+            item.board for item in each.layout.items if item.board is not None
+        )
+    return boards
+
+
+def board_variable_defs(board: Board | ResolvedBoard) -> dict[str, Variable]:
+    """Every variable the board tree declares. Names are board-global."""
+    return {
+        name: var for each in board_tree(board) for name, var in each.variables.items()
+    }
+
+
+def empty_filters(
+    chart: ResolvedChart,
+    variable_defs: Mapping[str, Variable],
+    values: VariableValues,
+    variables_style: VariablesStyle,
+) -> list[tuple[str, str]]:
+    """The filters a chart with nothing to show names: each variable its query
+    reads that holds a value other than its default, as the variable bar's
+    label and the text it would display. An unset variable is no filter."""
+    label_font = resolve_cascaded_font(variables_style.label.font)
+    filters: list[tuple[str, str]] = []
+    for name, var_def in variable_defs.items():
+        if name not in chart.variable_dependencies:
+            continue
+        current = values.get(
+            name, var_def.default
+        )  # type-state: silent_fallback — the variable's own default
+        if var_def.input == "multiselect":
+            chosen = coerce_multiselect(
+                UNSET_MULTISELECT if current is None else current
+            )
+            default = coerce_multiselect(
+                UNSET_MULTISELECT if var_def.default is None else var_def.default
+            )
+            if not chosen or chosen == default:
+                continue
+            text = ", ".join(str(value) for value in chosen)
+        else:
+            if var_def.input == "daterange":
+                # Render narrows a preset default to ISO dates; the committed
+                # preset id is what still says it is the default.
+                committed = current_daterange_presets().get(name)
+                at_default = committed is not None and committed == var_def.default
+                unset = _daterange_is_unset(current) or at_default
+            else:
+                unset = current in (None, "")
+            if unset or current == var_def.default:
+                continue
+            text = format_variable_display_value(var_def, current)
+        filters.append((variable_label(name, var_def, label_font), text))
+    return filters
+
+
 def linked_variable_options(
     board: Board | ResolvedBoard,
     results: ChartDataProvider | None,
@@ -421,11 +490,7 @@ def linked_variable_options(
     undrawn chart's link must not run an options query. A variable whose options are unknown here is
     left out: its linked legend lists only the series the query returned.
     """
-    boards: list[Board | ResolvedBoard] = [board]
-    for each in boards:
-        boards.extend(  # noqa: B909 — queue growth: BFS over the board tree
-            item.board for item in each.layout.items if item.board is not None
-        )
+    boards = board_tree(board)
     set_by_links = {
         color_link_variable(item.chart.link)
         for each in boards

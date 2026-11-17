@@ -28,7 +28,7 @@ This plugin is for claude.ai and Cowork, where Claude has no shell. An
 organization owner distributes it from **Organization settings → Plugins &
 skills**, and adds the connector under **Organization settings → Connectors**.
 Details:
-[Claude and ChatGPT connector](https://docs.dbtcharts.com/cloud/claude-chatgpt-connector/).
+[Claude and ChatGPT connector](https://docs.dbtcharts.com/platform/claude-chatgpt-connector/).
 
 ## Claude Code and other coding agents
 

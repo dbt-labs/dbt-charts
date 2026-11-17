@@ -36,6 +36,8 @@ const MINIMUM_TITLE_VALUE_GAP: f64 = 14.0;
 // Horizontal gap between adjacent slots in inline/compact.
 const INLINE_GAP: f64 = 14.0;
 // The `font-weight` a slot paints when its authored weight is not a CSS weight.
+/// What the value slot shows when there is no value to draw.
+const EMPTY_VALUE: &str = "\u{2014}";
 const FALLBACK_SLOT_WEIGHT: &str = "500";
 
 /// The board's plain-digit sibling spec of each adaptive member.
@@ -47,7 +49,9 @@ type SubUnitSpecs = std::collections::BTreeMap<String, String>;
 struct Resolved {
     id: String,
     label: String,
-    value: String,
+    /// Null only when the query returned no rows and the chart names no column.
+    #[serde(deserialize_with = "Option::deserialize")]
+    value: Option<String>,
     /// `ResolvedKpiChart.glyph` (`resolved/kpi.py`): the headline glyph, null
     /// when none. Always serialized.
     #[serde(deserialize_with = "Option::deserialize")]
@@ -696,7 +700,8 @@ fn resolve_colors(
         .map(|spec| {
         crate::common::predefined_number_spec(spec).unwrap_or(spec)
     });
-    let channel_bg = evaluate_background(&r.resolved_channels, row, col_format)?;
+    // A card with no row has no cell for a gradient to read.
+    let channel_bg = if row.is_empty() { None } else { evaluate_background(&r.resolved_channels, row, col_format)? };
     // A matched rule's color outranks the derived tone.
     let channel_color = explicit_color(patch.value_color.as_deref())?.or(tone_color);
     // Card background: a matched rule > the gradient channel > the explicit
@@ -990,12 +995,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         Deserialize::deserialize(&payload.resolved).map_err(|e| format!("kpi payload: {e}"))?;
     let kpi = &r.style.kpi;
 
-    let Some(first) = payload.rows.first() else {
-        return Err(Diagnostic::new(
-            &codes::ERR_KPI_NO_DATA,
-            [("chart_id", json!(r.id))],
-        ));
-    };
+    let first = payload.rows.first();
     if payload.rows.len() > 1 {
         return Err(Diagnostic::new(
             &codes::ERR_KPI_MULTIROW,
@@ -1006,7 +1006,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         ));
     }
     // A non-finite cell is null after the seam; the card prints its `str()` text.
-    let mut row = first.clone();
+    let mut row = first.cloned().unwrap_or_default();
     for (column, tag) in payload.cell_text.first().into_iter().flatten() {
         if tag.non_finite.is_some() {
             row.insert(column.clone(), Value::String(tag.text.clone()));
@@ -1014,7 +1014,11 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     }
     let row = &row;
     let mut slots = Slots::resolve(kpi)?;
-    let patch = conditional_patch(kpi.conditional.as_ref(), row, &r.id)?;
+    let patch = if first.is_some() {
+        conditional_patch(kpi.conditional.as_ref(), row, &r.id)?
+    } else {
+        CardPatch::default()
+    };
     for (slot, weight) in [
         (&mut slots.value, &patch.value_weight),
         (&mut slots.label, &patch.label_weight),
@@ -1025,7 +1029,15 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
             slot.weight = slot_weight(weight);
         }
     }
-    let cell = column_cell(row, &r.value, &r.id)?;
+    // No rows, or one row whose value is NULL: the card has no value to draw.
+    let cell = match first {
+        None => None,
+        Some(_) => {
+            let column = r.value.as_deref().ok_or("kpi: payload names no value column for a query that returned a row")?;
+            Some((column, column_cell(row, column, &r.id)?))
+        }
+    };
+    let cell = cell.filter(|(_, cell)| !cell.is_null());
     let board_formats = payload
         .board_style
         .as_ref()
@@ -1036,17 +1048,20 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         .and_then(|b| b.sub_unit_specs.as_ref())
         .ok_or("kpi: payload carries no board_style.sub_unit_specs (the board's plain-digit siblings of currency and number)")?;
 
-    let (prefix, number_str, suffix, is_numeric) = format_value_parts(
-        cell,
-        payload.schema.rows.get(&r.value)?,
-        r.format.as_ref(),
-        r.format_native,
-        &r.id,
-        true,
-        false,
-        board_formats,
-        sub_unit_specs,
-    )?;
+    let (prefix, number_str, suffix, is_numeric) = match cell {
+        Some((column, cell)) => format_value_parts(
+            cell,
+            payload.schema.rows.get(column)?,
+            r.format.as_ref(),
+            r.format_native,
+            &r.id,
+            true,
+            false,
+            board_formats,
+            sub_unit_specs,
+        )?,
+        None => (String::new(), EMPTY_VALUE.to_string(), String::new(), false),
+    };
     // Support-row and no-tone fills use the board-level `secondary_color` token and tone
     // palette (`ResolvedStyle.secondary_color` / `.tones`), carried in the envelope's
     // `board_style` slice.
@@ -1058,13 +1073,11 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
 
     // The headline's rules see the raw cell; a matched rule's glyph replaces the
     // authored one and its tone colors the whole run.
-    let value_styled = resolve_conditional_styles(
-        r.value_rules.as_deref().unwrap_or(&[]),
-        &r.value,
-        Some(cell).filter(|v| !v.is_null()),
-        tones,
-    )
-    .map_err(|e| e.in_context("kpi: value"))?;
+    let value_styled = match cell {
+        Some((column, cell)) => resolve_conditional_styles(r.value_rules.as_deref().unwrap_or(&[]), column, Some(cell), tones)
+            .map_err(|e| e.in_context("kpi: value"))?,
+        None => Default::default(),
+    };
     if value_styled.tone_needs_board_tones {
         return Err("kpi: value conditional rule tone with no board tones".into());
     }
@@ -1072,9 +1085,10 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     if value_styled.glyph.is_some() {
         std::mem::swap(&mut slots.glyph, &mut slots.arrow);
     }
+    let authored_glyph = if cell.is_some() { r.glyph.clone() } else { None };
     let value = ValueRun {
         glyph: slots.glyph.cased(
-            &value_styled.glyph.or_else(|| r.glyph.clone()).unwrap_or_default(),
+            &value_styled.glyph.or(authored_glyph).unwrap_or_default(),
         )?,
         prefix: slots.affix.cased(&prefix)?,
         number: slots.value.cased(&number_str)?,
@@ -1085,7 +1099,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     // text is emitted.
     let label_text = slots.label.cased(&r.label)?;
 
-    let colors = resolve_colors(
+    let mut colors = resolve_colors(
         &r,
         row,
         &slots,
@@ -1095,19 +1109,27 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         value_styled.tone_color,
         &patch,
     )?;
-    let support = resolve_support_row(
-        &r.support,
-        row,
-        &payload.schema.rows,
-        kpi,
-        &slots,
-        tones,
-        secondary,
-        &r.id,
-        board_formats,
-        sub_unit_specs,
-        &patch,
-    )?;
+    let support = if cell.is_some() {
+        resolve_support_row(
+            &r.support,
+            row,
+            &payload.schema.rows,
+            kpi,
+            &slots,
+            tones,
+            secondary,
+            &r.id,
+            board_formats,
+            sub_unit_specs,
+            &patch,
+        )?
+    } else {
+        // The dash and the line beneath it share the support text's own ink.
+        let ink = explicit_color(slots.support.color.as_deref())?.unwrap_or_else(|| secondary.to_string());
+        colors.value_fill = ink.clone();
+        let text = crate::families::no_results::kpi_line(payload)?;
+        Some(SupportRow { glyph: String::new(), value_str: slots.support.cased(&text)?, explainer: String::new(), value_fill: ink.clone(), glyph_fill: ink })
+    };
     let (url, open) = match r.link.as_deref() {
         Some(url) => (Some(url), r.link_open),
         None => (r.text_link.as_deref(), crate::href::LinkOpen::Page),

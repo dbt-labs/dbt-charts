@@ -247,6 +247,27 @@ impl ChartAuthored {
     }
 }
 
+impl Chart {
+    /// The fields every family but a callout takes (`ChartAuthored::base`).
+    pub fn base(&self) -> Option<&ChartBase> {
+        Some(match self {
+            Self::Scatter(c) => &c.cartesian.shared.base,
+            Self::Bar(c) | Self::Histogram(c) | Self::Funnel(c) => &c.cartesian.shared.base,
+            Self::Line(c) => &c.cartesian.shared.base,
+            Self::Area(c) => &c.cartesian.shared.base,
+            Self::Heatmap(c) => &c.cartesian.shared.base,
+            Self::Kpi(c) => &c.base,
+            Self::Pie(c) | Self::Donut(c) => &c.radial.shared.base,
+            Self::SparkBar(c) => &c.shared.base,
+            Self::Table(c) => &c.shared.base,
+            Self::Geoshape(c) | Self::Map(c) => &c.geo.shared.base,
+            Self::PointMap(c) | Self::BubbleMap(c) => &c.geo.shared.base,
+            Self::Custom(c) => &c.shared.base,
+            Self::Callout(_) => return None,
+        })
+    }
+}
+
 impl ChartAuthored {
     /// The fields every family but a callout takes.
     pub fn base(&self) -> Option<&ChartBaseAuthored> {
@@ -464,7 +485,7 @@ macro_rules! family_slots {
                 use model_core::ToAuthored;
                 match self {
                     $(Self::$variant(c) $(| Self::$alias(c))* => {
-                        c.style = (*scope.charts.$slot).clone().to_authored();
+                        c.style = (*scope.charts.$slot).to_authored_ref();
                     })*
                     Self::Custom(_) => {}
                 }

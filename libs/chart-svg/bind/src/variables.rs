@@ -8,15 +8,17 @@
 //! `text`, `number`, `checkbox`, `slider`, `select` (static options) or `date` input.
 //!
 //! Compile settles `input: auto` to a widget, so an unsettled one is an internal error. What this
-//! slice does not model is refused by name: a multiselect, a daterange, a radio and the aliases of
+//! slice does not model is refused by name: a radio and the aliases of
 //! the inputs it does draw, a select whose options a query answers, an `enabled:` that is not a
-//! literal, and a value a widget does not show.
+//! literal, and a value a widget does not show. A multiselect settles like a select over the list it
+//! holds: its text is the one chosen value, or a count beside the first, and it commits the list as JSON.
 
 use board_model::board::BoardBody;
 use board_model::style::style::Style;
 use board_model::unit::Number;
 use board_model::ids::QueryId;
-use board_model::variable::{refine_options, Enabled, InputType, OptionsQuery, StaticOptions, Variable};
+use board_model::style::variables::PresetsDisplay;
+use board_model::variable::{refine_options, DefaultValue, Enabled, InputType, OptionsQuery, StaticOptions, Variable};
 use std::collections::BTreeMap;
 use board_model::variable_value::{Atom, VariableValue};
 use d3rs::py_float::float_repr;
@@ -28,7 +30,7 @@ use crate::run::RunResult;
 
 /// A chart's legend view lives in the variable `_dct_legend_<chart-id>` (`board_variables.py`'s
 /// `LEGEND_VIEW_PREFIX`); a board's reset item clears it.
-const LEGEND_VIEW_PREFIX: &str = "_dct_legend_";
+pub(crate) const LEGEND_VIEW_PREFIX: &str = "_dct_legend_";
 
 /// The inputs the band draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,7 +40,9 @@ pub enum Widget {
     Checkbox,
     Slider,
     Select,
+    Multiselect,
     Date,
+    Daterange,
 }
 
 /// Where a field's width comes from (`InputTraits.sizing`): the text it draws, the theme's text
@@ -50,6 +54,9 @@ pub enum Sizing {
     Number,
     Checkbox,
     Slider,
+    Daterange,
+    /// The theme's text width whatever is chosen, the text cut to fit it (`summary`).
+    Summary,
 }
 
 /// The glyph marking a field's type inside its right edge (`InputTraits.ornament`).
@@ -69,13 +76,15 @@ impl Widget {
             Widget::Number => Sizing::Number,
             Widget::Checkbox => Sizing::Checkbox,
             Widget::Slider => Sizing::Slider,
+            Widget::Daterange => Sizing::Daterange,
+            Widget::Multiselect => Sizing::Summary,
         }
     }
 
     pub fn ornament(self) -> Ornament {
         match self {
-            Widget::Select => Ornament::Arrow,
-            Widget::Date => Ornament::Calendar,
+            Widget::Select | Widget::Multiselect => Ornament::Arrow,
+            Widget::Date | Widget::Daterange => Ornament::Calendar,
             _ => Ornament::None,
         }
     }
@@ -88,7 +97,9 @@ impl Widget {
             Widget::Checkbox => "checkbox",
             Widget::Slider => "slider",
             Widget::Select => "select",
+            Widget::Multiselect => "multiselect",
             Widget::Date => "date",
+            Widget::Daterange => "daterange",
         }
     }
 }
@@ -188,7 +199,9 @@ fn control(
         InputType::Checkbox => Widget::Checkbox,
         InputType::Slider => Widget::Slider,
         InputType::Select => Widget::Select,
+        InputType::Multiselect => Widget::Multiselect,
         InputType::Date => Widget::Date,
+        InputType::Daterange => Widget::Daterange,
         other => return Err(not_modeled(other.as_str())),
     };
     // A gated-off control is dimmed (`opacity` on its group), which the comparator cannot rule on.
@@ -208,6 +221,9 @@ fn control(
     let current = match run.variables.get(name) {
         Some(VariableValue::Unset) => None,
         Some(VariableValue::One(atom)) => Some(atom),
+        Some(VariableValue::Daterange { .. }) if widget == Widget::Daterange => None,
+        // A multiselect reads its whole value below: it is a list, a bare scalar or nothing.
+        Some(VariableValue::Multiselect(_)) if widget == Widget::Multiselect => None,
         Some(_) => {
             return Err(Diagnostic::refused(refuse!(
                 "a `{}` variable holding a list or a date range is not supported",
@@ -317,7 +333,7 @@ fn control(
                 fraction,
             };
         }
-        Widget::Select => {
+        Widget::Select | Widget::Multiselect => {
             let statics = variable.options.as_ref().and_then(|o| o.r#static.as_ref()).is_some_and(|options| match options {
                 StaticOptions::Strings(v) => !v.is_empty(),
                 StaticOptions::Numbers(v) => !v.is_empty(),
@@ -326,11 +342,37 @@ fn control(
                 check_options(name, variable, run, queries)?;
             }
             let all = unset_label("controls.all")?;
-            control.value = if blank {
-                all.clone()
+            if widget == Widget::Select {
+                control.value = if blank {
+                    all.clone()
+                } else {
+                    text_of(current.expect("not blank"))
+                };
             } else {
-                text_of(current.expect("not blank"))
-            };
+                let chosen = selection(run.variables.get(name));
+                control.value = match chosen.as_slice() {
+                    [] => all.clone(),
+                    [only] => member_text(only),
+                    [first, ..] => tr(
+                        "controls.selection_summary",
+                        None,
+                        &[("first", &member_text(first)), ("n", &chosen.len().to_string())],
+                    )
+                    .map_err(diag::err_internal)?,
+                };
+                // The coerced list, so nothing chosen commits `[]`, never an empty text.
+                control.committed = committed_list(&chosen);
+            }
+            control.unset = Some(Unset {
+                can: !variable.required,
+                label: all,
+            });
+        }
+        Widget::Daterange => {
+            let all = unset_label("controls.all_dates")?;
+            let (label, committed) = daterange_text(name, variable, run, style, all.clone())?;
+            control.value = label;
+            control.committed = committed;
             control.unset = Some(Unset {
                 can: !variable.required,
                 label: all,
@@ -352,20 +394,114 @@ fn control(
     Ok(control)
 }
 
-/// `match_column` (`compile/column_match.py`): the column `wanted` names, by exact spelling, else
-/// by case-folded spelling, which two columns may not share.
-fn match_column<'a>(wanted: &str, columns: &[&'a String], at: &str) -> Result<Option<&'a str>, Diagnostic> {
-    if let Some(exact) = columns.iter().find(|column| column.as_str() == wanted) {
-        return Ok(Some(exact.as_str()));
-    }
-    let folded = wanted.to_lowercase();
-    let matches: Vec<&str> = columns.iter().map(|column| column.as_str()).filter(|column| column.to_lowercase() == folded).collect();
-    match matches.as_slice() {
-        [] => Ok(None),
-        [one] => Ok(Some(one)),
-        many => Err(diag::err_column_ref_ambiguous(at.to_string(), wanted.to_string(), many.iter().map(|m| format!("{m:?}")).collect::<Vec<_>>().join(", "))),
+/// `coerce_multiselect`: a multiselect's members however its value arrived, a list, a bare scalar
+/// from a link written before the input was one, or nothing. A blank scalar is no selection.
+fn selection(held: Option<&VariableValue>) -> Vec<Option<&Atom>> {
+    match held {
+        Some(VariableValue::Multiselect(members)) => members.iter().map(Option::as_ref).collect(),
+        Some(VariableValue::One(Atom::Text(text))) if text.trim_matches(d3rs::py_str::is_py_space).is_empty() => Vec::new(),
+        Some(VariableValue::One(atom)) => vec![Some(atom)],
+        _ => Vec::new(),
     }
 }
+
+/// `str(member)` for display: a member Python holds as `None` reads `None`.
+fn member_text(member: &Option<&Atom>) -> String {
+    member.map_or_else(|| "None".to_string(), text_of)
+}
+
+/// `committed_text` of a list: `json.dumps` with its defaults, so `", "` between members and every
+/// non-ASCII code point a `\uXXXX` escape (an astral one a surrogate pair).
+fn committed_list(members: &[Option<&Atom>]) -> String {
+    let mut out = String::from("[");
+    for (i, member) in members.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        match member {
+            None => out.push_str("null"),
+            Some(Atom::Bool(on)) => out.push_str(if *on { "true" } else { "false" }),
+            Some(Atom::Int(n)) => out.push_str(&n.to_string()),
+            Some(Atom::Float(n)) if n.is_nan() => out.push_str("NaN"),
+            Some(Atom::Float(n)) if n.is_infinite() => out.push_str(if *n > 0.0 { "Infinity" } else { "-Infinity" }),
+            Some(Atom::Float(n)) => out.push_str(&float_repr(*n)),
+            Some(Atom::Text(text) | Atom::Date(text)) => out.push_str(&d3rs::py_str::json_string(text)),
+        }
+    }
+    out.push(']');
+    out
+}
+
+/// A daterange's drawn text and the value a host commits (`format_variable_display_value`,
+/// `_committed_value`). The text always reads the resolved dates. A preset-valued range commits its
+/// preset id (`RunResult::presets`), which keeps a link to it rolling; any other range commits its
+/// pair of ends, empty ends included; a control holding no value commits nothing, or the blank text
+/// it was given. The preset buttons need the preset grammar and are refused by name, as is a value
+/// `date.fromisoformat` reads that is not `YYYY-MM-DD`.
+fn daterange_text(name: &str, variable: &Variable, run: &RunResult, style: &Style, unset: String) -> Result<(String, String), Diagnostic> {
+    if style.variables.presets_display == PresetsDisplay::Buttons {
+        return Err(Diagnostic::refused(refuse!("a daterange offering its presets as buttons is not supported")));
+    }
+    let preset = run.presets.get(name);
+    if preset.is_none() && matches!(variable.default, Some(DefaultValue::Text(_))) && !run.overridden.contains(name) {
+        return Err(diag::err_internal(format!("the plan carries no preset id for the daterange {name}, whose default is a preset")));
+    }
+    let held = run.variables.get(name);
+    let (start, end) = match held {
+        Some(VariableValue::Daterange { start, end }) => (start.as_ref().map(text_of), end.as_ref().map(text_of)),
+        Some(VariableValue::Unset) | None => (None, None),
+        // `?d=`, the link that unsets a range, arrives as blank text: no value, committed as written.
+        Some(VariableValue::One(Atom::Text(text))) if text.trim_matches(d3rs::py_str::is_py_space).is_empty() => (None, None),
+        Some(_) => return Err(diag::err_internal(format!("the daterange {name} holds a value that is not a range"))),
+    };
+    let open = |end: &Option<String>| end.as_deref().is_none_or(str::is_empty);
+    // The label first: it refuses any end that is not an ISO date, which is what lets the pair below
+    // quote an end as plain text.
+    let label = match (open(&start), open(&end)) {
+        (true, true) => unset,
+        (true, false) => tr("controls.until", None, &[("date", &date_label(end.as_deref().unwrap_or_default())?)]).map_err(diag::err_internal)?,
+        (false, true) => tr("controls.from", None, &[("date", &date_label(start.as_deref().unwrap_or_default())?)]).map_err(diag::err_internal)?,
+        (false, false) => range_label(start.as_deref().unwrap_or_default(), end.as_deref().unwrap_or_default())?,
+    };
+    let committed = match (preset, held) {
+        (Some(id), _) => id.clone(),
+        (None, Some(VariableValue::Daterange { .. })) => {
+            let quoted = |end: &Option<String>| end.as_ref().map_or_else(|| "null".to_string(), |text| serde_json::Value::String(text.clone()).to_string());
+            format!("[{}, {}]", quoted(&start), quoted(&end))
+        }
+        (None, Some(VariableValue::One(Atom::Text(blank)))) => blank.clone(),
+        (None, _) => String::new(),
+    };
+    Ok((label, committed))
+}
+
+/// `format_daterange_label`: the board language's words for a closed range.
+fn range_label(start: &str, end: &str) -> Result<String, Diagnostic> {
+    let (s, e) = (iso_date(start)?, iso_date(end)?);
+    let no_year = |d: &jiff::civil::Date| tr("controls.date_no_year", None, &[("day", &d.day().to_string()), ("month", &short_month(d)?)]).map_err(diag::err_internal);
+    if s == e {
+        return date_label(start);
+    }
+    if (s.year(), s.month()) == (e.year(), e.month()) {
+        return tr(
+            "controls.range_same_month",
+            None,
+            &[("start_day", &s.day().to_string()), ("end_day", &e.day().to_string()), ("month", &short_month(&s)?), ("year", &s.year().to_string())],
+        )
+        .map_err(diag::err_internal);
+    }
+    let (first, last) = if s.year() == e.year() { (no_year(&s)?, date_label(end)?) } else { (date_label(start)?, date_label(end)?) };
+    tr("controls.range", None, &[("start", &first), ("end", &last)]).map_err(diag::err_internal)
+}
+
+/// A `YYYY-MM-DD` day; Python reads more spellings (3.11+), which are refused.
+fn iso_date(iso: &str) -> Result<jiff::civil::Date, Diagnostic> {
+    (iso.len() == 10)
+        .then(|| iso.parse::<jiff::civil::Date>().ok())
+        .flatten()
+        .ok_or_else(|| Diagnostic::refused(refuse!("a date value other than YYYY-MM-DD is not supported")))
+}
+
 
 /// Checks a select whose options a query answers, as `resolve_options` reads them: the first of the
 /// `value`, `label`, `name` and `id` columns the rows have (`_option_value_key`), else the first
@@ -388,17 +524,17 @@ fn check_options(name: &str, variable: &Variable, run: &RunResult, queries: &BTr
     let Some(first) = dataset.rows.first() else {
         return Ok(());
     };
-    let columns: Vec<&String> = first.keys().collect();
-    let at = format!("options query {key:?}");
+    let columns: Vec<&str> = first.keys().map(String::as_str).collect();
+    let at = format!("options query {}", diagnostic::py_str_repr(key));
     let mut column = None;
     for wanted in ["value", "label", "name", "id"] {
-        if let Some(found) = match_column(wanted, &columns, &at)? {
+        if let Some(found) = crate::column_refs::match_column(wanted, &columns, &at)? {
             column = Some(found);
             break;
         }
     }
     let column = column
-        .or_else(|| columns.first().map(|first| first.as_str()))
+        .or_else(|| columns.first().copied())
         .ok_or_else(|| diag::err_internal(format!("the options query {key} of variable {name} returned a row with no columns")))?;
     let mut values: Vec<String> = Vec::new();
     for row in dataset.rows.iter() {
@@ -443,38 +579,61 @@ pub fn text_of(atom: &Atom) -> String {
 /// Production falls back to the raw text on what `date.fromisoformat` rejects, which reads more
 /// than `YYYY-MM-DD` (3.11+), so only that form is read and any other is refused.
 fn date_label(iso: &str) -> Result<String, Diagnostic> {
-    let date = (iso.len() == 10)
-        .then(|| iso.parse::<jiff::civil::Date>().ok())
-        .flatten();
-    let Some(date) = date else {
-        return Err(Diagnostic::refused(refuse!(
-            "a date value other than YYYY-MM-DD is not supported"
-        )));
-    };
-    let locale = crate::time_locale::active_time_locale().map_err(diag::err_internal)?;
-    let month =
-        &locale.short_months[usize::try_from(date.month() - 1).expect("a month is 1 to 12")];
+    let date = iso_date(iso)?;
     tr(
         "controls.date",
         None,
         &[
             ("day", &date.day().to_string()),
-            ("month", month),
+            ("month", &short_month(&date)?),
             ("year", &date.year().to_string()),
         ],
     )
     .map_err(diag::err_internal)
 }
 
+/// `_month`: the date's month as the board's time locale abbreviates it.
+fn short_month(date: &jiff::civil::Date) -> Result<String, Diagnostic> {
+    let locale = crate::time_locale::active_time_locale().map_err(diag::err_internal)?;
+    Ok(locale.short_months[usize::try_from(date.month() - 1).expect("a month is 1 to 12")].clone())
+}
+
 #[cfg(test)]
-mod tests {
+mod multiselect_tests {
+    use super::*;
+
+    fn text(t: &str) -> Atom {
+        Atom::Text(t.to_string())
+    }
+
     #[test]
-    fn match_column_prefers_the_exact_spelling_and_refuses_two_folded_matches() {
-        let (lower, upper, other) = ("value".to_string(), "VALUE".to_string(), "name".to_string());
-        assert_eq!(super::match_column("value", &[&upper, &lower], "q").unwrap(), Some("value"));
-        assert_eq!(super::match_column("name", &[&upper, &other], "q").unwrap(), Some("name"));
-        assert_eq!(super::match_column("id", &[&upper, &other], "q").unwrap(), None);
-        let err = super::match_column("Value", &[&upper, &lower], "options query \"q\"").unwrap_err();
-        assert_eq!(err.code, "ERR-COLUMN-REF-AMBIGUOUS");
+    fn a_list_commits_as_json_dumps_with_ascii_escapes() {
+        let (a, b, c) = (text("Ünï \"q\"\n"), Atom::Int(3), text("😀"));
+        let held = [Some(&a), Some(&b), None, Some(&c)];
+        assert_eq!(
+            committed_list(&held),
+            r#"["\u00dcn\u00ef \"q\"\n", 3, null, "\ud83d\ude00"]"#
+        );
+        assert_eq!(committed_list(&[]), "[]");
+    }
+
+    #[test]
+    fn a_float_commits_as_its_python_repr() {
+        let (tiny, whole, big) = (Atom::Float(1e-5), Atom::Float(2.5), Atom::Float(1e16));
+        assert_eq!(committed_list(&[Some(&tiny), Some(&whole), Some(&big), Some(&Atom::Bool(true))]).as_str(), "[1e-05, 2.5, 1e+16, true]");
+        assert_eq!(committed_list(&[Some(&Atom::Float(f64::NAN)), Some(&Atom::Float(f64::NEG_INFINITY))]), "[NaN, -Infinity]");
+    }
+
+    #[test]
+    fn a_value_is_one_selection_however_it_arrived() {
+        let one = VariableValue::One(text("US"));
+        let blank = VariableValue::One(text("  "));
+        let list = VariableValue::Multiselect(vec![Some(text("a")), None]);
+        assert_eq!(selection(Some(&one)).len(), 1);
+        assert!(selection(Some(&blank)).is_empty());
+        assert!(selection(Some(&VariableValue::Unset)).is_empty());
+        assert!(selection(None).is_empty());
+        assert_eq!(selection(Some(&list)), vec![Some(&text("a")), None]);
+        assert_eq!(member_text(&None), "None");
     }
 }

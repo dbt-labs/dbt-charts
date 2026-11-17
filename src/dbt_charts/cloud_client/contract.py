@@ -402,6 +402,13 @@ class ProjectSummary(ContractModel):
     repo_label: str = Field(
         description="Credential-free label for the repo the boards come from."
     )
+    repo_url: str | None = Field(
+        default=None,
+        description=(
+            "Browser URL of the repo, credential-free; null for a managed "
+            "dbt_charts repo or a host Cloud cannot link to."
+        ),
+    )
     trunk_branch: str = Field(description="Repository branch Cloud pulls from.")
     work_branch: str = Field(
         description="dbt Charts branch, where Cloud commits edits."
@@ -634,9 +641,12 @@ PROJECT_SETTINGS_SETTABLE = tuple(
 class RenderResult(ContractModel):
     """The answer to "render this project's unrendered boards"."""
 
-    started: int = Field(description="Board renders this call started.")
+    started: int = Field(description="Board renders this call queued.")
     unrendered_remaining: int = Field(
-        description="Boards still unrendered after this batch."
+        description=(
+            "Boards left unrendered after this call; 0 once the call queued"
+            " every unrendered board."
+        )
     )
     blocked: str = Field(
         default="",
@@ -1108,6 +1118,19 @@ class CommentSummary(ContractModel):
     created_at: datetime = Field(description="When it was posted.")
     edited_at: datetime | None = Field(
         description="When the author last edited the body; null if never."
+    )
+    wizard_status: Literal["working", "answered", "failed"] | None = Field(
+        default=None,
+        description=(
+            "Where Wizard's reply stands: `working` while the body is still "
+            "empty, then `answered` or `failed`; null on a member's comment."
+        ),
+    )
+    change_url: str | None = Field(
+        default=None,
+        description=(
+            "Where to see the change Wizard committed for this reply; null if none."
+        ),
     )
 
 

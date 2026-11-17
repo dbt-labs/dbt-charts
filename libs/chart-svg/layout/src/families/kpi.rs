@@ -18,7 +18,6 @@
 
 use bind::bound::{Kpi, KpiSupport};
 use crate::families::failed::Weight;
-use board_model::primitives::LinkOpen;
 use board_model::style::board::{EmojiMode, OverflowMode};
 use board_model::style::font::{FontSlant, SingleLineFontStyle, TextDecoration};
 use board_model::style::kpi::{KpiAlign, KpiChartStyle, KpiSupportFontStyle, KpiVariant};
@@ -480,26 +479,11 @@ pub fn draw(card: &KpiCard, plan: &Plan, height: f64) -> Vec<Node> {
         (Some(href), KpiVariant::Stacked) => {
             let mut rest = parts.into_iter();
             let value = rest.next().into_iter().collect();
-            std::iter::once(link_node(href.as_str(), kpi.link_open, value)).chain(rest).collect()
+            std::iter::once(crate::contract::link(href.as_str(), kpi.link_open, value)).chain(rest).collect()
         }
-        (Some(href), _) => vec![link_node(href.as_str(), kpi.link_open, parts)],
+        (Some(href), _) => vec![crate::contract::link(href.as_str(), kpi.link_open, parts)],
     };
     vec![Node::new(Role::Chrome, Attrs::new(), Shape::Svg { extent, children: parts })]
-}
-
-/// An `<a>` as production's `Anchor::attrs` prints it: the href, how it opens (a page link says nothing)
-/// and the `_blank` target of a new tab.
-fn link_node(href: &str, open: LinkOpen, children: Vec<Node>) -> Node {
-    let (opens, target) = match open {
-        LinkOpen::Page => (None, None),
-        LinkOpen::Modal => (Some("modal"), None),
-        LinkOpen::Preview => (Some("preview"), None),
-        LinkOpen::NewTab => (Some("new_tab"), Some("_blank")),
-    };
-    let attrs = Attrs::new().quick("href", href);
-    let attrs = opens.map_or(attrs.clone(), |value| attrs.quick("data-dbt-link-open", value));
-    let attrs = target.map_or(attrs.clone(), |value| attrs.quick("target", value));
-    Node::new(Role::Chrome, attrs, Shape::Link(children))
 }
 
 /// kpi.rs:`compact_column`: the runs of the compact card's top and bottom lines beside the value,

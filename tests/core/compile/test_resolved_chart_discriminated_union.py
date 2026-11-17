@@ -409,6 +409,11 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                     "label_usable_ratio": 0.8,
                     "axis_x": _BAR_AX_D,
                     "axis_y": _BAR_AY_D,
+                    "torn_outlier": {
+                        "enabled": False,
+                        "band": 0.5,
+                        "cap": 1.0,
+                    },
                 },
                 **_CD,
             },

@@ -120,7 +120,8 @@ def resolve_mark_conditional(
     Mark families paint one mark per row, so two columns' rules writing one
     property would make the winner depend on key order. A multi-y ``y`` list
     folds a row into one mark per measure, and a rule on a measure paints only
-    that measure's marks, so two measures may patch the same property.
+    that measure's marks, so two measures may patch the same mark property; the
+    x-axis labels every measure shares are still one property.
     """
     if not conditional:
         return None if conditional is None else {}
@@ -142,7 +143,10 @@ def resolve_mark_conditional(
                         "does not draw per row"
                     )
                 first = owner.setdefault(path, column)
-                if first != column and not {first, column} <= measures:
+                per_measure = not path.startswith("axis_x.")
+                if first != column and not (
+                    per_measure and {first, column} <= measures
+                ):
                     raise ValueError(
                         f"{where} columns '{first}' and '{column}' both "
                         f"patch {path}; rules on two columns may not set the same "

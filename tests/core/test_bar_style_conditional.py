@@ -250,7 +250,7 @@ def test_a_style_that_cannot_vary_per_row_is_refused(body: dict[str, Any]) -> No
 
 
 def test_a_rule_with_no_style_is_refused() -> None:
-    with pytest.raises(ValidationError, match=r"(?s)0\.marks.*Field required"):
+    with pytest.raises(ValidationError, match="at least one style to apply"):
         _bar({"profit": [{"lt": 0}]})
 
 

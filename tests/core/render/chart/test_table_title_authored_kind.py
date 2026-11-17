@@ -7,13 +7,15 @@ opened the leaf editor, unlike a bar chart's title.
 
 from __future__ import annotations
 
+import re
+
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.normalized import TableChart
+from dbt_charts.core.compile.models.chart.normalized import BarChart, TableChart
 from dbt_charts.core.compile.models.query.normalized import ValuesQuery
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 
-from ..._engine_render import render_table_svg
+from ..._engine_render import render_chart_svg, render_table_svg
 
 _ROWS = [{"revenue": 128_000}]
 
@@ -45,3 +47,20 @@ def test_table_without_title_has_no_title_leaf() -> None:
     svg = _render()
     assert 'data-authored-kind="title"' not in svg
     assert 'data-authored-kind="subtitle"' not in svg
+
+
+def test_table_subtitle_without_a_title_is_drawn() -> None:
+    svg = _render(subtitle="last 30 days")
+    drawn = re.findall(r"<(?:text|tspan)\b[^>]*>last 30 days</", svg)
+    assert drawn, svg
+    assert 'data-authored-kind="subtitle"' in svg
+
+
+def test_bar_subtitle_without_a_title_is_drawn() -> None:
+    rows = [{"stage": "a", "revenue": 3}, {"stage": "b", "revenue": 5}]
+    chart = BarChart(
+        id="b1", type="bar", x="stage", y="revenue", subtitle="last 30 days"
+    )
+    svg = render_chart_svg(chart, rows, width=400.0, height=300.0)
+    assert re.search(r"<text\b[^>]*>last 30 days</text>", svg), svg
+    assert 'data-authored-kind="subtitle"' in svg

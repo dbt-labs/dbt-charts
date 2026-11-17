@@ -1,13 +1,23 @@
 //! The time domain: the calendar grain of a time x axis, its values keyed by the bucket that
 //! holds them, and the buckets after the optional calendar gap fill. Label cadence is layout's.
 
+use std::collections::HashSet;
+
+use board_model::style::axis::FillMode;
+use column_types::Dataset;
 use d3rs::calendar::days_from_civil;
-use diagnostic::{py_str_repr, Diagnostic};
+use diagnostic::{diag, py_str_repr, refuse, Diagnostic};
 
 use crate::bound::{GrainDrop, Month, TimeDomain};
-use crate::temporal::{complete_buckets, detect_time_unit, floor_to_bucket_start, TimeUnit};
+use crate::style::axis::AxisLadder;
+use crate::style::Tiers;
+use crate::temporal::{complete_buckets, detect_time_unit, floor_to_bucket_start, TimeUnit, VegaType};
 use crate::time_axis::{Dates, Grain, TimeAxis, Unreadable};
-use crate::x_type::parse_date;
+use crate::x_type::{parse_date, resolve_cartesian_x_type, Grain as XGrain, XAxis};
+
+/// `core/constants/axis.py::MAX_ORDINAL_BUCKETS`: the most empty buckets a calendar grain may
+/// span before the x-type law drops it.
+const MAX_ORDINAL_BUCKETS: usize = 60;
 
 /// `axis_x.time_unit` as authored. Absent and `auto` differ for the bar orientation law (a set
 /// unit, `auto` included, draws vertical bars) and agree for the domain: resolve collapses
@@ -96,6 +106,128 @@ pub fn time_domain(x: &[String], input: &TimeInput) -> Result<Option<TimeDomain>
     };
     let buckets = keys.iter().map(|key| axis.read(key).cloned().map_err(unreadable)).collect::<Result<_, _>>()?;
     Ok(Some(TimeDomain { axis, unit, grain_drop: input.grain_drop.filter(|_| unit.is_some()), buckets, fiscal_start: input.fiscal_start }))
+}
+
+/// The leaves of a `family` chart's x axis that move the x-type law's verdict or print its labels
+/// by rules the time axis does not model: the gap fill, the fiscal year, a label format.
+pub fn refuse_unmodeled_leaves(tiers: &Tiers<'_>, x_ladder: &AxisLadder<'_>, family: &str) -> Result<(), Diagnostic> {
+    let board = Some(&tiers.charts.axis_x);
+    let moved = [tiers.own.axis_x, tiers.family.axis_x, board].into_iter().flatten().any(|axis| {
+        axis.fill.is_some_and(|fill| fill != FillMode::Null) || axis.fiscal_year_start_month.is_some_and(|month| month != 1)
+    });
+    if moved {
+        return Err(Diagnostic::refused(refuse!("a {family} time axis that sets `fill` or `fiscal_year_start_month` is not supported")));
+    }
+    if x_ladder.labels_format().is_some() {
+        return Err(Diagnostic::refused(refuse!("a {family} time axis with a label format is not supported")));
+    }
+    Ok(())
+}
+
+/// The time domain of the x `x_field` of a `family` chart over its `texts` (the x cells of the rows that
+/// have one): the x-type law's verdict on the whole column, which must read as a time scale, then the
+/// grain it settles on, dropped for the scaffold budget or authored `time_unit: none`.
+pub fn x_domain(chart_id: &str, family: &str, dataset: &Dataset, x_field: &str, authored_none: bool, texts: &[&str]) -> Result<TimeDomain, Diagnostic> {
+    let law_axis = XAxis {
+        time_unit: authored_none.then_some("none"),
+        authored_type: None,
+        raw_type: None,
+        fill: Some("null"),
+        fiscal_year_start_month: 1,
+        max_ordinal_buckets: MAX_ORDINAL_BUCKETS,
+    };
+    let law = resolve_cartesian_x_type(&dataset.schema, &dataset.rows, x_field, &law_axis, family, false, &[]).map_err(Diagnostic::refused)?;
+    if law.vl_type != VegaType::Temporal {
+        return Err(Diagnostic::refused(refuse!("a {family} on an x the x-type law does not read as a time scale is not supported")));
+    }
+    let time_unit = match law.grain {
+        XGrain::Calendar(unit) => TimeUnitSetting::Unit(unit),
+        XGrain::None => TimeUnitSetting::Absent,
+        XGrain::Part(_) => return Err(diag::err_internal(format!("no time part is authored on a {family}"))),
+    };
+    let mut seen = HashSet::new();
+    let distinct: Vec<String> = texts.iter().filter(|text| seen.insert(**text)).map(|text| text.to_string()).collect();
+    // The grain is still read into the domain (`unit`); the reason says why production labels the
+    // axis without it.
+    let grain_drop = (law.grain == XGrain::None).then_some(if authored_none { GrainDrop::AuthoredNone } else { GrainDrop::ScaffoldBudget });
+    let input = TimeInput { chart_id, family, x_field, time_unit, grain_drop, fill_gaps: false, fiscal_start: None };
+    time_domain(&distinct, &input)?.ok_or_else(|| diag::err_internal(format!("a {family} with rows has an x to span")))
+}
+
+const MS_PER_DAY: f64 = 86_400_000.0;
+const DAY_MS: i64 = 86_400_000;
+/// A header names the time of day alone while the rows lie within two days (`TOOLTIP_SPAN_MS`).
+const HEADER_SPAN_MS: i64 = 2 * DAY_MS;
+
+/// The first and last instant of a domain with a time of day, in whole milliseconds.
+pub struct ClockExtent {
+    pub first: i64,
+    pub last: i64,
+    /// Every value names an absolute instant (an offset or `Z`); none is a naive clock reading.
+    pub absolute: bool,
+}
+
+impl TimeDomain {
+    /// Whether every x is a timestamp that names an absolute instant, so its clock prints in the board zone.
+    pub fn aware(&self) -> bool {
+        self.buckets.iter().all(|b| b.absolute && b.iso.len() > 10)
+    }
+
+    /// `SubdaySource::extent`: the span of the values production reads a time of day off (a short date form is
+    /// none), `None` without a time of day among them, with a mix of absolute and naive clocks, or with fewer
+    /// than two instants.
+    pub fn clock_extent(&self) -> Option<ClockExtent> {
+        let read: Vec<_> = self.buckets.iter().filter(|b| b.iso.len() >= 10).collect();
+        if !read.iter().any(|b| b.timed) {
+            return None;
+        }
+        let mut instants: Vec<i64> = read.iter().map(|b| (b.at * MS_PER_DAY).round() as i64).collect();
+        instants.sort_unstable();
+        instants.dedup();
+        let absolute = read.iter().any(|b| b.absolute);
+        if (absolute && read.iter().any(|b| !b.absolute)) || instants.len() < 2 {
+            return None;
+        }
+        Some(ClockExtent { first: instants[0], last: instants[instants.len() - 1], absolute })
+    }
+
+    /// The tooltip header of a grainless axis over timed rows (`Header::of`, `subday_header_for`): the
+    /// 12-hour clock of the row, with the date where the rows cross a midnight; `None` for a grained axis, rows with no time of day
+    /// and rows spanning more than two days, which read the date alone.
+    pub fn clock_header(&self) -> Result<Option<ClockHeader>, Diagnostic> {
+        let Some(extent) = self.clock_extent().filter(|extent| self.unit.is_none() && extent.last - extent.first <= HEADER_SPAN_MS) else {
+            return Ok(None);
+        };
+        let aware = self.aware();
+        let wall = |ms: i64| if aware { crate::time_zone::wall_ms(ms).map_err(diag::err_internal) } else { Ok(ms) };
+        let seconds = self.buckets.iter().filter(|b| b.iso.len() >= 10).any(|b| ((b.at * MS_PER_DAY).round() as i64).rem_euclid(60_000) / 1000 != 0);
+        let dated = wall(extent.first)?.div_euclid(DAY_MS) != wall(extent.last)?.div_euclid(DAY_MS);
+        Ok(Some(ClockHeader { aware, seconds, dated }))
+    }
+}
+
+/// How a tooltip names the time of a row (`Header`).
+pub struct ClockHeader {
+    aware: bool,
+    seconds: bool,
+    dated: bool,
+}
+
+impl ClockHeader {
+    /// The header of the row at the instant `at` (days): its wall clock, in the board zone when the column is aware.
+    pub fn text(&self, at: f64) -> Result<String, Diagnostic> {
+        let wall = if self.aware { crate::time_zone::wall_day(at).map_err(diag::err_internal)? } else { at };
+        let locale = crate::time_locale::active_time_locale().map_err(diag::err_internal)?;
+        let ms = (wall * MS_PER_DAY).round();
+        let say = |spec: &str| d3rs::time_format::format(spec, ms, 0.0, &locale).map_err(diag::err_internal);
+        let seconds = if self.seconds { ":%S" } else { "" };
+        let time = format!("{}{}", say(&format!("%-I:%M{seconds}"))?, say("%p")?.to_lowercase());
+        if self.dated {
+            Ok(format!("{}, {time}", say("%-d %b %Y")?))
+        } else {
+            Ok(time)
+        }
+    }
 }
 
 /// `detect_time_unit` over the distinct x texts: `None` below two dates, for a sub-daily value

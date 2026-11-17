@@ -574,16 +574,15 @@ rows:
         # Hot reload: the same render now plans the edited text.
         edited = compile(yaml_content.replace("FROM sales ", "FROM sales_v2 ")).board
         assert edited is not None
+        planned = plan_of(
+            edited,
+            executor.ctx.env,
+            executor.rendered_at,
+            {"region": "North"},
+            all_queries=True,
+        )
         executor.ctx = replace(
-            executor.ctx,
-            board=edited,
-            plan=plan_of(
-                edited,
-                executor.ctx.env,
-                executor.rendered_at,
-                {"region": "North"},
-                all_queries=True,
-            ),
+            executor.ctx, board=edited, plan=planned.plan, compiled=planned.compiled
         )
 
         # Second call - should NOT use cache because SQL changed

@@ -260,8 +260,7 @@ fn unknown_cache_ref(
         .filter(|id| !id.name().is_inline() && id.file() == home)
         .map(|id| id.label(own))
         .collect();
-    let refusal =
-        diag::err_query_cache_ref_unknown(holder.label(own), name, available.join(", "));
+    let refusal = diag::err_query_cache_ref_unknown(holder.label(own), name, available.join(", "));
     HoistError::refused(match holder.name().is_inline() {
         true => refusal,
         false => refusal.at_path(diagnostic::ModelPath(

@@ -19,9 +19,9 @@ metadata:
 Walk a user from nothing to a live, rendered board on dbtcharts.com, running
 `dct cloud` verbs and asking the user for only what your own credentials
 cannot supply. One browser sitting stays human: approving `dct cloud login`
-(Step 1) and, right after it, for a GitHub repository connected through the
-App, installing the GitHub App on it (Step 3). Everything else you do yourself, showing the boards locally as you
-go.
+(Step 1) and, only when `gh` cannot verify a GitHub repository, installing
+the GitHub App on it (Step 3). Everything else you do yourself, showing the
+boards locally as you go.
 
 > This skill is **CLI-only** (`surfaces: [cli]`) — `dct cloud` has no MCP
 > tool surface. Syntax for every verb below lives in `--help`; this skill
@@ -33,9 +33,9 @@ go.
 ## Get consent up front
 
 This run needs the user in the browser to approve `dct cloud login` (Step 1)
-and, for a private GitHub repository, to pick it for the GitHub App (Step 3);
-`dct cloud status` lists the human steps still ahead. Two things are
-decisions, not clicks: a read-only warehouse credential is minted and handed
+and, if `gh` cannot verify a private GitHub repository, to install the GitHub
+App on it (Step 3); `dct cloud status` lists the human steps still
+ahead. Two things are decisions, not clicks: a read-only warehouse credential is minted and handed
 to Cloud (Step 5), and dbt charts files are committed and pushed to this
 repository's default branch (Steps 4 and 8). If the user's request did not
 already grant them, ask for both once, before Step 1.
@@ -78,11 +78,23 @@ Confirm what it can't tell you:
   four warehouses (then write the boards against it), or export each table to
   a Parquet/CSV/JSON file committed in the repo and register it once under
   `sources:` (`type: csv | json | parquet`, a `files:` map, paths relative to
-  the project root) — every query then references it by name, and it renders
-  identically locally and on Cloud with no connection step. Reach for the
-  inline one-off form (`source: ../data/orders.parquet`, resolved from the
-  board's own directory or the project root) only when a board is the sole
-  reader of that one file. Don't build DuckDB boards and discover this at
+  the project root), for example:
+
+  ```yaml
+  sources:
+    games:
+      type: csv
+      files:
+        titles: data/titles.csv
+        transactions: data/transactions.csv
+  ```
+
+  Queries then reference the files by table name, can read several of them in
+  one query, and render identically locally and on Cloud with no connection
+  step. The inline one-off form
+  (`source: ../data/orders.parquet`, resolved from the board's own directory
+  or the project root) needs no declaration on Cloud either, but sees only
+  its own file. Don't build DuckDB boards and discover this at
   Step 5.
 
 ### Pick the repo and folder
@@ -94,7 +106,9 @@ authenticate — don't silently scaffold one:
   `charts/` directory) — use it as-is.
 - **In a git repo but no project yet** — ask whether to make *this* repo the
   home, or to start a **new repo** for it. `dct init` scaffolds the project
-  (`dbt_charts.yml` + a `charts/` with no boards) beside the nearest project marker (a
+  (`dbt_charts.yml`, a `charts/` with no boards, a `README.md` when none
+  exists, a `.gitignore`, and the `dct` skill stubs under `.agents/skills/` and
+  `.claude/skills/`) beside the nearest project marker (a
   `dbt_project.yml` counts), so where you run it matters. Cloud tracks the repo
   **plus the subfolder that holds the project**, so whatever folder init lands
   in is the one to connect in Step 3 — keep them the same. Do whichever the
@@ -138,7 +152,7 @@ organization the CLI should reach and approve.
 
 Bare `dct cloud login` blocks until the approval lands or the code expires
 (about 30 minutes) — longer than your shell tool's timeout and the user may
-be slow, so use the two-step form instead of backgrounding the blocking one:
+be slow, so use the two-step form rather than one blocking command:
 
 ```bash
 URL=$(dct cloud login --start)
@@ -147,11 +161,14 @@ URL=$(dct cloud login --start)
 This returns immediately: it prints the approval URL to stdout and stores
 the pending grant for `--wait` to pick up. Hand `$URL` to the user
 **immediately, as the only thing you say** — no summary first; every minute
-spent writing notes eats the code's lifetime. Also say **which account** to
+spent writing notes eats the code's lifetime. Put the URL in your reply text
+on a line of its own: tool output is collapsed, so a link that appears only
+there goes unseen. Also say **which account** to
 approve with when they have several: the CLI becomes whoever approves, so
 the org this creates or joins belongs to that account, and the board URLs
 only open in a browser signed in as a member. Then, in the same turn, wait
-in the foreground with your longest timeout:
+with your longest timeout, in the background if your shell tool caps
+commands (many cap at 600 seconds), and continue when it exits:
 
 ```bash
 dct cloud login --wait
@@ -167,13 +184,13 @@ not you.
 ## Step 2: Organization
 
 List orgs (`dct cloud orgs`) — the consent screen in Step 1 always leaves at
-least one, picked or created there. Note the slug of the one this repository
+least one, picked or created there. If the repository needs a specific new
+org, create it with `dct cloud org create <name>` rather than asking the user
+to make it on the consent screen. Note the slug of the one this repository
 is for: Step 3 names it with `--org`. `project connect` never reads the
 `dct cloud use` default (a repo being connected matches nothing yet, so the
 default would silently answer every time), so `dct cloud use <org>` is
-optional — it only saves `--org` on verbs run outside the repo later. `dct
-cloud org create` remains available if the user wants to create an
-additional organization later.
+optional — it only saves `--org` on verbs run outside the repo later.
 
 ## Step 3: Connect the project
 
@@ -228,8 +245,9 @@ with `--org <org>`:
     project connect github` with no URL. It names this checkout's repository
     itself. With `gh` signed in (Before you start) and the GitHub App
     already covering the repo, it verifies the repo with that login and
-    there is no browser step. Otherwise `--start` prints a
-    URL and returns immediately, no backgrounding needed. `--start` and
+    there is no browser step, even for a private repo: never predict one to
+    the user before `--start` has run. Otherwise `--start` prints a URL and
+    returns immediately, no backgrounding needed. `--start` and
     `--wait` are one inseparable unit, not two steps split across other work:
     hand over the URL (if there is one), then immediately run `--wait` in the
     same turn, before Step 4 and before any board authoring. The project does
@@ -305,7 +323,7 @@ process list, so the connect verb refuses it).
 
 | Warehouse | Minting | If you can't mint one |
 |---|---|---|
-| BigQuery | Create a service account scoped to the target dataset, grant it read access. Cover every dataset the boards' SQL names, not only the source's default one: a connection test passes against the default dataset while a board reading a sibling dataset renders `Access Denied`. The render error names the table; extend the grant and re-render with `dct cloud render --force`. If the dataset-level grant is blocked and you fall back to a project-level *conditional* binding, the condition must cover both the `Dataset` and `Table` resource types — `Dataset` alone renders `Access Denied` on the first board. Mint a JSON key into a temp file, delete the file once `connection create` succeeds. | Ask the user's admin to grant the IAM role, or to hand you a key. |
+| BigQuery | Create a service account scoped to the target dataset, grant it read access, and `roles/bigquery.jobUser` on the project so it can run query jobs. Cover every dataset the boards' SQL names, not only the source's default one: a connection test passes against the default dataset while a board reading a sibling dataset renders `Access Denied`. The render error names the table; extend the grant and re-render with `dct cloud render --force`. A dataset-level grant is an access-list edit, not an IAM binding (`add-iam-policy-binding` on a dataset fails with "requires allowlisting"): `bq show --format=prettyjson <project>:<dataset> > ds.json`, add the service account to `access` as `{"role": "READER", "userByEmail": "<sa-email>"}`, then `bq update --source ds.json <project>:<dataset>`. If it is blocked and you fall back to a project-level *conditional* binding, the condition must cover both the `Dataset` and `Table` resource types — `Dataset` alone renders `Access Denied` on the first board. Mint a JSON key into a temp file, delete the file once `connection create` succeeds. | Ask the user's admin to grant the IAM role, or to hand you a key. |
 | Snowflake | Generate a key pair, register the public half on a role-scoped user via `snowsql`, use the private key file. | Ask the user to type a password at a stdin prompt — never on the command line. |
 | Postgres / Redshift | If your own credentials allow it, create a read-only role via `psql` and use its password. | Ask the user to supply or approve a read-only credential. |
 
@@ -372,22 +390,23 @@ Cloud never reads a warehouse source's credential fields (`password:`,
 those are for local rendering. On Cloud the mapped connection supplies the
 credential, so an unresolvable `env_var()` in the file is not an error there.
 
-Binding a source, in the create or with `source map`, re-renders the
-project's boards on its own. The first render fired at sync, before anything
-was mapped, so its cards read `ERR-SOURCE-NOT-FOUND · Available sources: none
-configured`; the binding makes those renders stale
-and Cloud sweeps them the way it does after a push. Give it a minute, then
-read `dct cloud status` again rather than editing a board to provoke a render.
+Binding a source, in the create or with `source map`, queues a render of
+every board that has none yet; a render never starts while a warehouse source
+is unmapped. Give it a minute, then read `dct cloud status` again rather than
+editing a board to provoke a render.
 
 ## Step 7: Render
 
-Trigger rendering for the project's boards — but only once `dct cloud status`
-shows no unmapped sources. Rendering an unmapped project succeeds
+Boards render on their own: a sync that moves the branch and every source
+binding queue a render of the boards that have none. Re-run `dct cloud status`
+for up to a minute and watch `unrendered` fall; run `dct cloud render` only
+if it has not dropped. A board rendered against an unmapped source succeeds
 mechanically: every chart's query fails, the render still completes, and the
 board is served as a page of error cards. That board is `errored`, not
 `ready`: `status` counts it as `errored` on the project's `boards:` line and
 names it on the project's own `boards with chart errors:` line, and `dct cloud boards`
-reports it `errored` with the first chart's diagnostic. `ready` means a
+reports it `errored` with the first chart's diagnostic (in `--json` the key is
+`render_status`, not `status`). `ready` means a
 render exists **and** its charts came back clean. Never tell the user the
 boards are live while `status` still names a next step.
 
@@ -490,13 +509,14 @@ Record where the project lives, too. Nothing in the repo says which org
 publishes it, and the org slug is chosen at org creation — it has no
 relationship to the GitHub owner, so it cannot be guessed from the remote. The
 recovery is `dct cloud orgs` and then `dct cloud projects`, matching the
-`REPOSITORY` column against the clone. Save the next person that hunt: put the
-org and project slug in the repo's README as you finish.
+`REPOSITORY` column against the clone. `published_to` in `dbt_charts.yml` (Step 3) already records it; if the repo
+has a README, note the org and project slug there too.
 
 ## The loop that actually drives this
 
 Don't hardcode the step order above as a fixed script — after step 2, drive
-the rest from `dct cloud status`. It reports the org's setup stage and names
+the rest from `dct cloud status --org <org>`, naming the org from Step 2
+(a repository connected to several orgs makes bare `status` refuse). It reports the org's setup stage and names
 the exact next step in plain language (create a project, sync it, create or
 test a connection, map a source, author and push a board, render). Read that
 instruction, run the
@@ -551,8 +571,10 @@ dct cloud boards --json | jq -r '.boards[].url' | while read -r url; do
 done
 ```
 
-`200` on every board, with the board's title in `/tmp/dct-board.html`, is the
-check. Never echo `$TOKEN` — it is the user's credential.
+`200` on every board, with the board's title in the body of
+`/tmp/dct-board.html`, is the check. The `<title>` tag holds the slug and
+project, and the body HTML-escapes the title (`&amp;`, `&#39;`), so match the
+escaped form. Never echo `$TOKEN` — it is the user's credential.
 
 A `403`, or a redirect to a login page, means your token did not authenticate
 this fetch, not that the board is broken: report those boards as unverified

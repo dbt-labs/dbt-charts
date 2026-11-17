@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import OverlapSpec
 from dbt_charts.core.compile.models.style.resolved._marks import ResolvedBarMarkStyle
@@ -14,6 +14,16 @@ from dbt_charts.core.compile.models.style.theme.bar import (
 )
 
 from ._cartesian import _SeriesCartesianResolvedStyle
+
+
+class ResolvedBarTornOutlierStyle(BaseModel):
+    """Theme-baked tear shape and cap band; the break itself is on the chart."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = Field(description="Tear outlier bars at the break.")
+    band: float = Field(description="Share of the plot length reserved for caps.")
+    cap: float = Field(description="Cap length, as a multiple of bar thickness.")
 
 
 class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
@@ -70,6 +80,9 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
     grouped: BarGroupedStyle = Field(
         description="Band-scale padding applied to grouped bars."
     )
+    torn_outlier: ResolvedBarTornOutlierStyle = Field(
+        description="Tear shape and cap band for outlier bars."
+    )
     total_label_is_house: bool = Field(
         default=False,
         description=(
@@ -107,4 +120,4 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
     )
 
 
-__all__ = ["ResolvedBarStyle"]
+__all__ = ["ResolvedBarStyle", "ResolvedBarTornOutlierStyle"]

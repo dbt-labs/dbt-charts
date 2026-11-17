@@ -199,8 +199,9 @@ def chart_title_spec(
       and ``paper``), falling back
       to the body family when the title slot is unset.
 
-    Font weight comes from ``resolved_chart_style.title.compact_weight`` at
-    tiny width and ``title.font.weight`` at every other tier.
+    An authored ``title.font.weight`` wins at every tier; an ``auto`` one is
+    ``resolved_chart_style.title.compact_weight`` at tiny width and the board
+    title's weight at every other tier.
 
     Args:
         width:  Outer pixel width of the chart card. Must be the same width

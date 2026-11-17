@@ -42,28 +42,10 @@ def _registry(rows: list[dict[str, Any]]) -> ExecEnv:
     return scripted_env(ScriptedBackend(rows), named_sources=_EXAMPLES_DB)
 
 
-SPARK_BAR_BOARD = """
-source: examples_db
-queries:
-  q: SELECT id, name, amount FROM t
-charts:
-  s:
-    query: q
-    type: spark_bar
-    x: amount
-    y: name
-rows:
-  - s
-"""
-
-
 @pytest.mark.parametrize(
     ("board", "entry_points"),
-    [
-        (BOARD, ("render_chart", "measure_table_natural_width")),
-        (SPARK_BAR_BOARD, ("render_chart",)),
-    ],
-    ids=["table", "spark_bar"],
+    [(BOARD, ("render_chart", "measure_table_natural_width"))],
+    ids=["table"],
 )
 def test_a_render_loads_its_rows_into_the_engine_once(
     tmp_path,

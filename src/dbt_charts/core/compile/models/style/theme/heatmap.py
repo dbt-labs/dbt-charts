@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.conditional_predicate import (
-    ConditionalPredicate,
     default_rule_last,
 )
 from dbt_charts.core.compile.models.factories import build_conditional_model
@@ -20,6 +19,9 @@ from dbt_charts.core.compile.models.primitives import PatternStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _CartesianChartStyle,
     _SideLegendedChartStyleBaseAllOptional,
+)
+from dbt_charts.core.compile.models.style.theme.axis_conditional import (
+    AxisConditionalPredicate,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     RectMarkStyle,
@@ -65,12 +67,14 @@ class _HeatmapChartStyleBase(
 
 if TYPE_CHECKING:
 
-    class HeatmapConditionalRule(ConditionalPredicate):
+    class HeatmapConditionalRule(AxisConditionalPredicate):
         marks: HeatmapChartMarksStyle | None
 
 else:
     HeatmapConditionalRule = build_conditional_model(
-        _HeatmapChartStyleBase, name="HeatmapChartStyleConditional"
+        _HeatmapChartStyleBase,
+        AxisConditionalPredicate,
+        name="HeatmapChartStyleConditional",
     )
 
 

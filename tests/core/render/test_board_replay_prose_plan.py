@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
+from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
+from dbt_charts.core.compile.engine import engine_compile_recorded
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_render import ERR_BOARD_ARTIFACT_INVALID
 from dbt_charts.core.render.board_replay import dump_board_artifact, load_board_artifact
@@ -16,10 +19,15 @@ from dbt_charts.core.render.board_resolve import build_resolved_board_static
 BOARD = "rows:\n  - text: A nested block.\n  - text: Another.\n"
 
 
-def _artifact() -> dict:
+def _artifact(tmp_path: Path) -> dict:
     result = compile(BOARD)
     assert result.success
-    return json.loads(dump_board_artifact(build_resolved_board_static(result.board)))
+    record = engine_compile_recorded(
+        None, content=BOARD, project=FilesystemProject(tmp_path)
+    )[1]
+    return json.loads(
+        dump_board_artifact(build_resolved_board_static(result.board), record)
+    )
 
 
 def _strip_plans(node: object) -> None:
@@ -32,15 +40,15 @@ def _strip_plans(node: object) -> None:
             _strip_plans(value)
 
 
-def test_the_plan_round_trips() -> None:
-    resolved = load_board_artifact(json.dumps(_artifact()).encode())
+def test_the_plan_round_trips(tmp_path: Path) -> None:
+    resolved = load_board_artifact(json.dumps(_artifact(tmp_path)).encode()).resolved
     nested = resolved.layout.items[0].board
     assert nested.prose_plan is not None
     assert resolved.layout.items[1].board.prose_plan == nested.prose_plan
 
 
-def test_an_artifact_from_before_the_plan_is_rejected_by_name() -> None:
-    artifact = _artifact()
+def test_an_artifact_from_before_the_plan_is_rejected_by_name(tmp_path: Path) -> None:
+    artifact = _artifact(tmp_path)
     _strip_plans(artifact)
     with pytest.raises(DbtChartsError) as excinfo:
         load_board_artifact(json.dumps(artifact).encode())

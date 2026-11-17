@@ -1026,7 +1026,7 @@ def _pick_step_line(git_facts: GitCheckoutFacts) -> str | None:
         subcommand, url = known
         line = (
             f"- connect this repository: dct cloud project connect {subcommand}"
-            f" --git-url {url} --token <token>"
+            f" --git-url {url} (token in DCT_GIT_TOKEN)"
         )
         if subcommand == "github":
             line += (
@@ -2582,9 +2582,9 @@ def _connect_next_step(org: str, project: ProjectSummary) -> str:
         return f"{project.config_error}\nFix dbt_charts.yml and push before syncing."
     if project.unmapped_source_count:
         return (
-            f"Next: dct cloud connection create --org {org} --type <type>, then "
-            f"dct cloud source map <source> <connection> --org {org} "
-            f"--project {project.slug} ({project.unmapped_source_count} unmapped; "
+            f"Next: dct cloud connection create --org {org} --type <type> "
+            f"--project {project.slug} --map-all-sources "
+            f"({project.unmapped_source_count} unmapped; "
             "dct cloud sources lists them). Sync only after mapping, or every "
             "board renders without a source. A source whose data lives in the "
             "repo (CSV, JSON or Parquet, including an export of a local DuckDB "
@@ -2732,9 +2732,9 @@ def _finish_from_pick(
     root: str | None,
     pick: RepoPick,
 ) -> ProjectSummary:
-    """Finish the project once the browser pick has landed -- the half the
+    """Finish the project once the repository is settled, by gh or the browser -- the half the
     blocking connect and `--wait` share; only how they get *pick* differs."""
-    err_console.print(f"Picked {escape(pick.full_name)}.")
+    err_console.print(f"Using {escape(pick.full_name)}.")
     repo_name = pick.full_name.rpartition("/")[2]
     return client.create_project_from_pick(
         org,
@@ -3554,9 +3554,14 @@ def render(
         )
     else:
         typer.echo(
-            f"Started {result.started} board render(s);"
-            f" {result.unrendered_remaining} still unrendered."
+            f"Queued {result.started} board render(s); they run in the"
+            " background, so `dct cloud boards` shows them landing."
         )
+        if result.unrendered_remaining:
+            typer.echo(
+                f"{result.unrendered_remaining} still unrendered:"
+                " run `dct cloud render` again."
+            )
     # Printed under either count: forcing starts the renders but does not make
     # the warehouse answer, so a re-render over a connection that has not
     # passed its last test still produces boards of error cards.
@@ -3775,7 +3780,10 @@ def _print_comments(result: CommentList) -> None:
                 if comment.author_kind == "wizard"
                 else comment.author or "deleted account"
             )
-            typer.echo(f"  {who}: {comment.body}")
+            working = comment.wizard_status == "working"
+            typer.echo(f"  {who}: {'(working)' if working else comment.body}")
+            if comment.change_url:
+                typer.echo(f"    change: {comment.change_url}")
         typer.echo("")
 
 
@@ -4030,7 +4038,7 @@ def _print_status(org: str, status_result: OrgStatus) -> None:
             )
         if project.failed_board_slugs:
             console.print(
-                f"{project.slug} render failures: "
+                f"{project.slug} render failures (`warning` in dct cloud boards): "
                 + escape(", ".join(project.failed_board_slugs))
             )
         if project.errored_board_slugs:

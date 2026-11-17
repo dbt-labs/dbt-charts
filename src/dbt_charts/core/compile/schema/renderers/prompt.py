@@ -110,26 +110,35 @@ def _ordered_model_names(schema: AuthorableSchema) -> list[str]:
     return order
 
 
-_ENUM_CELL_TRUNCATE_AT = (
-    20  # Variable.input (14) is the largest pre-existing enum — stays whole.
-)
+_ENUM_CELL_COLLAPSE_AT = 20
+_LITERAL_LIST = re.compile(r"one of: ('[^']*'(?:, '[^']*')*)")
+
+
+def _collapsed(members: list[str]) -> str:
+    """A long closed set as a `<details>` list, so it doesn't blow out the row."""
+    return (
+        f"<details><summary>one of {len(members)} values</summary>"
+        f"{', '.join(members)}</details>"
+    )
 
 
 def _enum_str(values: list[str | int | bool]) -> str:
-    """ "enum: ..." cell text, truncated past _ENUM_CELL_TRUNCATE_AT members.
-
-    A long closed set (e.g. ScaleTargetConfig.palette's ~116 names) blown out
-    inline makes this doc's row unreadable and (the field reference is served
-    as an MCP resource) needlessly bloats agent context — the full
-    machine-readable list lives in the JSON Schema, where completion actually
-    reads it; the docs table only needs enough to show the shape.
-    """
     if len(values) == 1:
         return f"const: {_enum_member(values[0])}"
-    if len(values) <= _ENUM_CELL_TRUNCATE_AT:
-        return "enum: " + ", ".join(_enum_member(v) for v in values)
-    shown = ", ".join(_enum_member(v) for v in values[:_ENUM_CELL_TRUNCATE_AT])
-    return f"enum: {shown}, … ({len(values) - _ENUM_CELL_TRUNCATE_AT} more; see the JSON Schema)"
+    members = [_enum_member(v) for v in values]
+    if len(members) > _ENUM_CELL_COLLAPSE_AT:
+        return _collapsed(members)
+    return "enum: " + ", ".join(members)
+
+
+def _collapse_literal_lists(type_str: str) -> str:
+    def collapse(match: re.Match[str]) -> str:
+        members = re.findall(r"'[^']*'", match.group(1))
+        if len(members) > _ENUM_CELL_COLLAPSE_AT:
+            return _collapsed(members)
+        return match.group(0)
+
+    return _LITERAL_LIST.sub(collapse, type_str)
 
 
 def _enum_member(value: str | int | bool) -> str:
@@ -207,7 +216,7 @@ def _type_cell(field: SchemaField, schema: AuthorableSchema) -> str:
             f"[{display}](#{_anchor(display)})",
             t,
         )
-    return t.replace("|", "\\|")
+    return _collapse_literal_lists(t).replace("|", "\\|")
 
 
 def _anchor(display_name: str) -> str:

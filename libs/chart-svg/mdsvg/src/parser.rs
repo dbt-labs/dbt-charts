@@ -864,6 +864,48 @@ pub fn parse(text: &str) -> Document {
     MarkdownParser::new().parse(text)
 }
 
+/// Why [`rewrite_text_images`] gave no text: the resolver refused an image, or the rewritten text
+/// no longer parses to the blocks the destinations' rewrite gives.
+#[derive(Debug, PartialEq)]
+pub enum TextImageError<E> {
+    Resolve(E),
+    Reshaped,
+}
+
+/// `image_assets.py::rewrite_markdown_text_images`: `text` with each image's destination replaced by
+/// `resolve`'s URL, for a consumer that reads the text itself (a hash, a warning).
+///
+/// The parse decides which `![](..)` is an image: each candidate the parser's own image pattern
+/// finds is probed (is its destination read back as an image?), so one inside a code span or fence
+/// stays text. The result must parse to the blocks that rewriting the parsed destinations gives.
+pub fn rewrite_text_images<E>(
+    text: &str,
+    mut resolve: impl FnMut(&str) -> Result<String, E>,
+) -> Result<String, TextImageError<E>> {
+    let mut expected = parse(text);
+    for url in crate::types::image_urls_mut(&mut expected) {
+        *url = resolve(url).map_err(TextImageError::Resolve)?;
+    }
+    let mut pieces = String::new();
+    let mut cursor = 0;
+    for (index, candidate) in image_re().captures_iter(text).enumerate() {
+        let destination = candidate.get(2).held("the image pattern's destination group");
+        let probe = format!("mdsvg-probe-{index}");
+        let probed = format!("{}{probe}{}", &text[..destination.start()], &text[destination.end()..]);
+        if !crate::types::image_urls(&parse(&probed)).contains(&probe.as_str()) {
+            continue;
+        }
+        pieces.push_str(&text[cursor..destination.start()]);
+        pieces.push_str(&resolve(destination.as_str()).map_err(TextImageError::Resolve)?);
+        cursor = destination.end();
+    }
+    pieces.push_str(&text[cursor..]);
+    if parse(&pieces) != expected {
+        return Err(TextImageError::Reshaped);
+    }
+    Ok(pieces)
+}
+
 #[cfg(test)]
 mod tests {
     include!("parser_tests.rs");

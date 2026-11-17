@@ -15,9 +15,10 @@
 use board_model::primitives::{AffixRepeat, FormatConfig, FormatSpec, Notation, SignPlacement};
 use board_model::rule::Auto;
 use board_model::style::axis::{
-    AxisXStyle, AxisYStyle, BandAxisStyle, BaseAxisStyle, BaseScaleStyle, DomainBound, QuantitativeAxisStyle, ScaleDomain, TimeUnit,
+    AxisXStyle, AxisYStyle, BandAxisStyle, BaseAxisStyle, BaseScaleStyle, DomainBound, QuantitativeAxisStyle, ScaleDomain, ScaleType, TimeUnit,
 };
-use diagnostic::Diagnostic;
+use diagnostic::{refuse, Diagnostic};
+use crate::bound::ValueScale;
 use crate::plot::zero::Setting;
 use model_core::{Engine, Leaf, Patch, Spell, Tri};
 
@@ -306,6 +307,14 @@ impl<'a> Scale<'a> {
         }
     }
 
+    /// The unified `scale.padding` as this rung sets it.
+    fn padding(&self) -> Tri<&'a f64> {
+        match self {
+            Scale::Patch(p, _) => p.padding.as_ref(),
+            Scale::Total(t) => absent(&t.padding),
+        }
+    }
+
     /// `scale.continuous.zero` as this rung sets it.
     fn zero(&self) -> Tri<&'a Engine<bool, Auto>> {
         match self {
@@ -330,8 +339,68 @@ impl<'a> Scale<'a> {
         }
     }
 
+    /// `scale.continuous.type` as this rung sets it.
+    fn continuous_type(&self) -> Tri<&'a ScaleType> {
+        match self {
+            Scale::Patch(p, _) => match &p.continuous {
+                Tri::Value(c) => c.r#type.as_ref(),
+                Tri::Null => Tri::Null,
+                Tri::Unset => Tri::Unset,
+            },
+            Scale::Total(t) => t.continuous.as_ref().map_or(Tri::Unset, |c| absent(&c.r#type)),
+        }
+    }
+
+    /// `scale.continuous.log.base` as this rung sets it.
+    fn log_base(&self) -> Tri<&'a f64> {
+        match self {
+            Scale::Patch(p, _) => match &p.continuous {
+                Tri::Value(c) => match &c.log {
+                    Tri::Value(log) => log.base.as_ref(),
+                    Tri::Null => Tri::Null,
+                    Tri::Unset => Tri::Unset,
+                },
+                Tri::Null => Tri::Null,
+                Tri::Unset => Tri::Unset,
+            },
+            Scale::Total(t) => t.continuous.as_ref().and_then(|c| c.log.as_ref()).map_or(Tri::Unset, |log| absent(&log.base)),
+        }
+    }
+
+    /// `scale.continuous.pow.exponent` as this rung sets it.
+    fn pow_exponent(&self) -> Tri<&'a f64> {
+        match self {
+            Scale::Patch(p, _) => match &p.continuous {
+                Tri::Value(c) => match &c.pow {
+                    Tri::Value(pow) => pow.exponent.as_ref(),
+                    Tri::Null => Tri::Null,
+                    Tri::Unset => Tri::Unset,
+                },
+                Tri::Null => Tri::Null,
+                Tri::Unset => Tri::Unset,
+            },
+            Scale::Total(t) => t.continuous.as_ref().and_then(|c| c.pow.as_ref()).map_or(Tri::Unset, |pow| absent(&pow.exponent)),
+        }
+    }
+
+    /// `scale.continuous.symlog.constant` as this rung sets it.
+    fn symlog_constant(&self) -> Tri<&'a f64> {
+        match self {
+            Scale::Patch(p, _) => match &p.continuous {
+                Tri::Value(c) => match &c.symlog {
+                    Tri::Value(symlog) => symlog.constant.as_ref(),
+                    Tri::Null => Tri::Null,
+                    Tri::Unset => Tri::Unset,
+                },
+                Tri::Null => Tri::Null,
+                Tri::Unset => Tri::Unset,
+            },
+            Scale::Total(t) => t.continuous.as_ref().and_then(|c| c.symlog.as_ref()).map_or(Tri::Unset, |symlog| absent(&symlog.constant)),
+        }
+    }
+
     /// The `scale.continuous` leaf no walk reads yet; `reads_value_leaves` says whether this axis's
-    /// family reads `zero` and `domain` (a y axis, and a quantitative x).
+    /// family reads `zero`, `domain` and the scale type (a y axis, and a quantitative x).
     fn unwalked_continuous(&self, reads_value_leaves: bool) -> Option<&'static str> {
         match self {
             Scale::Patch(p, _) => match &p.continuous {
@@ -339,11 +408,11 @@ impl<'a> Scale<'a> {
                 Tri::Null => Some("scale.continuous"),
                 Tri::Value(c) => [
                     ("scale.continuous.zero", !reads_value_leaves && !matches!(c.zero, Tri::Unset)),
-                    ("scale.continuous.type", !matches!(c.r#type, Tri::Unset)),
+                    ("scale.continuous.type", !reads_value_leaves && !matches!(c.r#type, Tri::Unset)),
                     ("scale.continuous.domain", matches!(&c.domain, Tri::Value(d) if !reads_value_leaves || numeric(d).is_none()) || matches!(c.domain, Tri::Null)),
-                    ("scale.continuous.log", !matches!(c.log, Tri::Unset)),
-                    ("scale.continuous.pow", !matches!(c.pow, Tri::Unset)),
-                    ("scale.continuous.symlog", !matches!(c.symlog, Tri::Unset)),
+                    ("scale.continuous.log", !reads_value_leaves && !matches!(c.log, Tri::Unset)),
+                    ("scale.continuous.pow", !reads_value_leaves && !matches!(c.pow, Tri::Unset)),
+                    ("scale.continuous.symlog", !reads_value_leaves && !matches!(c.symlog, Tri::Unset)),
                 ]
                 .into_iter()
                 .find_map(|(name, set)| set.then_some(name)),
@@ -351,11 +420,11 @@ impl<'a> Scale<'a> {
             Scale::Total(t) => t.continuous.as_ref().and_then(|c| {
                 [
                     ("scale.continuous.zero", !reads_value_leaves && c.zero.is_some()),
-                    ("scale.continuous.type", c.r#type.is_some()),
+                    ("scale.continuous.type", !reads_value_leaves && c.r#type.is_some()),
                     ("scale.continuous.domain", c.domain.as_ref().is_some_and(|d| !reads_value_leaves || numeric(d).is_none())),
-                    ("scale.continuous.log", c.log.is_some()),
-                    ("scale.continuous.pow", c.pow.is_some()),
-                    ("scale.continuous.symlog", c.symlog.is_some()),
+                    ("scale.continuous.log", !reads_value_leaves && c.log.is_some()),
+                    ("scale.continuous.pow", !reads_value_leaves && c.pow.is_some()),
+                    ("scale.continuous.symlog", !reads_value_leaves && c.symlog.is_some()),
                 ]
                 .into_iter()
                 .find_map(|(name, set)| set.then_some(name))
@@ -546,6 +615,18 @@ impl<'a> AxisLadder<'a> {
             .copied()
     }
 
+    /// `scale.padding`, as walked: the share of a step a point scale keeps outside its first and
+    /// last category. Only a 0 ever reaches here, as [`Self::unwalked_leaf`] refuses any other.
+    pub fn padding(&self) -> Option<f64> {
+        self.rungs
+            .walk(|layer| layer.read(|rung| match rung.scale() {
+                Tri::Value(scale) => scale.padding(),
+                Tri::Null => Tri::Null,
+                Tri::Unset => Tri::Unset,
+            }))
+            .copied()
+    }
+
     /// Whether the walked `time_unit` is `none`: production's continuous temporal axis, authored.
     pub fn time_unit_none(&self) -> bool {
         let walked = self.rungs.walk(|layer| layer.read(AxisRung::time_unit));
@@ -574,6 +655,33 @@ impl<'a> AxisLadder<'a> {
             Tri::Unset => Tri::Unset,
         }));
         walked.and_then(numeric)
+    }
+
+    /// The continuous scale type of a value axis, `scale.continuous.type` walked with the parameter its
+    /// type reads (`log.base`, `pow.exponent`, `symlog.constant`) beside it. An unset parameter takes
+    /// d3-scale's default (`scaleLog` base 10, `scalePow` exponent 1, `scaleSymlog` constant 1), as
+    /// production does (`AxisStyle::transform`, `log_base`). A `temporal` type is an x axis's, not a
+    /// value scale.
+    pub fn value_scale(&self) -> Result<ValueScale, Diagnostic> {
+        macro_rules! walked {
+            ($leaf:ident) => {
+                self.rungs.walk(|layer| {
+                    layer.read(|rung| match rung.scale() {
+                        Tri::Value(scale) => scale.$leaf(),
+                        Tri::Null => Tri::Null,
+                        Tri::Unset => Tri::Unset,
+                    })
+                })
+            };
+        }
+        Ok(match walked!(continuous_type) {
+            None | Some(ScaleType::Linear) => ValueScale::Linear,
+            Some(ScaleType::Log) => ValueScale::Log { base: walked!(log_base).copied().unwrap_or(10.0) },
+            Some(ScaleType::Pow) => ValueScale::Pow { exponent: walked!(pow_exponent).copied().unwrap_or(1.0) },
+            Some(ScaleType::Sqrt) => ValueScale::Sqrt,
+            Some(ScaleType::Symlog) => ValueScale::Symlog { constant: walked!(symlog_constant).copied().unwrap_or(1.0) },
+            Some(ScaleType::Temporal) => return Err(Diagnostic::refused(refuse!("a value axis with `scale.continuous.type: temporal` is not supported"))),
+        })
     }
 
     /// `ticks.count`, as walked: `auto` stays the rule.

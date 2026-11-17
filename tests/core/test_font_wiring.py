@@ -567,16 +567,43 @@ class TestVlConvertFontNormalization:
         normalized = normalize_svg_font_families_for_vl_convert(svg)
         assert 'font-family="Source Serif 4"' in normalized
 
-    def test_source_serif_4_weight_700_has_no_registered_board_passes_through(self):
-        """700 is outside the closed weight set — no static board exists for it,
+    def test_source_serif_4_weight_800_has_no_registered_board_passes_through(self):
+        """800 is outside the closed weight set — no static board exists for it,
         so the rewrite must not invent one."""
         from dbt_charts.core.render.font_support import (
             normalize_svg_font_families_for_vl_convert,
         )
 
-        svg = '<text font-family="Source Serif 4" font-weight="700">40</text>'
+        svg = '<text font-family="Source Serif 4" font-weight="800">40</text>'
         normalized = normalize_svg_font_families_for_vl_convert(svg)
         assert 'font-family="Source Serif 4"' in normalized
+
+    @pytest.mark.parametrize("weight", ["700", "bold"])
+    def test_inter_variable_bold_rewritten_to_its_bold_face(self, weight: str):
+        """A table cell's conditional `font.weight: bold` arrives as the CSS
+        keyword, not a number; both spellings must reach the static Bold face."""
+        from dbt_charts.core.render.font_support import (
+            normalize_svg_font_families_for_vl_convert,
+        )
+
+        svg = (
+            '<text font-family="Inter Variable, Noto Emoji, Inter, system-ui, '
+            f'sans-serif" font-weight="{weight}">watch</text>'
+        )
+        normalized = normalize_svg_font_families_for_vl_convert(svg)
+        assert 'font-family="Inter Variable Bold, Noto Emoji,' in normalized
+
+    def test_inline_style_bold_keyword_on_a_tspan_rewritten(self):
+        from dbt_charts.core.render.font_support import (
+            normalize_svg_font_families_for_vl_convert,
+        )
+
+        svg = (
+            '<text font-family="Inter Variable">'
+            '<tspan style="font-weight: bold">B</tspan></text>'
+        )
+        normalized = normalize_svg_font_families_for_vl_convert(svg)
+        assert '<tspan font-family="Inter Variable Bold"' in normalized
 
     def test_dbt_sans_tabular_weight_500_rewritten_to_its_medium_board(self):
         from dbt_charts.core.render.font_support import (

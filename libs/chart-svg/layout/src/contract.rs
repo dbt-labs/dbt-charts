@@ -5,7 +5,8 @@
 
 use d3rs::format::{format, parse_parts, vega_tick_format, Locale};
 use display_text::language::tr;
-use scene::{Attrs, Node, Role};
+use board_model::primitives::LinkOpen;
+use scene::{Attrs, Node, Role, Shape};
 
 /// A Vega mark-set's `.role-mark` group, holding `children`: `chart_interactivity.js`'s
 /// `isDataMark` classifies an element by its NEAREST ancestor carrying
@@ -237,4 +238,19 @@ pub fn legend_label_attrs(series_key: Option<&str>, linked: bool) -> Attrs {
         Some(key) => attrs.set(SERIES_KEY, key),
         None => attrs,
     }
+}
+
+/// An `<a>` around `children` as production's `Anchor::attrs` prints it: the href, how it opens (a
+/// page link says nothing) and the `_blank` target of a new tab.
+pub fn link(href: &str, open: LinkOpen, children: Vec<Node>) -> Node {
+    let (opens, target) = match open {
+        LinkOpen::Page => (None, None),
+        LinkOpen::Modal => (Some("modal"), None),
+        LinkOpen::Preview => (Some("preview"), None),
+        LinkOpen::NewTab => (Some("new_tab"), Some("_blank")),
+    };
+    let attrs = Attrs::new().quick("href", href);
+    let attrs = opens.map_or(attrs.clone(), |value| attrs.quick("data-dbt-link-open", value));
+    let attrs = target.map_or(attrs.clone(), |value| attrs.quick("target", value));
+    Node::new(Role::Chrome, attrs, Shape::Link(children))
 }

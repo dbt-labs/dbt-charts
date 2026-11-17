@@ -1616,3 +1616,74 @@ class TestWriteFileNeverClobbersUnreadContent:
         assert result["path"] == "logo.yml"
         assert "cannot be read" in result["error"]
         assert (tmp_path / "logo.yml").read_bytes() == b"\xff\xfe\x00binary"
+
+
+_PAGE_HEAD = """\
+Revenue by month.
+
+```charts
+queries:
+  sales:
+    columns: [month, revenue]
+    values:
+      - [Jan, 100]
+      - [Feb, 150]
+charts:
+  by_month:
+    type: bar
+    query: sales
+    x: month
+    y: revenue
+rows:
+  - by_month
+```
+
+The same numbers as a line.
+
+```charts
+"""
+
+
+class TestRenderMarkdownPage:
+    def test_fences_sharing_a_query_check_as_one_board(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        page = _PAGE_HEAD + "type: line\nquery: sales\nx: month\ny: revenue\n```\n"
+        result = dispatch_tool_call("render_board", {"markdown": page}, context=context)
+        assert result.get("status") == "ok", result
+        assert "url" not in result
+
+    def test_a_query_repeated_in_a_later_fence_names_that_fence(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        page = _PAGE_HEAD + (
+            "queries:\n  sales:\n    columns: [month, revenue]\n    values:\n"
+            "      - [Jan, 100]\ntype: line\nquery: sales\nx: month\ny: revenue\n```\n"
+        )
+        second_fence_line = page.splitlines().index("```charts", 3) + 1
+        result = dispatch_tool_call("render_board", {"markdown": page}, context=context)
+        assert result["status"] == "failed"
+        messages = [e["message"] for e in result["validation_errors"]]
+        assert any(
+            m.startswith(f"`charts` fence on line {second_fence_line}:")
+            for m in messages
+        ), messages
+
+    def test_markdown_takes_no_yaml_content(self, context: DbtChartsAIContext) -> None:
+        result = dispatch_tool_call(
+            "render_board",
+            {"markdown": "# t", "yaml_content": "title: t"},
+            context=context,
+        )
+        assert result["success"] is False
+        assert "exactly one of" in result["errors"][0]
+
+    @pytest.mark.parametrize("extra", [{"chart": "by_month"}, {"as_link": True}])
+    def test_markdown_renders_the_whole_page_only(
+        self, context: DbtChartsAIContext, extra: dict[str, object]
+    ) -> None:
+        result = dispatch_tool_call(
+            "render_board", {"markdown": _PAGE_HEAD, **extra}, context=context
+        )
+        assert result["success"] is False
+        assert "renders a whole page" in result["errors"][0]

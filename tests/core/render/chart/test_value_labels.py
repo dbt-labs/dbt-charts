@@ -16,6 +16,7 @@ from dbt_charts.core.render.chart.vega_lite import render_chart
 
 from ...._results import rows_result
 from ..._engine_render import render_chart_svg
+from ..._kpi_board import kpi_svg
 from ...conftest import chart_pane
 
 _BOARD_RS, _BOARD_CTX = resolve_style_and_context(get_theme_style())
@@ -226,33 +227,22 @@ class TestKpiProvenance:
             "chart-local literal SI format must set format_native=True"
         )
 
-    def test_kpi_native_svg_has_raw_d3_suffix(self, make_chart) -> None:
+    def test_kpi_native_svg_has_raw_d3_suffix(self) -> None:
         """KPI with chart-local "~s" format renders SVG with raw d3 suffix "M".
 
-        format_native=True routes through format_kpi_parts(native=True) which
-        keeps the raw d3 suffix character. The rendered SVG must contain a tspan
-        with "M" (capital, unspaced) -- the rejected native quadrant -- not "m".
+        The rendered SVG must contain a tspan with "M" (capital, unspaced) -- the
+        rejected native quadrant -- not "m".
         """
-        from ..._engine_render import render_kpi_svg
-
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
-        chart = make_chart("kpi", value="revenue", style={"value": {"format": "~s"}})
-        resolved = resolve(chart, _KPI_MILLIONS_DATA, chart_style_context=board_ctx)
-        assert resolved.format_native is True
-        svg = render_kpi_svg(resolved, _KPI_MILLIONS_DATA, board_style=board_rs)
-        # The suffix "M" must appear in a tspan; "m" must not.
+        svg = kpi_svg(
+            {"value": "revenue", "style": {"value": {"format": "~s"}}},
+            _KPI_MILLIONS_DATA,
+        )
         # SVG path data contains literal "M" (moveto) commands, so checking
-        # bare "M" in svg is vacuous. The KPI suffix appears in a <tspan> like
-        # ">M<" -- check for that pattern to avoid false positives.
-        import re
-
+        # bare "M" in svg is vacuous; the KPI suffix is its own tspan.
         tspan_texts = re.findall(r">([^<]+)<", svg)
         assert any(t.strip() == "M" for t in tspan_texts) and not any(
             t.strip() == "m" for t in tspan_texts
-        ), (
-            f"native KPI SVG must contain raw d3 'M' in a tspan, not 'm': "
-            f"snippet={svg[:500]!r}"
-        )
+        ), f"native KPI SVG must contain raw d3 'M' in a tspan, not 'm': {tspan_texts}"
 
 
 # =============================================================================

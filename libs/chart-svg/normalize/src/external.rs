@@ -641,6 +641,8 @@ pub struct Imports {
     pub prose: BTreeSet<board_model::ids::ItemId>,
     /// The `variables:` entries a ref stands in for; a variable name is unique to its board tree.
     pub variables: BTreeSet<String>,
+    /// Each placed board file that declares charts or queries, with where it was placed.
+    pub placed: BTreeMap<ProjectPath, String>,
 }
 
 /// One imported chart's query walk: the queries gathered so far, and the ones in progress.

@@ -1,8 +1,9 @@
 """Tests for the LINE_JOINS_MISSING_PERIODS render-warning detector.
 
-A line breaks only at a row whose y is NULL, so a period with no row joins its
-neighbors. The detector fires when a temporal series keeps a regular grain and
-two plotted neighbors skip one or more periods of it.
+A line breaks at a row whose y is NULL and across a gap the engine judges large,
+so a small run of periods with no row joins its neighbors. The detector fires
+when a temporal series keeps a regular grain and two plotted neighbors the line
+joins skip one or more periods of it.
 """
 
 from __future__ import annotations
@@ -47,23 +48,38 @@ def _warnings(rows: list[dict[str, Any]], **chart: object) -> list[Diagnostic]:
 
 
 def _months(*present: int, y: int | None = 1, **extra: object) -> list[dict[str, Any]]:
-    return [{"month": date(2024, m, 1).isoformat(), "n": y, **extra} for m in present]
+    """Rows for months numbered from 1 (January 2024) through 36 (December 2026)."""
+    return [
+        {
+            "month": date(2024 + (m - 1) // 12, (m - 1) % 12 + 1, 1).isoformat(),
+            "n": y,
+            **extra,
+        }
+        for m in present
+    ]
+
+
+def _three_years(*missing: int, **extra: str) -> list[dict[str, Any]]:
+    """Three years of months without ``missing``: a skip small enough that the
+    line joins across it."""
+    rows = _months(*(m for m in range(1, 37) if m not in missing))
+    return [{**row, **extra} for row in rows]
 
 
 def test_fires_when_a_monthly_series_skips_months() -> None:
-    [warning] = _warnings(_months(1, 2, 3, 6, 7, 8, 9))
+    [warning] = _warnings(_three_years(4, 5))
 
     assert warning.fix is not None
     assert warning.code == WARN_LINE_JOINS_MISSING_PERIODS.code
     assert warning.chart == "c1"
     assert "2 missing monthly periods" in warning.message
     assert "NULL `n`" in warning.fix
-    assert "every month from 2024-01-01 to 2024-09-01" in warning.fix
+    assert "every month from 2024-01-01 to 2026-12-01" in warning.fix
     assert "warnings_ignore: [WARN-LINE-JOINS-MISSING-PERIODS]" in warning.fix
 
 
 def test_fires_on_an_area_chart() -> None:
-    assert len(_warnings(_months(1, 2, 3, 6, 7, 8, 9), type="area")) == 1
+    assert len(_warnings(_three_years(4, 5), type="area")) == 1
 
 
 def test_silent_on_a_stacked_area_that_draws_the_gap_as_zero() -> None:
@@ -75,9 +91,7 @@ def test_silent_on_a_stacked_area_that_draws_the_gap_as_zero() -> None:
 
 
 def test_fires_on_an_unstacked_area_with_several_series() -> None:
-    rows = _months(*range(1, 10), region="EMEA") + _months(
-        1, 2, 3, 6, 7, 8, 9, region="APAC"
-    )
+    rows = _three_years(region="EMEA") + _three_years(4, 5, region="APAC")
 
     assert len(_warnings(rows, type="area", color="region", stack="none")) == 1
 
@@ -95,7 +109,7 @@ def test_silent_when_a_null_row_already_marks_the_gap() -> None:
 
 
 def test_fires_when_a_null_row_marks_only_one_of_the_gaps() -> None:
-    rows = _months(1, 2, 3, 6, 7, 8, 10, 11, 12)
+    rows = _three_years(4, 5, 9)
     rows += [{"month": f"2024-0{m}-01", "n": None} for m in (4, 5)]
 
     [warning] = _warnings(rows)
@@ -120,7 +134,7 @@ def test_silent_on_a_series_that_is_regular_at_a_coarser_step() -> None:
 
 
 def test_names_the_coarser_step_when_one_is_skipped() -> None:
-    [warning] = _warnings(_months(1, 3, 5, 9, 11))
+    [warning] = _warnings(_months(*(m for m in range(1, 37, 2) if m != 15)))
 
     assert "1 missing 2-month period" in warning.message
 
@@ -141,8 +155,8 @@ def test_a_missing_weekday_in_a_business_day_series_still_fires() -> None:
 
 
 def test_each_series_is_judged_on_its_own_rows() -> None:
-    complete = _months(*range(1, 10), region="EMEA")
-    gappy = _months(1, 2, 3, 6, 7, 8, 9, region="APAC")
+    complete = _three_years(region="EMEA")
+    gappy = _three_years(4, 5, region="APAC")
 
     [warning] = _warnings(complete + gappy, color="region")
 
@@ -158,6 +172,22 @@ def test_a_series_complete_on_its_own_does_not_inherit_another_series_gap() -> N
     apac = _months(2, 4, 6, 8, region="APAC")
 
     assert _warnings(emea + apac, color="region") == []
+
+
+def test_silent_on_a_gap_the_line_breaks() -> None:
+    assert _warnings(_months(1, 2, 3, 6, 7, 8, 9)) == []
+
+
+def test_fires_on_a_large_gap_when_the_line_joins_every_gap() -> None:
+    rows = _months(1, 2, 3, 6, 7, 8, 9)
+
+    [warning] = _warnings(rows, style={"marks": {"line": {"connect": True}}})
+
+    assert "2 missing monthly periods" in warning.message
+
+
+def test_an_area_has_no_connect_and_never_joins_a_large_gap() -> None:
+    assert _warnings(_months(1, 2, 3, 6, 7, 8, 9), type="area") == []
 
 
 @pytest.mark.parametrize("chart_type", ["bar", "scatter"])
@@ -179,7 +209,7 @@ def test_the_warning_surfaces_from_render() -> None:
         "rows:\n  - c\n"
     )
     assert result.success and result.board is not None, result.errors
-    registry = scripted_env(ScriptedBackend(_months(1, 2, 3, 6, 7)))
+    registry = scripted_env(ScriptedBackend(_three_years(4, 5)))
     executor = Run(result.board, env=registry)
 
     rendered = render(result.board, executor.ctx, executor.ledger, format="svg")

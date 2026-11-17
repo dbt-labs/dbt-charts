@@ -224,6 +224,7 @@ def test_state_naming_a_pid_another_server_now_has_never_kills_it(
 ) -> None:
     from dbt_charts.agent_api.serve import _state_path
 
+    _state_path(port).parent.mkdir(parents=True, exist_ok=True)
     _state_path(port).write_text(
         json.dumps(
             {
@@ -283,6 +284,7 @@ def test_changed_server_options_replace_the_running_server(
 def test_unreadable_state_file_is_a_clear_error(project: Path, port: int) -> None:
     from dbt_charts.agent_api.serve import _state_path
 
+    _state_path(port).parent.mkdir(parents=True, exist_ok=True)
     _state_path(port).write_text("not json", encoding="utf-8")
 
     result = runner.invoke(app, ["serve", "--detach", "--port", str(port)])
@@ -383,6 +385,7 @@ def test_stop_returns_only_once_the_port_is_released(
     from dbt_charts.core.serve import port as port_mod
 
     number = _free_port()
+    serve._state_path(number).parent.mkdir(parents=True, exist_ok=True)
     serve._state_path(number).write_text(
         json.dumps(
             {
@@ -429,6 +432,7 @@ def test_stop_reports_a_port_that_stays_bound(
     from dbt_charts.core.serve import port as port_mod
 
     number = _free_port()
+    serve._state_path(number).parent.mkdir(parents=True, exist_ok=True)
     serve._state_path(number).write_text(
         json.dumps(
             {

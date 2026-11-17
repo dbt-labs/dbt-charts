@@ -1,0 +1,3 @@
+kind: Fixes
+body: The board-migrate skill keeps a source table column's hyperlink on the same column of the migrated table.
+time: 2026-11-12T23:44:05.087129-08:00

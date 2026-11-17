@@ -1,8 +1,9 @@
-"""PEP 517 backend: maturin plus the two things it cannot do.
+"""PEP 517 backend: maturin plus the things it cannot do.
 
 maturin has no VCS version source and cannot reach packages outside the project
 root, so this wraps its hooks to stamp the git-tag version and to ship the
-vendored `mdsvg` and `d3_format` peer packages.
+vendored `mdsvg` and `d3_format` peer packages. Editable installs also share
+`_engine` builds across checkouts through a cache keyed by source content.
 """
 
 from __future__ import annotations
@@ -10,12 +11,19 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib
+import importlib.metadata
 import io
+import json
 import os
+import platform
+import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
+import time
+import tomllib
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -33,6 +41,24 @@ VENDORED = {
     "mdsvg": REPO_ROOT / "libs/markdown-svg/src/mdsvg",
     "d3_format": REPO_ROOT / "libs/d3-format/src/d3_format",
 }
+# Every repo path the `_engine` build reads (the build scripts embed the
+# dbt-charts ones). `_check_engine_inputs` fails a build that read any other.
+# dbt-charts paths derive from ROOT: the OSS export makes `dbt-charts/` the root.
+ENGINE_INPUTS = (
+    "libs/chart-svg",
+    *(
+        (ROOT / "src/dbt_charts" / path).relative_to(REPO_ROOT).as_posix()
+        for path in (
+            "core/defaults/palettes",
+            "core/defaults/themes",
+            "data/schemas/yaml",
+        )
+    ),
+    ".cargo/config.toml",
+)
+ENGINE_CACHE_ENTRIES = 10
+# A store older than this was abandoned by a build that died mid-copy.
+STAGED_TTL_SECONDS = 3600
 
 os.environ.setdefault("MATURIN_NO_MISSING_BUILD_BACKEND_WARNING", "1")
 
@@ -246,6 +272,126 @@ def _editable_from_prebuilt(
     return wheel.name
 
 
+def _git(*args: str) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(REPO_ROOT), *args], check=True, capture_output=True
+    ).stdout
+
+
+def _toolchain() -> str:
+    crate = REPO_ROOT / "libs/chart-svg/python"
+    versions = [
+        subprocess.run(
+            [tool, "-vV"], cwd=crate, check=True, capture_output=True, text=True
+        ).stdout
+        for tool in ("rustc", "cargo")
+    ]
+    return "".join(versions) + importlib.metadata.version("maturin")
+
+
+def _engine_key(config_settings: dict[str, str] | None) -> str:
+    """Hash of everything the `_engine` build depends on: the content of
+    `ENGINE_INPUTS` (index blobs, plus the working-tree bytes of any modified or
+    untracked file), the build settings, the toolchain and the platform."""
+    digest = hashlib.sha256(Path(__file__).read_bytes())
+    digest.update(_git("ls-files", "--stage", "-z", "--", *ENGINE_INPUTS))
+    status = _git(
+        "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames",
+        "--", *ENGINE_INPUTS,
+    )  # fmt: skip
+    for entry in filter(None, status.split(b"\0")):
+        path = REPO_ROOT / os.fsdecode(entry[3:])
+        content = path.read_bytes() if path.is_file() else None
+        digest.update(entry + b"\0")
+        digest.update(b"-" if content is None else hashlib.sha256(content).digest())
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k.startswith(("CARGO_", "RUST", "MATURIN_", "PYO3_"))
+    }
+    maturin_config = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]
+    settings = [
+        maturin_config["maturin"],
+        config_settings,
+        env,
+        _toolchain(),
+        [sys.platform, platform.machine(), *sys.version_info[:2]],
+    ]
+    digest.update(json.dumps(settings, sort_keys=True).encode())
+    return digest.hexdigest()
+
+
+def _check_engine_inputs() -> None:
+    """Fail the build if cargo read a repo file outside `ENGINE_INPUTS`: the
+    cache key would miss it and serve a stale engine."""
+    target = Path(
+        os.environ.get("CARGO_TARGET_DIR", REPO_ROOT / "libs/chart-svg/python/target")
+    )
+    (depinfo,) = (target / "release").glob("*_engine.d")
+    first_line = depinfo.read_text().split("\n", 1)[0]
+    deps = re.split(r"(?<!\\) ", first_line.split(": ", 1)[1])
+    repo = REPO_ROOT.resolve()
+    roots = [repo / path for path in ENGINE_INPUTS]
+    resolved = (Path(dep.replace("\\ ", " ")).resolve() for dep in deps if dep)
+    unkeyed = sorted(
+        str(dep.relative_to(repo))
+        for dep in resolved
+        if dep.is_relative_to(repo) and not any(dep.is_relative_to(r) for r in roots)
+    )
+    if unkeyed:
+        raise RuntimeError(
+            f"the _engine build read files outside ENGINE_INPUTS in "
+            f"{Path(__file__).name}; add their paths: {unkeyed}"
+        )
+
+
+def _store_engine(cache: Path, key: str) -> None:
+    built = (ROOT / "src" / "dbt_charts").glob("_engine.*")
+    engine = max(
+        (p for p in built if p.suffix != ".pyi"), key=lambda p: p.stat().st_mtime
+    )
+    cache.mkdir(parents=True, exist_ok=True)
+    staged = Path(tempfile.mkdtemp(prefix=".staged-", dir=cache))
+    shutil.copy2(engine, staged / engine.name)
+    try:
+        staged.rename(cache / key)
+    except OSError:  # a concurrent build stored the same key first
+        shutil.rmtree(staged)
+    entries = sorted(
+        (p for p in cache.iterdir() if not p.name.startswith(".")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    abandoned = [
+        p
+        for p in cache.glob(".staged-*")
+        if time.time() - p.stat().st_mtime > STAGED_TTL_SECONDS
+    ]
+    for stale in entries[ENGINE_CACHE_ENTRIES:] + abandoned:
+        shutil.rmtree(stale)
+
+
+def _editable_from_cache(
+    wheel_directory: Path, config_settings: dict[str, str] | None
+) -> str:
+    """Reuse an `_engine` built from identical source by any checkout, else
+    build it and store it under its key."""
+    cache = Path(
+        os.environ.get("DCT_ENGINE_CACHE", Path.home() / ".cache/dbt-charts/engine")
+    )
+    key = _engine_key(config_settings)
+    entry = cache / key
+    if hit := sorted(entry.glob("_engine.*")):
+        os.utime(entry)
+        return _editable_from_prebuilt(hit[0], wheel_directory, config_settings)
+    name = maturin.build_editable(str(wheel_directory), config_settings, None)
+    _check_engine_inputs()
+    # An input edited mid-build makes the engine match neither key.
+    if _engine_key(config_settings) == key:
+        _store_engine(cache, key)
+    return name
+
+
 def build_editable(
     wheel_directory: str,
     config_settings: dict[str, str] | None = None,
@@ -255,8 +401,10 @@ def build_editable(
         name = _editable_from_prebuilt(
             Path(prebuilt), Path(wheel_directory), config_settings
         )
-        return _finalize(Path(wheel_directory) / name, editable=True)
-    name = maturin.build_editable(wheel_directory, config_settings, None)
+    elif (REPO_ROOT / ".git").exists():
+        name = _editable_from_cache(Path(wheel_directory), config_settings)
+    else:  # an unpacked sdist: no git to key the cache with
+        name = maturin.build_editable(wheel_directory, config_settings, None)
     return _finalize(Path(wheel_directory) / name, editable=True)
 
 

@@ -17,6 +17,7 @@
 //! by name; its own title and text draw under one `header` block, inside its border. A `cols` row draws a pie no taller than it sizes.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use bind::bound::{self, Family};
 use bind::run::RunResult;
 use board_model::board::layout::LayoutItem;
@@ -27,8 +28,8 @@ use d3rs::py_float::float_repr;
 use diagnostic::{diag, refuse, Diagnostic};
 use layout::board::assemble::{board_geometry, Laid, LaidBoard, LaidItem, Placed, PlacedBoard};
 use board_model::board::BoardBody;
-use board_model::style::style::{Gap, Style};
-use layout::board::{chrome, frame, prose, variables};
+use board_model::style::style::Style;
+use layout::board::{card, chrome, frame, prose, variables};
 use board_model::board::Layout;
 use board_model::variable_value::VariableValue;
 use bind::variables::Controls;
@@ -38,11 +39,12 @@ use layout::families::callout::{CalloutCard, CalloutStyle};
 use layout::family::{Env, Family as _};
 use layout::families::kpi::{KpiCard, KpiFaces};
 use layout::families::spark_bar::{self, SparkBarCard};
-use layout::families::pie::{self, PieCard};
+use layout::families::pie;
 use layout::families::table::{self, TableCard, TableFaces};
 use layout::geom::{Rect, Size};
 use layout::board::band::TitleShift;
 use layout::board::bands::{self, Page};
+use layout::board::prose_plan::{Plan, ProsePlans};
 use measure::shaped::FontBook;
 use scene::{Attrs, Chars, Escape, Extent, Node, Role, Shape};
 
@@ -157,12 +159,66 @@ pub(crate) fn kpi_card(placed: &Style, body: &BoardBody, kpi: &bind::bound::Kpi,
         warnings.push(diag::warn_kpi_align_overflow(id));
     }
     let (extent, mut content) = card_svg(layout::families::kpi::draw(&card, &planned, inner.1))?;
-    // The card's own background reaches back out over the padding the card was shrunk by.
+    // The card's own background reaches back out over the padding the card was shrunk by, rounded
+    // to the card's border radius (`families/kpi.rs`' card rect).
     if let Some(fill) = &kpi.fill {
         let (left, right, top, bottom) = pad;
-        content.insert(0, Node::rect(Role::Chrome, (-left, -top, extent.width + left + right, extent.height + top + bottom), Attrs::new().set("fill", fill.as_str())));
+        let (w, h) = (extent.width + left + right, extent.height + top + bottom);
+        content.insert(0, Node::new(Role::Chrome, Attrs::new().set("fill", fill.as_str()), Shape::Rect { x: -left, y: -top, w, h, rx: chart_style.border.radius }));
     }
     Ok((extent, content, warnings))
+}
+
+/// A callout card drawn at (width, height), never shorter than its content, with the project
+/// `images` its host read: its `<svg>` extent, its content and the warnings production raises. The board's slot and a host's cell both draw a callout
+/// through this.
+pub(crate) fn callout_card(placed: &Style, body: &BoardBody, callout: &bind::bound::Callout, id: &str, images: &crate::host::Images, (width, height): (f64, f64), book: &FontBook) -> Result<(Extent, Vec<Node>, Vec<Diagnostic>), Diagnostic> {
+    let style = CalloutStyle::of(&placed.charts.callout, total_style(body)?)?;
+    let card = CalloutCard { callout, style: &style, id, images };
+    let mut plan = card.plan(&Env { book }, width)?;
+    let warnings = std::mem::take(&mut plan.diagnostics);
+    let (extent, content) = card_svg(card.draw(plan, height)?)?;
+    Ok((extent, content, warnings))
+}
+
+/// A spark_bar's card at `width`, drawn `height` tall and its row's `body_dy` taller (spark_bar.rs:
+/// `render`), or at its natural height with no height; the host pads it from outside. Its extent,
+/// its content and the warnings its plan raised.
+pub(crate) fn spark_bar_card(placed: &Style, body: &BoardBody, spark: &bind::bound::SparkBar, heading: &spark_bar::Heading, id: &str, (width, height): (f64, Option<f64>)) -> Result<(Extent, Vec<Node>, Vec<Diagnostic>), Diagnostic> {
+    let chart_style = &placed.charts.spark_bar;
+    let face = spark_bar::face_of(chart_style, &total_style(body)?.font.emoji);
+    let fill = spark_bar::fill_of(placed)?;
+    let card = SparkBarCard { id, spark, heading, style: chart_style, face: &face, fill: &fill };
+    let planned = spark_bar::plan(&card, width)?;
+    let height = height.map_or(planned.natural_height, |height| height + heading.body_dy());
+    let (extent, content) = card_svg(spark_bar::draw(&card, &planned, height))?;
+    Ok((extent, content, planned.diagnostics))
+}
+
+/// A pie's card in a box `width` wide and `height` tall, or at its natural height with no height: the
+/// height it draws to, its own `<svg>`, the inner selection box and the warnings its plan raised. The
+/// size stage decides the mode in the slot's own box, and a cols row aligns a pie no taller than it
+/// sizes (`_effective_alignment_target_for_chart`), which under an authored `height:` is the whole cell
+/// (`render_svg_family` draws at the slot). A table pie composes its own canvas, which the slot was
+/// sized to; its wheel and table sit in the chart's box with no card padding around them.
+pub(crate) fn pie_card(site: &crate::slot::PieSite, heights: &crate::slot::Heights, pie: &bind::bound::Pie, (width, height): (f64, Option<f64>), shift: TitleShift, book: &FontBook) -> Result<(f64, Node, (f64, f64, f64, f64), Vec<Diagnostic>), Diagnostic> {
+    let card = crate::slot::pie_card(site, pie)?;
+    let natural = crate::slot::pie_natural_height(site, heights, width)?;
+    let authored = matches!(site.chart, ModelChart::Pie(c) | ModelChart::Donut(c) if c.radial.height.is_some());
+    let wheel = match height {
+        Some(height) if authored => height,
+        Some(height) => height.min(natural),
+        None => natural,
+    };
+    let planned = crate::slot::pie_plan(site, heights, pie, width, wheel, shift, book)?;
+    let (drawn, inner) = if planned.is_table() {
+        (planned.height(), (0.0, 0.0, px(width), px(planned.height())))
+    } else {
+        let pad = crate::slot::additive_padding(heights.card_padding, &site.placed.charts.pie.base.padding);
+        (wheel, (px(pad.0), px(pad.2), px(width - pad.0 - pad.1), px(wheel - pad.2 - pad.3)))
+    };
+    let svg = pie::draw(&card, &planned, (width, drawn))?;
+    Ok((drawn, svg, inner, planned.diagnostics().to_vec()))
 }
 
 /// A card or title drawn as one `<svg>`: its extent and its children, which the wrapper takes in its place.
@@ -210,8 +266,6 @@ pub(crate) struct HeaderFrame {
     pub origin: (f64, f64),
     /// What separates one block from the next.
     pub pitch: f64,
-    /// The gap prose columns divide a board's width by (`card_row_gap`).
-    pub gap: f64,
     pub has_items: bool,
     /// Whether the first drawn item is a text block of its own (`opens_with_text`).
     pub opens_with_text: bool,
@@ -228,7 +282,7 @@ impl HeaderFrame {
     /// the board and what it measures read the same one.
     pub(crate) fn nested(geometry: &layout::board::assemble::BoardGeometry, has_items: bool, opens_with_text: bool, title_kind: prose::TitleKind, shift: TitleShift, header_path: Option<String>) -> Self {
         let gap = geometry.gap.unwrap_or(0.0);
-        Self { origin: (geometry.padding.left + geometry.border_width, geometry.padding.top + geometry.border_width), pitch: gap, gap, has_items, opens_with_text, title_kind, shift, header_path }
+        Self { origin: (geometry.padding.left + geometry.border_width, geometry.padding.top + geometry.border_width), pitch: gap, has_items, opens_with_text, title_kind, shift, header_path }
     }
 }
 
@@ -238,10 +292,10 @@ impl Header {
         self.non_layout_height + self.gap_before_layout
     }
 
-    pub(crate) fn of(body: &BoardBody, total: &Style, frame: &HeaderFrame, book: &FontBook, controls: &Controls, content_width: f64) -> Result<Self, Diagnostic> {
+    pub(crate) fn of(body: &BoardBody, total: &Style, frame: &HeaderFrame, book: &FontBook, controls: &Controls, content_width: f64, plan: Option<Plan>) -> Result<Self, Diagnostic> {
         let (page_padding, card_padding) = (frame.origin.0, total.frame.card_padding);
-        let HeaderFrame { pitch, gap, has_items, .. } = frame;
-        let (pitch, gap, has_items) = (*pitch, *gap, *has_items);
+        let HeaderFrame { pitch, has_items, .. } = frame;
+        let (pitch, has_items) = (*pitch, *has_items);
         let header_path = frame.header_path.as_deref();
         let prose_width = content_width - 2.0 * card_padding;
         // Production measures the inline title at `max(inner, 1)` and the stacked one at
@@ -252,10 +306,11 @@ impl Header {
         let prose_width = prose_width.max(0.0);
         let title = title_text(body).map(|text| prose::title(total, text, book, prose_width, frame.title_kind)).transpose()?;
         let title_height = title.as_ref().map_or(0.0, |t| t.height.max(total.title.base.min_height));
-        let text = body
-            .text
-            .as_ref()
-            .map(|t| prose::text(total, t.as_str(), book, prose::Slot { width: prose_width, board_width: content_width, gap }))
+        let text = prose::board_text(body)
+            .map(|t| {
+                let plan = plan.ok_or_else(|| diag::err_internal("a board's text is planned before it is drawn"))?;
+                prose::text(total, t, book, prose::Slot { width: prose::slot_width(content_width, card_padding), plan })
+            })
             .transpose()?;
         let text_height = text.as_ref().map_or(0.0, |t| t.height);
         let heading = title.as_ref().map(|t| variables::Headline { height: title_height, baseline: t.baseline, one_line_width: t.one_line_width });
@@ -295,7 +350,7 @@ impl Header {
                 let strip = translated(vec![inline.strip], px(inline.strip_dx), px(inline.strip_dy));
                 nodes.extend(translated([vec![block], strip].concat(), px(page_padding), px(y)));
                 y += inline.height;
-                if body.text.is_some() {
+                if prose::board_text(body).is_some() {
                     y += pitch;
                 }
             }
@@ -324,12 +379,12 @@ impl Header {
             // A combined header opening with a title is seated the way the standalone title is, and ends
             // where the header ends: the title's trailing margin is the rhythm to the text under it.
             let height = y - header_start;
-            let mark = line_box.map(|(top, line_height)| (top, if body.text.is_some() { height - top } else { line_height }));
+            let mark = line_box.map(|(top, line_height)| (top, if prose::board_text(body).is_some() { height - top } else { line_height }));
             nodes.push(tagged(path, "header", pieces, (x, header_start), (prose_width, height), (card_padding, card_padding, band.content_top), mark));
         }
         if let Some((strip, _)) = strip {
             // Title or text above it: one gap (`compute_board_content_box`).
-            if title_text(body).is_some() || body.text.is_some() {
+            if title_text(body).is_some() || prose::board_text(body).is_some() {
                 y += pitch;
             }
             nodes.extend(translated(vec![strip], px(x), px(y)));
@@ -346,6 +401,10 @@ struct Composer<'a, F> {
     book: &'a FontBook,
     /// The warnings the drawn charts raised against their widths, in the order they draw.
     warnings: RefCell<Vec<Diagnostic>>,
+    /// The height each drawn pie came to, by its placement: production's sized box is the pie's own
+    /// height, never the taller cell a `cols` row gives it.
+    pie_heights: RefCell<BTreeMap<ItemId, f64>>,
+    prose: &'a ProsePlans,
 }
 
 pub(crate) fn board<F: EngineFacts>(
@@ -356,8 +415,8 @@ pub(crate) fn board<F: EngineFacts>(
     run: &RunResult,
     facts: &F,
     book: &FontBook,
-) -> Result<(Vec<Node>, Vec<Diagnostic>), Diagnostic> {
-    let composer = Composer { bound, slots, facts, book, run, warnings: RefCell::new(Vec::new()) };
+) -> Result<(Vec<Node>, Vec<Diagnostic>, BTreeMap<ItemId, f64>), Diagnostic> {
+    let composer = Composer { bound, slots, facts, book, run, warnings: RefCell::new(Vec::new()), pie_heights: RefCell::new(BTreeMap::new()), prose: &laid.prose };
     let style = facts.style(&board.body)?;
     let body = &board.body;
     let total = total_style(body)?;
@@ -365,17 +424,11 @@ pub(crate) fn board<F: EngineFacts>(
     let background = leaf(style.background.as_ref(), "style.background")?.as_str();
     let content_width = laid.width - 2.0 * page_padding;
     let controls = bind::variables::controls(body, run, total, &slots.styles.root_queries)?;
-    if laid.root.items.is_empty() && title_text(body).is_none() && body.text.is_none() && controls.list.is_empty() {
+    if laid.root.items.is_empty() && title_text(body).is_none() && prose::board_text(body).is_none() && controls.list.is_empty() {
         return Err(Diagnostic::refused(refuse!("drawing a board with no drawn items is not supported")));
     }
-    let card_gap = if body.card_gap { total.frame.card_gap } else { 0.0 };
-    // `card_row_gap`: a root cols or grid pitches its cards by its own gap, any other by `style.gap`.
-    let gap = match laid.root.kind {
-        Kind::Cols | Kind::Grid { .. } => laid.root.pitch,
-        Kind::Rows | Kind::Tabs { .. } => total.gap.map_or(0.0, Gap::px) + card_gap,
-    };
-    let frame = HeaderFrame { origin: (page_padding, page_padding), pitch: laid.root.pitch, gap, has_items: !laid.root.items.is_empty(), opens_with_text: layout::board::assemble::opens_with_text(body, &ItemId::root(), bound.drawn()), title_kind: prose::TitleKind::ROOT, shift: TitleShift::default(), header_path: None };
-    let header = Header::of(body, total, &frame, book, &controls, content_width)?;
+    let frame = HeaderFrame { origin: (page_padding, page_padding), pitch: laid.root.pitch, has_items: !laid.root.items.is_empty(), opens_with_text: layout::board::assemble::opens_with_text(body, &ItemId::root(), bound.drawn()), title_kind: prose::TitleKind::ROOT, shift: TitleShift::default(), header_path: None };
+    let header = Header::of(body, total, &frame, book, &controls, content_width, laid.prose.get(&ItemId::root()))?;
     let (items, layout_height) = composer.layout(&laid.root)?;
     let actual_height = header.non_layout_height + header.gap_before_layout + layout_height;
     let mut layout = header.nodes;
@@ -412,7 +465,7 @@ pub(crate) fn board<F: EngineFacts>(
     let page_title = title_text(body).unwrap_or("dbt Charts");
     let attrs = frame::root_attrs(style, &family, page_title, &run.env.rendered_at)?;
     let svg = Node::new(Role::Chrome, attrs, Shape::Svg { extent: Extent { width: total_width, height: total_height }, children });
-    Ok((vec![svg], composer.warnings.into_inner()))
+    Ok((vec![svg], composer.warnings.into_inner(), composer.pie_heights.into_inner()))
 }
 
 impl<'a, F: EngineFacts> Composer<'a, F> {
@@ -463,22 +516,17 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         Ok((nodes, drawn))
     }
 
-    /// A chart's card in its wrapper (`_wrap_rendered_chart_svg`). A failed chart's is the error
-    /// card on the error path (`_render_chart_resolve_failure`: no padding inset, no card border or
-    /// shadow); a KPI's is its card inset by the card padding and its own.
+    /// A chart's card in its wrapper (`_wrap_rendered_chart_svg`), in the card's chrome. A failed
+    /// chart's is the error card on the error path (`_render_chart_resolve_failure`: no padding inset);
+    /// a KPI's is its card inset by the card padding and its own.
     fn chart(&self, placed: &Placed) -> Result<(Vec<Node>, f64), Diagnostic> {
         let id = placed.chart.as_str();
         let slot = self.slots.get(&placed.item)?;
         let style = self.facts.style(slot.body)?;
-        let shadow = !matches!(style.box_shadow, model_core::Tri::Unset | model_core::Tri::Null);
-        let border = &style.charts.border;
-        let drawn_border = leaf(border.width, "style.charts.border.width")? > 0.0 || leaf(border.radius, "style.charts.border.radius")? > 0.0;
-        if drawn_border || shadow {
-            return Err(Diagnostic::refused(refuse!("drawing a chart card's border or shadow is not supported")));
-        }
         let drawn = self.bound.charts().get(&placed.item);
         let body = drawn.map(|c| &c.family);
-        let (class, title, extent_height, children) = match body {
+        // A family's own plan or draw that refuses is this chart's refusal; the error card's is the board's.
+        let card = || -> Result<(&str, String, f64, Vec<Node>), Diagnostic> { Ok(match body {
             Some(Err(failure)) => {
                 let card = crate::slot::error_card(self.facts, slot, failure, placed.width, placed.shift)?;
                 let (extent, children) = card_svg(card.render(&Env { book: self.book }, placed.width, placed.height)?)?;
@@ -487,9 +535,6 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
             }
             Some(Ok(Family::Kpi(kpi))) => {
                 let chart_style = &slot.placed.charts.kpi;
-                if chart_style.border.width > 0.0 || chart_style.border.radius > 0.0 {
-                    return Err(Diagnostic::refused(refuse!("drawing a chart card's border or shadow is not supported")));
-                }
                 let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
                 let pad = crate::slot::additive_padding(card_padding, &chart_style.padding);
                 let (inner_width, inner_height) = ((placed.width - pad.0 - pad.1).max(0.0), (placed.height - px(pad.2) - px(pad.3)).max(0.0));
@@ -503,19 +548,16 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
             }
             Some(Ok(Family::Table(bound_table))) => {
                 let chart_style = &slot.placed.charts.table;
-                if chart_style.border.width > 0.0 || chart_style.border.radius > 0.0 {
-                    return Err(Diagnostic::refused(refuse!("drawing a chart card's border or shadow is not supported")));
-                }
-                let faces = TableFaces::of(chart_style, slot.placed, crate::slot::table_title(slot.chart), placed.width)?;
+                let faces = TableFaces::of(chart_style, slot.placed, crate::slot::table_title(slot.chart), crate::slot::table_subtitle(slot.chart), placed.width)?;
                 // A nested board wrapping a table moves its title to share a baseline with its `cols`
                 // row's other titles; the layout does not yet name which boards wrap.
-                if faces.title.is_some() && placed.nested {
-                    return Err(Diagnostic::refused(refuse!("a table title inside a nested board is not supported")));
+                if (faces.title.is_some() || faces.subtitle.is_some()) && placed.nested {
+                    return Err(Diagnostic::refused(refuse!("a table title or subtitle inside a nested board is not supported")));
                 }
                 let card = TableCard { table: bound_table, style: chart_style, faces: &faces };
                 let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
                 let pad = crate::slot::additive_padding(card_padding, &chart_style.padding);
-                let planned = table::plan(&card, self.book, (placed.width - pad.0 - pad.1).max(0.0))?;
+                let planned = table::plan(&card, self.book, (placed.width - pad.0 - pad.1).max(0.0), placed.shift)?;
                 if !planned.fits(&card, placed.height - px(pad.2) - px(pad.3)) {
                     return Err(Diagnostic::refused(refuse!("a table in a slot shorter than its rows is not supported")));
                 }
@@ -524,37 +566,32 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 ("dbt-chart", crate::slot::table_title(slot.chart).filter(|title| !title.is_empty()).map_or_else(|| id.to_string(), str::to_string), extent.height + px(pad.2) + px(pad.3), children)
             }
             Some(Ok(Family::Pie(bound_pie))) => {
-                let card = PieCard { pie: bound_pie, style: &slot.placed.charts.pie, placed: slot.placed, chart_id: id, emoji: &total_style(slot.body)?.font.emoji, ground: leaf(style.background.as_ref(), "style.background")?.as_str() };
-                let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
-                let pad = crate::slot::additive_padding(card_padding, &slot.placed.charts.pie.base.padding);
-                // The size stage decides the mode in the slot's own box; a cols row aligns a pie no
-                // taller than it sizes (`_effective_alignment_target_for_chart`).
-                let natural = crate::slot::pie_height(slot, style, placed.width)?;
-                let height = placed.height.min(natural);
-                let planned = pie::plan(&card, self.book, (placed.width, natural), (placed.width, height), pad)?;
-                self.warnings.borrow_mut().extend(planned.diagnostics().iter().cloned());
-                let svg = pie::draw(&card, &planned, (placed.width, height))?;
+                let (height, svg, inner, warnings) = pie_card(&slot.pie_site(), &crate::slot::Heights::of_patch(style)?, bound_pie, (placed.width, Some(placed.height)), placed.shift, self.book)?;
+                self.warnings.borrow_mut().extend(warnings);
+                self.pie_heights.borrow_mut().insert(placed.item.clone(), height);
                 let selection = |class: &str, rect: (f64, f64, f64, f64)| Node::rect(Role::Chrome, rect, Attrs::new().set("class", class).set("fill", "transparent"));
-                let inner = (px(pad.0), px(pad.2), px(placed.width - pad.0 - pad.1), px(height - pad.2 - pad.3));
                 let children = vec![selection("dbt-box-outer", (0.0, 0.0, px(placed.width), px(height))), selection("dbt-box-inner", inner), svg];
                 ("dbt-chart", bound_pie.title.clone().unwrap_or_else(|| id.to_string()), height, children)
             }
             Some(Ok(Family::SparkBar(bound_spark))) => {
                 let chart_style = &slot.placed.charts.spark_bar;
-                let face = spark_bar::face_of(chart_style, &total_style(slot.body)?.font.emoji);
-                let fill = spark_bar::fill_of(slot.placed)?;
-                let card = SparkBarCard { spark: bound_spark, style: chart_style, face: &face, fill: &fill };
                 let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
                 let pad = crate::slot::additive_padding(card_padding, &chart_style.padding);
-                let (extent, content) = card_svg(card.render(&Env { book: self.book }, (placed.width - pad.0 - pad.1).max(0.0), (placed.height - px(pad.2) - px(pad.3)).max(0.0))?)?;
-                ("dbt-chart", id.to_string(), extent.height + px(pad.2) + px(pad.3), padded(extent, content, pad))
+                let inner = ((placed.width - pad.0 - pad.1).max(0.0), Some((placed.height - px(pad.2) - px(pad.3)).max(0.0)));
+                let heading = spark_bar::Heading::of(bound_spark.title.as_deref(), bound_spark.subtitle.as_deref(), slot.placed, placed.width, placed.shift)?;
+                let (extent, content, warnings) = spark_bar_card(slot.placed, slot.body, bound_spark, &heading, id, inner)?;
+                self.warnings.borrow_mut().extend(warnings);
+                // The selection boxes are the slot's (`padded_authoring_content`), though a card floored at
+                // `min_width` draws wider than the slot leaves it.
+                let boxed = Extent { width: inner.0, height: extent.height };
+                ("dbt-chart", bound_spark.title.clone().unwrap_or_else(|| id.to_string()), extent.height + px(pad.2) + px(pad.3), padded(boxed, content, pad))
             }
             Some(Ok(Family::Callout(callout))) => {
                 // A callout paints its own border and background, and takes neither the card padding
                 // nor the chart's own (`_uses_svg_family_layout_padding`): its card fills the wrapper.
-                let style = CalloutStyle::of(&slot.placed.charts.callout, total_style(slot.body)?)?;
-                let card = CalloutCard { callout, style: &style };
-                let (extent, content) = card_svg(card.render(&Env { book: self.book }, placed.width, placed.height)?)?;
+                // A board's render reads no project images: a callout that writes one is refused.
+                let (extent, content, warnings) = callout_card(slot.placed, slot.body, callout, id, &crate::host::Images::new(), (placed.width, placed.height), self.book)?;
+                self.warnings.borrow_mut().extend(warnings);
                 let title = callout.title.clone().unwrap_or_else(|| id.to_string());
                 ("dbt-chart dbt-chart-callout", title, extent.height, unpadded(placed.width, extent.height, content))
             }
@@ -574,7 +611,8 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 ("dbt-chart", drawn.title.clone().unwrap_or_else(|| id.to_string()), placed.height, [boxes.to_vec(), nodes].concat())
             }
             _ => return Err(diag::err_internal(format!("chart {id} is not drawn by the engine"))),
-        };
+        }) };
+        let (class, title, extent_height, children) = card().map_err(|refusal| if matches!(body, Some(Err(_))) { refusal } else { crate::slot::scoped(&placed.item, refusal) })?;
         let family = match slot.chart {
             ModelChart::Kpi(_) => "kpi",
             ModelChart::Table(_) => "table",
@@ -612,6 +650,12 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
             .set("aria-label", title.as_str())
             .set("data-authored-path", chart_path)
             .set("data-authored-kind", "chart");
+        // `data-chart-notes`: the authored notes, for the runtime and AI search, never painted; an empty note writes none.
+        let attrs = match slot.chart.base().and_then(|base| base.notes.as_ref()).map(|notes| notes.as_str()).filter(|notes| !notes.is_empty()) {
+            Some(notes) => attrs.set("data-chart-notes", notes),
+            None => attrs,
+        };
+        let attrs = self.slots.styles.chart_variables.get(&placed.chart).into_iter().flatten().fold(attrs, |attrs, name| attrs.set(format!("data-var-{name}"), "true"));
         let canvas = match (body, drawn.and_then(|chart| chart.frame.as_ref())) {
             (Some(Ok(Family::Pie(pie))), _) => Some(pie.canvas.clone()),
             // The ground label ink is judged on, which the chart's runtime reads off its wrapper.
@@ -621,7 +665,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
             }
             _ => slot.canvas.clone(),
         };
-        let attrs = match canvas {
+        let attrs = match &canvas {
             Some(canvas) => attrs.set("data-dbt-chart-canvas", canvas.as_str()),
             None => attrs,
         };
@@ -629,13 +673,46 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         // `Mdsvg` escape) even as element text; never a `<title>`, which browsers paint as a hover tooltip.
         let subtitle = match body {
             Some(Ok(Family::Pie(pie))) => pie.subtitle.as_deref(),
+            Some(Ok(Family::SparkBar(spark))) => spark.subtitle.as_deref(),
             _ => drawn.and_then(|chart| chart.subtitle.as_deref()),
         };
+        let children = self.card_chrome(slot, body, canvas.as_deref(), children, (placed.width, extent_height))?;
         let description = subtitle.map(|text| {
             let desc = scene::Element { tag: "desc".to_string(), attrs: Attrs::new(), children: vec![scene::Child::Text(Chars::new(text, Escape::Mdsvg))] };
             Node::element(desc)
         });
         Ok((vec![Node::group(Role::Chrome, attrs, description.into_iter().chain(children).collect())], extent_height))
+    }
+
+    /// `_wrap_rendered_chart_svg`'s chrome around a chart's card `content`: the board's drop shadow
+    /// under it, filled with the canvas the card paints on (`_card_shadow`), and the border over it
+    /// (`_card_border`). A callout draws its own border; a KPI and a table carry theirs on their own
+    /// style, a failed chart and every other family the board's `charts.border`.
+    fn card_chrome(&self, slot: &crate::slot::Slot, body: Option<&Result<Family, bound::Failure>>, canvas: Option<&str>, content: Vec<Node>, size: (f64, f64)) -> Result<Vec<Node>, Diagnostic> {
+        let charts = &slot.placed.charts;
+        let (border, inked) = match (body, slot.chart) {
+            (Some(Err(_)), _) => (Some(&charts.border), true),
+            (_, ModelChart::Callout(_)) => (None, true),
+            (_, ModelChart::Kpi(_)) => (Some(&charts.kpi.border), true),
+            (_, ModelChart::Table(_)) => (Some(&charts.table.border), false),
+            (_, ModelChart::Geoshape(_) | ModelChart::PointMap(_)) => return Err(diag::err_internal("a map's card is not drawn by the engine")),
+            _ => (Some(&charts.border), false),
+        };
+        // A callout's shadow follows its own radius; every other card's the border it draws.
+        let radius = match border {
+            Some(border) => border.radius,
+            None => charts.callout.border.radius,
+        };
+        let shadow = match &slot.placed.box_shadow {
+            None => None,
+            Some(shadow) => {
+                let fill = if inked { slot.ink.as_deref() } else { canvas };
+                let fill = fill.ok_or_else(|| diag::err_internal("a chart card under a drop shadow knows its canvas"))?;
+                Some(card::Shadow { shadow, fill, radius })
+            }
+        };
+        let radius = if border.is_some() || shadow.is_some() { radius } else { 0.0 };
+        card::card_layers(content, size, radius, border, shadow)
     }
 
     fn body(&self, at: &ItemId) -> Result<&'a BoardBody, Diagnostic> {
@@ -717,7 +794,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         let (padding, margin) = (geometry.padding, geometry.margin);
         let (inset_left, inset_top, inset_bottom) = (padding.left + stroke, padding.top + stroke, padding.bottom + stroke);
         // A tab's pane has no body of its own, and so no text.
-        let body = self.slots.boards.get(&placed.item).copied().filter(|body| body.text.is_some() || title_text(body).is_some());
+        let body = self.slots.boards.get(&placed.item).copied().filter(|body| prose::board_text(body).is_some() || title_text(body).is_some());
         let (layout, layout_height) = self.layout(&placed.layout)?;
         // The board's own title and text above its layout, in this board's frame (`render_nested_board`).
         let header = if let Some(body) = body {
@@ -725,7 +802,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
             let opens = layout::board::assemble::opens_with_text(body, &placed.item, self.slots.drawn);
             let frame = HeaderFrame::nested(&geometry, !placed.layout.items.is_empty(), opens, kind, placed.shift, Some(authored_path(&placed.item)));
             let content_width = placed.width - geometry.chrome().0;
-            Some(Header::of(body, total_style(body)?, &frame, self.book, &Controls { list: Vec::new(), reset_enabled: false }, content_width)?)
+            Some(Header::of(body, total_style(body)?, &frame, self.book, &Controls { list: Vec::new(), reset_enabled: false }, content_width, self.prose.get(&placed.item))?)
         } else {
             None
         };

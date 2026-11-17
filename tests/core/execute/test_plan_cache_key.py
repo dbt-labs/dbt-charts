@@ -3,6 +3,7 @@
 import pytest
 
 from dbt_charts.core.compile import compile
+from dbt_charts.core.compile.engine import engine_compile_recorded
 from dbt_charts.core.compile.models.source import (
     DatabricksSourceConfig,
     PostgresSourceConfig,
@@ -10,6 +11,7 @@ from dbt_charts.core.compile.models.source import (
     SnowflakeSourceConfig,
 )
 from dbt_charts.core.execute.plan import cache_key, make_context
+from dbt_charts.core.execute.planned import Planned
 from dbt_charts.core.execute.query_plan import QueryPlan
 
 from ..._scripted_env import ScriptedBackend, scripted_env
@@ -62,7 +64,15 @@ def plan_with(declaration: dict[str, object]) -> QueryPlan:
 def key_of(declaration: dict[str, object]) -> tuple[str, str, str]:
     board = compile(BOARD).board
     assert board is not None
-    ctx = make_context(board, plan_with(declaration), scripted_env(ScriptedBackend()))
+    env = scripted_env(ScriptedBackend())
+    # The plan is hand-built, so the engine compiles an empty board beside it.
+    planned = Planned(
+        *engine_compile_recorded(
+            None, content="title: hand built\n", project=env.project
+        ),
+        plan_with(declaration),
+    )
+    ctx = make_context(board, planned, env)
     return cache_key(ctx, "q", lambda: None)
 
 

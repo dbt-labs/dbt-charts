@@ -404,7 +404,7 @@ mod tests {
         assert!(svg.contains("x=\"56.8\" y=\"381.5\""), "x label crisp shift: {svg}");
         // Y tick "0" — its label anchor (before this fix: -12.000, 363.000)
         // must pick up +0.5 in both directions too.
-        assert!(svg.contains("x=\"-11.5\" y=\"363.5\""), "y label crisp shift: {svg}");
+        assert!(svg.contains("x=\"-11.5\" y=\"369.5\""), "y label crisp shift: {svg}");
         // The rotated title's outer-edge derivation (`0.5 - y_tick_eff -
         // y_label_pad - y_gutter`) plus this same label crisp shift moves it
         // from the pre-fix -23.58 to -25.08 — the exact combined correction
@@ -525,7 +525,7 @@ mod tests {
         let base = svg.find("Bucket: B").expect("series B segment");
         let top = svg.find("Bucket: A").expect("series A segment");
         assert!(base < top, "the most frequent series is the base: {svg}");
-        assert!(svg.contains("height=\"270\" fill=\"#3164a3\""), "B: slot 0, square, y 90..360: {svg}");
+        assert!(svg.contains("height=\"274.5\" fill=\"#3164a3\""), "B: slot 0, square, y 91.5..366: {svg}");
         assert!(svg.contains("A2,2,0,0,1,") && svg.contains("fill=\"#779bc9\""), "A: slot 1, rounded top: {svg}");
         assert_eq!(svg.matches("aria-roledescription=\"bar\"").count(), 3, "{svg}");
     }
@@ -905,11 +905,11 @@ mod tests {
         let svg = own_side_fixture("right", 805.04, [0.0, 20.0]);
         assert!(svg.contains("translate(18,50)"), "plot origin: {svg}");
         assert!(
-            svg.contains("<line x1=\"0.5\" y1=\"266.5\" x2=\"732.54\" y2=\"266.5\""),
+            svg.contains("<line x1=\"0.5\" y1=\"271.5\" x2=\"732.54\" y2=\"271.5\""),
             "plot is 732.04 wide (production's gridline runs -732.04 from the axis group): {svg}"
         );
         assert!(
-            svg.contains("<text x=\"750.19\" y=\"345.5\" text-anchor=\"end\""),
+            svg.contains("<text x=\"750.19\" y=\"351.5\" text-anchor=\"end\""),
             "label end-anchored at plot_w + 0.5 + labelPadding: {svg}"
         );
         assert!(
@@ -917,8 +917,8 @@ mod tests {
             "top label shares the anchor: {svg}"
         );
         assert!(
-            svg.contains("x=\"762.19\" y=\"171.5\"")
-                && svg.contains("rotate(90 762.19 171.5)"),
+            svg.contains("x=\"762.19\" y=\"174.5\"")
+                && svg.contains("rotate(90 762.19 174.5)"),
             "title sits title.padding + nudge past the label anchor: {svg}"
         );
     }
@@ -934,16 +934,16 @@ mod tests {
         let svg = own_side_fixture("left", 787.84, [0.0, 20.0]);
         assert!(svg.contains("translate(55,50)"), "plot origin: {svg}");
         assert!(
-            svg.contains("<line x1=\"0.5\" y1=\"266.5\" x2=\"715.34\" y2=\"266.5\""),
+            svg.contains("<line x1=\"0.5\" y1=\"271.5\" x2=\"715.34\" y2=\"271.5\""),
             "plot is 714.84 wide (production's gridline runs 714.84 from the axis group): {svg}"
         );
         assert!(
-            svg.contains("<text x=\"-17.15\" y=\"345.5\" text-anchor=\"start\""),
+            svg.contains("<text x=\"-17.15\" y=\"351.5\" text-anchor=\"start\""),
             "label start-anchored at 0.5 - labelPadding: {svg}"
         );
         assert!(
-            svg.contains("x=\"-29.15\" y=\"171.5\"")
-                && svg.contains("rotate(-90 -29.15 171.5)"),
+            svg.contains("x=\"-29.15\" y=\"174.5\"")
+                && svg.contains("rotate(-90 -29.15 174.5)"),
             "title sits title.padding + nudge past the label anchor: {svg}"
         );
     }
@@ -1129,14 +1129,14 @@ mod tests {
         // Tick marks: outward from the plot's right edge (563 -> 569),
         // never inward toward the plot.
         assert!(
-            svg.contains("x1=\"563\" y1=\"360.5\" x2=\"569\" y2=\"360.5\""),
+            svg.contains("x1=\"563\" y1=\"366.5\" x2=\"569\" y2=\"366.5\""),
             "tick points outward from plot edge: {svg}"
         );
 
         // Labels: anchor "start", x = plot_w(563) + tick_eff(6) +
         // label_pad(6) + 0.5 = 575.5 — no VALUE_AXIS_BREATHING_ROOM term.
         assert!(
-            svg.contains("<text x=\"575.5\" y=\"363.5\" text-anchor=\"start\""),
+            svg.contains("<text x=\"575.5\" y=\"369.5\" text-anchor=\"start\""),
             "label anchors start at plot_w+tick_eff+label_pad+0.5, no breathing room: {svg}"
         );
 
@@ -1145,10 +1145,10 @@ mod tests {
         // title.padding(0.0) + rotated_axis_title_nudge(11px) (2.0) = 589.08,
         // rotated +90 (sign 1.0, the opposite of the left axis's -90).
         assert!(
-            svg.contains(">#</text>") && svg.contains("x=\"589.08\" y=\"180.5\""),
+            svg.contains(">#</text>") && svg.contains("x=\"589.08\" y=\"183.5\""),
             "title past the widest label, rotated +90: {svg}"
         );
-        assert!(svg.contains("rotate(90 589.08 180.5)"), "right-axis title rotates +90: {svg}");
+        assert!(svg.contains("rotate(90 589.08 183.5)"), "right-axis title rotates +90: {svg}");
     }
     // ── The family contract ──────────────────────────────────────────────
 

@@ -58,7 +58,9 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sha2",
  "template",
+ "unicase",
 ]
 
 [[package]]
@@ -286,8 +288,10 @@ dependencies = [
 name = "dbt-charts-core-py"
 version = "0.0.1"
 dependencies = [
+ "bind",
  "board-model",
  "chart-renderer",
+ "column-types",
  "diagnostic",
  "display-text",
  "engine",
@@ -404,6 +408,7 @@ version = "0.0.1"
 dependencies = [
  "bind",
  "board-model",
+ "column-types",
  "d3rs",
  "dbt-charts-color",
  "diagnostic",
@@ -694,6 +699,7 @@ dependencies = [
  "model-core",
  "regex",
  "scene",
+ "serde",
  "serde_json",
  "sha2",
 ]

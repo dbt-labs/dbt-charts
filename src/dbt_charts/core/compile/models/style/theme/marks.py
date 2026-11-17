@@ -447,9 +447,11 @@ class BarLabelsStyle(MarkLabelsStyle):
         default=None,
         description=(
             "Jinja2 label template, like a pie's. Its names are the row's columns and "
-            "`value`, the bar's measure; on bars joined by ribbons `percent` is the "
-            "value as a share of the first stage's. `value` and `percent` replace a same-named "
-            "column. Without one the label prints the formatted value."
+            "`value`, the bar's measure; on bars joined by ribbons `percent_of_first` "
+            "is the value as a share of the first stage's and `percent_of_previous` as "
+            "a share of the stage before's (the first stage's own). `value` and the "
+            "percents replace a same-named column. Without one the label prints the "
+            "formatted value."
         ),
     )
 
@@ -498,8 +500,9 @@ class RibbonLabelsStyle(BaseModel):
         description=(
             "Jinja2 label template, like a pie's. Its names are the columns of the "
             "row the ribbon flows into, `value`, that stage's value less the "
-            "previous stage's (negative for a loss), and `percent`, that change as "
-            "a share of the previous stage's value. `value` and `percent` replace a "
+            "previous stage's (negative for a loss), and that change as a share of "
+            "the previous stage's value, `percent_of_previous`, and of the first "
+            "stage's, `percent_of_first`. `value` and the percents replace a "
             "same-named column. The label uses the bar value labels' font."
         ),
     )
@@ -657,10 +660,11 @@ class LineMarkStyle(BaseModel):
     connect: Annotated[bool | None, AutoUnset()] = Field(
         default=None,
         description=(
-            "For curve='step' on a categorical (band) x-axis, whether adjacent "
-            "band plateaus are joined by vertical jumps (True/None) or left as "
-            "disconnected segments (False). No-op for other curves or a "
-            "continuous x-axis."
+            "Whether the line joins every point. On a date or numeric x-axis, "
+            "the line breaks across a large gap in the data unless this is "
+            "True. For curve='step' on a categorical (band) x-axis, whether "
+            "adjacent band plateaus are joined by vertical jumps (True/None) or "
+            "left as disconnected segments (False)."
         ),
     )
     # Cascade tier sentinel: None means "not specified at this tier".

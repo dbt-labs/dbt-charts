@@ -202,6 +202,13 @@ pub fn contains_raw_html(blocks: &[AnyBlock]) -> bool {
     })
 }
 
+/// `file_refs.is_local_image`: whether image destination `url` names a project file, rather than
+/// a remote URL (`http(s)://`, `//host`) or an inline `data:` URI.
+pub fn is_local_image(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    !["http://", "https://", "//", "data:"].iter().any(|origin| lower.starts_with(origin))
+}
+
 /// `markdown_blocks.image_urls`: every image destination, standalone or inline, in document order.
 pub fn image_urls(blocks: &[AnyBlock]) -> Vec<&str> {
     fn run<'a>(spans: &'a [Span], out: &mut Vec<&'a str>) {
@@ -231,6 +238,44 @@ pub fn image_urls(blocks: &[AnyBlock]) -> Vec<&str> {
                     for row in std::iter::once(&t.header).chain(&t.rows) {
                         for cell in &row.cells {
                             run(&cell.spans, out);
+                        }
+                    }
+                }
+                AnyBlock::CodeBlock(_)
+                | AnyBlock::HorizontalRule(_)
+                | AnyBlock::RawHtmlBlock(_) => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(blocks, &mut out);
+    out
+}
+
+/// [`image_urls`]' destinations, each to rewrite in place, in the same order.
+pub fn image_urls_mut(blocks: &mut [AnyBlock]) -> Vec<&mut String> {
+    fn run<'a>(spans: &'a mut [Span], out: &mut Vec<&'a mut String>) {
+        out.extend(spans.iter_mut().filter(|s| s.span_type == SpanType::Image).filter_map(|s| s.url.as_mut()));
+    }
+    fn items<'a>(items: &'a mut [ListItem], out: &mut Vec<&'a mut String>) {
+        for i in items {
+            run(&mut i.spans, out);
+            walk(&mut i.children, out);
+        }
+    }
+    fn walk<'a>(blocks: &'a mut [AnyBlock], out: &mut Vec<&'a mut String>) {
+        for block in blocks {
+            match block {
+                AnyBlock::ImageBlock(i) => out.push(&mut i.url),
+                AnyBlock::Paragraph(p) => run(&mut p.spans, out),
+                AnyBlock::Heading(h) => run(&mut h.spans, out),
+                AnyBlock::Blockquote(q) => walk(&mut q.blocks, out),
+                AnyBlock::UnorderedList(l) => items(&mut l.items, out),
+                AnyBlock::OrderedList(l) => items(&mut l.items, out),
+                AnyBlock::Table(t) => {
+                    for row in std::iter::once(&mut t.header).chain(&mut t.rows) {
+                        for cell in &mut row.cells {
+                            run(&mut cell.spans, out);
                         }
                     }
                 }

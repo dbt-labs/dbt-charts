@@ -491,7 +491,7 @@ pub struct TicksRest {
     /// Tick color.
     pub color: Color,
     /// Tick length in pixels.
-    #[model(fill = 6.0)]
+    #[model(fill = 4.0)]
     pub length: f64,
     /// Tick stroke width in pixels.
     pub width: f64,
@@ -1006,4 +1006,32 @@ pub struct BandAxisStyle {
     /// Band position within the step (0 to 1).
     #[model(absent = "Vega-Lite's default", local)]
     pub band_position: Option<f64>,
+}
+
+/// The part of the x-axis label font a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(shorthand = "extends")]
+pub struct AxisLabelFontConditional {
+    /// Name of a `style.fonts` entry this slot starts from; the fields set beside it override that entry.
+    #[model(absent = "no named font")]
+    pub extends: Option<String>,
+    /// Text color as a CSS color string.
+    #[model(absent = "the label's own color")]
+    pub color: Option<Color>,
+}
+
+/// The part of the x-axis labels a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct DimensionLabelStyleConditional {
+    /// Axis element font style overrides.
+    #[model(absent = "the labels' own font")]
+    pub font: Option<AxisLabelFontConditional>,
+}
+
+/// The part of the x axis a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct AxisXConditional {
+    /// Dimension axis label style.
+    #[model(absent = "the axis's own labels")]
+    pub labels: Option<DimensionLabelStyleConditional>,
 }

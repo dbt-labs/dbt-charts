@@ -63,6 +63,96 @@
         }
     }
 
+    /*{# The tab bar's rule is one path: a line along the bar that steps around #}*/
+    /*{# the active tab. Along the bar it has six stops -- start, the two that #}*/
+    /*{# open the step, the two that close it, end -- so moving the step to #}*/
+    /*{# another tab shifts the opening pair and shifts-and-resizes the closing. #}*/
+    function movedTabRule(d, vertical, shift, grow) {
+        var along = vertical ? { M: 1, V: 0, A: 6 } : { M: 0, H: 0, A: 5 };
+        var stop = 0;
+        return d.replace(/([MHVA])([^MHVA]*)/g, function(_, command, rest) {
+            var args = rest.trim().split(/[\s,]+/).map(Number);
+            var at = along[command];
+            if (at !== undefined) {
+                if (stop === 1 || stop === 2) args[at] += shift;
+                if (stop === 3 || stop === 4) args[at] += shift + grow;
+                args[at] = parseFloat(args[at].toFixed(3));
+                stop++;
+            }
+            return command + ' ' + args.join(' ') + ' ';
+        }).trim();
+    }
+
+    function tabCell(tab, vertical) {
+        var at = /translate\(\s*([-\d.]+)[\s,]+([-\d.]+)/.exec(tab.getAttribute('transform'));
+        var box = tab.querySelector('.dbt-box-outer');
+        return {
+            start: parseFloat(at[vertical ? 2 : 1]),
+            size: parseFloat(box.getAttribute(vertical ? 'height' : 'width'))
+        };
+    }
+
+    /*{# Shows a tab click as taken before the render that answers it lands. #}*/
+    /*{# The drawn state is kept on the tablist itself: it dies with the board #}*/
+    /*{# that is replaced. #}*/
+    var TAB_INK = ['fill', 'font-weight'];
+    var TAB_PANE_GLYPH_DROP = 96;
+    function showTabSwitch(tab) {
+        var list = tab.closest('[role="tablist"]');
+        var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+        var rule = list.querySelector('path');
+        if (!list.__dbtDrawnTabs) {
+            var drawnRule = rule.getAttribute('d');
+            var drawn = tabs.map(function(each) {
+                var text = each.querySelector('text');
+                return [each.getAttribute('aria-selected')].concat(TAB_INK.map(function(attr) {
+                    return text.getAttribute(attr);
+                }));
+            });
+            list.__dbtDrawnTabs = function() {
+                rule.setAttribute('d', drawnRule);
+                tabs.forEach(function(each, i) {
+                    each.setAttribute('aria-selected', drawn[i][0]);
+                    TAB_INK.forEach(function(attr, j) {
+                        each.querySelector('text').setAttribute(attr, drawn[i][j + 1]);
+                    });
+                });
+                delete list.__dbtDrawnTabs;
+            };
+        }
+        var active = list.querySelector('[role="tab"][aria-selected="true"]');
+        var vertical = list.getAttribute('aria-orientation') === 'vertical';
+        var from = tabCell(active, vertical);
+        var to = tabCell(tab, vertical);
+        rule.setAttribute('d', movedTabRule(
+            rule.getAttribute('d'), vertical, to.start - from.start, to.size - from.size));
+        active.setAttribute('aria-selected', 'false');
+        tab.setAttribute('aria-selected', 'true');
+        TAB_INK.forEach(function(attr) {
+            var activeText = active.querySelector('text');
+            var tabText = tab.querySelector('text');
+            var ink = activeText.getAttribute(attr);
+            activeText.setAttribute(attr, tabText.getAttribute(attr));
+            tabText.setAttribute(attr, ink);
+        });
+        /*{# The pane follows the bar, or the inset group that holds only the bar. #}*/
+        /*{# A tab whose content is hidden draws no pane. #}*/
+        var holder = list.parentNode;
+        var pane = list.nextElementSibling
+            || (holder.childElementCount === 1 ? holder.nextElementSibling : null);
+        if (!pane) return;
+        if (!pane.classList.contains('dbt-tab-pane-loading')) {
+            var box = pane.getBBox();
+            var spinner = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            spinner.setAttribute('class', 'dbt-chart-spinner');
+            /*{# Near the tabs, so a tall pane's glyph is not below the fold. #}*/
+            spinner.appendChild(loadingGlyph(
+                box.x + box.width / 2, box.y + Math.min(box.height / 2, TAB_PANE_GLYPH_DROP)));
+            pane.appendChild(spinner);
+            pane.classList.add('dbt-tab-pane-loading');
+        }
+    }
+
     /*{# A navigation that starts and never commits (Escape, the browser's #}*/
     /*{# Stop, a 204, a download response) fires neither `unload` nor #}*/
     /*{# `pageshow` -- no predicate can see it coming, only this document #}*/
@@ -102,6 +192,12 @@
                 .split(/\s+/).filter(function(c) { return c && c !== 'dbt-chart-loading'; }).join(' '));
         });
         document.querySelectorAll('.dbt-chart-spinner').forEach(function(s) { s.remove(); });
+        document.querySelectorAll('[role="tablist"]').forEach(function(list) {
+            if (list.__dbtDrawnTabs) list.__dbtDrawnTabs();
+        });
+        document.querySelectorAll('.dbt-tab-pane-loading').forEach(function(pane) {
+            pane.classList.remove('dbt-tab-pane-loading');
+        });
         document.documentElement.classList.remove('dbt-page-loading');
     };
 
@@ -591,7 +687,13 @@
             return;
         }
 
+        /*{# With no host to answer it, a modified click opens the tab elsewhere and this page stays. #}*/
+        var leavesPage = inIframe || hasHook || !(event.metaKey || event.ctrlKey || event.shiftKey);
+        var isTab = link.getAttribute('role') === 'tab' && leavesPage;
+        if (isTab) showTabSwitch(link);
+
         if (!inIframe && !hasHook) {
+            if (isTab) _armNavigationCancelGuard();
             /*{# Standalone dct serve: let the browser navigate, but save scroll #}*/
             /*{# first so restoreScrollIfSaved() can recover position after reload. #}*/
             try {
@@ -870,6 +972,13 @@
     /*{# A number inside a value sorts by its value, so "Team 9" precedes #}*/
     /*{# "Team 10"; case and accents do not split the alphabet in two. #}*/
     var _OPTION_COLLATOR = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+    var _SORT_WORDS = {
+        '': 'clear_sort',
+        'asc': 'sort_text_ascending',
+        'desc': 'sort_text_descending',
+        'count-desc': 'sort_count_descending',
+        'count-asc': 'sort_count_ascending'
+    };
 
     /*{# A menu draws at most this many member rows. A column-bound control #}*/
     /*{# can carry every distinct id in a table, and a row per value held the #}*/
@@ -885,7 +994,7 @@
 
     /*{# The card, the unset row, and the search bar; member rows are drawn #}*/
     /*{# by the binding, a bounded window at a time. #}*/
-    function _buildSelectPopover(el, values, counted) {
+    function _buildSelectPopover(el, values) {
         var canUnset = el.getAttribute('data-dbt-can-unset') === 'true';
         /*{# An empty option list is still openable when the control can be #}*/
         /*{# returned to unset — that row is the whole menu. #}*/
@@ -942,31 +1051,18 @@
             var sort = document.createElement('button');
             sort.type = 'button';
             sort.className = 'dbt-select-sort';
-            sort.setAttribute('aria-label', words.sort);
-            sort.setAttribute('aria-haspopup', 'menu');
-            sort.setAttribute('aria-expanded', 'false');
-            /*{# A multiselect's bar is the field its pills and search share. #}*/
-            if (el.getAttribute('data-dbt-input') === 'multiselect') bar.classList.add('dbt-select-field');
-            bar.appendChild(search);
+            /*{# A multiselect's pills and search share one wrapping field; the #}*/
+            /*{# sort sits beside it, so it never wraps onto a line of its own. #}*/
+            if (el.getAttribute('data-dbt-input') === 'multiselect') {
+                var field = document.createElement('div');
+                field.className = 'dbt-select-field';
+                field.appendChild(search);
+                bar.appendChild(field);
+            } else {
+                bar.appendChild(search);
+            }
             bar.appendChild(sort);
             popover.appendChild(bar);
-            var sortMenu = document.createElement('div');
-            sortMenu.className = 'dbt-select-sort-menu';
-            sortMenu.setAttribute('role', 'menu');
-            sortMenu.hidden = true;
-            var sorts = [['asc', 'sort_text_ascending'], ['desc', 'sort_text_descending'], ['', 'clear_sort']];
-            if (counted) {
-                sorts.unshift(['count-desc', 'sort_count_descending'], ['count-asc', 'sort_count_ascending']);
-            }
-            sorts.forEach(function(item) {
-                    var pick = document.createElement('button');
-                    pick.type = 'button';
-                    pick.setAttribute('role', item[0] ? 'menuitemradio' : 'menuitem');
-                    pick.setAttribute('data-sort', item[0]);
-                    pick.textContent = words[item[1]];
-                    sortMenu.appendChild(pick);
-                });
-            popover.appendChild(sortMenu);
             if (el.getAttribute('data-dbt-input') === 'multiselect') {
                 only = document.createElement('button');
                 only.type = 'button';
@@ -1095,7 +1191,7 @@
         /*{# carry counts: the number is what a count sort compares, the text is #}*/
         /*{# what the row draws, already in the board's format. #}*/
         var counts = _parseOptions(el, 'data-dbt-option-counts');
-        var popover = _buildSelectPopover(el, values, counts.length > 0);
+        var popover = _buildSelectPopover(el, values);
         if (!popover) {
             /*{# Nothing to open — an option query that returned empty, and no #}*/
             /*{# unset row either. Withdraw the affordances rather than leave a #}*/
@@ -1108,13 +1204,16 @@
         var search = popover.querySelector('.dbt-select-search');
         var list = popover.querySelector('.dbt-select-list');
         var sortButton = popover.querySelector('.dbt-select-sort');
-        var sortMenu = popover.querySelector('.dbt-select-sort-menu');
         var only = popover.querySelector('.dbt-select-only');
         var note = popover.querySelector('.dbt-select-truncated');
         var words = _words(el);
         var multi = el.getAttribute('data-dbt-input') === 'multiselect';
         var field = popover.querySelector('.dbt-select-field');
         var sorted = '';
+        /*{# One click moves to the next order; a menu with counts adds its two #}*/
+        /*{# count orders after the text ones. '' is the order they came in. #}*/
+        var sortCycle = counts.length
+            ? ['', 'asc', 'desc', 'count-desc', 'count-asc'] : ['', 'asc', 'desc'];
         var selectedOnly = false;
         var chosen = _committedList(el);
         var lowered = values.map(function(v) { return String(v).toLowerCase(); });
@@ -1199,18 +1298,21 @@
                 });
             }
             narrow();
-            sortButton.classList.toggle('dbt-select-sorted', !!how);
-            sortMenu.querySelectorAll('[role="menuitemradio"]').forEach(function(pick) {
-                pick.setAttribute('aria-checked', pick.getAttribute('data-sort') === how ? 'true' : 'false');
-            });
+            markSort();
+        }
+
+        /*{# The button shows the order in force and is named for the one a #}*/
+        /*{# click applies. #}*/
+        function nextSort() { return sortCycle[(sortCycle.indexOf(sorted) + 1) % sortCycle.length]; }
+        function markSort() {
+            var label = words[_SORT_WORDS[nextSort()]];
+            sortButton.setAttribute('data-sort', sorted);
+            sortButton.setAttribute('aria-label', label);
+            sortButton.title = label;
         }
 
         narrow();
-
-        function foldSortMenu(folded) {
-            sortMenu.hidden = folded;
-            sortButton.setAttribute('aria-expanded', folded ? 'false' : 'true');
-        }
+        if (sortButton) markSort();
 
         function view() {
             return {query: search ? search.value : '', sort: sorted, only: selectedOnly};
@@ -1221,13 +1323,14 @@
             _floatPopover(popover);
             popover.classList.add('dbt-popover-open');
             if (search) {
-                /*{# Held at no less than the drawn rows' width: rows do not wrap, #}*/
-                /*{# so the card would otherwise shrink and shift under the caret #}*/
-                /*{# on each key. A floor, not a width: a menu reopened as the page #}*/
-                /*{# loads is measured before the web font arrives, and has to grow #}*/
-                /*{# when it does. #}*/
+                /*{# Held at no less than the drawn rows' width, nor the field it #}*/
+                /*{# opens from: rows do not wrap, so the card would otherwise #}*/
+                /*{# shrink and shift under the caret on each key. A floor, not a #}*/
+                /*{# width: a menu reopened as the page loads is measured before #}*/
+                /*{# the web font arrives, and has to grow when it does. #}*/
                 narrow();
-                popover.style.minWidth = Math.ceil(popover.getBoundingClientRect().width) + 'px';
+                popover.style.minWidth = Math.ceil(Math.max(popover.getBoundingClientRect().width,
+                    _anchorBoxOf(el).getBoundingClientRect().width)) + 'px';
                 if (saved) {
                     search.value = saved.query;
                     selectedOnly = saved.only;
@@ -1247,7 +1350,6 @@
                 search.value = '';
                 selectedOnly = false;
                 order('');
-                foldSortMenu(true);
                 narrow();
                 popover.style.minWidth = '';
             }
@@ -1284,12 +1386,8 @@
                 var first = popover.querySelector('.dbt-select-option:not([hidden]):not([data-unset])');
                 if (first) first.click();
             });
-            sortButton.addEventListener('click', function() { foldSortMenu(!sortMenu.hidden); });
-            sortMenu.addEventListener('click', function(e) {
-                var pick = e.target.closest('[data-sort]');
-                if (!pick) return;
-                order(pick.getAttribute('data-sort'));
-                foldSortMenu(true);
+            sortButton.addEventListener('click', function() {
+                order(nextSort());
                 search.focus();
             });
         }
@@ -1304,7 +1402,6 @@
         /*{# a select commits one value and closes. Binding both as "pick one" #}*/
         /*{# silently narrowed every multiselect to its first choice. #}*/
         popover.addEventListener('click', function(e) {
-            if (sortMenu && !e.target.closest('.dbt-select-sort, .dbt-select-sort-menu')) foldSortMenu(true);
             var chipX = e.target.closest('.dbt-select-chip-x');
             if (chipX) {
                 remove(chipX.parentNode.getAttribute('data-value'));

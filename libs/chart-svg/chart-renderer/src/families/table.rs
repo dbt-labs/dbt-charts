@@ -1482,12 +1482,14 @@ struct Drawn {
     link_context: Option<crate::href::LinkContext>,
     title_shift: TitleShift,
     pagination_control_height: f64,
+    /// The filters under a zero-row body's "No results" (`no_results::context_line`).
+    empty_line: Option<String>,
 }
 
 /// A table after `bind`: the rows it draws, or a result with nothing to draw.
 pub enum Bound {
     Rows(Rows),
-    /// A query with no rows and no columns to head: the title band over an em dash.
+    /// A query with no rows and no columns to head: the title band over "No results".
     Empty(Blank),
 }
 
@@ -1502,6 +1504,7 @@ pub struct Blank {
     resolved: EmptyResolved,
     padding: Option<Padding>,
     title_shift: TitleShift,
+    empty_line: Option<String>,
 }
 
 impl Bound {
@@ -3243,6 +3246,111 @@ pub(crate) mod tests {
         let thumb = &thumb_tag[thumb_tag.rfind("<rect").unwrap()..];
         let thumb_bottom = tag_attr(thumb, " y") + tag_attr(thumb, " height");
         assert!(thumb_bottom <= tag_attr(&label, " y") - 18.0 + 0.01, "{thumb}\n{label}");
+    }
+
+    /// A wide interactive table over `rows` that scrolls both ways, paged by 20.
+    fn wide_scrolling_of(rows: Vec<Value>, columns: Value, height: f64) -> Payload {
+        let mut payload = make_paginated_payload_with_id("t1", columns, rows, 20, height);
+        payload.resolved["style"]["table"]["pagination"]["mode"] = json!("scroll");
+        payload.resolved["style"]["table"]["column_layout"]["overflow"] = json!("scroll");
+        payload.resolved["style"]["table"]["outer_padding"] = json!(0.0);
+        payload.interactive_controls = true;
+        payload
+    }
+
+    fn wide_scrolling_payload(rows: usize, height: f64) -> Payload {
+        let rows = (0..rows).map(|i| json!({"product": format!("Row {i}"), "revenue": i as f64})).collect();
+        let columns = json!({"product": {"label": "Product", "width": 2000}, "revenue": {"label": "Revenue"}});
+        wide_scrolling_of(rows, columns, height)
+    }
+
+    /// The height a board reserves for a scrolling table (its natural height) is a slot
+    /// that holds the page the table asked for, scrollbar band included.
+    #[test]
+    fn a_wide_scrolling_table_given_its_natural_height_shows_its_full_page() {
+        let natural = rendered_height(&render(&wide_scrolling_payload(89, 0.0), &test_fonts()).expect("renders"));
+        let svg = render(&wide_scrolling_payload(89, natural), &test_fonts()).expect("renders");
+        assert!(range_label(&svg).ends_with(">1\u{2013}20 / 89"), "{}", range_label(&svg));
+    }
+
+    /// Rows of uneven wrapped height: the natural height must hold the page the slot law
+    /// will ask to fit, not just the first rows.
+    #[test]
+    fn a_wide_scrolling_table_with_uneven_rows_given_its_natural_height_shows_its_full_page() {
+        let uneven = |height: f64| {
+            let rows = (0..89)
+                .map(|i| json!({"product": format!("Row {i}"), "note": if i % 7 == 3 { "word ".repeat(40) } else { "ok".to_string() }}))
+                .collect();
+            let columns = json!({"product": {"label": "Product", "width": 2000}, "note": {"label": "Note", "width": 80}});
+            wide_scrolling_of(rows, columns, height)
+        };
+        let natural = rendered_height(&render(&uneven(0.0), &test_fonts()).expect("renders"));
+        let svg = render(&uneven(natural), &test_fonts()).expect("renders");
+        assert!(range_label(&svg).ends_with(">1\u{2013}20 / 89"), "{}", range_label(&svg));
+    }
+
+    /// A scroll viewport that shows fewer rows than the page holds says so.
+    #[test]
+    fn a_scrolling_table_squeezed_below_its_page_warns() {
+        let natural = rendered_height(&render(&wide_scrolling_payload(89, 0.0), &test_fonts()).expect("renders"));
+        let (_svg, warnings) = diagnostic::collect(|| render(&wide_scrolling_payload(89, natural - 70.0), &test_fonts()));
+        let squeezed = warnings.iter().find(|d| d.code == "WARN-TABLE-PAGE-SQUEEZED").expect("squeezed");
+        assert_eq!(squeezed.params["page_rows"], 20);
+        assert!(squeezed.params["drawn_rows"].as_u64().unwrap() < 20);
+    }
+
+    #[test]
+    fn a_scrolling_table_shorter_than_its_page_still_fits_a_short_slot() {
+        let natural = rendered_height(&render(&wide_scrolling_payload(15, 0.0), &test_fonts()).expect("renders"));
+        let slot = natural / 3.0;
+        let (svg, warnings) = diagnostic::collect(|| render(&wide_scrolling_payload(15, slot), &test_fonts()));
+        let svg = svg.expect("renders");
+        assert_eq!(rendered_height(&svg), slot);
+        let squeezed = warnings.iter().find(|d| d.code == "WARN-TABLE-PAGE-SQUEEZED").expect("squeezed");
+        assert_eq!(squeezed.params["page_rows"], 15);
+        assert!(squeezed.params["drawn_rows"].as_u64().unwrap() < 15);
+    }
+
+    /// `n` number columns under three-word headers, in a 600px slot that
+    /// scrolls sideways.
+    fn long_header_payload(n: usize) -> Payload {
+        let names: Vec<String> = (0..n).map(|i| format!("m{i}")).collect();
+        let row: serde_json::Map<String, Value> =
+            names.iter().map(|name| (name.clone(), json!(7.0))).collect();
+        let columns: serde_json::Map<String, Value> = names
+            .iter()
+            .map(|name| (name.clone(), json!({"label": "Dashboard versions authored"})))
+            .collect();
+        let mut payload =
+            make_paginated_payload_with_id("t1", Value::Object(columns), vec![Value::Object(row)], 10, 0.0);
+        payload.resolved["style"]["table"]["column_layout"]["overflow"] = json!("scroll");
+        payload
+    }
+
+    #[test]
+    fn long_headers_wrap_to_two_lines_before_a_table_scrolls_sideways() {
+        let svg = render(&long_header_payload(4), &test_fonts()).expect("renders");
+        assert!(!svg.contains("data-dbt-scroll-thumb=\"x\""), "{svg}");
+        assert!(!svg.contains(">Dashboard Versions Authored<"), "{svg}");
+        assert!(!svg.contains('\u{2026}'), "{svg}");
+    }
+
+    #[test]
+    fn a_table_that_still_scrolls_keeps_its_long_headers_on_two_lines() {
+        let svg = render(&long_header_payload(12), &test_fonts()).expect("renders");
+        assert!(svg.contains("data-dbt-scroll-thumb=\"x\""), "{svg}");
+        assert!(!svg.contains(">Dashboard Versions Authored<"), "{svg}");
+        assert!(!svg.contains('\u{2026}'), "{svg}");
+        // Twelve columns at the one-line header width scroll 1495px.
+        assert!(attr_f64(&svg, "data-max-x") < 1000.0, "{svg}");
+    }
+
+    #[test]
+    fn a_short_header_keeps_its_line_when_the_table_scrolls_sideways() {
+        let mut payload = long_header_payload(12);
+        payload.resolved["columns"]["m0"]["label"] = json!("Action types");
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(svg.contains(">Action Types<"), "{svg}");
     }
 
     #[test]
@@ -10940,17 +11048,17 @@ mod background_and_font_family_tests {
     }
 
     /// Zero rows over resolved columns: the header band and a centered
-    /// em dash.
+    /// "No results".
     #[test]
-    fn an_empty_result_keeps_the_header_and_paints_an_em_dash() {
+    fn an_empty_result_keeps_the_header_and_paints_no_results() {
         let mut payload = payload_with(json!({}));
         payload.rows = vec![].into();
         payload.resolved["style"]["table"]["empty_state"] =
             json!({"font": {"size": 14.0, "color": "#626366"}});
         let svg = crate::families::empty::render("table", &payload, &test_fonts()).unwrap();
         assert!(svg.contains(">A</text>"), "header label missing:\n{svg}");
-        assert!(svg.contains(">\u{2014}</text>"), "{svg}");
-        assert!(!svg.contains("No data"), "{svg}");
+        assert!(svg.contains(">No results</text>"), "{svg}");
+        assert!(!svg.contains("No data") && !svg.contains('\u{2014}'), "{svg}");
     }
 
     /// The y of the `<text>` element whose content is `label`.
@@ -10961,7 +11069,7 @@ mod background_and_font_family_tests {
         y.parse().unwrap()
     }
 
-    /// The em dash sits in a body region below the header band and
+    /// "No results" sits in a body region below the header band and
     /// inside the canvas, never over the column headers.
     #[test]
     fn the_empty_mark_sits_below_the_header_band_inside_the_canvas() {
@@ -10972,11 +11080,32 @@ mod background_and_font_family_tests {
         let svg = crate::families::empty::render("table", &payload, &test_fonts()).unwrap();
         let canvas_h: f64 =
             svg.split("height=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
-        let no_data = text_y(&svg, "\u{2014}");
+        let no_data = text_y(&svg, "No results");
         let rule = svg.split("<rect").find(|r| r.contains("crispEdges")).unwrap();
         let header_rule_y: f64 = rule.split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
         assert!(no_data > header_rule_y, "overlaps the header:\n{svg}");
         assert!(no_data < canvas_h, "outside the canvas:\n{svg}");
+    }
+
+    /// The filters that reach the table sit under the headline in the subtitle's face, inside
+    /// the canvas the line grows.
+    #[test]
+    fn an_empty_result_names_the_active_filters_under_the_headline() {
+        let mut payload = payload_with(json!({}));
+        payload.rows = vec![].into();
+        payload.empty_filters = vec![("Src".into(), "6s".into()), ("Reg".into(), "EU".into())];
+        payload.resolved["style"]["table"]["empty_state"] =
+            json!({"font": {"size": 14.0, "color": "#626366"}});
+        let bare = {
+            let mut p = payload.clone();
+            p.empty_filters.clear();
+            crate::families::empty::render("table", &p, &test_fonts()).unwrap()
+        };
+        let svg = crate::families::empty::render("table", &payload, &test_fonts()).unwrap();
+        let line = "Src: 6s \u{b7} Reg: EU";
+        assert!(svg.contains(&format!(">{line}</text>")), "{svg}");
+        assert!(text_y(&svg, line) > text_y(&svg, "No results"), "{svg}");
+        assert!(!bare.contains("Src:"), "{bare}");
     }
 
     /// `style.row_numbers`: a leading `#` column of 1-based indices, blank on a

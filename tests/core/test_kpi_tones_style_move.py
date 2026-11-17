@@ -10,8 +10,6 @@ that both consumers read the shared board-level slot.
 from __future__ import annotations
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.normalized import KpiChart
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -19,7 +17,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
 )
 
-from ._engine_render import render_kpi_svg, render_table_svg
+from ._engine_render import render_table_svg
 
 _OVERRIDE_POSITIVE = "#123456"
 
@@ -39,27 +37,6 @@ def test_style_tones_propagates_through_resolve_style() -> None:
     resolved = resolve_style(get_theme_style(), patch)
     assert resolved.tones.positive == _OVERRIDE_POSITIVE
     assert resolved.chart_defaults.tones.positive == _OVERRIDE_POSITIVE
-
-
-def test_kpi_support_row_reads_board_level_tones_override() -> None:
-    """A KPI support row with style.support.tone: positive picks up the board-level override."""
-    patch = StylePatch.model_validate({"tones": {"positive": _OVERRIDE_POSITIVE}})
-    board_style = resolve_style(get_theme_style(), patch)
-    board_ctx = resolve_chart_style_context(get_theme_style(), patch)
-
-    chart = KpiChart(
-        id="kpi_tones",
-        query=SqlQuery(sql="SELECT 1", source="test"),
-        query_name="q",
-        type="kpi",
-        value="revenue",
-        support={"value": "delta_pct", "label": "vs LQ", "glyph": "▲"},
-        style={"support": {"tone": "positive"}},
-    )
-    data = [{"revenue": 1_500_000, "delta_pct": 0.124}]
-    resolved = resolve(chart, data, chart_style_context=board_ctx)
-    svg = render_kpi_svg(resolved, data, width=300, height=160, board_style=board_style)
-    assert _OVERRIDE_POSITIVE in svg
 
 
 def test_table_conditional_glyph_reads_board_level_tones_override(make_chart) -> None:

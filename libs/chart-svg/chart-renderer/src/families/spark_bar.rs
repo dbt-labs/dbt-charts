@@ -268,8 +268,9 @@ fn title_font_of(title_font: Option<&Font>) -> Result<TitleFont, String> {
 }
 
 /// The title block above the bars as `(height, first baseline)`, before a row's
-/// shift: none when untitled, and a subtitle adds the
-/// title's whole-pixel font size.
+/// shift: none when it has neither title nor subtitle. A subtitle under a
+/// title adds the title's whole-pixel font size; a subtitle alone is the
+/// block's only row and takes the title row's height and baseline.
 fn title_block(
     title: Option<&str>,
     subtitle: Option<&str>,
@@ -278,8 +279,8 @@ fn title_block(
 ) -> (f64, f64) {
     let SparkBarTitle { height, baseline_y } = *geometry;
     match (title, subtitle) {
-        (None, _) => (0.0, baseline_y),
-        (Some(_), None) => (height, baseline_y),
+        (None, None) => (0.0, baseline_y),
+        (None, Some(_)) | (Some(_), None) => (height, baseline_y),
         (Some(_), Some(_)) => (height + title_size as f64, baseline_y),
     }
 }
@@ -446,8 +447,8 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     } else {
         None
     };
-    let subtitle = match (&title, r.subtitle) {
-        (Some(_), Some(text)) => {
+    let subtitle = match r.subtitle {
+        Some(text) => {
             let size =
                 sc.subtitle.font.size.ok_or(
                     "spark_bar: style.spark_bar.subtitle.font.size absent (theme required)",
@@ -457,7 +458,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
             )?;
             Some(Subtitle { text, size, style: sc.subtitle.font.style.clone(), color })
         }
-        _ => None,
+        None => None,
     };
 
     let mut bound_rows = Vec::with_capacity(visible.len());
@@ -576,7 +577,7 @@ fn vertical(bound: &Bound) -> Vertical {
     // `spark_bar.py:427-431`: the row's shifted title band is added to the card,
     // so the bars keep their own room.
     let title_height = title_height + bound.shift.body_dy;
-    let current_y = if bound.title.is_some() {
+    let current_y = if bound.title.is_some() || bound.subtitle.is_some() {
         title_height
     } else {
         0.0
@@ -652,8 +653,8 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
     };
     let mut content = Vec::new();
 
+    let title_baseline_y = title_baseline + shift.title_dy;
     if let Some(display) = title {
-        let title_baseline_y = title_baseline + shift.title_dy;
         content.push(text(
             Role::Title,
             (0.0, title_baseline_y),
@@ -666,19 +667,22 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
                 .quick("data-authored-kind", "title"),
             display.to_string(),
         ));
-        if let Some(subtitle) = subtitle {
-            content.push(text(
-                Role::Title,
-                (0.0, title_baseline_y + title_size as f64),
-                Attrs::new()
-                    .num("font-size", subtitle.size)
-                    .quick_some("font-style", subtitle.style.as_deref())
-                    .quick("fill", subtitle.color.as_str())
-                    .quick("font-family", bound.body_family.as_str())
-                    .quick("data-authored-kind", "subtitle"),
-                subtitle.text.clone(),
-            ));
-        }
+    }
+    if let Some(subtitle) = subtitle {
+        // Under a title the subtitle sits one title size below its baseline;
+        // alone it takes the title row's baseline.
+        let subtitle_baseline_y = if title.is_some() { title_baseline_y + title_size as f64 } else { title_baseline_y };
+        content.push(text(
+            Role::Title,
+            (0.0, subtitle_baseline_y),
+            Attrs::new()
+                .num("font-size", subtitle.size)
+                .quick_some("font-style", subtitle.style.as_deref())
+                .quick("fill", subtitle.color.as_str())
+                .quick("font-family", bound.body_family.as_str())
+                .quick("data-authored-kind", "subtitle"),
+            subtitle.text.clone(),
+        ));
     }
 
     let mut truncated_labels = 0;

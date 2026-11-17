@@ -1120,7 +1120,6 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
     let x_axis_drop = sign * ax_x.ticks.offset.unwrap_or(0.0) + 0.5;
     let x_ticks_visible = ax_x.ticks.visible.unwrap_or(true);
     let x_tick_len = ax_x.ticks.length.unwrap_or(6.0);
-    let x_tick_eff = if x_ticks_visible { x_tick_len } else { 0.0 };
     let x_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     let (plot_left, plot_w, plot_bottom) = (p.plot_left, p.plot_w, p.plot_bottom);
     let x_pos = |frac: f64| frac * plot_w;
@@ -1133,7 +1132,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
         } else {
             (Some(anchor(p.align)?), Some(anchor(p.baseline)?), None)
         };
-        let spec = AxisSpec { orient: Orient::Bottom, offset: x_tick_eff + x_label_pad, shift: label_crisp - 0.5, align, baseline, angle: p.angle, flush, style: ax_x.labels.item_style()? };
+        let spec = AxisSpec { orient: Orient::Bottom, offset: x_label_pad, shift: label_crisp - 0.5, align, baseline, angle: p.angle, flush, style: ax_x.labels.item_style()? };
         register_axis("x", spec);
     }
     let mut items = Vec::new();
@@ -1150,7 +1149,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
         // Vega's SVG text transform for a rotated item: translate to the
         // anchor, rotate, then the baseline shift — bar's own
         // `BandXAxis::paint` rotated arm (`bar.rs`), reused verbatim.
-        let anchor_y = plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad);
+        let anchor_y = plot_bottom + x_axis_drop + sign * x_label_pad;
         let dy = measure::baseline_shift(p.baseline, x_font_size);
         let text_anchor = match p.align {
             "left" => "start",
@@ -1178,7 +1177,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
             );
         }
     } else {
-        let x_label_y = plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad) + measure::baseline_shift(edge.baseline(), x_font_size);
+        let x_label_y = plot_bottom + x_axis_drop + sign * x_label_pad + measure::baseline_shift(edge.baseline(), x_font_size);
         let x_flush_align = |pos: f64, pw: f64| crate::families::line::flush_align(pos, pw, p.flush);
         let x_label_visible = ax_x.is_quantitative.then(|| {
             let widths: Result<Vec<f64>, String> =
@@ -1188,7 +1187,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
                 let pos = p.ticks[i] * plot_w;
                 vega_fit::text_ink_rows(
                     pos,
-                    plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad),
+                    plot_bottom + x_axis_drop + sign * x_label_pad,
                     widths[i].min(x_limit),
                     x_font_size,
                     x_flush_align(pos, plot_w),
@@ -1223,7 +1222,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
     if p.angle != 0.0 && x_title_band > 0.0 && !x_labels_hidden {
         // Vega's `axisTitleLayout` offsets the title by the label ink's reach past
         // the pivot plus `titlePadding`, read from `rotated_category_label_ink`.
-        let anchor_y = plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad);
+        let anchor_y = plot_bottom + x_axis_drop + sign * x_label_pad;
         let reach = p.labels.iter().try_fold(0.0_f64, |acc, lbl| {
             let w = fonts.measure_shaped(lbl, x_family, x_font_size)?.min(x_limit);
             let ink = crate::common::rotated_category_label_ink(0.0, 0.0, w, x_font_size, p.align, p.baseline, p.angle, crate::text::line_count(lbl) - 1);
@@ -1239,14 +1238,14 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
     } else if p.ticks.is_empty() || x_labels_hidden {
         // An axis with no labels has no label bounds to clear: the title sits one padding past its tick marks.
         let title_fs = ax_x.title.font.size_or(11.0);
-        let tick_reach = if p.ticks.is_empty() { 0.0 } else { x_tick_eff };
+        let tick_reach = if p.ticks.is_empty() || !x_ticks_visible { 0.0 } else { x_tick_len };
         let title_y = plot_bottom + x_axis_drop + sign * (tick_reach + ax_x.title.padding.unwrap_or(10.0)) + measure::baseline_shift(edge.baseline(), title_fs);
         items.extend(crate::common::axis_title_at(p.title, &ax_x.title, plot_left + plot_w / 2.0, title_y, p.title_key));
     } else {
         let label_rows = p.labels.iter().map(|l| crate::text::line_count(l)).max().unwrap_or(1);
         let x_label_baseline = plot_bottom
             + x_axis_drop
-            + sign * (x_tick_eff + x_label_pad)
+            + sign * x_label_pad
             + measure::baseline_shift(edge.baseline(), x_font_size)
             + sign * (label_rows - 1) as f64 * crate::text::line_height(x_font_size);
         items.extend(crate::common::axis_title_flat(p.title, &ax_x.title, plot_left + plot_w / 2.0, x_label_baseline, x_font_size, p.title_key, edge));
@@ -1556,9 +1555,8 @@ impl PlainXAxis {
                 sized.left_reach = sized.left_reach.max(w / 2.0 - frac * pw);
             }
         }
-        let tick_eff = if ax_x.ticks.visible.unwrap_or(true) { ax_x.ticks.length.unwrap_or(6.0) } else { 0.0 };
         sized.rotated_reach = (self.angle != 0.0)
-            .then(|| ax_x.ticks.offset.unwrap_or(0.0) + tick_eff + ax_x.labels.padding.unwrap_or(6.0) + below);
+            .then(|| ax_x.ticks.offset.unwrap_or(0.0) + ax_x.labels.padding.unwrap_or(6.0) + below);
         Ok(sized)
     }
 
@@ -1836,6 +1834,9 @@ fn date_axis(
         let expr = ::layout::labels_expr::Expr::parse(src).map(|e| e.on("x")).map_err(|e| format!("scatter: labels.expr {src:?}: {e:?}"))?;
         axis.speak(expr, &ladder)?;
     }
+    let rules = crate::point_conditional::axis_label_rules("scatter", r.style.conditional.as_ref(), &r.x);
+    rules.refuse_rows("this time axis's ticks name instants, not rows").map_err(|e| e.to_string())?;
+    axis.label_rules = rules.x_rules();
     Ok(axis)
 }
 

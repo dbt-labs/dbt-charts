@@ -91,7 +91,7 @@ Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`
 - `stack` (none|zero|normalize|center): Default stack mode for bar charts; none renders side-by-side columns
 - `orientation` (horizontal|vertical|auto): Preferred bar orientation
 - `endpoint_labels` ({label_offset, height}): Styling of the series names printed on stacked bars (`legend.position.edge: endpoints`)
-Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `pattern`, `conditional`.
+Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `torn_outlier`, `pattern`, `conditional`.
 
 ### Axes
 
@@ -115,7 +115,7 @@ Also exist: `grid`, `line`, `ticks`, `labels`, `title`, `scale`, `position`, `fi
 Also exist: `round`, `clamp`, `padding`, `continuous`.
 
 `axis_y.scale.continuous`:
-- `type` (linear|log|pow|sqrt|symlog|temporal): Scale type override; a bar rejects 'log', so use 'symlog'
+- `type` (linear|log|pow|sqrt|symlog|temporal): Scale type override; pow, sqrt and symlog bend only a scatter's axes
 - `domain` (tuple[int | float | str, int | float | str]): Explicit [low, high] scale domain; None lets Vega-Lite auto-determine from data
 - `zero` (bool|auto): Force scale zero-baseline
 Also exist: `log`, `pow`, `symlog`.

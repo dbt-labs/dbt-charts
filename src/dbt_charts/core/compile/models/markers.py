@@ -131,11 +131,14 @@ class Conditionable:
     keeps exactly the marked fields, plus the parents leading to them, as a
     rule's body. On a nested-model field the marker keeps the whole subtree, or
     only the leaves named in ``only``. ``rule_type`` replaces the field's type in
-    the rule, for a field whose static form takes more than a rule may.
+    the rule, for a field whose static form takes more than a rule may. ``name``
+    names a nested rule model whose ``only`` differs from another rule of the same
+    model, so the two never share a schema name.
     """
 
     only: tuple[str, ...] = ()
     rule_type: type | None = None
+    name: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)

@@ -62,10 +62,10 @@ pub struct DerivedChart {
 }
 
 /// The leaves of a tier's legend and title patch the walks read; any other set leaf is refused.
-const LEGEND_WALKED: [&str; 4] = ["symbol_limit", "direction", "visible", "title.visible"];
+pub(crate) const LEGEND_WALKED: [&str; 4] = ["symbol_limit", "direction", "visible", "title.visible"];
 const TITLE_WALKED: [&str; 2] = ["min_height", "subtitle.overflow"];
 
-fn refuse_unwalked(slot: &str, patch: &impl SetLeaves, walked: &[&str]) -> Result<(), Diagnostic> {
+pub(crate) fn refuse_unwalked(slot: &str, patch: &impl SetLeaves, walked: &[&str]) -> Result<(), Diagnostic> {
     let mut unwalked = None;
     patch.set_leaves("", &mut |path| {
         if !walked.contains(&path) {
@@ -172,6 +172,7 @@ impl Placed<'_> {
         };
         let frame = Frame {
             canvas: color::parse_css_color(&self.canvas(&own_painted.base.background, scope)?).map_err(diag::err_internal)?,
+            card: self.card(&own_painted.base.background, scope)?,
             padding: painted.base.padding.clone(),
             title,
             sizing: Sizing {
@@ -207,6 +208,18 @@ impl Placed<'_> {
             layers.push(style.background.as_str());
         }
         color::ink_canvas(&layers).map_err(|_| unsupported(refuse!("a translucent board background over the theme's is not supported")))
+    }
+
+    /// The card fill the chart's marks root paints (`chart_context.py`'s `card_fill`): the chart's own
+    /// background, else the card fill `charts.background`, which is clear where the chart sits in a
+    /// scope that paints none (a `cols` row). A translucent fill is layout's to refuse: production
+    /// resolves it to `transparent` unless some scope authored it.
+    pub fn card(&self, own: &Tri<Color>, scope: &Style) -> Result<Rgba, Diagnostic> {
+        let card = match own {
+            Tri::Value(own) => own.as_str(),
+            Tri::Unset | Tri::Null => scope.charts.background.as_str(),
+        };
+        color::parse_css_color(card).map_err(diag::err_internal)
     }
 
     /// `_effective_single_series_fill`. It reads the chart's own tier alone: its primary mark's paint,

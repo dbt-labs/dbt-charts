@@ -8,7 +8,8 @@
 
 use bind::formats::locale::NumberLocale;
 use bind::formats::ResolvedFormat;
-use bind::bound::{Extent, Ladder, ValueDomain};
+use bind::bound::{Extent, Ladder, Rung, ValueDomain};
+use d3rs::scale::Continuous;
 use d3rs::ticks::nice_tick_values;
 use diagnostic::{diag, refuse, Diagnostic};
 use measure::shaped::{Font, FontBook};
@@ -17,7 +18,7 @@ use scene::Bounds;
 use crate::text_ink;
 use crate::geom::{Insets, Size};
 use crate::plot::label::{
-    flush_align, parity_advance, parity_visible, vega_baseline, vega_line, vega_space, Align,
+    drawn_labels, flush_align, parity_advance, vega_baseline, vega_line, vega_space, Align,
     Baseline,
 };
 
@@ -238,6 +239,28 @@ pub struct Placement {
     pub title: Option<PlacedTitle>,
 }
 
+impl Placement {
+    /// The placement of a right axis standing `off` px farther from the plot (production's
+    /// `value_axis_dx`): every label and its boxes, and the title, move out with it. The gutter stays what the fit
+    /// reserved, which the plot box and a side legend are placed by.
+    pub fn stood_off(mut self, off: f64) -> Self {
+        let shift = |bounds: &mut Bounds| {
+            bounds.x1 += off;
+            bounds.x2 += off;
+        };
+        for rung in &mut self.rungs {
+            rung.x += off;
+            shift(&mut rung.ink);
+            shift(&mut rung.space);
+        }
+        if let Some(title) = &mut self.title {
+            title.x += off;
+            shift(&mut title.ink);
+        }
+        self
+    }
+}
+
 /// A value axis over one domain: it holds the face's ascent and descent, and
 /// decides rungs and placement per plot size.
 pub struct ValueAxis<'a> {
@@ -246,6 +269,9 @@ pub struct ValueAxis<'a> {
     book: &'a FontBook,
     ascent: f64,
     descent: f64,
+    /// Whether a label whose tick is on the plot's bottom edge stands on it (`YEdges::baseline`),
+    /// which the overlap rule judges it by.
+    rises_bottom_label: bool,
 }
 
 /// Vega-Lite's default `tickCount` for a quantitative axis with no authored
@@ -263,15 +289,12 @@ pub(crate) fn direction(domain: &ValueDomain) -> (f64, f64) {
     }
 }
 
-/// How far along the axis `value` sits, 0 at the domain's start and 1 at its end. d3's linear
-/// scale puts a flat domain at the middle of the range.
+/// How far along the axis `value` sits, 0 at the domain's start and 1 at its end, on d3's scale of the
+/// domain's type (`scaleLinear`, `scaleLog`, `scalePow`, `scaleSqrt`, `scaleSymlog`): the one law every
+/// mark and rung of a value axis is positioned by. d3's scale puts a flat domain at the middle of the range.
 pub(crate) fn fraction(domain: &ValueDomain, value: f64) -> f64 {
     let (start, stop) = direction(domain);
-    if stop == start {
-        0.5
-    } else {
-        (value - start) / (stop - start)
-    }
+    Continuous::new(domain.scale.transform(), [start, stop], [0.0, 1.0]).scale(value)
 }
 
 impl<'a> ValueAxis<'a> {
@@ -287,7 +310,13 @@ impl<'a> ValueAxis<'a> {
             book,
             ascent: run.ascent,
             descent: run.descent,
+            rises_bottom_label: false,
         })
+    }
+
+    /// The axis whose bottom-edge label stands on the edge (`rises`) rather than centered on its tick.
+    pub fn rising_bottom_label(self, rises: bool) -> Self {
+        Self { rises_bottom_label: rises, ..self }
     }
 
     /// The rungs drawn on an axis `length` px long, in domain order, each with
@@ -300,18 +329,13 @@ impl<'a> ValueAxis<'a> {
         let (lo, hi) = (bounds.lo(), bounds.hi());
         let (start, stop) = direction(self.domain);
         let slack = (hi - lo) * 1e-9;
+        let inside = |rungs: &[Rung]| -> Vec<(f64, String)> {
+            rungs.iter().filter(|r| lo - slack <= r.value && r.value <= hi + slack).map(|r| (r.value, r.text.clone())).collect()
+        };
         match &self.domain.ladder {
-            Ladder::Authored(rungs) => Ok(rungs
-                .iter()
-                .filter(|r| lo - slack <= r.value && r.value <= hi + slack)
-                .map(|r| (r.value, r.text.clone()))
-                .collect()),
-            Ladder::Fixed(fixed) => Ok(fixed
-                .rungs()
-                .iter()
-                .filter(|r| lo - slack <= r.value && r.value <= hi + slack)
-                .map(|r| (r.value, r.text.clone()))
-                .collect()),
+            Ladder::Authored(rungs) => Ok(inside(rungs)),
+            Ladder::Fixed(fixed) => Ok(inside(fixed.rungs())),
+            Ladder::Log(rungs) => Ok(inside(rungs)),
             Ladder::BySize { min_step } => {
                 let ValueLabels { format, locale, estimate_extent, .. } = self.labels;
                 format.unbaked_rungs(locale, (start, stop), default_tick_count(length), *min_step, estimate_extent.hi())
@@ -505,26 +529,19 @@ impl<'a> ValueAxis<'a> {
         } else {
             reach
         };
-        let boxed = |y: f64, width: f64, height: f64| {
-            let x1 = if left_of_anchor {
-                distance - width
-            } else {
-                distance
-            };
-            Bounds {
-                x1,
-                y1: y - height / 2.0,
-                x2: x1 + width,
-                y2: y + height / 2.0,
-            }
-        };
+        let boxed = |y: f64, width: f64, height: f64| side_box(distance, left_of_anchor, y, width, height);
         // A Vega box's offset from its anchor is the same for every label, so
         // it cancels in the gaps the parity rule reads.
+        // A risen label's box stands as far above its tick as its baseline moves.
+        let rise = vega_baseline(0.0, Baseline::Bottom, font.size) - vega_baseline(0.0, Baseline::Middle, font.size);
         let vega: Vec<Bounds> = texts
             .iter()
-            .map(|&(_, _, w, y)| boxed(y, w.min(limit), font.size))
+            .map(|&(_, _, w, y)| {
+                let risen = self.rises_bottom_label && (y - plot.height).abs() <= 0.5;
+                boxed(if risen { y + rise } else { y }, w.min(limit), font.size)
+            })
             .collect();
-        let shown = parity_visible(&vega, self.labels.min_gap);
+        let shown = drawn_labels(self.domain.scale, &texts.iter().map(|t| t.1.as_str()).collect::<Vec<_>>(), &vega, self.labels.min_gap);
         let ghost = match own_format {
             None => None,
             Some(own) => self.ghost_width(own, &texts, &shown)?,
@@ -568,7 +585,7 @@ impl<'a> ValueAxis<'a> {
         // hangs from the right tick and a right axis's ends at the far edge of the primary's
         // gutter: the primary's reserve is inherited, and each ghost label's width extends the
         // margin a second time.
-        let band = self.labels.title.map_or(0.0, |title| title.padding - text_ink::rise(title.font.size, "bottom"));
+        let band = side_title_band(self.labels.title);
         let gutter = match side {
             Side::Left => Insets {
                 top,
@@ -589,13 +606,18 @@ impl<'a> ValueAxis<'a> {
         let title = self
             .labels
             .title
-            .map(|title| self.place_rotated_title(title, plot, if side == Side::Left { -reach } else { plot.width + reach }, side == Side::Left))
+            .map(|title| place_rotated_title(self.book, title, plot, if side == Side::Left { -reach } else { plot.width + reach }, side == Side::Left))
             .transpose()?;
         Ok(Placement {
             rungs,
             gutter,
             title,
         })
+    }
+
+    /// Whether the axis hangs on the plot's right edge.
+    pub fn is_right(&self) -> bool {
+        matches!(self.labels.side, Side::Right | Side::RightAway)
     }
 
     /// A bottom or top axis on a plot of `plot` px. Which labels show is Vega's
@@ -610,7 +632,6 @@ impl<'a> ValueAxis<'a> {
         let ValueLabels {
             font,
             side,
-            tick,
             padding,
             limit,
             min_gap,
@@ -631,7 +652,8 @@ impl<'a> ValueAxis<'a> {
                 edge - distance
             }
         };
-        let anchor = away(tick + padding);
+        // An x tick hangs into the label gap and adds no height.
+        let anchor = away(padding);
         let baseline = if below {
             Baseline::Top
         } else {
@@ -667,7 +689,7 @@ impl<'a> ValueAxis<'a> {
             let space = vega_space((ink.x1, ink.x2), (x, anchor), baseline, font.size, 1, 0.0);
             placed.push((value, text, x, align, ink, space));
         }
-        let shown = parity_visible(&vega, min_gap);
+        let shown = drawn_labels(self.domain.scale, &placed.iter().map(|p| p.1.as_str()).collect::<Vec<_>>(), &vega, min_gap);
         let rungs: Vec<PlacedRung> = placed
             .into_iter()
             .zip(shown)
@@ -722,38 +744,51 @@ impl<'a> ValueAxis<'a> {
             title,
         })
     }
+}
 
-    /// A left or right axis title, turned a quarter and centered on the plot's height, `label_edge` the
-    /// plot-local x of the labels' far edge. It sits `padding` plus the turn's nudge past it
-    /// (`chart-renderer/src/common.rs::axis_title_rotated`, its band `y_title_extra`); a title longer than the plot is refused, as production wraps it.
-    fn place_rotated_title(&self, title: AxisTitle, plot: Size, label_edge: f64, left: bool) -> Result<PlacedTitle, Diagnostic> {
-        if title.text.contains('\n') || title.text.contains(measure::LINE_SEP) {
-            return Err(diag::err_internal(
-                "an axis title reached layout on more than one line: production joins an authored break",
-            ));
-        }
-        let run = self.book.run(title.text, &title.font).map_err(diag::err_internal)?;
-        if run.advance > plot.height {
-            return Err(Diagnostic::refused(refuse!("a value axis title longer than its plot is not supported")));
-        }
-        let sign = if left { -1.0 } else { 1.0 };
-        let x = label_edge + sign * (title.padding - measure::baseline_shift("bottom", title.font.size));
-        let y = plot.height / 2.0;
-        Ok(PlacedTitle {
-            text: title.text.to_string(),
-            x,
-            y,
-            baseline: Baseline::Bottom,
-            turn: Some(sign * 90.0),
-            // The turned text's up points away from the plot.
-            ink: Bounds {
-                x1: x - if left { run.ascent } else { run.descent },
-                y1: y - run.advance / 2.0,
-                x2: x + if left { run.descent } else { run.ascent },
-                y2: y + run.advance / 2.0,
-            },
-        })
+/// The box of a label `width` by `height` on a left or right axis, centered on `y`, ending at the anchor
+/// `distance` when `left_of_anchor` and starting on it otherwise.
+pub(crate) fn side_box(distance: f64, left_of_anchor: bool, y: f64, width: f64, height: f64) -> Bounds {
+    let x1 = if left_of_anchor { distance - width } else { distance };
+    Bounds { x1, y1: y - height / 2.0, x2: x1 + width, y2: y + height / 2.0 }
+}
+
+/// The band a left or right axis's title takes in the gutter, past its labels: its padding less the rise
+/// of its turned text.
+pub(crate) fn side_title_band(title: Option<AxisTitle>) -> f64 {
+    title.map_or(0.0, |title| title.padding - text_ink::rise(title.font.size, "bottom"))
+}
+
+/// A left or right axis title, turned a quarter and centered on the plot's height, `label_edge` the
+/// plot-local x of the labels' far edge. It sits `padding` plus the turn's nudge past it
+/// (`chart-renderer/src/common.rs::axis_title_rotated`, its band `y_title_extra`); a title longer than the plot is refused, as production wraps it.
+pub(crate) fn place_rotated_title(book: &FontBook, title: AxisTitle, plot: Size, label_edge: f64, left: bool) -> Result<PlacedTitle, Diagnostic> {
+    if title.text.contains('\n') || title.text.contains(measure::LINE_SEP) {
+        return Err(diag::err_internal(
+            "an axis title reached layout on more than one line: production joins an authored break",
+        ));
     }
+    let run = book.run(title.text, &title.font).map_err(diag::err_internal)?;
+    if run.advance > plot.height {
+        return Err(Diagnostic::refused(refuse!("a value axis title longer than its plot is not supported")));
+    }
+    let sign = if left { -1.0 } else { 1.0 };
+    let x = label_edge + sign * (title.padding - measure::baseline_shift("bottom", title.font.size));
+    let y = plot.height / 2.0;
+    Ok(PlacedTitle {
+        text: title.text.to_string(),
+        x,
+        y,
+        baseline: Baseline::Bottom,
+        turn: Some(sign * 90.0),
+        // The turned text's up points away from the plot.
+        ink: Bounds {
+            x1: x - if left { run.ascent } else { run.descent },
+            y1: y - run.advance / 2.0,
+            x2: x + if left { run.descent } else { run.ascent },
+            y2: y + run.advance / 2.0,
+        },
+    })
 }
 
 /// A bottom or top axis title centered on the plot: its baseline the label

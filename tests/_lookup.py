@@ -4,13 +4,16 @@ from collections.abc import Iterable
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
+from dbt_charts.core.compile.engine import engine_compile_recorded
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.execute import plan_names, run as run_stage
 from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.lookup import Ledger, Lookup, Miss
 from dbt_charts.core.execute.plan import CacheKey, QueryRun, make_context
+from dbt_charts.core.execute.planned import Planned
 from dbt_charts.core.execute.query_plan import PlannedQuery, PlannedSqlQuery, QueryPlan
 from dbt_charts.core.execute.query_result import QueryResult
+from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
 from dbt_charts.core.render.render_result import RenderResult
 
@@ -62,8 +65,10 @@ def all_miss(names: Iterable[str], variables: object = None) -> Lookup:
     return Lookup({}, tuple(Miss(planned_query(name)) for name in names), {})
 
 
-def _hand_built_plan(board: Board) -> QueryPlan:
-    """A plan of the queries *board*'s charts and layers name, for a board built by hand."""
+def _hand_built_plan(board: Board, project: Project) -> Planned:
+    """A plan of the queries *board*'s charts and layers name, for a board built by hand.
+    Such a board has no text for the engine to compile, so the compile is of an empty
+    board: a chart the engine would draw from it is not there, and raises."""
     charts = board.placed_charts()
     layers = {
         chart.id: [layer.query for layer in plan_names._layers(chart)]
@@ -71,12 +76,15 @@ def _hand_built_plan(board: Board) -> QueryPlan:
     }
     names = {c.query_name for c in charts if c.query_name is not None}
     names.update(name for keys in layers.values() for name in keys if name)
-    return _plans.plan_of(
-        {name: sql_entry("SELECT 1") for name in names},
-        chart_queries={
-            chart.id: {"query": chart.query_name, "layers": layers[chart.id]}
-            for chart in charts
-        },
+    return Planned(
+        *engine_compile_recorded(None, content="title: hand built\n", project=project),
+        _plans.plan_of(
+            {name: sql_entry("SELECT 1") for name in names},
+            chart_queries={
+                chart.id: {"query": chart.query_name, "layers": layers[chart.id]}
+                for chart in charts
+            },
+        ),
     )
 
 
@@ -105,7 +113,7 @@ def render_via(mock: MagicMock, board: Board, **options: Any) -> RenderResult:
     plan = (
         plan_of(board, env, mock.rendered_at, all_queries=True)
         if id(board) in _TEXTS
-        else _hand_built_plan(board)
+        else _hand_built_plan(board, env.project)
     )
     ctx = make_context(
         board,

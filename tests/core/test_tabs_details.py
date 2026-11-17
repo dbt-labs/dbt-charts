@@ -1474,7 +1474,7 @@ class TestInactiveTabDataAwareResolution:
     def _build(self, yaml_content: str, local_project):
         return _compile_and_build_executor(yaml_content, local_project)
 
-    def test_inactive_tab_pie_survives_artifact_replay(self, local_project):
+    def test_inactive_tab_pie_survives_artifact_replay(self, local_project, tmp_path):
         """CRITICAL regression: artifact emit -> replay with a pie in an
         inactive tab.
 
@@ -1526,7 +1526,14 @@ tabs:
         # Must not raise ERR-RESOLVED-PIE-DATA-MISMATCH: before the fix, the
         # inactive tab's pie was resolved against [] while record_board
         # recorded the query's real rows.
-        svg = render_board_from_artifact(resolved, recording, {})
+
+        from dbt_charts.core.compile.engine import engine_compile_recorded
+        from dbt_charts.core.render.board_replay import BoardArtifact
+
+        record = engine_compile_recorded(
+            None, content=yaml_content, project=local_project(tmp_path)
+        )[1]
+        svg = render_board_from_artifact(BoardArtifact(resolved, record), recording, {})
         assert svg
 
     def test_inactive_tab_pie_honors_authored_width(self, local_project):

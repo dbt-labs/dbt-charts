@@ -46,6 +46,8 @@ pub struct Bound {
     pub(crate) ladder: Vec<(String, String)>,
     pub(crate) cells: Vec<Cell>,
     pub(crate) marks: CellMarks,
+    /// `style.conditional`'s color for each x category's label.
+    pub(crate) x_label_fills: std::collections::HashMap<String, String>,
 }
 
 /// One band dimension.
@@ -228,6 +230,11 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     };
     let cells = bind_cells(&rows, &x_domain, &y_domain, &paint)?;
     let marks = CellMarks::of(&r.style.rect_mark)?;
+    let axis_rules = crate::families::heatmap::axis_label_rules(&r);
+    if x_grain.is_some() {
+        axis_rules.refuse_all("a date x axis draws its labels per tick")?;
+    }
+    let x_label_fills = axis_rules.category_fills(&x_domain, &rows)?;
 
     Ok(Bound {
         padding: payload.padding,
@@ -244,6 +251,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         ladder,
         cells,
         marks,
+        x_label_fills,
         r,
     })
 }

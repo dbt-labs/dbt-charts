@@ -1187,11 +1187,8 @@ rows:
         assert "[chart error:" in result
         assert "vs last month" not in result
 
-    def test_kpi_zero_rows_raises_chart_error(self, make_chart):
-        """A KPI with no data errors that chart in text, matching the SVG
-        renderer's own guard (the engine's KPI card refuses the same case) --
-        not a silently empty KPI section.
-        """
+    def test_kpi_zero_rows_reads_as_no_results(self, make_chart):
+        """A KPI with no data reads as the card draws it: a dash and "No results"."""
         data: list[dict] = []
         chart = make_chart("kpi", value="revenue", x=None, y=None)
         board = _make_board([chart])
@@ -1199,7 +1196,8 @@ rows:
 
         result = render_via(executor, board, format="text").output
 
-        assert "[chart error:" in result
+        assert "- value: \u2014" in result
+        assert "- support: No results" in result
 
 
 class TestTextFormatWarnings:
@@ -1458,6 +1456,33 @@ rows:
         assert "Hit rate (kpi)" in output
         assert "hit_rate_kpi" not in output
 
+    def test_percent_y_range_matches_the_axis_tick_precision(self) -> None:
+        output = _render_yaml_text(
+            f"""\
+title: T
+{_ONE_QUERY}
+charts:
+  share:
+    query: q
+    type: line
+    x: month
+    y: share
+    style:
+      axis_y:
+        labels:
+          format: percent
+rows:
+  - share
+""",
+            [
+                {"month": "2024-01-01", "share": 0.537},
+                {"month": "2024-02-01", "share": 0.812},
+            ],
+        )
+
+        assert "share: 54%–81%" in output
+        assert "53.7%" not in output
+
     def test_decimal_measure_shows_y_range(self) -> None:
         from decimal import Decimal
 
@@ -1697,13 +1722,12 @@ rows:
         assert "## Revenue drivers" in output
 
 
-def test_kpi_with_no_rows_stamps_no_data_code(make_chart):
-    from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
+def test_kpi_with_no_rows_reads_as_no_results(make_chart):
     from dbt_charts.core.render.board_to_dict import _render_chart_item
 
     chart = make_chart("kpi", value="revenue", x=None, y=None)
     collected = []
-    _render_chart_item(
+    item = _render_chart_item(
         chart,
         _make_executor([]),
         {},
@@ -1711,6 +1735,54 @@ def test_kpi_with_no_rows_stamps_no_data_code(make_chart):
         collected,
         filter_variables=frozenset(),
         link_open="page",
+        filters_of=lambda _chart: [],
         include_text_format=True,
     )
-    assert [d.code for d in collected] == [ERR_KPI_NO_DATA.code]
+    assert collected == []
+    assert item["kpi_text"] == {"value": "\u2014", "support": "No results"}
+
+
+def test_kpi_with_no_rows_names_the_filters_in_its_text(make_chart):
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.render.board_to_dict import _kpi_text_parts
+
+    chart = make_chart("kpi", value="revenue")
+    resolved = resolve(
+        chart,
+        [{"revenue": 1.0}],
+        chart_style_context=_default_chart_style_context(),
+    )
+    parts = _kpi_text_parts(resolved, None, None, [("Region", "EMEA")])
+    assert parts["support"] == "No results \u00b7 Region: EMEA"
+
+
+class TestSqueezedTablePageSize:
+    def test_the_pagination_line_states_the_rows_the_slot_drew_not_page_rows(
+        self,
+    ) -> None:
+        import re
+
+        data = [{"account": f"Acct{i}", "total": i} for i in range(60)]
+        output = _render_yaml_text(
+            f"""\
+title: T
+{_ONE_QUERY}
+charts:
+  t:
+    query: q
+    type: table
+    style:
+      pagination:
+        mode: pages
+        page_rows: 20
+rows:
+  - height: 300px
+    rows:
+      - t
+""",
+            data,
+        )
+
+        drawn = re.search(r"fits (\d+) of the 20 rows", output)
+        assert drawn, output
+        assert f"60 rows, {drawn[1]} a page" in output

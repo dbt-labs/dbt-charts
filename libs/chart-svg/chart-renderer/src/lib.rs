@@ -418,6 +418,11 @@ pub struct Payload {
     /// same name links to `?col=value` (`automatic_link.get_filter_variables_context`).
     #[serde(default)]
     pub filter_variables: Vec<String>,
+    /// The board filters that reach this chart and hold a non-default value, as `(label, value
+    /// text)` in the variable bar's own words. A chart with nothing to show names them under
+    /// its "No results"; empty means no filter is active.
+    #[serde(default)]
+    pub empty_filters: Vec<(String, String)>,
     /// The host acts on `data-dbt-page-var` (`dct serve`, Cloud): a paginated
     /// table draws only the page its variable names, and its controls commit
     /// that variable. Off, an export pre-renders every page
@@ -444,9 +449,9 @@ pub struct Payload {
     /// Every geo source a map chart draws, as the TopoJSON or GeoJSON document's
     /// JSON text keyed by the chart's `geo_url`. The engine does no I/O: the host
     /// loads the documents and the engine parses each distinct text once
-    /// (`families::geo::source`). Absent on a payload with no map.
+    /// (`bind::geo_source`). Absent on a payload with no map.
     #[serde(default)]
-    pub geometries: Option<families::geo::source::Geometries>,
+    pub geometries: Option<::bind::geo_source::Geometries>,
     /// Set by `sizing::render_first_vega_height`'s own probe render —
     /// production's ONE "static estimate, before any layout decision"
     /// measurement call (`layout_sizing.py`'s `item.height == 0` branch) —
@@ -525,7 +530,7 @@ impl Payload {
     /// This payload over `resolved` and `rows`, without copying the ones it replaces.
     pub(crate) fn with_inputs(&self, resolved: Value, rows: impl Into<SharedRows>) -> Payload {
         let rows = rows.into();
-        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, variable_options, filter_variables, interactive_controls, link_context, datasets, schema, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, placement, max_template_output_bytes, cell_text } = self;
+        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, variable_options, filter_variables, empty_filters, interactive_controls, link_context, datasets, schema, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, placement, max_template_output_bytes, cell_text } = self;
         Payload {
             resolved,
             rows,
@@ -539,6 +544,7 @@ impl Payload {
             variables: variables.clone(),
             variable_options: variable_options.clone(),
             filter_variables: filter_variables.clone(),
+            empty_filters: empty_filters.clone(),
             interactive_controls: *interactive_controls,
             link_context: link_context.clone(),
             datasets: datasets.clone(),
@@ -755,10 +761,19 @@ fn draw_family(
     if chart_type == "custom" {
         return families::custom::render(payload, fonts).map(|svg| (svg, None));
     }
-    // A map with no rows is a base map, not an empty chart: `geoshape` decides it.
-    if (payload.is_empty_result() || unplotted(&payload.resolved, chart_type))
-        && !matches!(chart_type, "callout" | "geoshape")
+    // A chart authored with no `x` or no `y` is an authoring state: it draws its empty frame.
+    let authored_empty = unplotted(&payload.resolved, chart_type);
+    // Nothing to plot (no rows, or no value in the plotted column) is one quiet card in every
+    // chart family; a map with no rows is a base map, which `geoshape` decides itself.
+    if !authored_empty
+        && matches!(chart_type, "bar" | "line" | "area" | "scatter" | "heatmap" | "histogram" | "pie" | "point_map")
+        && families::no_results::nothing_to_plot(payload, chart_type)?
     {
+        families::cartesian_errors::check(payload, chart_type)?;
+        return families::no_results::render(chart_type, payload, fonts).map(|svg| (svg, None));
+    }
+    // A callout has no query, so no rows is its normal shape.
+    if (payload.is_empty_result() || authored_empty) && !matches!(chart_type, "callout" | "geoshape") {
         // The empty chart still raises what production raises of its resolved model.
         if matches!(chart_type, "bar" | "line" | "area" | "scatter" | "heatmap" | "histogram") {
             families::cartesian_errors::check(payload, chart_type)?;

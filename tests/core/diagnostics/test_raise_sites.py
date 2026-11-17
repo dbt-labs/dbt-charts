@@ -11,7 +11,6 @@ from __future__ import annotations
 import sys
 import types
 from collections.abc import Callable
-from datetime import date
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -23,7 +22,6 @@ from dbt_charts.core.compile.compiler import compile
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
-from dbt_charts.core.compile.models.chart.normalized import KpiChart
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -197,70 +195,6 @@ class TestFormatConversionFailureCarriesCode:
         assert "pip install vl-convert-python" in str(exc_info.value)
 
 
-class TestRenderKpiMultirowCarriesCode:
-    def test_kpi_multirow_carries_code(self) -> None:
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.diagnostics.codes_render import ERR_KPI_MULTIROW
-
-        from .._engine_render import render_kpi_svg
-
-        chart = KpiChart(
-            id="rev",
-            query=SqlQuery(sql="SELECT 1", source="test"),
-            query_name="q",
-            type="kpi",
-            value="n",
-        )
-        data = [{"n": 1}, {"n": 2}]
-        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-
-        with pytest.raises(ChartDataError) as exc_info:
-            render_kpi_svg(
-                resolved,
-                data,
-                width=200,
-                height=140,
-                board_style=resolve_style(get_theme_style()),
-            )
-
-        assert exc_info.value.code is ERR_KPI_MULTIROW
-
-
-class TestRenderKpiFormatKindMismatchCarriesCode:
-    def test_support_format_mismatch_carries_code(self) -> None:
-        from dbt_charts.core.compile.models.chart.authored import KpiSupportConfig
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
-        from dbt_charts.core.diagnostics.codes_render import (
-            ERR_KPI_FORMAT_KIND_MISMATCH,
-        )
-
-        from .._engine_render import render_kpi_svg
-
-        chart = KpiChart(
-            id="rev",
-            query=SqlQuery(sql="SELECT 1", source="test"),
-            query_name="q",
-            type="kpi",
-            value="revenue",
-            support=KpiSupportConfig(value="renewed_on"),
-            style=KpiChartStylePatch.model_validate({"support": {"format": "percent"}}),
-        )
-        data = [{"revenue": 1_500_000, "renewed_on": date(2026, 11, 15)}]
-        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-
-        with pytest.raises(ChartDataError) as exc_info:
-            render_kpi_svg(
-                resolved,
-                data,
-                width=300,
-                height=160,
-                board_style=resolve_style(get_theme_style()),
-            )
-
-        assert exc_info.value.code is ERR_KPI_FORMAT_KIND_MISMATCH
-
-
 class TestRenderKpiTemporalFormatInvalidCarriesCode:
     def test_bad_strftime_alias_carries_code(self) -> None:
         from dbt_charts.core.diagnostics.codes_render import (
@@ -390,50 +324,6 @@ rows:
 
         assert render_result.board_error is not None
         assert render_result.board_error.code == ERR_INTERNAL.code
-
-
-def _kpi_error(data: list[dict[str, int]], value: str = "n") -> ChartDataError:
-    from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
-    from dbt_charts.core.compile.models.query.normalized import SqlQuery
-
-    from .._engine_render import render_kpi_svg
-
-    chart = KpiChart(
-        id="rev",
-        query=SqlQuery(sql="SELECT 1", source="test"),
-        query_name="q",
-        type="kpi",
-        value=value,
-    )
-    resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-    assert isinstance(resolved, ResolvedKpiChart)
-    with pytest.raises(ChartDataError) as exc_info:
-        render_kpi_svg(
-            resolved,
-            data,
-            width=200,
-            height=140,
-            board_style=resolve_style(get_theme_style()),
-        )
-    return exc_info.value
-
-
-class TestRenderKpiDataErrorsCarryCode:
-    def test_no_rows_carries_code(self) -> None:
-        from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
-
-        error = _kpi_error([])
-        assert error.code is ERR_KPI_NO_DATA
-        assert error.fields == {"chart_id": "rev"}
-
-    def test_missing_value_column_carries_code(self) -> None:
-        from dbt_charts.core.diagnostics.codes_render import (
-            ERR_KPI_VALUE_COLUMN_NOT_FOUND,
-        )
-
-        error = _kpi_error([{"other": 1}])
-        assert error.code is ERR_KPI_VALUE_COLUMN_NOT_FOUND
-        assert error.fields == {"chart_id": "rev", "value_column": "n"}
 
 
 _TABLE_ROWS = [{"a": 1, "b": 2, "c": 3}]

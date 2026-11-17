@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use diagnostic::{diag, Diagnostic};
+use diagnostic::{diag, refuse, Diagnostic};
 
 use crate::board::band::{row_shifts, TitleShift};
 use crate::board::tree::{Cell, Chart, Content, Details, Item, Kind, Node, Spare, Title};
@@ -52,6 +52,10 @@ struct Slot {
     title: Option<TitleMetrics>,
     /// Where the item's title and body move in its `cols` row.
     shift: TitleShift,
+    /// A chart whose untitled wrapper passes its title into the row's band,
+    /// which moves it: production moves it after sizing, without reflowing
+    /// the row (quirk class Q2g's law), so the chart is refused by name.
+    deferred: bool,
     /// A nested board's measure; `None` for a chart, or while collapsed.
     board: Option<Measured>,
 }
@@ -68,6 +72,8 @@ pub struct Boxed {
     /// The shift its `cols` row gives the item. A board's band and layout area
     /// sit `body_dy` below where its chrome puts them.
     pub shift: TitleShift,
+    /// A chart whose wrapped title the row's band moves (`Slot::deferred`).
+    pub deferred: bool,
     pub board: Option<Vec<Option<Boxed>>>,
 }
 
@@ -94,7 +100,7 @@ struct Drawn<'a> {
 pub fn measure(board: &Node, available: f64, card_gap: f64, natural: &mut Natural) -> Result<Measured, Diagnostic> {
     let placed = item_widths(board, available, card_gap);
     let mut measured = plan(board, available, &placed, natural)?;
-    shift_rows(board, &mut measured);
+    shift_rows(board, &mut measured)?;
     finish(board, &mut measured, card_gap);
     Ok(measured)
 }
@@ -140,6 +146,7 @@ fn plan(
                 content,
                 title,
                 shift: TitleShift::default(),
+                deferred: false,
                 board: nested,
             }))
         })
@@ -159,16 +166,22 @@ fn plan(
 /// Gives every `cols` row's titled cells their shifts, inner boards first: a
 /// row inside an untitled `cols` wrapper shares its parent's band, so the
 /// parent's shift is the one that stands.
-fn shift_rows(board: &Node, measured: &mut Measured) {
+///
+/// A title an untitled wrapper passes into the band that the band moves from
+/// where the wrapper's own row put it: production moves it onto the band after
+/// sizing, without reflowing the row (quirk class Q2g's law), which the engine
+/// does not port. A chart's is marked for its own refusal, so the rest of the
+/// board draws; a board's is refused here.
+fn shift_rows(board: &Node, measured: &mut Measured) -> Result<(), Diagnostic> {
     for (item, slot) in board.items.iter().zip(measured.items.iter_mut()) {
         if let (Content::Board(inner), Some(slot)) = (&item.content, slot) {
             if let Some(planned) = slot.board.as_mut() {
-                shift_rows(inner, planned);
+                shift_rows(inner, planned)?;
             }
         }
     }
     if board.kind != Kind::Cols {
-        return;
+        return Ok(());
     }
     let mut targets = Vec::new();
     for (at, (item, slot)) in board.items.iter().zip(&measured.items).enumerate() {
@@ -178,8 +191,18 @@ fn shift_rows(board: &Node, measured: &mut Measured) {
     }
     let shifts = row_shifts(&targets.iter().map(|(_, m)| *m).collect::<Vec<_>>());
     for ((path, _), shift) in targets.iter().zip(shifts) {
-        slot_at(measured, path).shift = shift;
+        let slot = slot_at(measured, path);
+        if path.len() > 1 && shift != slot.shift {
+            if slot.board.is_some() {
+                return Err(Diagnostic::refused(refuse!(
+                    "a title its untitled wrapper board shifts onto its row's title band is not supported"
+                )));
+            }
+            slot.deferred = true;
+        }
+        slot.shift = shift;
     }
+    Ok(())
 }
 
 /// The items that draw a `cols` cell's titles, as paths from the row, with the
@@ -499,16 +522,22 @@ fn takes_spare(item: &Item, alone: bool) -> bool {
     }
 }
 
-/// Every drawn item's box when `board`, measured, is `height` tall, and the
-/// warnings its charts' floors raise against the slots they got. A chart under
-/// an authored `height:`, its own or an ancestor's, whose category floor is
-/// taller than its slot warns.
+/// Every drawn item's box when the root `board`, measured, is `height` tall, and
+/// the warnings its charts' floors raise against the slots they got. A chart
+/// under an authored `height:`, its own or an ancestor's, whose category floor
+/// is taller than its slot warns.
+///
+/// The root lays its items out in its whole height, its title band included
+/// (`calculate_data_aware_layout` hands `calculate_layout_items` the container
+/// height): its rows never scale to the band's rounding, and a percentage
+/// height is of that whole height. A nested board's area is its
+/// cell less its band (`place`).
 pub fn boxes(board: &Node, measured: &Measured, height: f64, card_gap: f64) -> Boxes {
     let mut diagnostics = Vec::new();
     let items = place(
         board,
         measured,
-        (height - board.band - board.chrome_height).max(0.0),
+        (height - board.chrome_height).max(0.0),
         card_gap,
         false,
         &mut diagnostics,
@@ -595,6 +624,7 @@ fn place(
             width: rect.width,
             height: rect.height,
             shift: d.slot.shift,
+            deferred: d.slot.deferred,
             board: nested,
         });
     }

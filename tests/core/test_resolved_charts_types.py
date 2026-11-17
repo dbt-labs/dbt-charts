@@ -9,7 +9,6 @@ cascade and threaded separately to runtime chart resolution.
 
 from __future__ import annotations
 
-import dataclasses
 import typing
 from typing import Any
 
@@ -128,51 +127,3 @@ class TestMergedChartsKpiType:
 
         context = resolve_chart_style_context(get_theme_style())
         assert context.kpi.border.radius is not None and context.kpi.border.radius >= 0
-
-
-class TestKpiRendererWithStyleType:
-    """KPI renderer works after kpi: Any → KpiStyle."""
-
-    def test_kpi_renders_without_crash(self):
-        from ._engine_render import render_kpi_svg
-
-        board_style = resolve_style(get_theme_style())
-        board_context = resolve_chart_style_context(get_theme_style())
-        data = [{"value": 42}]
-        chart = KpiChart(id="test_kpi", type="kpi", label="Revenue", value="value")
-        resolved = resolve(chart, data, chart_style_context=board_context)
-        svg = render_kpi_svg(resolved, data, width=300, board_style=board_style)
-        assert "<svg" in svg
-
-    def test_kpi_value_font_weight_from_compiled(self):
-        """The KpiValueStyle.font.weight reaches the rendered SVG.
-
-        Override with a distinctive weight (700) and assert it round-trips —
-        survives any default-value tweak. The chart-local KpiChartStyle
-        override is applied via ``dataclasses.replace`` on the non-Resolved
-        ``ChartStyleContext`` — legal because it carries no Resolved prefix.
-        """
-        from ._engine_render import render_kpi_svg
-
-        board_style = resolve_style(get_theme_style())
-        board_context = resolve_chart_style_context(get_theme_style())
-        # Use model_copy to override only weight; size and family remain
-        # cascade-filled so the renderer's non-None contract holds.
-        cascaded_family = board_context.kpi.value.font.family
-        kpi_override = board_context.kpi.model_copy(
-            update={
-                "value": board_context.kpi.value.model_copy(
-                    update={
-                        "font": board_context.kpi.value.font.model_copy(
-                            update={"weight": 700, "family": cascaded_family}
-                        )
-                    }
-                )
-            }
-        )
-        modified_context = dataclasses.replace(board_context, kpi=kpi_override)
-        data = [{"value": 42}]
-        chart = KpiChart(id="test_kpi", type="kpi", label="Revenue", value="value")
-        resolved = resolve(chart, data, chart_style_context=modified_context)
-        svg = render_kpi_svg(resolved, data, width=300, board_style=board_style)
-        assert 'font-weight="700"' in svg

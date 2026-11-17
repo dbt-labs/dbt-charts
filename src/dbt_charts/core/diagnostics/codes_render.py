@@ -1144,7 +1144,7 @@ WARN_QUERY_RETURNED_ZERO_ROWS = REGISTRY.register(
         title="Chart query returned zero rows",
         message_template="Chart {chart_id!r}: query returned zero rows.",
         fix_template="Check the WHERE clause or date filter: it may be excluding all data for the current filter values.",
-        doc="Fires on any chart whose query returned zero rows. An empty chart renders as a blank panel with axes; no signal to the viewer that the query returned nothing. Most common cause: a WHERE clause or date filter that excludes all data.",
+        doc='Fires on any chart whose query returned zero rows. The viewer sees a quiet "No results" card (a KPI shows a dash), naming the board filters that reach the chart, so nothing looks broken; this warning tells the author. Most common cause: a WHERE clause or date filter that excludes all data.',
         docs_topic="charts",
     )
 )
@@ -1217,9 +1217,9 @@ WARN_TABLE_PAGE_SQUEEZED = REGISTRY.register(
         code="WARN-TABLE-PAGE-SQUEEZED",
         domain="render",
         title="Layout slot forced a smaller table page than the table asked for",
-        message_template="Table {chart_id!r}: the layout slot fits {drawn_rows} of the {page_rows} rows a page holds ({total_rows} rows total); the rest moved onto later pages.",
+        message_template="Table {chart_id!r}: the layout slot fits {drawn_rows} of the {page_rows} rows a page holds ({total_rows} rows total); the rest sit on later pages or scroll out of view.",
         fix_template="Give the tile more height (layout height:, a taller row, or fewer siblings sharing the row), or set `page_rows: {drawn_rows}` under `style.pagination` of `charts.{chart_id}` to page at what the slot fits. page_rows is a ceiling: raising it does not make the slot taller.",
-        doc="Fires when a pinned layout slot (explicit height, grid row, equalized siblings) fits fewer rows than the table's page_rows, so the paginator draws fewer rows per page and the export photographs as a faithful table showing a fraction of its rows. An auto-sized tile is measured by the renderer and always fits its page; page_rows: null never warns. Paginating because the data is longer than the page is not this warning.",
+        doc="Fires when a pinned layout slot (explicit height, grid row, equalized siblings) fits fewer rows than the table's page_rows, so the paginator (or, in scroll mode, the viewport) draws fewer rows per page and the export photographs as a faithful table showing a fraction of its rows. An auto-sized tile is measured by the renderer and always fits its page; page_rows: null never warns. Paginating because the data is longer than the page is not this warning.",
         docs_topic="charts",
     )
 )
@@ -1255,7 +1255,7 @@ WARN_LINE_JOINS_MISSING_PERIODS = REGISTRY.register(
         title="Line joins straight across periods missing from the data",
         message_template="Chart {chart_id!r}: the {chart_type} joins straight across periods that have no row, so the gap reads as data: {detail}.",
         fix_template="Make each missing period a row with a NULL `{y_field}`: LEFT JOIN the query to a spine of every {grain} from {first} to {last} (`generate_series` or a date table){by_series}. The line then breaks at the gap. If the join is deliberate, add `warnings_ignore: [WARN-LINE-JOINS-MISSING-PERIODS]` to chart {chart_id!r}.",
-        doc="Fires on a line or area chart with a temporal x when, for a series, the x values keep a regular grain (the smallest step between consecutive values is also most of the steps) and two consecutive values with a y skip one or more periods of that grain. A line breaks only at a row whose y is NULL; a period with no row draws no gap, so the line joins the two neighbors and the missing periods look like a straight trend. Irregular or event-shaped x values have no grain to skip and stay quiet, as does a series whose missing periods are already rows with a NULL y. A daily series with no weekend rows does not count Saturdays and Sundays as missing.",
+        doc="Fires on a line or area chart with a temporal x when, for a series, the x values keep a regular grain (the smallest step between consecutive values is also most of the steps) and two consecutive values with a y skip one or more periods of that grain while the line still joins them. A line breaks at a row whose y is NULL and across a large gap (one far wider than the series' usual step, or a skipped period wide on the plot); a smaller run of periods with no row draws no gap, so the line joins the two neighbors and the missing periods look like a straight trend. With `style.marks.line.connect` set to true the line joins every gap, and every skip fires. Irregular or event-shaped x values have no grain to skip and stay quiet, as does a series whose missing periods are already rows with a NULL y. A daily series with no weekend rows does not count Saturdays and Sundays as missing.",
         summary="Fired when a temporal line or area joins across periods that have no row.",
         docs_topic="charts",
     )
@@ -2224,6 +2224,19 @@ WARN_TREND_ON_BARS = REGISTRY.register(
         fix_template="Draw the column as a line chart (or a line layer) to fit a trend. To keep the bars, thin them with style.marks.bar.band_width (e.g. 0.5) so more of the trend shows between them. If the trend over bars is deliberate, add WARN-TREND-ON-BARS to the chart's warnings_ignore.",
         doc="Fired once per `type: trend` annotation that reads a bar mark: an unstacked bar, or the `series: total` of a stacked bar. The trend still draws. A trend over an area is an error instead, and a trend over a line or scatter mark is the intended use.",
         summary="Fired when a trend annotation fits a bar mark.",
+        docs_topic="charts",
+    )
+)
+
+WARN_TORN_OUTLIER_NO_OUTLIER = REGISTRY.register(
+    WarningCode(
+        code="WARN-TORN-OUTLIER-NO-OUTLIER",
+        domain="render",
+        title="Torn outlier bars are on but no bar needs tearing",
+        message_template="Chart {chart_id!r}: style.torn_outlier.enabled is on, but no bar is far enough above the rest to tear, so the chart is drawn plain.",
+        fix_template="Nothing to fix if the data may change. Otherwise set style.torn_outlier.enabled: false, or pin the break with style.torn_outlier.at.",
+        doc="Fires when `style.torn_outlier.enabled` is on and no bar qualifies as an outlier. With no authored `at`, no gap between sorted bar lengths reaches the minimum ratio (or fewer than four bars exist); with an authored `at`, no bar extends past it. The chart renders without a tear. This is informational because the data under a saved board can change.",
+        summary="style.torn_outlier is enabled but no bar exceeds the break.",
         docs_topic="charts",
     )
 )

@@ -24,7 +24,7 @@ use crate::column_kind::{field_channel, ChannelType, Role};
 use crate::formats::locale::{active_number_locale, d3_format};
 use crate::derived::{DerivedChart, Placed};
 use crate::formats::{column_format, resolve_format_parts, AuthoredFormat, Formats, Kind, ResolvedFormat, Tiers};
-use crate::bound::{self, AxisStyles, Key, Legend, LegendEntry, Paint, Series, SeriesKey, ValueAxis, ValueDomain, Zero};
+use crate::bound::{self, AxisStyles, Key, Legend, LegendEntry, Paint, Series, SeriesKey, ValueAxis, ValueDomain, ValueScale, Zero};
 use crate::rows::color_domain_of;
 use crate::plot::caps::caps_bottom;
 use crate::plot::domain::{self, Count};
@@ -43,14 +43,12 @@ fn total_style<'a>(placed: &'a Placed<'a>) -> Result<&'a Style, Diagnostic> {
     placed.body()?.style.as_deref().ok_or_else(|| diag::err_internal("a normalized board carries its total style"))
 }
 
-/// A family bound over no rows: the face its y axis labels would have, which the "No data" text is
-/// set in. It has no scales, so a chart whose labels are hidden has no face to set it in.
-pub fn no_data(placed: &Placed<'_>, family: &str) -> Result<bound::Cartesian, Diagnostic> {
-    let tiers = StyleTiers::of(placed.chart, placed.own, &total_style(placed)?.charts)?;
-    let y = AxisLadder::new(AxisName::Y, ChannelType::Quantitative, &tiers, None, false)?;
-    let labels = y.parts(placed.scope, family, false, false, false, false)?.labels;
-    let labels = labels.ok_or_else(|| unsupported(refuse!("a chart with no rows whose y axis labels are hidden is not supported")))?;
-    Ok(bound::Cartesian::NoData(labels.face))
+/// A chart over no rows, in its frame and `derived`'s walked style, as production draws it
+/// (`no_results::render`): the headline in the legend label font.
+pub fn no_data(derived: DerivedChart, public_id: &str, run: &RunResult, title: Option<String>, subtitle: Option<String>) -> bound::Chart {
+    let headline = derived.legend.base.label.element.font.clone();
+    let empty = bound::Empty { filters: run.empty_filters_line(public_id) };
+    bound::Chart { title, subtitle, frame: Some(derived.frame), family: Ok(bound::Family::Cartesian(bound::Cartesian::NoData { empty, headline })) }
 }
 
 /// What every cartesian family reads before its own steps: the board's total style, the tiers and
@@ -61,33 +59,42 @@ pub struct Prelude<'a> {
     pub tiers: StyleTiers<'a>,
     pub x_ladder: AxisLadder<'a>,
     pub y_ladder: AxisLadder<'a>,
+    /// The continuous scale type each axis is authored on; a family refuses or draws it, so none
+    /// ignores one (linear for an axis that is not a value axis, whose type is refused outright).
+    pub x_scale: ValueScale,
+    pub y_scale: ValueScale,
     pub x_field: &'a str,
     pub y_field: &'a str,
+    /// Each axis's title: the authored `x_label:` / `y_label:` as written (its newlines read as
+    /// spaces, a blank one stays blank), else the field's title. Tooltips and the series name read it too.
     pub x_title: String,
     pub y_title: String,
+    /// Whether the chart authors a non-empty label for the axis, which shows an `auto` title.
+    pub x_labeled: bool,
+    pub y_labeled: bool,
 }
 
 impl<'a> Prelude<'a> {
-    /// `fields`' chart as `placed`, its x axis carrying an `x_type` field. The refusals are the
-    /// ones every family shares: a board `style.formats` alias, and an axis leaf no walk reads.
-    pub fn of(fields: &'a CartesianChartFields, x_type: ChannelType, placed: &'a Placed<'a>) -> Result<Self, Diagnostic> {
+    /// `fields`' chart as `placed`, its x axis carrying an `x_type` field and its y axis a `y_type` one.
+    /// The refusals are the ones every family shares: a board `style.formats` alias, and an axis leaf no
+    /// walk reads.
+    pub fn of(fields: &'a CartesianChartFields, x_type: ChannelType, y_type: ChannelType, placed: &'a Placed<'a>) -> Result<Self, Diagnostic> {
         let y_field = match &fields.y {
             Some(Columns::One(y)) => y.as_str(),
             _ => return Err(diag::err_internal("normalize requires a cartesian chart's `y:`")),
         };
-        let labels: HashMap<String, String> = fields.labels.field_labels.clone().into_iter().collect();
-        let y_title = display_text::field_title(y_field, &labels).map_err(diag::err_internal)?;
-        Self::open(fields, x_type, y_field, y_title, placed)
+        let y_title = axis_title(y_field, fields.y_label.as_deref(), fields)?;
+        Self::open(fields, x_type, y_type, y_field, y_title, placed)
     }
 
     /// A chart that counts rows (a histogram) has no `y:` column: its y is the count, titled `y_label:`
     /// when that is non-empty, else `#`.
     pub fn counting(fields: &'a CartesianChartFields, x_type: ChannelType, placed: &'a Placed<'a>) -> Result<Self, Diagnostic> {
-        let y_title = fields.y_label.clone().filter(|label| !label.is_empty()).unwrap_or_else(|| COUNT_TITLE.to_string());
-        Self::open(fields, x_type, COUNT_TITLE, y_title, placed)
+        let y_title = fields.y_label.as_deref().filter(|label| !label.is_empty()).map_or_else(|| COUNT_TITLE.to_string(), display_text::collapse_title_newlines);
+        Self::open(fields, x_type, ChannelType::Quantitative, COUNT_TITLE, y_title, placed)
     }
 
-    fn open(fields: &'a CartesianChartFields, x_type: ChannelType, y_field: &'a str, y_title: String, placed: &'a Placed<'a>) -> Result<Self, Diagnostic> {
+    fn open(fields: &'a CartesianChartFields, x_type: ChannelType, y_type: ChannelType, y_field: &'a str, y_title: String, placed: &'a Placed<'a>) -> Result<Self, Diagnostic> {
         let style = total_style(placed)?;
         if !style.formats.is_empty() {
             return Err(unsupported(refuse!("a cartesian chart on a board with `style.formats` aliases is not supported")));
@@ -95,19 +102,35 @@ impl<'a> Prelude<'a> {
         let x_field = fields.x.as_ref().ok_or_else(|| diag::err_internal("normalize requires a cartesian chart's `x:`"))?.as_str();
         let tiers = StyleTiers::of(placed.chart, placed.own, &style.charts)?;
         let x_ladder = AxisLadder::new(AxisName::X, x_type, &tiers, None, false)?;
-        let y_ladder = AxisLadder::new(AxisName::Y, ChannelType::Quantitative, &tiers, None, false)?;
-        if let Some(leaf) = x_ladder.unwalked_leaf(x_type == ChannelType::Quantitative).or_else(|| y_ladder.unwalked_leaf(true)) {
+        let y_ladder = AxisLadder::new(AxisName::Y, y_type, &tiers, None, false)?;
+        if let Some(leaf) = x_ladder.unwalked_leaf(x_type == ChannelType::Quantitative).or_else(|| y_ladder.unwalked_leaf(y_type == ChannelType::Quantitative)) {
             return Err(unsupported(refuse!("a cartesian axis that sets `{leaf}` is not supported")));
         }
-        let labels: HashMap<String, String> = fields.labels.field_labels.clone().into_iter().collect();
-        let x_title = display_text::field_title(x_field, &labels).map_err(diag::err_internal)?;
-        Ok(Self { style, formats: Formats::new(None), tiers, x_ladder, y_ladder, x_field, y_field, x_title, y_title })
+        let x_title = axis_title(x_field, fields.x_label.as_deref(), fields)?;
+        let x_scale = if x_type == ChannelType::Quantitative { x_ladder.value_scale()? } else { ValueScale::Linear };
+        let y_scale = if y_type == ChannelType::Quantitative { y_ladder.value_scale()? } else { ValueScale::Linear };
+        Ok(Self { style, formats: Formats::new(None), tiers, x_ladder, y_ladder, x_scale, y_scale, x_field, y_field, x_title, y_title, x_labeled: is_labeled(&fields.x_label), y_labeled: is_labeled(&fields.y_label) })
     }
 
     /// The tooltip's number format, voted by `values`.
     pub fn tooltip_format(&self, values: &[f64]) -> Result<ResolvedFormat, Diagnostic> {
         let board = AuthoredFormat::named(self.style.charts.tooltip.format.as_str());
         column_format(Kind::Number, Tiers { own: Some(&board), ..Tiers::default() }, self.formats, None, None, values)
+    }
+}
+
+fn is_labeled(label: &Option<String>) -> bool {
+    label.as_deref().is_some_and(|label| !label.is_empty())
+}
+
+/// An axis title as production draws it (`axis_title_text`): the authored `label` with its newlines read as spaces, else `field`'s title.
+fn axis_title(field: &str, label: Option<&str>, fields: &CartesianChartFields) -> Result<String, Diagnostic> {
+    match label {
+        Some(label) => Ok(display_text::collapse_title_newlines(label)),
+        None => {
+            let labels: HashMap<String, String> = fields.labels.field_labels.clone().into_iter().collect();
+            display_text::field_title(field, &labels).map_err(diag::err_internal)
+        }
     }
 }
 
@@ -157,22 +180,30 @@ pub fn axis_format(ladder: &AxisLadder<'_>, formats: Formats<'_>) -> Result<Reso
     Ok(format)
 }
 
-/// The one law the families call for the parts both axes draw (each with whether the chart authors its
-/// axis `x_label:` or `y_label:`, which shows an `auto` title), walked over the placing scope
-/// (`ChartStyles.scope`); the title of an axis is `None` where
-/// the walked `title.visible` hides it.
+/// The one law the families call for the parts both axes draw, walked over the placing scope
+/// (`ChartStyles.scope`); the title of an axis is `None` where the walked `title.visible` hides it or its text is blank, and
+/// an `auto` title shows only where `p` says the chart authors the axis's label. `y_domain` is `None` for
+/// a y axis with no value ladder (a point scale).
 pub fn axes(
-    x: (&AxisLadder<'_>, String, bool),
-    y: (&AxisLadder<'_>, String, bool),
-    y_domain: &ValueDomain,
+    p: &Prelude<'_>,
+    y_domain: Option<&ValueDomain>,
     scope: &Resolved<Style>,
     family: &str,
     x_is_ruler: bool,
     y_auto_right: bool,
 ) -> Result<(AxisStyles, [Option<String>; 2]), Diagnostic> {
-    let caps = caps_bottom(y_domain, y.0.grid_visible() == Some(true), false);
-    let (x_style, y_style) = (x.0.parts(scope, family, x_is_ruler, y_auto_right, caps, x.2)?, y.0.parts(scope, family, false, y_auto_right, false, y.2)?);
-    let titles = [x_style.title.is_some().then_some(x.1), y_style.title.is_some().then_some(y.1)];
+    let grid = p.y_ladder.grid_visible() == Some(true);
+    // A point y scale bakes no ladder, so its floor is unknown and a drawn grid is taken to cap the plot.
+    let caps = y_domain.map_or(grid, |domain| caps_bottom(domain, grid, false));
+    let mut x_style = p.x_ladder.parts(scope, family, x_is_ruler, y_auto_right, caps, p.x_labeled)?;
+    let mut y_style = p.y_ladder.parts(scope, family, false, y_auto_right, false, p.y_labeled)?;
+    // A blank title draws no text and reserves no band, however the walk shows it.
+    for (style, title) in [(&mut x_style, &p.x_title), (&mut y_style, &p.y_title)] {
+        if title.is_empty() {
+            style.title = None;
+        }
+    }
+    let titles = [x_style.title.is_some().then(|| p.x_title.clone()), y_style.title.is_some().then(|| p.y_title.clone())];
     Ok((AxisStyles { x: x_style, y: vec![y_style] }, titles))
 }
 
@@ -271,9 +302,31 @@ pub fn rung_text(format: &ResolvedFormat, column_forming: bool, ticks: &[f64]) -
     Ok(texts)
 }
 
-/// The linear domain of `values` on `axis`, its ladder's rungs printed by [`rung_text`]. The
-/// domain law takes an infallible printer, so the first refusal waits here and wins over the
-/// domain's result.
+/// A domain built over an infallible rung printer: the domain laws take one, so the printer's first
+/// refusal waits here and wins over the domain's result.
+fn printed(
+    print: impl Fn(&[f64]) -> Result<Vec<String>, Diagnostic>,
+    domain: impl FnOnce(domain::RungText) -> Result<Option<ValueDomain>, bound::Invalid>,
+    context: &str,
+) -> Result<ValueDomain, Diagnostic> {
+    let refused = RefCell::new(None);
+    let text = |ticks: &[f64]| match print(ticks) {
+        Ok(texts) => texts,
+        Err(diagnostic) => {
+            refused.borrow_mut().get_or_insert(diagnostic);
+            vec![String::new(); ticks.len()]
+        }
+    };
+    let domain = domain(&text);
+    if let Some(diagnostic) = refused.into_inner() {
+        return Err(diagnostic);
+    }
+    domain
+        .map_err(|invalid| diag::err_internal(format!("cartesian {context} is invalid: {invalid:?}")))?
+        .ok_or_else(|| diag::err_internal(format!("cartesian {context} has no value to span")))
+}
+
+/// The linear domain of `values` on `axis`, its ladder's rungs printed by [`rung_text`].
 pub fn linear_domain(
     axis: &domain::Axis,
     values: &[f64],
@@ -281,21 +334,50 @@ pub fn linear_domain(
     column_forming: bool,
     context: &str,
 ) -> Result<ValueDomain, Diagnostic> {
-    let refused = RefCell::new(None);
-    let text = |ticks: &[f64]| match rung_text(format, column_forming, ticks) {
-        Ok(texts) => texts,
-        Err(diagnostic) => {
-            refused.borrow_mut().get_or_insert(diagnostic);
-            vec![String::new(); ticks.len()]
-        }
-    };
-    let domain = domain::linear(axis, values, &text);
-    if let Some(diagnostic) = refused.into_inner() {
-        return Err(diagnostic);
+    printed(|ticks| rung_text(format, column_forming, ticks), |text| domain::linear(axis, values, text), context)
+}
+
+/// The domain of a log axis over `values` (all positive: [`domain::require_positive`]), its rungs
+/// printed as production prints a log tick, each through the axis format (`format_y_label` with no
+/// ruler or tick label, which a log axis bakes none of).
+pub fn log_domain(
+    base: f64,
+    count: usize,
+    ladder: &AxisLadder<'_>,
+    values: &[f64],
+    format: &ResolvedFormat,
+    context: &str,
+) -> Result<ValueDomain, Diagnostic> {
+    let locale = active_number_locale();
+    printed(
+        |ticks| ticks.iter().map(|tick| format.paint_tick(&locale, *tick)).collect(),
+        |text| domain::log(base, count, values, ladder.domain(), text),
+        context,
+    )
+}
+
+/// The zero verdict of an axis on `scale`: a log axis has no zero to anchor or cross, and so no rule at it.
+pub fn zero_on(scale: ValueScale, verdict: Zero) -> Zero {
+    if scale.is_log() {
+        Zero::Free
+    } else {
+        verdict
     }
-    domain
-        .map_err(|invalid| diag::err_internal(format!("cartesian {context} is invalid: {invalid:?}")))?
-        .ok_or_else(|| diag::err_internal(format!("cartesian {context} has no value to span")))
+}
+
+/// The ticks Vega draws on a log measure axis that carries no `ticks.count`: d3's own default of 10.
+pub const LOG_TICK_COUNT: usize = 10;
+
+/// Refuses a value axis scale type the family does not draw, by name. `draws_log` says whether the family
+/// draws a log scale; none draws the bent ones (pow, sqrt, symlog) but a scatter, whose callers do not
+/// ask: production's line and bar ignore `scale.continuous.type` there and draw linear marks
+/// under an axis description naming the type, which no board could mean.
+pub fn refuse_scale(scale: ValueScale, family: &str, axis: &str, draws_log: bool) -> Result<(), Diagnostic> {
+    match scale {
+        ValueScale::Linear => Ok(()),
+        scale if scale.is_log() && draws_log => Ok(()),
+        other => Err(unsupported(refuse!("a {family} {axis} axis on a {} scale is not supported", other.name()))),
+    }
 }
 
 /// The measure axis over `values`, baked as production bakes a vertical cartesian measure axis:
@@ -310,6 +392,7 @@ pub fn measure_axis(
     nice: Option<bool>,
 ) -> Result<ValueAxis, Diagnostic> {
     let axis = domain::Axis {
+        scale: ValueScale::Linear,
         zero,
         headroom: ladder.headroom().unwrap_or(0.0),
         percent: format.spec.contains('%'),
@@ -351,7 +434,7 @@ impl ColorSeries {
     /// The legend naming every series, in series order, under `title`.
     pub fn legend(&self, title: String) -> Legend {
         let entries = self.series.iter().enumerate().map(|(series, s)| LegendEntry { series, label: s.display.clone() });
-        Legend { title: Some(title), entries: entries.collect(), toggle: None }
+        Legend { title: Some(title), entries: entries.collect(), toggle: None, stamps_series: false }
     }
 }
 

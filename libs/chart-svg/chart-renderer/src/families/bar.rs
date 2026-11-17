@@ -64,9 +64,11 @@ pub(crate) mod labels;
 pub mod layout;
 pub(crate) mod legend;
 pub(crate) mod marks;
+mod off_chart;
 mod ribbons;
 mod time_x;
 mod tooltip;
+mod torn_outlier;
 mod vertical;
 
 use self::facet::{color_one_to_one, render_facet};
@@ -228,6 +230,10 @@ pub(crate) struct BarResolved {
     /// (acceptable for a spike; a production port would need the fallback).
     #[serde(default)]
     stacked_domain_max: Option<f64>,
+    /// The value the tear breaks the axis at (`style.torn_outlier`): the value domain
+    /// is `[0, torn_break]` and everything past it floats in the cap band.
+    #[serde(default)]
+    torn_break: Option<f64>,
     /// A non-null `support_table` grows the card past the plot's own
     /// `payload.height` for the attached strip's rows (vertical) or the
     /// column block's header and ink (horizontal) — see `AGENTS.md`'s
@@ -347,6 +353,8 @@ struct BarStyle {
     stack_order: Option<String>,
     #[serde(default)]
     overlap: Option<Overlap>,
+    #[serde(default)]
+    torn_outlier: Option<torn_outlier::Style>,
     /// `style.conditional`: per-column rules restyling a base-layer bar by its own row.
     #[serde(default)]
     conditional: Option<std::collections::BTreeMap<String, Vec<BarRule>>>,
@@ -355,11 +363,13 @@ struct BarStyle {
 /// One `style.conditional` rule (`BarChartStyleConditional`): a predicate beside the
 /// per-bar style it applies.
 #[derive(Deserialize)]
-struct BarRule {
+pub(crate) struct BarRule {
     #[serde(flatten)]
     predicate: crate::conditional::Predicate,
     #[serde(default)]
     marks: Option<BarRuleMarks>,
+    #[serde(default)]
+    axis_x: Option<crate::conditional::RuleAxisX>,
 }
 
 #[derive(Deserialize)]
@@ -721,6 +731,18 @@ fn overlap_errors(r: &BarResolved, payload: &Payload) -> Result<(), Diagnostic> 
 }
 
 impl BarResolved {
+    /// The rules as the category axis's labels read them.
+    pub(crate) fn axis_label_rules(&self) -> crate::conditional::AxisLabelRules<'_, BarRule> {
+        crate::conditional::AxisLabelRules {
+            family: "bar",
+            rules: self.style.conditional.as_ref(),
+            predicate: |r| &r.predicate,
+            axis: |r| r.axis_x.as_ref(),
+            measures: &self.wide_measures,
+            x: &self.x,
+        }
+    }
+
     /// The patch `style.conditional` makes to the base-layer bar drawn under `key`, tested
     /// against that bar's own row (a stacked segment is its own row). Rules on different
     /// columns never set the same key (resolve refuses it), so column order is immaterial.
@@ -5643,6 +5665,8 @@ mod tests {
         axis_y["scale"] = json!({"continuous": {"domain": [0.0, 4000.0]}});
         axis_y["tick_values"] = json!([0.0, 1000.0, 2000.0, 3000.0, 4000.0]);
         axis_y["domain_max"] = json!(null);
+        payload_json["resolved"]["style"]["torn_outlier"] =
+            json!({"enabled": false, "band": 0.5, "cap": 1.2});
         payload_json
     }
 
@@ -5738,11 +5762,12 @@ mod tests {
         }
     }
 
-    /// Vega draws a bar outside an authored pair unclipped: 5000 over
-    /// `[0, 4000]` overflows the plot top, -300 hangs below the bottom edge.
+    /// Vega draws a bar outside an authored pair unclipped: a horizontal 5000
+    /// over `[0, 4000]` overruns the plot's right edge, and -300 hangs past
+    /// the floor in either orientation.
     #[test]
     fn authored_domain_with_a_value_outside_it_draws_the_bar_past_the_plot() {
-        for (horizontal, value) in [(false, 5000.0), (true, 5000.0), (false, -300.0), (true, -300.0)] {
+        for (horizontal, value) in [(true, 5000.0), (false, -300.0), (true, -300.0)] {
             let mut payload_json = make_authored_domain_payload(horizontal);
             payload_json["rows"][0]["revenue"] = serde_json::json!(value);
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
@@ -5750,26 +5775,359 @@ mod tests {
             let (lo, hi) = (grid.iter().copied().fold(f64::INFINITY, f64::min), grid.iter().copied().fold(0.0, f64::max));
             let rects = parse_rects(&svg);
             let past = rects.iter().any(|r| match (horizontal, value > 0.0) {
-                (false, true) => r.1 < lo - 1.0,
                 (false, false) => r.1 + r.3 > hi + 1.0,
                 (true, true) => r.0 + r.2 > hi + 1.0,
                 (true, false) => r.0 < lo - 1.0,
+                (false, true) => unreachable!("a vertical bar past the max is cut at the card"),
             });
             assert!(past, "horizontal={horizontal} value={value}: {rects:?} in [{lo}, {hi}]");
         }
     }
 
-    /// A value far past the authored pair grows the fit's ink until the plot
+    /// A horizontal value far past the authored pair grows the fit's ink until the plot
     /// collapses: every mark is zero-sized, which production reports as
     /// ERR-CHART-PAINTED-NO-MARKS rather than a too-small card.
     #[test]
-    fn authored_domain_far_below_the_data_collapses_the_plot_to_painted_no_marks() {
-        for horizontal in [false, true] {
-            let mut payload_json = make_authored_domain_payload(horizontal);
-            payload_json["resolved"]["style"]["axis_y"]["scale"] =
-                serde_json::json!({"continuous": {"domain": [0.0, 1.0]}});
-            let err = render(&make_payload(payload_json), &test_fonts()).expect_err("collapses");
-            assert!(err.contains("ERR-CHART-PAINTED-NO-MARKS"), "horizontal={horizontal}: {err}");
+    fn authored_domain_far_below_the_data_collapses_the_horizontal_plot_to_painted_no_marks() {
+        let mut payload_json = make_authored_domain_payload(true);
+        payload_json["resolved"]["style"]["axis_y"]["scale"] =
+            serde_json::json!({"continuous": {"domain": [0.0, 1.0]}});
+        let err = render(&make_payload(payload_json), &test_fonts()).expect_err("collapses");
+        assert!(err.contains("ERR-CHART-PAINTED-NO-MARKS"), "{err}");
+    }
+
+    /// Vertical bars past an authored max are cut at their card's top edge, not
+    /// grown into the plot's margin: `[0, 4000]` with bars of 320 and an outlier.
+    mod off_the_chart {
+        use super::*;
+
+        const BAR: &str = "#3164a3";
+        const FAMILY: &str = "'Inter Variable', Inter, sans-serif";
+
+        fn card(values: &[f64], title: &str) -> String {
+            card_with(values, title, |_| {})
+        }
+
+        fn card_with(values: &[f64], title: &str, tweak: impl FnOnce(&mut serde_json::Value)) -> String {
+            let mut payload_json = make_authored_domain_payload(false);
+            payload_json["rows"] = serde_json::json!(values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| serde_json::json!({"product": format!("C{i}"), "revenue": v}))
+                .collect::<Vec<_>>());
+            payload_json["resolved"]["title"] = serde_json::json!(title);
+            tweak(&mut payload_json);
+            render(&make_payload(payload_json), &test_fonts()).expect("renders")
+        }
+
+        fn grouped_card(north: &[f64]) -> String {
+            let mut payload_json = make_vertical_payload(&north.iter().enumerate().map(|(i, v)| (["A", "B", "C", "D"][i], *v)).collect::<Vec<_>>(), true);
+            let (axis_y, style) = (make_authored_domain_payload(false)["resolved"]["style"]["axis_y"].clone(), make_authored_domain_payload(false)["resolved"]["style"]["torn_outlier"].clone());
+            payload_json["resolved"]["style"]["axis_y"] = axis_y;
+            payload_json["resolved"]["style"]["torn_outlier"] = style;
+            render(&make_payload(payload_json), &test_fonts()).expect("renders")
+        }
+
+        fn labeled(payload_json: &mut serde_json::Value) {
+            payload_json["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
+                "visible": true, "position": "above", "field": null, "format": null, "dx": null, "dy": null, "font": null
+            });
+        }
+
+        /// The plot group's `translate(x, y)`: the first group after the title.
+        fn plot_origin(svg: &str) -> (f64, f64) {
+            let at = svg.find("<g transform=\"translate(").expect("a plot group") + "<g transform=\"translate(".len();
+            let (x, y) = svg[at..].split(')').next().expect("closes").split_once(',').expect("a pair");
+            (x.parse().expect("x"), y.parse().expect("y"))
+        }
+
+        /// Every `<text>` as (tag, content).
+        fn texts(svg: &str) -> Vec<(String, String)> {
+            svg.match_indices("<text ")
+                .map(|(at, _)| {
+                    let tag_end = svg[at..].find('>').expect("a tag") + at;
+                    let end = svg[tag_end..].find("</text>").expect("closes") + tag_end;
+                    (svg[at..tag_end].to_string(), svg[tag_end + 1..end].to_string())
+                })
+                .collect()
+        }
+
+        fn attr(tag: &str, name: &str) -> f64 {
+            tag.split(&format!(" {name}=\"")).nth(1).expect("an attribute").split('"').next().expect("closes").parse().expect("a number")
+        }
+
+        fn label<'a>(texts: &'a [(String, String)], content: &str) -> Vec<&'a (String, String)> {
+            texts.iter().filter(|(_, c)| c.starts_with(content)).collect()
+        }
+
+        fn torn_bars(svg: &str) -> Vec<Drawn> {
+            drawn(svg).into_iter().filter(|m| m.is_path() && m.fill() == BAR && !m.tag.contains(" transform=")).collect()
+        }
+
+        /// Each `data-dbt-off-chart` length, in source order: the hover runtime draws the bar this long.
+        fn true_lengths(svg: &str) -> Vec<f64> {
+            svg.split(" data-dbt-off-chart=\"").skip(1).map(|rest| rest.split('"').next().expect("closes").parse().expect("a number")).collect()
+        }
+
+        #[test]
+        fn an_off_the_chart_bar_carries_its_true_length_for_hover() {
+            let (twice, once) = (true_lengths(&card(&[320.0, 10000.0], "T")), true_lengths(&card(&[320.0, 5000.0], "T")));
+            assert_eq!((twice.len(), once.len()), (1, 1), "only the bar past the maximum carries one");
+            assert!((twice[0] / once[0] - 2.0).abs() < 1e-9, "the length is the value on the authored scale: {twice:?} {once:?}");
+            let plot_h = { let ys = gridline_positions(&card(&[320.0, 5000.0], "T"), "y1"); ys.iter().fold(f64::MIN, |a, &b| a.max(b)) - ys.iter().fold(f64::MAX, |a, &b| a.min(b)) };
+            assert!(once[0] > plot_h, "a bar past the maximum is longer than the plot");
+            assert!(true_lengths(&card(&[320.0, 540.0], "T")).is_empty(), "no bar past the maximum, no length");
+        }
+
+        /// The hover runtime keeps a spiral clear of the plot it leaves: the bar carries the plot's height.
+        #[test]
+        fn an_off_the_chart_bar_carries_its_plot_height_for_hover() {
+            let svg = card(&[320.0, 10000.0], "T");
+            let heights: Vec<f64> = svg.split(" data-dbt-off-chart-plot=\"").skip(1).map(|rest| rest.split('"').next().expect("closes").parse().expect("a number")).collect();
+            let ys = gridline_positions(&svg, "y1");
+            let plot_h = ys.iter().fold(f64::MIN, |a, &b| a.max(b)) - ys.iter().fold(f64::MAX, |a, &b| a.min(b));
+            assert_eq!(heights.len(), 1);
+            assert!((heights[0] - plot_h).abs() < 0.01, "the plot runs from the baseline to the axis maximum: {heights:?} vs {plot_h}");
+            assert!((true_lengths(&svg)[0] / heights[0] - 10000.0 / 4000.0).abs() < 1e-9);
+        }
+
+        #[test]
+        fn an_outlier_leaves_the_plot_the_size_it_would_have_without_it() {
+            let (with, without) = (card(&[320.0, 5000.0], "T"), card(&[320.0, 540.0], "T"));
+            assert_eq!(gridline_positions(&with, "y1"), gridline_positions(&without, "y1"));
+            assert_eq!(plot_origin(&with), plot_origin(&without));
+        }
+
+        #[test]
+        fn an_outlier_runs_to_the_cards_top_edge_and_ends_torn() {
+            let svg = card(&[320.0, 5000.0], "Test Vertical Bar");
+            let (_, top) = plot_origin(&svg);
+            let bars = torn_bars(&svg);
+            assert_eq!(bars.len(), 1, "{svg}");
+            assert!((bars[0].y() + top).abs() < 0.01, "the bar's top is the card's top: {} vs {}", bars[0].y(), -top);
+            let edge = torn_top(&svg);
+            assert!(edge.iter().any(|p| (p.1 - edge[0].1).abs() > 0.5), "a torn edge, not a flat cut");
+            assert!(drawn(&svg).iter().all(|m| m.y() + top >= -0.01 || m.tag.contains("transform")), "nothing above the card");
+        }
+
+        #[test]
+        fn every_outlier_names_its_value_upright_in_its_bar_with_an_arrow() {
+            for (values, title) in [(vec![320.0, 5000.0, 320.0, 6000.0, 320.0], "T"), (vec![5000.0, 6000.0, 320.0], "A title long enough to run past both tears")] {
+                let svg = card(&values, title);
+                let all = texts(&svg);
+                let bars = torn_bars(&svg);
+                assert_eq!(bars.len(), 2, "{svg}");
+                for (value, bar) in ["5000", "6000"].into_iter().zip(&bars) {
+                    let found = label(&all, value);
+                    assert_eq!(found.len(), 1, "{svg}");
+                    let (tag, content) = found[0];
+                    assert!(tag.contains("transform=\"rotate(-90") && tag.contains("text-anchor=\"end\""), "{tag}");
+                    assert!(content.ends_with('\u{2192}'), "an arrow at the top: {content}");
+                    assert!(tag.contains("data-dbt-off-chart-label"), "the hover runtime finds it: {tag}");
+                    let x = attr(tag, "x");
+                    assert!(x > bar.x() && x < bar.x2, "inside its own bar: {x}");
+                }
+                assert!(label(&all, "off the chart").is_empty(), "the tear and arrow say it: {svg}");
+            }
+        }
+
+        #[test]
+        fn an_off_the_chart_bar_carries_its_knocked_out_edge_for_hover() {
+            let edges = |svg: &str| -> Vec<f64> {
+                svg.split(" data-dbt-off-chart-edge=\"").skip(1).map(|rest| rest.split('"').next().expect("closes").parse().expect("a number")).collect()
+            };
+            let haloed = card_with(&[320.0, 10000.0], "T", |p| {
+                let canvas = p["resolved"]["canvas"].clone();
+                p["resolved"]["style"]["mark"]["border"] = serde_json::json!({"width": 1.5, "color": canvas, "radius": 0.0});
+            });
+            let mask = &haloed[haloed.find("<mask").expect("a knockout mask")..];
+            let cut: f64 = mask.split("stroke=\"#000\"").nth(1).expect("an outline cut").split("stroke-width=\"").nth(1).expect("a width").split('"').next().expect("closes").parse().expect("a number");
+            assert_eq!(edges(&haloed), vec![cut], "the stamped edge is the width the knockout cuts: {haloed}");
+            let bare = card_with(&[320.0, 10000.0], "T", |p| p["resolved"]["style"]["mark"]["border"] = serde_json::json!({"width": 0.0, "color": null, "radius": 0.0}));
+            assert_eq!(edges(&bare), vec![0.0], "no outline, nothing knocked out");
+        }
+
+        /// The tag of the first `<text` carrying `class`.
+        fn text_tag<'a>(svg: &'a str, class: &str) -> (usize, &'a str) {
+            let at = svg.find(&format!("class=\"{class}\"")).unwrap_or_else(|| panic!("a {class}: {svg}"));
+            let start = svg[..at].rfind("<text").expect("its tag");
+            (start, &svg[start..svg[start..].find('>').expect("closes") + start])
+        }
+
+        /// The lifted header's band: the one `data-dbt-lifted` path with a fill opacity.
+        fn bands(svg: &str) -> Vec<&str> {
+            svg.match_indices("<path").map(|(at, _)| &svg[at..at + svg[at..].find('>').expect("closes")]).filter(|tag| tag.contains("data-dbt-lifted") && tag.contains("fill-opacity")).collect()
+        }
+
+        #[test]
+        fn a_legend_over_the_plot_rests_behind_the_bars_ready_to_lift() {
+            let svg = grouped_card(&[5000.0, 320.0, 320.0, 320.0]);
+            let legend_at = svg.find("class=\"mark-group role-legend\"").expect("a legend");
+            let bar_at = svg.find("data-dbt-off-chart=").expect("a torn bar");
+            assert!(legend_at < bar_at, "the legend rests behind the bar: {svg}");
+            let root = &svg[svg[..legend_at].rfind('<').expect("its tag")..legend_at + 200];
+            assert!(root.contains("data-dbt-lifted"), "the hover runtime finds it: {root}");
+            let legend = &svg[legend_at..];
+            let label = &legend[legend.find("<text").expect("a label")..];
+            assert!(!label[..label.find('>').expect("closes")].contains("stroke="), "no halo on its label: {label}");
+            assert_eq!(bands(&svg).len(), 1, "one band behind title and legend: {svg}");
+        }
+
+        /// In a chart with a bar off the chart, the title, subtitle and legend rest behind the bars
+        /// on one band of the card's color, 85% opaque, as wide as the text needs: the hover
+        /// runtime lifts them over the bars while the chart is hovered, when the bars are drawn at
+        /// true length. The band is one shape, so where two lines' strips meet the bars show
+        /// through it once, never twice.
+        #[test]
+        fn header_content_rests_behind_the_bars_on_one_band_as_wide_as_its_text() {
+            let crossed = card_with(&[5000.0, 320.0, 320.0, 320.0], "Signups by region this quarter", |p| p["resolved"]["subtitle"] = serde_json::json!("Trailing thirty days"));
+            let bar_at = crossed.find("data-dbt-off-chart=").expect("a torn bar");
+            let bands = bands(&crossed);
+            assert_eq!(bands.len(), 1, "one band: {crossed}");
+            let band = bands[0];
+            let band_at = crossed.find(band).expect("in the card");
+            assert!(band_at < bar_at, "the band rests behind the bar");
+            assert!(band.contains("fill=\"#ffffff\"") && attr(band, "fill-opacity") == 0.85, "{band}");
+            let d = &band[band.find(" d=\"").expect("a path") + 4..];
+            let d = &d[..d.find('"').expect("closes")];
+            assert_eq!(d.matches('M').count(), 1, "title and subtitle strips merge into one: {band}");
+            let width = attr(&crossed[..crossed.find('>').expect("root")], "width");
+            let xs: Vec<f64> = d.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).filter(|t| !t.is_empty()).map(|t| t.parse().expect("a number")).step_by(2).collect();
+            let (lo, hi) = xs.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &x| (lo.min(x), hi.max(x)));
+            let (_, title) = text_tag(&crossed, "role-title-text");
+            assert!(lo > 0.0 && lo < attr(title, "x"), "starts just left of the text, not at the card's edge: {lo}");
+            assert!(hi < width - 20.0, "ends past the text, short of the card's far edge: {hi} of {width}");
+            for class in ["role-title-text", "role-title-subtitle"] {
+                let (at, tag) = text_tag(&crossed, class);
+                assert!(at > band_at && at < bar_at, "the {class} rests on the band, behind the bar: {crossed}");
+                assert!(!tag.contains("stroke="), "no halo: {tag}");
+                assert!(tag.contains("data-dbt-lifted"), "the hover runtime finds it: {tag}");
+            }
+            // A spiral drawn on hover can pass over any of the chart's header, so all of it lifts.
+            let missed = card(&[320.0, 320.0, 320.0, 5000.0], "T");
+            assert!(text_tag(&missed, "role-title-text").1.contains("data-dbt-lifted"), "an uncrossed title lifts too");
+            let plain = card(&[320.0, 320.0, 320.0, 3000.0], "T");
+            assert!(!plain.contains("data-dbt-lifted"), "a chart with nothing off the chart lifts nothing");
+        }
+
+        /// The torn top as (x, y) points in the bar's path, plot coordinates, before it drops to the base.
+        fn torn_top(svg: &str) -> Vec<(f64, f64)> {
+            let bar = &torn_bars(svg)[0];
+            let d = bar.attr("d").expect("d");
+            let nums: Vec<f64> = d.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).filter(|t| !t.is_empty()).map(|t| t.parse().expect("a number")).collect();
+            let pts: Vec<(f64, f64)> = nums.chunks(2).map(|p| (p[0], p[1])).collect();
+            let base = pts.iter().map(|p| p.1).fold(f64::MIN, f64::max);
+            pts.into_iter().filter(|p| p.1 < base - 1.0).collect()
+        }
+
+        /// How deep the first torn bar's tear bites below its highest point.
+        fn tear_depth(svg: &str) -> f64 {
+            let edge = torn_top(svg);
+            let (lo, hi) = edge.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p.1), hi.max(p.1)));
+            hi - lo
+        }
+
+        #[test]
+        fn the_tear_is_ragged_paper_that_touches_the_cards_top_and_tears_the_same_way_every_time() {
+            let svg = card(&[320.0, 5000.0], "T");
+            assert_eq!(svg, card(&[320.0, 5000.0], "T"), "the same bar tears the same way");
+            let (_, top) = plot_origin(&svg);
+            let edge = torn_top(&svg);
+            assert!(edge.len() > 12, "many small teeth, not a few big ones: {edge:?}");
+            let (lo, hi) = edge.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p.1), hi.max(p.1)));
+            assert!((lo + top).abs() < 0.01, "its highest points touch the card's top edge");
+            assert!(hi - lo > 2.0, "it bites into the bar: {}", hi - lo);
+            let steps: Vec<f64> = edge.windows(2).map(|w| w[1].0 - w[0].0).collect();
+            let spread = steps.iter().fold(f64::MIN, |a, &b| a.max(b)) - steps.iter().fold(f64::MAX, |a, &b| a.min(b));
+            assert!(spread > 0.5, "irregular teeth: {steps:?}");
+        }
+
+        #[test]
+        fn a_wider_bar_tears_deeper() {
+            let narrow = card(&[320.0, 5000.0, 320.0, 320.0, 320.0, 320.0, 320.0, 320.0], "T");
+            let wide = card(&[320.0, 5000.0], "T");
+            assert!(tear_depth(&wide) > tear_depth(&narrow), "{} vs {}", tear_depth(&wide), tear_depth(&narrow));
+        }
+
+        /// Where an outlier's upright label puts its arrow, in plot coordinates.
+        fn arrow_y(svg: &str, value: &str) -> f64 {
+            let all = texts(svg);
+            attr(&label(&all, value)[0].0, "y")
+        }
+
+        #[test]
+        fn a_label_sits_at_the_top_of_its_torn_bar_when_nothing_crosses_it() {
+            let svg = card_with(&[320.0, 320.0, 320.0, 5000.0], "", |p| p["resolved"]["title"] = serde_json::Value::Null);
+            assert!(bands(&svg).is_empty(), "no header, no band: {svg}");
+            let (_, top) = plot_origin(&svg);
+            let y = arrow_y(&svg, "5000");
+            assert!(y < 0.0 && y > -top, "inside the bar above the plot, under the tear: {y} (card top {})", -top);
+        }
+
+        #[test]
+        fn a_label_drops_to_the_plot_top_only_where_lifted_content_would_cover_it() {
+            let svg = card(&[5000.0, 320.0, 320.0, 320.0, 320.0, 6000.0], "A title over the first bar");
+            assert!((0.0..=8.0).contains(&arrow_y(&svg, "5000")), "under the title's band: dropped to the plot's top");
+            assert!(arrow_y(&svg, "6000") < 0.0, "clear of it: keeps its place at the top");
+        }
+
+        #[test]
+        fn an_outlier_names_its_value_once_when_value_labels_are_on() {
+            let svg = card_with(&[320.0, 5000.0, 320.0, 320.0], "T", labeled);
+            assert_eq!(label(&texts(&svg), "5000").len(), 1, "{svg}");
+        }
+
+        #[test]
+        fn a_grouped_sub_bar_past_the_max_is_torn_labeled_and_leaves_the_plot_alone() {
+            let (with, without) = (grouped_card(&[320.0, 5000.0, 320.0, 320.0]), grouped_card(&[320.0, 3000.0, 320.0, 320.0]));
+            assert_eq!(gridline_positions(&with, "y1"), gridline_positions(&without, "y1"));
+            assert_eq!(plot_origin(&with), plot_origin(&without));
+            let (_, top) = plot_origin(&with);
+            let torn: Vec<_> = drawn(&with).into_iter().filter(|m| m.is_path() && m.tag.contains("data-dbt-off-chart=")).collect();
+            assert_eq!(torn.len(), 1, "{with}");
+            assert!((torn[0].y() + top).abs() < 0.01);
+            assert_eq!(label(&texts(&with), "5000").len(), 1);
+        }
+
+        #[test]
+        fn every_bar_off_the_chart_is_torn_at_the_top_and_leaves_the_plot_alone() {
+            let domain = |p: &mut serde_json::Value| p["resolved"]["style"]["axis_y"]["scale"] = serde_json::json!({"continuous": {"domain": [0.0, 1.0]}});
+            let (with, without) = (card_with(&[320.0, 540.0], "T", domain), card_with(&[0.2, 0.5], "T", domain));
+            assert_eq!(gridline_positions(&with, "y1"), gridline_positions(&without, "y1"));
+            let (_, top) = plot_origin(&with);
+            let bars = torn_bars(&with);
+            assert_eq!(bars.len(), 2, "{with}");
+            assert!(bars.iter().all(|b| (b.y() + top).abs() < 0.01));
+        }
+
+        #[test]
+        fn a_mirrored_axis_keeps_the_bar_past_the_plot() {
+            let svg = card_with(&[320.0, 5000.0], "T", |p| p["resolved"]["style"]["axis_y"]["mirror"] = serde_json::json!(true));
+            assert!(torn_bars(&svg).is_empty(), "{svg}");
+        }
+
+        #[test]
+        fn rows_stacked_in_one_cell_keep_their_bar_past_the_plot() {
+            let svg = card_with(&[320.0, 540.0], "T", |p| p["rows"] = serde_json::json!([
+                {"product": "A", "revenue": 3000.0}, {"product": "A", "revenue": 2000.0}, {"product": "B", "revenue": 100.0}
+            ]));
+            let (_, top) = plot_origin(&svg);
+            assert!(torn_bars(&svg).is_empty() && drawn(&svg).iter().all(|m| m.y() + top >= -0.01 || m.tag.contains("transform")), "{svg}");
+        }
+
+        #[test]
+        fn an_upright_label_wider_than_its_narrow_bar_takes_dark_ink_on_a_halo() {
+            let mut values = vec![320.0; 60];
+            (values[30], values[31]) = (5000.0, 6000.0);
+            let svg = card(&values, "T");
+            let all = texts(&svg);
+            let (tag, _) = label(&all, "5000")[0];
+            assert!(tag.contains("rotate(-90") && tag.contains("fill=\"#313233\""), "{tag}");
+            let x = attr(tag, "x");
+            let rects = parse_rects(&svg);
+            let canvas = &rects.iter().max_by(|a, b| (a.2 * a.3).total_cmp(&(b.2 * b.3))).expect("a background").4;
+            let halo = rects.iter().any(|(rx, _, w, h, fill)| fill == canvas && *rx < x && x - rx < 20.0 && *h > 2.0 * w);
+            assert!(halo, "the upright label sits on a halo behind it: {svg}");
         }
     }
 
@@ -10120,12 +10478,11 @@ mod tests {
             .collect()
     }
 
-    /// Regression (review round 2): the restored tick length must be
-    /// BUDGETED on every arm that emits it. The legacy arm (right legend)
-    /// reserved no tick length, so its ticks pushed the two-row label band
-    /// 6px into the bottom padding.
+    /// Restored ticks hang into the label gap and add no height: on the legacy
+    /// arm (right legend) the two-row label band sits label padding below the
+    /// axis line and fits the bottom padding.
     #[test]
-    fn legacy_arm_budgets_the_restored_tick_length() {
+    fn legacy_arm_restored_ticks_add_no_height() {
         use serde_json::json;
         let cats = weekly_cats();
         let cat_refs: Vec<(&str, f64)> = cats.iter().map(|(d, v)| (d.as_str(), *v)).collect();
@@ -10152,34 +10509,29 @@ mod tests {
         assert_eq!(tick_spans.len(), 6, "one restored tick per month label of 26 weeks\n{svg}");
         let (ty1, ty2) = tick_spans[0];
         assert!((ty2 - ty1 - 6.5).abs() < 0.01, "a tick runs from the plot bottom through the crisp 0.5 and length 6: {ty1}..{ty2}");
-        // The two-row label band below the ticks stays inside the bottom
-        // padding: with the tick unbudgeted the band overflows h − pad_b by
-        // the full tick length (fixture pad 16, label pad 6, two rows
-        // fs*2+2 = 24; the crisp +0.5 the tick paints at is the only
-        // tolerated overshoot).
+        // The two-row label band starts label padding below the axis line and
+        // stays inside the bottom padding (fixture pad 16, label pad 6, two
+        // rows fs*2+2 = 24; the crisp +0.5 is the only tolerated overshoot).
         assert!(
-            ty2 + 6.0 + 24.0 <= 202.0 - 16.0 + 0.51,
-            "tick bottom {ty2} + label band 30 must fit above h − pad_b = 186\n{svg}"
+            ty1 + 6.0 + 24.0 <= 202.0 - 16.0 + 0.51,
+            "axis line {ty1} + label band 30 must fit above h − pad_b = 186\n{svg}"
         );
-        // And the labels themselves clear the ticks: the legacy arm's own
-        // `cat_label_y` carries the same tick length, so row 1's baseline
-        // sits a full ascent below the tick bottom.
+        // Row 1's baseline sits at least the label padding below the axis line.
         let row1_y: f64 = {
             let pos = svg.find(">Jan<").expect("month-opener label present");
             let tag = &svg[svg[..pos].rfind("<text").unwrap()..pos];
             tag.split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
         };
         assert!(
-            row1_y >= ty2 + 6.0,
-            "row-1 baseline {row1_y} clears tick bottom {ty2} by the label padding\n{svg}"
+            row1_y >= ty1 + 6.0,
+            "row-1 baseline {row1_y} is the label padding below the axis line {ty1}\n{svg}"
         );
     }
 
-    /// Same regression on the composed support-table arm: its canvas grows
-    /// by exactly the restored tick length, keeping the label band inside
-    /// the bottom padding.
+    /// The composed support-table arm reserves the same label band below the
+    /// axis line, with no tick length in it.
     #[test]
-    fn composed_arm_budgets_the_restored_tick_length() {
+    fn composed_arm_restored_ticks_add_no_height() {
         use serde_json::json;
         let cats = weekly_cats();
         let cat_refs: Vec<(&str, f64)> = cats.iter().map(|(d, v)| (d.as_str(), *v)).collect();
@@ -10208,13 +10560,12 @@ mod tests {
         assert!(canvas_w > 564.0, "composed arm grows the canvas past the slot: {canvas_w}");
         let canvas_h: f64 = svg
             .split("height=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
-        let ty2 = vertical_line_spans(&svg).first().expect("restored ticks drawn").1;
-        // Below the tick bottom the canvas still holds label pad 6 + two
-        // label rows 24 + pad_b 16; without the budgeted tick length it
-        // comes out 6 short.
+        let ty1 = vertical_line_spans(&svg).first().expect("restored ticks drawn").0;
+        // Below the axis line the canvas holds label pad 6 + two label rows
+        // 24 + pad_b 16, and no more.
         assert!(
-            canvas_h >= ty2 + 6.0 + 24.0 + 16.0 - 1.0,
-            "canvas {canvas_h} budgets pad+rows+padding below tick bottom {ty2}\n{svg}"
+            (ty1 + 6.0 + 24.0 + 16.0 - canvas_h).abs() < 1.5,
+            "canvas {canvas_h} holds exactly pad+rows+padding below axis line {ty1}\n{svg}"
         );
     }
 
@@ -11306,21 +11657,22 @@ mod tests {
     fn bar_support_table_on_the_rail_concat_pins_exact_canvas_and_group_y_titled() {
         let payload = make_payload(make_titled_rail_strip_payload());
         let svg = render(&payload, &test_fonts()).expect("titled support_table rail concat renders");
-        assert_eq!(bar_canvas_dims(&svg), (400.0, 441.0), "{svg}");
+        assert_eq!(bar_canvas_dims(&svg), (400.0, 435.0), "{svg}");
         assert_eq!(bar_group_y(&svg), 102.0, "{svg}");
     }
 
-    /// The untitled sibling (`make_rail_strip_payload`'s own default title
-    /// cleared): the concat spec carries no padding bump for the strip, so only
+    /// The untitled sibling (`make_rail_strip_payload`'s own default title and
+    /// subtitle cleared): the concat spec carries no padding bump for the strip, so only
     /// the strip's ink sets `top_margin`.
     #[test]
     fn bar_support_table_on_the_rail_concat_pins_exact_canvas_and_group_y_untitled() {
         use serde_json::json;
         let mut payload_json = make_rail_strip_payload();
         payload_json["resolved"]["title"] = json!("");
+        payload_json["resolved"]["subtitle"] = json!("");
         let payload = make_payload(payload_json);
         let svg = render(&payload, &test_fonts()).expect("untitled support_table rail concat renders");
-        assert_eq!(bar_canvas_dims(&svg), (400.0, 392.0), "{svg}");
+        assert_eq!(bar_canvas_dims(&svg), (400.0, 386.0), "{svg}");
         assert_eq!(bar_group_y(&svg), 53.0, "{svg}");
     }
 
@@ -14016,7 +14368,7 @@ mod tests {
         payload_json["rows"][1]["val"] = json!(-5.0);
         let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
         assert_eq!(svg.matches("NaN").count(), 2, "only the zero's rect has no extent: {svg}");
-        assert!(svg.contains("y=\"0\" width=\"132.8\" height=\"211\""), "the negative fills its own layer: {svg}");
+        assert!(svg.contains("y=\"0\" width=\"132.8\" height=\"217\""), "the negative fills its own layer: {svg}");
     }
 
     /// Production splits a normalized mixed-sign column into a `>= 0` layer and a
@@ -17456,6 +17808,16 @@ mod tests {
             assert!(render_with(Some("popup")).unwrap_err().contains("popup"));
         }
 
+        /// A link a row fills with a navigable script scheme is refused, as a table cell's is
+        /// (`checked_href`): every cartesian mark's href comes through `DatumLink::href`.
+        #[test]
+        fn a_bar_link_filled_with_an_unsafe_scheme_is_refused() {
+            let mut payload_json = make_vertical_payload(&[("javascript:alert(1)", 1.0), ("b", 2.0)], false);
+            payload_json["resolved"]["link"] = json!("{{ x }}");
+            let err = render(&make_payload(payload_json), &test_fonts()).expect_err("an unsafe href is refused");
+            assert!(err.to_string().contains("javascript"), "{err}");
+        }
+
         /// The host's link context rewrites a bar's board link like it does a table cell's.
         #[test]
         fn a_bar_link_is_rewritten_through_the_host_link_context() {
@@ -18666,6 +19028,23 @@ mod tests {
                     assert_eq!(got.iter().map(|r| &r.1).collect::<Vec<_>>(), want.iter().map(|r| &r.1).collect::<Vec<_>>(), "{orientation} {stack}");
                     assert_quads(&got.into_iter().map(|r| r.0).collect::<Vec<_>>(), &want.into_iter().map(|r| r.0).collect::<Vec<_>>());
                 }
+            }
+        }
+
+        #[test]
+        fn bars_colored_by_their_own_category_join_each_to_the_next() {
+            for (orientation, stack) in [("horizontal", "center"), ("vertical", "center"), ("horizontal", "none"), ("vertical", "none")] {
+                let horizontal = orientation == "horizontal";
+                let mut payload = ribbon_payload(orientation, stack, false);
+                payload["resolved"]["color"] = json!("cat");
+                payload["resolved"]["palette"] = json!(["#3164a3", "#779bc9", "#bad5f0"]);
+                let svg = render_of(payload);
+                let bars: Vec<_> = ["#3164a3", "#779bc9", "#bad5f0"].into_iter().map(|c| (c, bars_of(&svg, c, horizontal))).collect();
+                assert!(bars.iter().all(|(_, b)| b.len() == 1), "one bar per stage: {svg}");
+                let ribbons = ribbons_of(&svg);
+                assert_quads(&ribbons.iter().map(|r| r.0.clone()).collect::<Vec<_>>(), &[joining(bars[0].1[0], bars[1].1[0], horizontal), joining(bars[1].1[0], bars[2].1[0], horizontal)]);
+                let fills: Vec<_> = bars[..2].iter().map(|(c, _)| dbt_charts_color::recede(c, "#ffffff", 0.5).unwrap()).collect();
+                assert_eq!(ribbons.iter().map(|r| r.1.clone()).collect::<Vec<_>>(), fills, "each ribbon takes its upper stage's color");
             }
         }
 

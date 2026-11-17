@@ -541,3 +541,23 @@ rows:
     assert result.success, result.errors
     assert result.artifact_path is not None
     assert "/data/dw/main/orders/detail/" in result.artifact_path.read_text()
+
+
+def test_a_callout_board_emits_sized_by_the_engines_cell(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    # Sizing measures a callout in the engine's cell, which an artifact's sizing
+    # reaches as a live render's does.
+    (tmp_path / "board.yml").write_text(
+        "charts:\n  note:\n    type: callout\n    message: The numbers are in.\n"
+        "rows:\n  - note\n"
+    )
+    project = local_project(tmp_path)
+    result = emit_board_artifact(
+        tmp_path / "board.yml",
+        tmp_path / "out" / "board.artifact.json",
+        tmp_path / "out" / "board.recording.json",
+        project=project,
+        env=build_exec_env(project),
+    )
+    assert result.success, result.errors

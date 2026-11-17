@@ -245,6 +245,16 @@ def unset_dbt_target_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
+def placement_scope() -> Iterator[None]:
+    """The layout walk a test that calls a layout helper outside ``render`` places its
+    charts in. No engine board is in scope, so a KPI drawn through it raises."""
+    from dbt_charts.core.render.engine_cell import placements
+
+    with placements():
+        yield
+
+
+@pytest.fixture
 def routes(monkeypatch: pytest.MonkeyPatch) -> Mock:
     """Stands in for the run stage: a test that names this fixture scripts what every
     route returns. Configure ``return_value`` or ``side_effect`` with ``QueryResult``s
@@ -296,6 +306,22 @@ def isolate_user_cache_dir(
     monkeypatch.setattr(
         "dbt_charts.core.compile.config.user_cache_dir", _user_cache_dir
     )
+
+
+@pytest.fixture(autouse=True)
+def isolate_user_state_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Keep `dct serve --detach` records out of the real per-user state directory,
+    where a leftover one would answer a developer's own `dct serve --stop`."""
+    created: list[Path] = []
+
+    def _user_state_dir() -> str:
+        if not created:
+            created.append(tmp_path_factory.mktemp("user-state"))
+        return str(created[0])
+
+    monkeypatch.setattr("dbt_charts.agent_api.serve.user_state_dir", _user_state_dir)
 
 
 @pytest.fixture(autouse=True)

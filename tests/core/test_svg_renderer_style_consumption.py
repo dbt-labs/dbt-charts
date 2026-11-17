@@ -1,9 +1,5 @@
-"""Tests for table and KPI renderers consuming effective chart style.
-
-Proves:
-1. Table renderer reads colors from chart.style.table (ResolvedTableStyle).
-2. KPI renderer reads styling from chart.style.kpi (ResolvedKpiStyle).
-"""
+"""Tests for the table renderer consuming effective chart style: it reads colors
+from chart.style.table (ResolvedTableStyle)."""
 
 from __future__ import annotations
 
@@ -20,7 +16,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
 )
 
-from ._engine_render import render_kpi_svg, render_table_svg
+from ._engine_render import render_table_svg
 
 
 def _rs():
@@ -53,46 +49,6 @@ def _table_chart(
             }
         )
     return resolved
-
-
-def _kpi_chart(kpi_style=None):
-    """Build a minimal V2 ResolvedKpiChart, optionally with a kpi-style override."""
-    from dbt_charts.core.compile.models.chart.normalized import KpiChart
-    from dbt_charts.core.compile.resolve import resolve as _resolve
-
-    chart = KpiChart.model_validate(
-        {
-            "id": "test_kpi",
-            "type": "kpi",
-            "query": {"query_type": "sql", "sql": "SELECT 1", "source": "test"},
-            "query_name": "q",
-            "value": "revenue",
-            "label": "Revenue",
-        }
-    )
-    resolved = _resolve(chart, [{"revenue": 42000}], chart_style_context=_ctx())
-    if kpi_style is not None:
-        return resolved.model_copy(
-            update={"style": resolved.style.model_copy(update={"kpi": kpi_style})}
-        )
-    return resolved
-
-
-def _make_kpi_style(value_font_size=None, value_font_weight=None):
-    """Build a KpiChartStyle override."""
-    base = _ctx().kpi
-    v = base.value
-    value_updates: dict = {}
-    if value_font_size is not None:
-        value_updates["font"] = v.font.model_copy(
-            update={"size": float(value_font_size)}
-        )
-    if value_font_weight is not None:
-        font = value_updates.get("font", v.font)
-        value_updates["font"] = font.model_copy(update={"weight": value_font_weight})
-    if value_updates:
-        return base.model_copy(update={"value": v.model_copy(update=value_updates)})
-    return base
 
 
 # ---------------------------------------------------------------------------
@@ -222,90 +178,3 @@ class TestTableRendererStyleConsumption:
         """render_table_svg raises TypeError when board_style is not passed."""
         with pytest.raises(TypeError, match="board_style"):
             render_table_svg(_table_chart(), [{"a": "hello"}], width=400)  # type: ignore[call-arg]
-
-
-# ---------------------------------------------------------------------------
-# KPI renderer
-# ---------------------------------------------------------------------------
-
-
-class TestKpiRendererStyleConsumption:
-    """render_kpi_svg reads styling from chart.style.kpi; board_style is a kwarg."""
-
-    def test_kpi_uses_style_value_font_size(self):
-        kpi_style = _make_kpi_style(value_font_size=72.0)
-        svg = render_kpi_svg(
-            _kpi_chart(kpi_style),
-            [{"revenue": 42000}],
-            width=300,
-            height=200,
-            board_style=_rs(),
-        )
-        assert 'font-size="72"' in svg
-
-    def test_kpi_uses_style_value_font_weight(self):
-        kpi_style = _make_kpi_style(value_font_weight="600")
-        svg = render_kpi_svg(
-            _kpi_chart(kpi_style),
-            [{"revenue": 42000}],
-            width=300,
-            height=200,
-            board_style=_rs(),
-        )
-        assert 'font-weight="600"' in svg
-
-    def test_kpi_label_font_size_follows_theme_when_set(self):
-        """When charts.kpi.label.font.size is set on the resolved style,
-        the rendered label uses that size regardless of card width."""
-        kpi_style = _ctx().kpi
-        expected = int(kpi_style.label.font.size)
-        svg = render_kpi_svg(
-            _kpi_chart(),
-            [{"revenue": 42000}],
-            width=300,
-            height=200,
-            board_style=_rs(),
-        )
-        assert f'font-size="{expected}"' in svg or f'font-size="{expected}.0"' in svg, (
-            f"Expected KPI label at theme size {expected}, got {svg[:300]}"
-        )
-
-    def test_kpi_rejects_invalid_font_weight(self):
-        """An invalid weight string falls back to the resolved theme default."""
-        from dbt_charts.core.compile.models.style.theme import font_weight_as_css
-
-        kpi_style = _make_kpi_style(value_font_weight="evil-injection")
-        svg = render_kpi_svg(
-            _kpi_chart(kpi_style),
-            [{"revenue": 42000}],
-            width=300,
-            height=200,
-            board_style=_rs(),
-        )
-        assert "evil-injection" not in svg
-        default_weight = font_weight_as_css(
-            resolve_chart_style_context(get_theme_style()).kpi.value.font.weight
-        )
-        assert f'font-weight="{default_weight}"' in svg
-
-    def test_kpi_without_style_override_uses_theme_defaults(self):
-        """KPI with default resolved_style emits the resolved theme weight."""
-        from dbt_charts.core.compile.models.style.theme import font_weight_as_css
-
-        svg = render_kpi_svg(
-            _kpi_chart(),
-            [{"revenue": 42000}],
-            width=300,
-            height=200,
-            board_style=_rs(),
-        )
-        assert "<svg" in svg
-        default_weight = font_weight_as_css(
-            resolve_chart_style_context(get_theme_style()).kpi.value.font.weight
-        )
-        assert f'font-weight="{default_weight}"' in svg
-
-    def test_kpi_requires_board_style(self):
-        """render_kpi_svg raises TypeError when board_style is not passed."""
-        with pytest.raises(TypeError, match="board_style"):
-            render_kpi_svg(_kpi_chart(), [{"revenue": 42000}])  # type: ignore[call-arg]

@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
 
+from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.models.chart.authored import CalloutChart
 from dbt_charts.core.compile.models.primitives import BoardLinks
-from dbt_charts.core.compile.models.style.authored import CalloutChartStylePatch
+from dbt_charts.core.compile.models.style.authored import (
+    CalloutChartStylePatch,
+    StylePatch,
+)
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -21,14 +26,16 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style_and_context,
 )
 from dbt_charts.core.compile.resolve.style.palette import color as resolve_palette_color
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.query_results import QueryResults
+from dbt_charts.core.render import render
 from dbt_charts.core.render.chart.rendering import render_chart_item
-from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.engine import render_callout_card
 
 from ...._lookup import render_via
-from ...._results import rows_result
+from ...._run import Run
 from ..._board_utils import merged_patch
+from ..._one_chart_board import chart_svg
 from ..._svg_render import PINNED_RENDER_TIME
 from ._callout_test_helpers import (
     callout_style_for_tone,
@@ -99,25 +106,9 @@ def test_callout_tone_at_root_rejected_with_hint() -> None:
 # --- Color resolution by tone ---
 
 
-def test_callout_default_tone_is_info(make_chart) -> None:
+def test_callout_default_tone_is_info() -> None:
     """When tone is omitted, authored callouts resolve info.* palette roles."""
-    chart = make_chart(
-        "callout",
-        x=None,
-        y=None,
-        query=None,
-        query_name=None,
-        message="Default info tone",
-    )
-    _rs, _ctx = resolve_style_and_context(get_theme_style("clarity"))
-    svg = render_chart(
-        chart,
-        resolved_style=_rs,
-        chart_style_context=_ctx,
-        data=rows_result([]),
-        format="svg",
-        width=220,
-    )
+    svg = chart_svg({"type": "callout", "message": "Default info tone"})
     assert resolve_palette_color("info.bg") in svg
     assert resolve_palette_color("info.border") in svg
     assert resolve_palette_color("negative.bg") not in svg
@@ -125,25 +116,14 @@ def test_callout_default_tone_is_info(make_chart) -> None:
     assert "info.bg" not in svg
 
 
-def test_callout_warning_tone_resolves_warning_palette_roles(make_chart) -> None:
+def test_callout_warning_tone_resolves_warning_palette_roles() -> None:
     """style.tone: warning resolves warning.bg|border|solid|text — not negative.*."""
-    chart = make_chart(
-        "callout",
-        x=None,
-        y=None,
-        query=None,
-        query_name=None,
-        message="A migration warning",
-        style=CalloutChartStylePatch.model_validate({"tone": "warning"}),
-    )
-    _rs, _ctx = resolve_style_and_context(get_theme_style("clarity"))
-    svg = render_chart(
-        chart,
-        resolved_style=_rs,
-        chart_style_context=_ctx,
-        data=rows_result([]),
-        format="svg",
-        width=220,
+    svg = chart_svg(
+        {
+            "type": "callout",
+            "message": "A migration warning",
+            "style": {"tone": "warning"},
+        }
     )
     assert resolve_palette_color("warning.bg") in svg
     assert resolve_palette_color("warning.border") in svg
@@ -151,25 +131,14 @@ def test_callout_warning_tone_resolves_warning_palette_roles(make_chart) -> None
     assert resolve_palette_color("negative.bg") not in svg
 
 
-def test_callout_positive_tone_resolves_positive_palette_roles(make_chart) -> None:
+def test_callout_positive_tone_resolves_positive_palette_roles() -> None:
     """style.tone: positive resolves positive.bg|border|solid|text — not negative.*."""
-    chart = make_chart(
-        "callout",
-        x=None,
-        y=None,
-        query=None,
-        query_name=None,
-        message="All checks passed",
-        style=CalloutChartStylePatch.model_validate({"tone": "positive"}),
-    )
-    _rs, _ctx = resolve_style_and_context(get_theme_style("clarity"))
-    svg = render_chart(
-        chart,
-        resolved_style=_rs,
-        chart_style_context=_ctx,
-        data=rows_result([]),
-        format="svg",
-        width=220,
+    svg = chart_svg(
+        {
+            "type": "callout",
+            "message": "All checks passed",
+            "style": {"tone": "positive"},
+        }
     )
     assert resolve_palette_color("positive.bg") in svg
     assert resolve_palette_color("positive.border") in svg
@@ -186,14 +155,8 @@ _AUTHORED_COLORS = {
 }
 
 
-def _board(style: dict):
-    from dbt_charts.core.compile.models.style.authored import StylePatch
-
-    return StylePatch.model_validate(style)
-
-
-def _render_callout(make_chart, style: dict | None, *board_patches):
-    """Resolve and render one callout; return (resolved style, svg)."""
+def _render_callout(make_chart, style: dict | None, board_style: dict | None = None):
+    """Resolve one callout, and draw it in a board; return (resolved style, svg)."""
     chart = make_chart(
         "callout",
         x=None,
@@ -204,15 +167,19 @@ def _render_callout(make_chart, style: dict | None, *board_patches):
         message="Details",
         style=CalloutChartStylePatch.model_validate(style) if style else None,
     )
-    rs, ctx = resolve_style_and_context(get_theme_style(), merged_patch(*board_patches))
+    board_patches = [StylePatch.model_validate(board_style)] if board_style else []
+    _rs, ctx = resolve_style_and_context(
+        get_theme_style(), merged_patch(*board_patches)
+    )
     resolved = resolve(chart, [], chart_style_context=ctx)
-    svg = render_chart(
-        chart,
-        resolved_style=rs,
-        chart_style_context=ctx,
-        data=rows_result([]),
-        format="svg",
-        width=220,
+    svg = chart_svg(
+        {
+            "type": "callout",
+            "title": "Status",
+            "message": "Details",
+            **({"style": style} if style else {}),
+        },
+        board_style=board_style,
     )
     return resolved.style, svg
 
@@ -259,17 +226,15 @@ def test_board_callout_colors_beat_tone_and_chart_tone_rederives_the_rest(
 ) -> None:
     """A board-authored color survives a chart-local tone change; the colors
     the board left unset follow the chart's tone, not the board's."""
-    board = _board(
-        {
-            "charts": {
-                "callout": {
-                    "tone": "warning",
-                    "background": "#0b1f3a",
-                    "title": {"font": {"color": "#fefefe"}},
-                }
+    board = {
+        "charts": {
+            "callout": {
+                "tone": "warning",
+                "background": "#0b1f3a",
+                "title": {"font": {"color": "#fefefe"}},
             }
         }
-    )
+    }
     style, svg = _render_callout(make_chart, {"tone": "positive"}, board)
 
     _bg, border, _solid, text = _tone_colors("positive")
@@ -278,7 +243,7 @@ def test_board_callout_colors_beat_tone_and_chart_tone_rederives_the_rest(
 
 
 def test_board_message_color_beats_tone(make_chart) -> None:
-    board = _board({"charts": {"callout": {"message": {"font": {"color": "#dddddd"}}}}})
+    board = {"charts": {"callout": {"message": {"font": {"color": "#dddddd"}}}}}
     style, _svg = _render_callout(make_chart, {"tone": "warning"}, board)
 
     assert style.message.font.color == "#dddddd"
@@ -286,14 +251,14 @@ def test_board_message_color_beats_tone(make_chart) -> None:
 
 def test_board_tone_alone_colors_the_callout(make_chart) -> None:
     style, _svg = _render_callout(
-        make_chart, None, _board({"charts": {"callout": {"tone": "warning"}}})
+        make_chart, None, ({"charts": {"callout": {"tone": "warning"}}})
     )
 
     assert _colors(style) == _tone_colors("warning")
 
 
 def test_chart_color_beats_board_color(make_chart) -> None:
-    board = _board({"charts": {"callout": {"background": "#0b1f3a"}}})
+    board = {"charts": {"callout": {"background": "#0b1f3a"}}}
     style, _svg = _render_callout(make_chart, {"background": "#123456"}, board)
 
     assert style.background == "#123456"
@@ -302,22 +267,16 @@ def test_chart_color_beats_board_color(make_chart) -> None:
 def test_board_font_color_does_not_override_tone_ink(make_chart) -> None:
     """A board-wide font color is not a callout color: the tone still inks
     the title and message."""
-    board = _board(
-        {"font": {"color": "#123456"}, "charts": {"font": {"color": "#654321"}}}
-    )
+    board = {"font": {"color": "#123456"}, "charts": {"font": {"color": "#654321"}}}
     style, _svg = _render_callout(make_chart, {"tone": "warning"}, board)
 
     assert _colors(style) == _tone_colors("warning")
 
 
 def test_chart_by_tone_follows_the_tone_after_a_board_set_a_color(make_chart) -> None:
-    board = _board(
-        {
-            "charts": {
-                "callout": {"background": "#0b1f3a", "border": {"color": "#ff8800"}}
-            }
-        }
-    )
+    board = {
+        "charts": {"callout": {"background": "#0b1f3a", "border": {"color": "#ff8800"}}}
+    }
     style, _svg = _render_callout(
         make_chart,
         {"tone": "warning", "background": "by_tone", "border": {"color": "by_tone"}},
@@ -336,7 +295,7 @@ def test_no_by_tone_survives_into_the_resolved_callout(make_chart) -> None:
 
 
 def test_authored_palette_tokens_resolve_to_hex(make_chart) -> None:
-    board = _board({"charts": {"callout": {"border": {"color": "positive.border"}}}})
+    board = {"charts": {"callout": {"border": {"color": "positive.border"}}}}
     style, svg = _render_callout(
         make_chart,
         {"background": "warning.bg", "title": {"font": {"color": "negative.solid"}}},
@@ -353,63 +312,34 @@ def test_authored_palette_tokens_resolve_to_hex(make_chart) -> None:
 # --- Render behavior ---
 
 
-def test_callout_renders_message_and_title(make_chart) -> None:
-    from dbt_charts.core.compile.config import get_theme_style
-
-    chart = make_chart(
-        "callout",
-        x=None,
-        y=None,
-        query=None,
-        query_name=None,
-        title="Important Notice",
-        message="This chart requires review.",
-    )
-    _rs, _ctx = resolve_style_and_context(get_theme_style())
-    svg = render_chart(
-        chart,
-        resolved_style=_rs,
-        chart_style_context=_ctx,
-        data=rows_result([]),
-        format="svg",
-        width=220,
+def test_callout_renders_message_and_title() -> None:
+    svg = chart_svg(
+        {
+            "type": "callout",
+            "title": "Important Notice",
+            "message": "This chart requires review.",
+        }
     )
     assert "Important Notice" in svg
     assert "This chart requires review" in svg
     assert "add data" not in svg.lower()
 
 
-def test_callout_skips_query_execution(make_chart) -> None:
-    from dbt_charts.core.compile.config import get_theme_style
-
-    chart = make_chart(
-        "callout",
-        x=None,
-        y=None,
-        query_name=None,
-        title="No Query",
-        message="No query should run",
+def test_callout_plans_no_query_and_renders_its_message() -> None:
+    """A callout reads no query of its own, so its board plans none to run."""
+    result = compile(
+        "charts:\n  c:\n    type: callout\n    message: No query should run\n"
+        "rows:\n  - c\n"
     )
-    executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
-    executor.execute_query.side_effect = AssertionError(
-        "callout must not execute queries"
-    )
-
-    rs, ctx = resolve_style_and_context(get_theme_style())
-    svg, height = render_chart_item(
-        resolve(chart, [], chart_style_context=ctx),
-        executor,
-        variables={},
-        available_width=220,
-        available_height=300,
-        resolved_style=rs,
-        render_cache={},
-    )
-
-    executor.execute_query.assert_not_called()
-    svg_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", svg)).strip()
+    assert result.success, result.errors
+    assert result.board is not None
+    run = Run(result.board, env=build_exec_env(FilesystemProject(Path.cwd())))
+    assert run.ctx.plan["queries"] == {}
+    rendered = render(result.board, run.ctx, run.ledger, format="svg")
+    assert not rendered.chart_errors
+    assert isinstance(rendered.output, str)
+    svg_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", rendered.output)).strip()
     assert "No query should run" in svg_text
-    assert height > 60
 
 
 def test_callout_compiles_successfully() -> None:
@@ -445,24 +375,22 @@ rows:
 # --- Runtime ChartDataError fallback ---
 
 
+@pytest.mark.usefixtures("placement_scope")
 def test_chart_data_error_fallback_renders_as_a_quiet_callout_tile(make_chart) -> None:
     """Runtime ChartDataError fallback is a callout card with no tone color."""
     from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
-    chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
+    chart = make_chart("bar", x="x", y="y", title="Broken chart")
     executor = MagicMock(spec=QueryResults, board=SimpleNamespace(links=BoardLinks()))
-    executor.execute_query.return_value = [{"value": 1}, {"value": 2}]
-    executor.execute_query_result.return_value = rows_result(
-        executor.execute_query.return_value
+    executor.execute_query.side_effect = ChartDataError(
+        "expects exactly 1 row", chart_id=chart.id
     )
+    executor.execute_query_result.side_effect = executor.execute_query.side_effect
 
     rs, ctx = resolve_style_and_context(get_theme_style())
     svg, height = render_chart_item(
-        resolve(
-            chart,
-            [{"value": 1}, {"value": 2}],
-            chart_style_context=ctx,
-        ),
+        resolve(chart, [], chart_style_context=ctx),
         executor,
         variables={},
         available_width=220,

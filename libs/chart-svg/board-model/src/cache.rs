@@ -348,6 +348,9 @@ impl ToAuthored for CacheSlot {
     fn to_authored(self) -> CacheSlot {
         self
     }
+    fn to_authored_ref(&self) -> CacheSlot {
+        self.clone()
+    }
 }
 
 impl Leaf for CacheLayer {
@@ -366,12 +369,12 @@ impl Leaf for CacheLayer {
 }
 
 impl Build for CacheLayer {
-    fn build(slot: CacheSlot, at: &str) -> Result<Self, Unset> {
+    fn build(slot: CacheSlot, at: &model_core::At<'_>) -> Result<Self, Unset> {
         slot.0.ok_or_else(|| Unset {
             paths: vec![at.to_string()],
         })
     }
-    fn build_authored(slot: CacheSlot, at: &str) -> Result<Self, Unset> {
+    fn build_authored(slot: CacheSlot, at: &model_core::At<'_>) -> Result<Self, Unset> {
         Self::build(slot, at)
     }
 }

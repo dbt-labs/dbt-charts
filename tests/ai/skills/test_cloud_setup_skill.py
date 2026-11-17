@@ -233,12 +233,11 @@ def test_uses_bare_dct(body: str) -> None:
 
 
 def test_mapping_rerenders_and_force_is_the_manual_lever(body: str) -> None:
-    """The first render fires on sync, before any source is mapped. The skill
-    must say that mapping re-renders on its own, and name ``--force`` for the
-    case where nothing else moves a dead board."""
+    """The skill must say that mapping queues the renders on its own, and name
+    ``--force`` for the case where nothing else moves a dead board."""
     map_at = body.index("## Step 6")
     render_at = body.index("## Step 7")
-    assert "re-render" in body[map_at:render_at].lower()
+    assert "queues a render" in body[map_at:render_at].lower()
     assert "dct cloud render --force" in body[render_at:]
 
 

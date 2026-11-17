@@ -190,7 +190,7 @@ impl ValueAxisPlan {
                 let pos = self.pos(value, pw, ph);
                 let (align, baseline) = self.anchor(st, pos, pw);
                 if self.horizontal {
-                    self.label_ink(st, pos, self.tick_len + self.pad, w, align, baseline)
+                    self.label_ink(st, pos, self.pad, w, align, baseline)
                 } else {
                     self.label_ink(st, self.label_dx(st), pos, w, align, baseline)
                 }
@@ -939,7 +939,7 @@ fn axes_nodes(
                 let (align, baseline) = axis.anchor(st, along, m.plot_w);
                 let shift = measure::baseline_shift(baseline, st.size);
                 let (anchor_x, anchor_y) = if horizontal {
-                    (plot_left + 0.5 + along, plot_top + m.plot_h + axis.offset + 0.5 + axis.tick_len + axis.pad)
+                    (plot_left + 0.5 + along, plot_top + m.plot_h + axis.offset + 0.5 + axis.pad)
                 } else {
                     (plot_left + axis_x0(axis) + axis.label_dx(st), plot_top + along + 0.5)
                 };

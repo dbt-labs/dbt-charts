@@ -8,6 +8,7 @@ use crate::style::chart_base::{
 };
 use crate::style::endpoint_labels::EndpointLabelsConfig;
 use crate::chart::conditional_formatting::Predicate;
+use crate::style::axis::AxisXConditional;
 use crate::style::bar::misplaced_defaults;
 use crate::style::marks::{AreaLineStyleConditional, AreaMarkStyle, AreaMarkStyleConditional, PointLabelsStyle, PointMarkStyle, PointMarkStyleConditional};
 use diagnostic::Diagnostic;
@@ -75,13 +76,20 @@ pub struct AreaChartMarksStyleConditional {
     )),
     constraint(at_most_one_of(eq, ne, lt, lte, gt, gte, between, "in", is_null, default,
         message = "A conditional rule requires exactly one condition operator, got: {set}"
+    )),
+    constraint(at_least_one_of(axis_x, marks,
+        message = "A conditional rule requires at least one style to apply"
     ))
 )]
 pub struct AreaChartStyleConditional {
     #[flatten]
     pub predicate: Predicate,
-    /// Area-family mark overrides; a rule that restyles nothing is a mistake, so they are required.
-    pub marks: AreaChartMarksStyleConditional,
+    /// Restyles the x-axis labels the rule matches. A rule on the x column tests each label's own value; a rule on another column tests the rows the label names, which must agree.
+    #[model(absent = "the axis's own style")]
+    pub axis_x: Option<AxisXConditional>,
+    /// Mark overrides.
+    #[model(absent = "the marks' own style")]
+    pub marks: Option<AreaChartMarksStyleConditional>,
 }
 
 /// Required wrapper for area-layer mark overrides.

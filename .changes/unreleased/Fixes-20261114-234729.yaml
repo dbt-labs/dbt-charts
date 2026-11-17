@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'dct cloud status and the connect and status hints now match what Cloud does: boards render on their own after a sync or mapping, and the next-step lines name the token env var and --map-all-sources.'
+time: 2026-11-14T23:47:29.063392-08:00

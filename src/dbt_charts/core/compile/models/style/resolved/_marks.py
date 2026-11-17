@@ -150,8 +150,10 @@ class ResolvedLineMarkStyle(BaseModel):
     connect: bool | None = Field(
         default=None,
         description=(
-            "Band-aware step (curve='step' on a categorical x-axis): join "
-            "adjacent plateaus (True/None) or leave disconnected (False)."
+            "True joins every point: no break across a large gap on a "
+            "continuous x. Band-aware step (curve='step' on a categorical "
+            "x-axis): join adjacent plateaus (True/None) or leave disconnected "
+            "(False)."
         ),
     )
     disconnected_cap: LineCap | None = Field(

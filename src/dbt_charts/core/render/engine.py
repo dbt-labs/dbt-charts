@@ -11,7 +11,7 @@ warning sinks the Python renderers write for a warning. An engine refusal
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from typing import Literal
 
@@ -73,6 +73,7 @@ from dbt_charts.core.fonts import get_fonts_dir
 from dbt_charts.core.render.board_links import get_link_context, resolve_href
 from dbt_charts.core.render.board_variables import (
     current_board_variables,
+    current_variable_defs,
     current_variable_options,
 )
 from dbt_charts.core.render.chart.annotation_nothing_drawn import (
@@ -135,6 +136,7 @@ from dbt_charts.core.render.controls import is_flat_export, ships_page_runtime
 from dbt_charts.core.render.geo.loader import load_geometry_text
 from dbt_charts.core.render.sizing import TABLE_PAGINATION_CONTROL_HEIGHT
 from dbt_charts.core.render.svg_utils import css_color
+from dbt_charts.core.render.variables_resolve import empty_filters
 from dbt_charts.core.text.format_d3 import (
     HouseLocale,
     TimeLocaleDefinition,
@@ -374,9 +376,13 @@ def build_chart_layout(
     measuring: bool = False,
     authored_height: float | None = None,
     pie_mode: PieMode | None = None,
+    placement: int = 0,
 ) -> JsonDict:
     """The engine payload for one chart, without its rows: `resolved`, the box
     and the board's envelope. The rows go beside it as `ResultRows.engine_rows`.
+
+    `placement` numbers this draw among the chart's placements on the board (0 for
+    the first, and for a chart drawn alone), so a later placement mints ids of its own.
 
     `pie_mode` is a pie's sized mode; absent, the engine decides from the box
     the payload carries. `variables` are the board's variable values (a table
@@ -415,6 +421,9 @@ def build_chart_layout(
         "variable_options": dict(current_variable_options()),
         "title_shift": title_shift.model_dump(mode="json"),
         "filter_variables": sorted(get_filter_variables_context()),
+        "empty_filters": empty_filters(
+            chart, current_variable_defs(), variables, board_style.variables
+        ),
         "interactive_controls": ships_page_runtime(),
         "link_context": None if link_context is None else asdict(link_context),
         "width": width,
@@ -434,6 +443,7 @@ def build_chart_layout(
         "pie_mode": pie_mode,
         "measuring": measuring,
         "authored_height": authored_height,
+        "placement": placement,
         # A custom chart's template draws on the board's one output budget:
         # the engine gets what is left, and the render charges what it emits.
         "max_template_output_bytes": (
@@ -458,6 +468,7 @@ def engine_inputs(
     measuring: bool = False,
     authored_height: float | None = None,
     pie_mode: PieMode | None = None,
+    placement: int = 0,
 ) -> tuple[JsonDict, dict[str | None, ResultRows]]:
     """The layout and the results the engine draws `chart` from. `datasets` is
     `layout_sizing.build_chart_datasets`'s full result: `rows` is
@@ -475,6 +486,7 @@ def engine_inputs(
         measuring=measuring,
         authored_height=authored_height,
         pie_mode=pie_mode,
+        placement=placement,
     )
     return layout, engine_datasets(chart, datasets)
 
@@ -525,7 +537,7 @@ def _dataset_handles(
     }
 
 
-def _chart_data_error(exc: _engine.RenderDiagnosticError) -> ChartDataError:
+def chart_data_error(exc: _engine.RenderDiagnosticError) -> ChartDataError:
     registered = REGISTRY.get(exc.code)
     if not isinstance(registered, ErrorCode):
         raise TypeError(
@@ -556,7 +568,7 @@ def measure_table_natural_width(
             result.engine_rows, dumps_layout(layout)
         )
     except _engine.RenderDiagnosticError as exc:
-        raise _chart_data_error(exc) from exc
+        raise chart_data_error(exc) from exc
 
 
 def table_title_geometry(
@@ -575,7 +587,7 @@ def table_title_geometry(
     try:
         return _engine.table_title_geometry(dumps_layout(layout))
     except _engine.RenderDiagnosticError as exc:
-        raise _chart_data_error(exc) from exc
+        raise chart_data_error(exc) from exc
 
 
 def _truncations(
@@ -788,11 +800,13 @@ def render_native(
     measuring: bool = False,
     authored_height: float | None = None,
     pie_mode: PieMode | None = None,
+    placement: int = 0,
 ) -> tuple[str, float | None]:
     """Render one chart in the engine; return `(svg, natural_height)`.
 
     `datasets` carries a layered chart's per-layer queries (default: `data`
-    alone). A `measuring` render is a sizing probe: its `natural_height` is the
+    alone). `placement` numbers the draw among the chart's placements on the
+    board. A `measuring` render is a sizing probe: its `natural_height` is the
     box the layout sizes the slot from.
 
     `variables` defaults to the board's current values
@@ -819,17 +833,13 @@ def render_native(
         measuring=measuring,
         authored_height=authored_height,
         pie_mode=pie_mode,
-    )
-    authored = (
-        {"title": chart.title, "message": chart.message}
-        if isinstance(chart, ResolvedCalloutChart)
-        else None
+        placement=placement,
     )
     svg, natural_height = _render_payload(
         layout,
         sent[chart.query_name],
         sent,
-        authored,
+        authored_texts(chart),
         record_warnings=record_warnings,
         measuring=measuring,
     )
@@ -883,7 +893,7 @@ def decide_pie_mode(
             dumps_layout(layout),
         )
     except _engine.RenderDiagnosticError as exc:
-        raise _chart_data_error(exc) from exc
+        raise chart_data_error(exc) from exc
     return _PIE_MODES[mode]
 
 
@@ -906,15 +916,44 @@ def _render_payload(
             dumps_layout(layout),
         )
     except _engine.RenderDiagnosticError as exc:
-        raise _chart_data_error(exc) from exc
+        raise chart_data_error(exc) from exc
+    record_engine_warnings(
+        layout["resolved"]["id"],
+        layout["width"],
+        warnings,
+        authored,
+        record_warnings=record_warnings,
+        measuring=measuring,
+    )
+    return svg, natural_height
+
+
+def authored_texts(chart: ResolvedChart) -> dict[str, str | None] | None:
+    """Each field a truncation warning of ``chart`` names, as its author wrote it: the
+    engine cuts a callout's text after its images resolve, but the warning reports the
+    text as written."""
+    if not isinstance(chart, ResolvedCalloutChart):
+        return None
+    return {"title": chart.title, "message": chart.message}
+
+
+def record_engine_warnings(
+    chart_id: str,
+    width: float,
+    warnings: Sequence[_engine.RenderDiagnostic],
+    authored: dict[str, str | None] | None,
+    *,
+    record_warnings: bool,
+    measuring: bool,
+) -> None:
+    """Record the warnings the engine drew `chart_id` with, at `width`, into the open
+    sinks; `authored` maps a field to its text as written, which a truncation warning
+    reports. Raises `ValueError` for a warning no sink takes."""
     # Placement warnings come from painted renders only, at the chart's narrowest
     # placement; a sizing probe's geometry was never painted.
     speaks_for_placement = False
     if record_warnings:
-        chart_id = layout["resolved"]["id"]
-        speaks_for_placement = not measuring and claim_placement(
-            chart_id, layout["width"]
-        )
+        speaks_for_placement = not measuring and claim_placement(chart_id, width)
         if speaks_for_placement:
             reset_geometry_warnings(chart_id)
             reset_axis_label_collision(chart_id)
@@ -936,7 +975,6 @@ def _render_payload(
         if authored is not None and "authored_field" in params:
             params = {**params, "authored_text": authored[params["authored_field"]]}
         _WARNING_SINKS[warning["code"]](params)
-    return svg, natural_height
 
 
 def render_callout_card(

@@ -1697,11 +1697,11 @@ class TestBadSourceConfigReportedOnce:
         tmp_path: Path, names: list[str], project: FilesystemProject
     ) -> list[tuple[str, str]]:
         from dbt_charts.agent_api.validate import (
-            annotate_with_data_lint,
+            annotate_with_alias_lint,
             validate_paths,
         )
 
-        results = annotate_with_data_lint(
+        results = annotate_with_alias_lint(
             validate_paths([tmp_path / name for name in names], project=project),
             project=project,
         )

@@ -4,6 +4,7 @@ import re
 from collections.abc import Callable
 
 _JINJA_OPENER_RE = re.compile(r"\{[{%#]")
+_ESCAPED_OPENER_RE = re.compile(r'\{\{ "(\{[{%#])" \}\}')
 _MARKDOWN_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})([^\r\n]*)$")
 MASKED_FENCE_RE = re.compile(r"(__DCT_MARKDOWN_FENCE_\d+__)")
 
@@ -25,6 +26,11 @@ def escape_jinja_outside_fences(text: str) -> str:
             lambda opener: f'{{{{ "{opener.group()}" }}}}', masked
         ),
     )
+
+
+def unescape_jinja(text: str) -> str:
+    """Invert ``escape_jinja_outside_fences``: the openers as the author wrote them."""
+    return _ESCAPED_OPENER_RE.sub(lambda escaped: escaped.group(1), text)
 
 
 def mask_fenced_code(text: str) -> tuple[str, dict[str, str]]:

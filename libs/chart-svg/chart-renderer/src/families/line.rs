@@ -176,6 +176,7 @@ use crate::Payload;
 const X_AXIS_OFFSET: f64 = 1.0;
 
 pub mod bind;
+pub mod gaps;
 pub mod layout;
 pub(crate) mod segments;
 
@@ -382,6 +383,8 @@ pub(crate) struct PointRule {
     predicate: crate::conditional::Predicate,
     #[serde(default)]
     marks: Option<PointRuleMarks>,
+    #[serde(default)]
+    axis_x: Option<crate::conditional::RuleAxisX>,
 }
 
 #[derive(Deserialize)]
@@ -526,6 +529,18 @@ impl LineResolved {
         label_rows.iter().map(|(key, row)| Ok((key.clone(), self.patch_of(row)?))).collect()
     }
 
+    /// The rules as the x-axis labels read them.
+    pub(crate) fn axis_label_rules<'a>(&'a self, x: &'a str) -> crate::conditional::AxisLabelRules<'a, PointRule> {
+        crate::conditional::AxisLabelRules {
+            family: "line",
+            rules: self.style.conditional.as_ref(),
+            predicate: |r| &r.predicate,
+            axis: |r| r.axis_x.as_ref(),
+            measures: &self.wide_measures,
+            x,
+        }
+    }
+
     /// Whether any rule restyles the line or the area, which are drawn between points.
     pub(crate) fn sets_segment_style(&self) -> bool {
         self.style.conditional.iter().flat_map(|c| c.values()).flatten().any(|rule| {
@@ -657,9 +672,10 @@ pub(crate) struct LineMark {
     /// `bucket_aligned_temporal` on `curve == "step"` (`_cartesian.py:347`).
     #[serde(default)]
     pub curve: Option<String>,
-    /// Band-step only (`curve: step` on a nominal/ordinal x): whether
-    /// adjacent plateaus are joined (`true`/absent, the default) or left as
-    /// separate segments (`false`) — `step_band.py`'s `connect` parameter.
+    /// `true` joins every point, so a continuous x draws no large-gap break
+    /// (`line/gaps.rs`). On a band-step (`curve: step` on a nominal/ordinal x):
+    /// whether adjacent plateaus are joined (`true`/absent, the default) or left
+    /// as separate segments (`false`) — `step_band.py`'s `connect` parameter.
     /// No area equivalent (`_apply_area_step_band` always hardcodes
     /// `connect=True`), so `AreaMark` carries no such field.
     #[serde(default)]
@@ -1072,6 +1088,8 @@ pub(crate) struct LineXAxis {
     /// supplies the label text.
     tick_xs: Vec<f64>,
     body: LineXAxisBody,
+    /// Each label's `style.conditional` color, parallel to the body's labels (or bare ticks).
+    pub(crate) label_fills: Vec<Option<String>>,
     /// See `PlotRect::x_reach`.
     rotated_reach: Option<f64>,
 }
@@ -1158,24 +1176,25 @@ impl LineXAxis {
         if ax_x.labels.visible.unwrap_or(true) {
             let xf = &ax_x.labels.font;
             let xwt = xf.weight_str();
-            let face = |anchor| LabelFace {
+            let base_fill = xf.color.as_deref().unwrap_or("#626366");
+            let face = |anchor, i: usize| LabelFace {
                 anchor,
                 family: xf.family.as_deref().unwrap_or("sans-serif"),
                 size: xf.size_or(11.0),
                 weight: &xwt,
                 style: xf.style.as_deref(),
-                fill: xf.color.as_deref().unwrap_or("#626366"),
+                fill: self.label_fills.get(i).and_then(|f| f.as_deref()).unwrap_or(base_fill),
             };
             let xsz = xf.size_or(11.0);
             let label_y = plot_bottom
                 + self.x_axis_drop
-                + sign * (self.x_tick_eff + self.x_label_pad)
+                + sign * self.x_label_pad
                 + measure::baseline_shift(self.edge.baseline(), xsz);
-            let anchor_y = plot_bottom + self.x_axis_drop + sign * (self.x_tick_eff + self.x_label_pad);
+            let anchor_y = plot_bottom + self.x_axis_drop + sign * self.x_label_pad;
             let edge_half = ax_x.edge_rule_half_width(self.x_tick_eff > 0.0);
             match &self.body {
                 LineXAxisBody::Bare { ticks, visible, xs, angle } => {
-                    for ((t, &keep), &x) in ticks.iter().zip(visible).zip(xs) {
+                    for (i, ((t, &keep), &x)) in ticks.iter().zip(visible).zip(xs).enumerate() {
                         if !keep || t.mark == BareMark::TickOnly {
                             continue;
                         }
@@ -1183,7 +1202,7 @@ impl LineXAxis {
                             let (align, baseline) = bare_label_anchor(*angle, t.frac, plot_w, self.edge, self.flush);
                             items.push(rotated_label(
                                 (plot_left + x + self.ad, anchor_y, *angle, measure::baseline_shift(baseline, xsz)),
-                                &face(svg_text_anchor(align)),
+                                &face(svg_text_anchor(align), i),
                                 (&clip(&t.text)?, ""),
                                 false,
                             ));
@@ -1194,9 +1213,9 @@ impl LineXAxis {
                         let anchor = flush_anchor_px(t.frac * plot_w, plot_w, self.flush);
                         // A flushed label reaches the outer edge of the snapped rule under it, not of the raw tick.
                         let gx = plot_left + label_x(x, self.ad, anchor, edge_half);
-                        items.push(flat_label(Role::Axis, (gx, row1_y), &face(anchor), false, &clip(&t.text)?));
+                        items.push(flat_label(Role::Axis, (gx, row1_y), &face(anchor, i), false, &clip(&t.text)?));
                         if let Some(row2) = row2_text {
-                            items.push(flat_label(Role::Axis, (gx, row2_y), &face(anchor), false, &clip(row2)?));
+                            items.push(flat_label(Role::Axis, (gx, row2_y), &face(anchor, i), false, &clip(row2)?));
                         }
                     }
                 }
@@ -1205,17 +1224,17 @@ impl LineXAxis {
                         vega_fit::vl_x_label_anchor(vega_fit::normalize_angle(*angle), true);
                     let text_anchor = svg_text_anchor(align.unwrap_or(default_align));
                     let dy = measure::baseline_shift(baseline, xsz);
-                    for (tl, &x) in labels.iter().zip(xs) {
+                    for (i, (tl, &x)) in labels.iter().zip(xs).enumerate() {
                         let gx = plot_left + x + if self.use_band_positions { 0.0 } else { self.ad };
                         let (text, rows, ..) = tilted_temporal_label(tl, *angle, *format_tu, self.edge);
                         for (row, row_text) in [text.as_str(), tl.row2.as_str()].into_iter().take(rows).enumerate() {
                             let row_dy = dy + row as f64 * vega_fit::label_row_advance(xsz);
-                            items.push(rotated_label((gx, anchor_y, *angle, row_dy), &face(text_anchor), (&clip(row_text)?, ""), false));
+                            items.push(rotated_label((gx, anchor_y, *angle, row_dy), &face(text_anchor, i), (&clip(row_text)?, ""), false));
                         }
                     }
                 }
                 LineXAxisBody::FlatTemporal { labels, xs, anchors } => {
-                    for ((tl, &x), &anchor) in labels.iter().zip(xs).zip(anchors) {
+                    for (i, ((tl, &x), &anchor)) in labels.iter().zip(xs).zip(anchors).enumerate() {
                         let (row1_y, row2_y) = rows_at(label_y, xsz + 2.0);
                         let flushed = flush_anchor_px(x - self.x_inset, plot_w - 2.0 * self.x_inset, self.flush) == anchor && anchor != "middle";
                         // A flushed label reaches the outer edge of the snapped rule under it, not of the raw tick.
@@ -1226,9 +1245,9 @@ impl LineXAxis {
                                 (false, true) => x,
                                 (false, false) => x + self.ad,
                             };
-                        items.push(flat_label(Role::Axis, (gx, row1_y), &face(anchor), false, &clip(&tl.row1)?));
+                        items.push(flat_label(Role::Axis, (gx, row1_y), &face(anchor, i), false, &clip(&tl.row1)?));
                         if !tl.row2.is_empty() {
-                            items.push(flat_label(Role::Axis, (gx, row2_y), &face(anchor), false, &clip(&tl.row2)?));
+                            items.push(flat_label(Role::Axis, (gx, row2_y), &face(anchor, i), false, &clip(&tl.row2)?));
                         }
                     }
                 }
@@ -1236,9 +1255,9 @@ impl LineXAxis {
                     let (align, baseline) = nominal_label_anchor(*angle, self.edge, *align);
                     let text_anchor = svg_text_anchor(align);
                     let dy = measure::baseline_shift(baseline, xsz);
-                    for (xv, &x) in labels.iter().zip(xs) {
+                    for (i, (xv, &x)) in labels.iter().zip(xs).enumerate() {
                         let gx = plot_left + x + if self.use_band_positions { 0.0 } else { self.ad };
-                        items.push(rotated_label((gx, anchor_y, *angle, dy), &face(text_anchor), (&clip(xv)?, ""), false));
+                        items.push(rotated_label((gx, anchor_y, *angle, dy), &face(text_anchor, i), (&clip(xv)?, ""), false));
                     }
                 }
                 LineXAxisBody::Nominal { labels, xs, align, .. } => {
@@ -1247,9 +1266,9 @@ impl LineXAxis {
                         Some("right") => "end",
                         _ => "middle",
                     };
-                    for (xv, &x) in labels.iter().zip(xs) {
+                    for (i, (xv, &x)) in labels.iter().zip(xs).enumerate() {
                         let gx = plot_left + x + if self.use_band_positions { 0.0 } else { self.ad };
-                        items.push(flat_label(Role::Axis, (gx, label_y), &face(anchor), false, &clip(xv)?));
+                        items.push(flat_label(Role::Axis, (gx, label_y), &face(anchor, i), false, &clip(xv)?));
                     }
                 }
             }
@@ -1257,7 +1276,7 @@ impl LineXAxis {
         // The title clears the label block's far row: the last one under a bottom axis, the first over a top one.
         let x_label_baseline = plot_bottom
             + self.x_axis_drop
-            + sign * (self.x_tick_eff + self.x_label_pad)
+            + sign * self.x_label_pad
             + measure::baseline_shift(self.edge.baseline(), self.x_font_size)
             + sign * (self.label_rows - 1) as f64 * (self.x_font_size + 2.0);
         items.extend(crate::common::axis_title_flat(
@@ -2028,6 +2047,49 @@ mod tests {
         render_inner(&crate::test_payload(json), &test_fonts(), draw_areas)
     }
 
+    /// Two years of monthly rows with March through August 2024 missing.
+    fn monthly_gap_payload(connect: Option<bool>) -> serde_json::Value {
+        let mut p = make_line_payload(true, false);
+        let months = (0..24).filter(|m| !(14..20).contains(m));
+        p["rows"] = serde_json::json!(months
+            .map(|m| serde_json::json!({"week": format!("{}-{:02}-01", 2023 + m / 12, m % 12 + 1), "signups": 100.0 + f64::from(m)}))
+            .collect::<Vec<_>>());
+        p["resolved"]["style"]["line_mark"]["connect"] = serde_json::json!(connect);
+        p
+    }
+
+    fn subpaths(svg: &str) -> Vec<usize> {
+        drawn_with(&path_tags(svg), "stroke=\"#3164a3\"").iter().map(|(d, _)| d.matches('M').count()).collect()
+    }
+
+    #[test]
+    fn a_line_breaks_across_a_large_gap() {
+        let svg = render_segments(monthly_gap_payload(None), false).unwrap();
+        assert_eq!(subpaths(&svg), [2]);
+    }
+
+    #[test]
+    fn a_lone_point_between_two_large_gaps_still_draws() {
+        let mut p = make_line_payload(true, false);
+        let months = (0..6).chain([15]).chain(24..30);
+        p["rows"] = serde_json::json!(months
+            .map(|m| serde_json::json!({"week": format!("{}-{:02}-01", 2023 + m / 12, m % 12 + 1), "signups": 100.0}))
+            .collect::<Vec<_>>());
+        let svg = render_segments(p, false).unwrap();
+        let paths = path_tags(&svg);
+        let line = drawn_with(&paths, "stroke=\"#3164a3\"");
+        assert_eq!(line.len(), 1, "{paths:?}");
+        let lone = line[0].0.split('M').nth(2).unwrap();
+        assert!(line[0].1.contains("stroke-linecap=\"round\""), "{}", line[0].1);
+        assert!(!lone.contains('L') && lone.trim_end().ends_with('Z'), "a lone point is a closed one-point subpath, drawn as a dot by its round cap: {lone}");
+    }
+
+    #[test]
+    fn connect_true_joins_a_large_gap() {
+        let svg = render_segments(monthly_gap_payload(Some(true)), false).unwrap();
+        assert_eq!(subpaths(&svg), [1]);
+    }
+
     #[test]
     fn a_run_of_matching_points_restyles_its_segments_but_not_the_boundary_one() {
         let svg = render_segments(segment_payload(gray_line(), 2, None), false).unwrap();
@@ -2458,7 +2520,7 @@ mod tests {
         let at = |needle: &str| svg.find(needle).unwrap_or_else(|| panic!("{needle} missing: {svg}"));
         let halo = at("layer_1_marks");
         let tint = at("<rect x=\"309.51\"");
-        let rule = at("<line x1=\"0\" y1=\"65\"");
+        let rule = at("<line x1=\"0\" y1=\"66.2\"");
         let main = at("layer_3_marks");
         let text = at("annotations-text\"><g data");
         assert!(halo < tint && tint < rule && rule < main && main < text, "{svg}");
@@ -4652,10 +4714,10 @@ mod tests {
             .skip(1)
             .map(|pt| pt.split(',').nth(1).expect("y").trim_end_matches('Z').parse().expect("number"))
             .collect();
-        // The payload's plot is 300 tall; zero sits below the domain's floor, so the
+        // The payload's plot is 306 tall; zero sits below the domain's floor, so the
         // fill is clipped at the plot rect rather than squeezed onto its edge.
-        assert!(ys[ys.len() - 3..].iter().all(|y| *y > 300.0), "{ys:?}: {svg}");
-        assert!(svg.contains("<clipPath id=\"dbt-layer-clip-") && svg.contains("height=\"300\"/></clipPath>"), "{svg}");
+        assert!(ys[ys.len() - 3..].iter().all(|y| *y > 306.0), "{ys:?}: {svg}");
+        assert!(svg.contains("<clipPath id=\"dbt-layer-clip-") && svg.contains("height=\"306\"/></clipPath>"), "{svg}");
     }
 
     /// A scatter layer over a color-grouped base renders beside the base's circle glyphs.
@@ -8791,7 +8853,7 @@ mod tests {
         let svg = render(&payload, &test_fonts()).expect("titled support_table rail concat renders");
         // Right-aligned cells reach left, into the gutter: nothing overhangs
         // the declared 600.
-        assert_eq!(canvas_dims(&svg), (600.0, 545.0), "{svg}");
+        assert_eq!(canvas_dims(&svg), (600.0, 539.0), "{svg}");
         assert_eq!(group_y(&svg), 92.0, "{svg}");
     }
 
@@ -8803,7 +8865,7 @@ mod tests {
     fn support_table_on_the_rail_concat_pins_exact_canvas_and_group_y_untitled() {
         let payload: Payload = serde_json::from_value(make_rail_strip_payload()).unwrap();
         let svg = render(&payload, &test_fonts()).expect("untitled support_table rail concat renders");
-        assert_eq!(canvas_dims(&svg), (600.0, 510.0), "{svg}");
+        assert_eq!(canvas_dims(&svg), (600.0, 504.0), "{svg}");
         assert_eq!(group_y(&svg), 57.0, "{svg}");
     }
 
@@ -11069,7 +11131,7 @@ mod tests {
         }
         assert_eq!(point_ys.len(), 3, "{labeled}");
         for (label_y, point_y) in label_ys.iter().zip(&point_ys) {
-            assert_eq!(label_y - point_y, -6.0, "dy − |bs(bottom, 11)|: {labeled}");
+            assert!((label_y - point_y + 6.0).abs() < 1e-9, "dy − |bs(bottom, 11)|: {labeled}");
         }
 
         let first_half = fonts.measure_shaped("100.0", TEST_FONT, 11.0).unwrap() / 2.0;
@@ -11845,7 +11907,7 @@ mod tests {
     }
 
     /// L10(a): the rail arm's x-label baseline is the SAME Vega formula the
-    /// fit arm uses (`plot_h + offset 1 + 0.5 + tick + pad + round(0.79·fs)`),
+    /// fit arm uses (`plot_h + offset 1 + 0.5 + pad + round(0.79·fs)`),
     /// not the legacy `xsz*0.8` expression — the two arms must land on the
     /// exact same y for equal inputs.
     #[test]
@@ -11858,7 +11920,7 @@ mod tests {
         // `plot_h_from_tick` reads the x-axis tick's y1, the plot's bottom edge.
         let tick_y = plot_h_from_tick(&rail_svg);
         let label_y = attr(&text_tag(&rail_svg, "1"), "y");
-        let expected = tick_y + 1.0 + 0.5 + 6.0 + 6.0 + measure::baseline_shift("top", 11.0);
+        let expected = tick_y + 1.0 + 0.5 + 6.0 + measure::baseline_shift("top", 11.0);
         assert!(
             (label_y - expected).abs() < 1e-6,
             "rail label baseline {label_y} != fit-arm formula {expected}: {rail_svg}"
@@ -12979,15 +13041,15 @@ mod tests {
         let payload: Payload = serde_json::from_value(p).unwrap();
         let svg = render(&payload, &test_fonts()).expect("nominal x + mirror renders band positions");
         assert!(
-            svg.contains("d=\"M81.17,338L243.5,0L405.83,135.2\""),
+            svg.contains("d=\"M81.17,344L243.5,0L405.83,137.6\""),
             "vertices must land at band centers step*(i+0.5), step=487/3, printed to two \
              decimals (81.1666.. -> 81.17, 405.8333.. -> 405.83): {svg}"
         );
         // X ticks snap to `floor(center) + 0.5` (a BAND scale's own
         // `tickRound` law, `tick_snap`'s doc comment).
-        assert!(svg.contains("x1=\"81.5\" y1=\"338\" x2=\"81.5\" y2=\"345.5\""), "{svg}");
-        assert!(svg.contains("x1=\"243.5\" y1=\"338\" x2=\"243.5\" y2=\"345.5\""), "{svg}");
-        assert!(svg.contains("x1=\"405.5\" y1=\"338\" x2=\"405.5\" y2=\"345.5\""), "{svg}");
+        assert!(svg.contains("x1=\"81.5\" y1=\"344\" x2=\"81.5\" y2=\"351.5\""), "{svg}");
+        assert!(svg.contains("x1=\"243.5\" y1=\"344\" x2=\"243.5\" y2=\"351.5\""), "{svg}");
+        assert!(svg.contains("x1=\"405.5\" y1=\"344\" x2=\"405.5\" y2=\"351.5\""), "{svg}");
         // Primary + ghost pair — the mirror ghost still paints (the band
         // flip changes X positions only, never the Y-axis mirror itself).
         assert!(svg.matches("text-anchor=\"end\"").count() >= 2, "primary + ghost pair: {svg}");
@@ -13555,7 +13617,7 @@ mod tests {
             {"week": "2026-01-08", "series": "Paris", "signups": 3.0},
         ]);
         p["width"] = json!(360.0);
-        p["height"] = json!(90.0);
+        p["height"] = json!(84.0);
         p["resolved"]["legend"]["visible"] = json!(false);
         p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(true);
         let (svg, warnings) =
@@ -14847,13 +14909,11 @@ mod tests {
     /// subpath at a datum whose measure is null and starts a new one after
     /// it — a run of ONE defined point is its own closed `M x,y Z`, which
     /// under the mark's round cap paints a dot. A bucket with no ROW AT
-    /// ALL is a different thing: that datum never reaches d3, so the
-    /// mark connects straight across it. (Both rules checked against the
-    /// reference: `Download`'s runs come out `5, 8, 5, 8, 2` under
-    /// break-at-null-only and `1, 1, 3, 7, 1, 5, 8, 1, 1` if a missing row
-    /// broke the run too.)
+    /// ALL never reaches d3; whether the line joins across it is the
+    /// large-gap rule's call (`line/gaps.rs`). Here `bb` skips one of five
+    /// weekly periods, half the plot wide, so it breaks there.
     #[test]
-    fn a_null_measure_breaks_the_line_but_a_missing_row_does_not() {
+    fn a_null_measure_breaks_the_line_and_so_does_a_skipped_period_wide_on_the_plot() {
         let payload: Payload = serde_json::from_value(make_gappy_payload()).unwrap();
         let svg = render(&payload, &test_fonts()).expect("renders");
         assert_eq!(
@@ -14863,8 +14923,8 @@ mod tests {
         );
         assert_eq!(
             subpath_lens(&path_d(&svg, "stroke=\"#00bb00\" stroke-width=\"4\"")),
-            vec![4],
-            "a bucket with no row at all is not a break — the mark connects across it"
+            vec![2, 2],
+            "a skipped weekly period half the plot wide breaks the line"
         );
         let cc = path_d(&svg, "stroke=\"#0000cc\" stroke-width=\"4\"");
         assert_eq!(subpath_lens(&cc), vec![1, 1, 1], "three one-point runs: {cc}");
@@ -14895,8 +14955,8 @@ mod tests {
         assert!(aa.contains("ZM"), "the runs are one path, not two marks: {aa}");
         assert_eq!(
             path_d(&svg, "fill=\"#00bb00\" fill-opacity").matches('Z').count(),
-            1,
-            "a missing row leaves one run"
+            2,
+            "a skipped weekly period half the plot wide breaks the area"
         );
         let cc = path_d(&svg, "fill=\"#0000cc\" fill-opacity");
         assert_eq!(subpath_lens(&cc), vec![2, 2, 2], "single-point runs close top→bottom: {cc}");
@@ -16443,7 +16503,7 @@ mod tests {
                 "North's own row offset: {svg}"
             );
             assert!(
-                svg.contains(r#"<g transform="translate(38,200)">"#),
+                svg.contains(r#"<g transform="translate(38,203)">"#),
                 "South's own row offset (North's own child_height + grid padding below): {svg}"
             );
             // The shared x axis (painted once, below South) ticks at Jan/
@@ -16472,7 +16532,7 @@ mod tests {
             // y_gutter`, `left_mark_overhang` right of the un-shifted
             // `391.087` this rung painted before this fix.
             assert!(
-                svg.contains(r#"<text x="395.09" y="99.06" text-anchor="end""#)
+                svg.contains(r#"<text x="395.09" y="100.72" text-anchor="end""#)
                     && svg.contains(">100<"),
                 "North's own value-axis label reaches `left_mark_overhang` past `plot_w`: {svg}"
             );
@@ -16545,7 +16605,7 @@ mod tests {
             payload_json["width"] = json!(600.1);
             let svg = render_facet_payload(payload_json).expect("renders");
             assert!(
-                svg.contains(r#"<text x="518.09" y="96.56" text-anchor="end""#)
+                svg.contains(r#"<text x="518.09" y="98.22" text-anchor="end""#)
                     && svg.contains(">100<"),
                 "North's own value-axis label reaches `ceil(plot_w + raw_right_reach)`, \
                  not `ceil(plot_w + left_mark_overhang)`: {svg}"
@@ -16576,7 +16636,7 @@ mod tests {
             payload_json["width"] = json!(600.1);
             let svg = render_facet_payload(payload_json).expect("renders");
             assert!(
-                svg.contains(r#"<text x="512.09" y="99.06" text-anchor="end""#)
+                svg.contains(r#"<text x="512.09" y="100.72" text-anchor="end""#)
                     && svg.contains(">100<"),
                 "North's own value-axis label reaches `ceil(plot_w + raw_left.max(0.0))`, \
                  never a negative mark-only term: {svg}"
@@ -16603,7 +16663,7 @@ mod tests {
             payload_json["width"] = json!(481.5);
             let svg = render_facet_payload(payload_json).expect("renders");
             assert!(
-                svg.contains(r#"<text x="397.09" y="99.06" text-anchor="end""#)
+                svg.contains(r#"<text x="397.09" y="100.72" text-anchor="end""#)
                     && svg.contains(">100<"),
                 "North's own value-axis label reaches `ceil(plot_w + raw_right_reach)`, \
                  not the un-ceiled sum: {svg}"
@@ -17205,13 +17265,13 @@ mod tests {
             };
             let mirrored = render(true);
             for fill in [
-                r#"d="M23.33,193.33L70,0L116.67,77.33L116.67,348L70,348L23.33,348Z""#,
-                r#"d="M23.33,232L70,348L116.67,116L116.67,348L70,348L23.33,348Z""#,
+                r#"d="M23.33,196.67L70,0L116.67,78.67L116.67,354L70,354L23.33,354Z""#,
+                r#"d="M23.33,236L70,354L116.67,118L116.67,354L70,354L23.33,354Z""#,
             ] {
                 assert!(mirrored.contains(fill), "band centers {fill}: {mirrored}");
             }
             let point = render(false);
-            assert!(point.contains(r#"d="M0,193.33L90,0L180,77.33L180,348L90,348L0,348Z""#), "{point}");
+            assert!(point.contains(r#"d="M0,196.67L90,0L180,78.67L180,354L90,354L0,354Z""#), "{point}");
         }
 
         /// A facet panel with an authored `axis_y.mirror: true` must never
@@ -17459,23 +17519,43 @@ mod tests {
             p
         }
 
-        /// A layer moves the base line off the facet's own dataset: over a temporal
-        /// x each panel's base line walks every row of the chart, so both panels
-        /// draw the same six-vertex path.
+        /// A layer leaves each panel's base line on the panel's own rows: three
+        /// vertices (halo and stroke) per panel, never a walk through every
+        /// panel's points.
         #[test]
-        fn a_layer_over_a_temporal_x_walks_every_row_in_each_panel() {
+        fn a_layer_over_a_temporal_x_leaves_each_panel_s_base_line_on_its_own_rows() {
             let _locale = ::bind::time_locale::en_us_scope();
-            let plain = render_facet_payload(dated_facet_payload()).expect("a dated facet renders without a layer");
             let mut layer = super::line_layer_json(None);
             layer["y"] = json!("target");
             let mut payload = dated_facet_payload();
             payload["resolved"]["layers"] = json!([layer]);
             let svg = render_facet_payload(payload).expect("a layer over a temporal x renders");
-            let vertices = |svg: &str| -> Vec<usize> {
-                svg.split("<path d=\"M").skip(1).map(|p| p.split('"').next().unwrap().matches('L').count() + 1).collect()
-            };
-            assert!(vertices(&plain).iter().all(|&n| n <= 3), "a panel's own rows draw three vertices");
-            assert_eq!(vertices(&svg).iter().filter(|&&n| n == 6).count(), 4, "halo and stroke in each panel");
+            let vertices: Vec<usize> =
+                svg.split("<path d=\"M").skip(1).map(|p| p.split('"').next().unwrap().matches('L').count() + 1).collect();
+            assert!(vertices.contains(&3) && vertices.iter().all(|&n| n <= 3), "a panel draws only its own three rows: {vertices:?}");
+        }
+
+        /// The same holds for a columns facet.
+        #[test]
+        fn a_layer_over_a_temporal_x_leaves_each_column_s_base_line_on_its_own_rows() {
+            let _locale = ::bind::time_locale::en_us_scope();
+            let mut payload = make_facet_line_payload_columns();
+            for row in payload["rows"].as_array_mut().unwrap() {
+                let month = match row["month"].as_str().unwrap() {
+                    "Jan" => "2024-01-01",
+                    "Feb" => "2024-02-01",
+                    _ => "2024-03-01",
+                };
+                row["month"] = json!(month);
+                row["target"] = json!(100.0);
+            }
+            let mut layer = super::line_layer_json(None);
+            layer["y"] = json!("target");
+            payload["resolved"]["layers"] = json!([layer]);
+            let svg = render_facet_payload(payload).expect("a layer over a temporal x renders");
+            let vertices: Vec<usize> =
+                svg.split("<path d=\"M").skip(1).map(|p| p.split('"').next().unwrap().matches('L').count() + 1).collect();
+            assert!(vertices.contains(&3) && vertices.iter().all(|&n| n <= 3), "a column draws only its own three rows: {vertices:?}");
         }
 
         #[test]
@@ -17609,11 +17689,11 @@ mod tests {
             })
             .expect("rows-only facet with mirror renders band positions");
             assert!(
-                svg.contains("d=\"M46.67,95.56L140,0L233.33,38.22\""),
+                svg.contains("d=\"M46.67,97.22L140,0L233.33,38.89\""),
                 "North's own vertices at band centers, step*(i+0.5), step=280/3: {svg}"
             );
             assert!(
-                svg.contains("d=\"M46.67,114.67L140,172L233.33,57.33\""),
+                svg.contains("d=\"M46.67,116.67L140,175L233.33,58.33\""),
                 "South's own vertices at the SAME band centers: {svg}"
             );
             assert!(svg.contains("x1=\"133.5\""), "shared footer tick, floor(center)+0.5: {svg}");

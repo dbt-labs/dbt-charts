@@ -91,7 +91,7 @@ where
         });
         return Err(FixtureError(msgs.collect()));
     }
-    T::build_authored(parsed.twin, "").map_err(|u| FixtureError(u.paths))
+    T::build_authored(parsed.twin, &model_core::At::ROOT).map_err(|u| FixtureError(u.paths))
 }
 
 fn formats(formats: &[(&str, &str)]) -> Value {
@@ -192,7 +192,7 @@ pub fn resolved_theme(
 /// The total `Style` of a built-in theme: its folded `style:` patch through the generated inherit
 /// and fill, then built. Nothing is written by hand, so it is what normalize would resolve.
 pub fn resolved_style(theme: &str) -> Result<Box<crate::style::style::Style>, FixtureError> {
-    resolved_theme(theme).map(|r| r.total)
+    resolved_theme(theme).map(|r| Box::new(std::sync::Arc::unwrap_or_clone(r.total)))
 }
 
 /// [`resolved_style`] with `style`, the authored form of a board's own `style:` block, laid over the
@@ -217,7 +217,7 @@ pub fn resolved_style_over(
     }
     resolved_theme(theme)?
         .apply(&parsed.twin)
-        .map(|r| r.total)
+        .map(|r| Box::new(std::sync::Arc::unwrap_or_clone(r.total)))
         .map_err(|e| FixtureError(vec![e.to_string()]))
 }
 

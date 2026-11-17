@@ -1185,3 +1185,142 @@ def test_rows_of_an_imported_board_file_are_not_reported(
     """An imported subtree has no authored coordinates in this file."""
     board = _board(rows=["./section.yml"])
     assert not _adjacent_in_project(tmp_path, local_project, board)
+
+
+# ────────────────────────── WARN-TEXT-UNDECLARED-NAME ─────────────────────────
+
+
+def _undeclared(yaml: str) -> list[Diagnostic]:
+    result = compile(yaml, file="f.yaml")
+    assert result.success, result.errors
+    return [w for w in result.warnings if w.code == "WARN-TEXT-UNDECLARED-NAME"]
+
+
+_REGION = """
+variables:
+  region:
+    input: select
+    options:
+      static: [East, West]
+"""
+
+
+def test_a_declared_variable_with_no_value_does_not_warn() -> None:
+    assert not _undeclared(f"{_REGION}\ntext: Sales in {{{{ region }}}}.\n")
+
+
+def test_an_undeclared_name_in_board_text_warns_with_a_close_match() -> None:
+    (warning,) = _undeclared(
+        f"{_REGION}\ntext: |\n  Intro.\n\n  Sales in {{{{ regoin }}}}.\n"
+    )
+
+    assert warning.path == "text"
+    assert "'regoin'" in warning.message
+    assert warning.hint is not None
+    assert "'region'" in warning.hint
+    assert warning.range is not None
+    # The mark narrows from the block to the line that reads the name.
+    assert warning.range.start_line == warning.range.end_line == 11
+
+
+def test_an_undeclared_name_in_a_board_title_warns() -> None:
+    (warning,) = _undeclared(f"{_REGION}\ntitle: Sales in {{{{ regoin }}}}\n")
+    assert warning.path == "title"
+
+
+def test_a_name_in_a_nested_text_row_warns_at_its_row() -> None:
+    warnings = _undeclared(
+        f"""
+{_QUERIES_AND_CHARTS}
+rows:
+  - untitled
+  - title: Detail
+    rows:
+      - text: Hello {{{{ nobody }}}}.
+"""
+    )
+    assert [w.path for w in warnings] == ["rows.1.rows.0.text"]
+
+
+def test_a_variable_a_nested_board_declares_does_not_warn_in_root_text() -> None:
+    assert not _undeclared(
+        f"""
+{_QUERIES_AND_CHARTS}
+text: Sales in {{{{ region }}}}.
+rows:
+  - variables:
+      region:
+        input: text
+    rows:
+      - untitled
+"""
+    )
+
+
+def test_builtins_loop_and_set_names_do_not_warn() -> None:
+    assert not _undeclared(
+        """
+queries:
+  q:
+    type: values
+    rows:
+      - {x: 1}
+text: |
+  {% set label = 'Total' %}{{ label }}
+  {% for row in queries.q.rows %}{{ row.x }}{{ loop.index }}{% endfor %}
+  {% for n in range(2) %}{{ n }}{% endfor %}
+  {{ queries.q.rows | length }}
+"""
+    )
+
+
+def test_a_name_inside_fenced_code_does_not_warn() -> None:
+    assert not _undeclared("text: |\n  ```\n  {{ nobody }}\n  ```\n")
+
+
+def test_a_query_name_read_bare_suggests_the_queries_namespace() -> None:
+    (warning,) = _undeclared(
+        f"{_QUERIES_AND_CHARTS}\ntext: '{{{{ q }}}}'\nrows:\n  - untitled\n"
+    )
+    assert warning.hint is not None
+    assert "'queries.q'" in warning.hint
+
+
+def test_an_undeclared_name_reaches_the_render_result(
+    tmp_path: Path, local_project: Callable[[Path], Project]
+) -> None:
+    from dbt_charts.core.board import render_dashboard
+    from dbt_charts.core.execute.env import build_exec_env
+    from dbt_charts.core.project import InMemoryBoard
+
+    reset_config()
+    project = local_project(tmp_path)
+    result = render_dashboard(
+        board=InMemoryBoard(
+            f"{_REGION}\ntext: Sales in {{{{ regoin }}}}.\n",
+            path=project.path("charts/b.yml"),
+        ),
+        env=build_exec_env(project, read_only=False),
+        project=project,
+        result_cache=None,
+    )
+
+    (warning,) = [w for w in result.warnings if w.code == "WARN-TEXT-UNDECLARED-NAME"]
+    assert warning.path == "text"
+    assert warning.range is not None
+
+
+def test_a_markdown_document_heading_is_named_as_written(tmp_path: Path) -> None:
+    """A document's Jinja is escaped on parse; the warning names what the author wrote."""
+    from dbt_charts.cli.filesystem_project import FilesystemProject
+
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts/guide.md").write_text("# Using {{ region }}\n\nProse.\n")
+    result = compile_file(
+        FilesystemProject(tmp_path).path("charts/guide.md").read_board()
+    )
+
+    assert result.success, result.errors
+    (warning,) = [w for w in result.warnings if w.code == "WARN-BODY-HEADING-NO-TITLE"]
+    assert "'Using {{ region }}'" in warning.message
+    assert not [w for w in result.warnings if w.code == "WARN-TEXT-UNDECLARED-NAME"]

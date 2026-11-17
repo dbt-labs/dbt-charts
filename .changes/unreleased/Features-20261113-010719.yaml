@@ -1,0 +1,5 @@
+kind: Features
+body: A filter's sort button now changes the order with each click and shows the order in force, instead of opening a menu.
+time: 2026-11-13T01:07:19.398369-08:00
+custom:
+    DbtChartsIssue: "99"

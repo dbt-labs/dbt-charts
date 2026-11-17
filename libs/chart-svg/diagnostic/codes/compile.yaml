@@ -321,6 +321,18 @@
     being placed, it would never end, so the board stops here and names the files in order.
   summary: Board files place each other in a circle.
   docs_topic: board
+- code: ERR-BOARD-FILE-PLACED-TWICE
+  level: error
+  title: A board places the same file twice
+  template: 'Board file {file!r} is placed twice: by {first} and by {second}. A file that
+    declares charts or queries can be placed once in a board, because every file a board
+    places shares one set of chart and query names. Keep one placement.'
+  doc: A rows item, or a `charts` fence, can place another board file or Markdown page by
+    its path. Fired when a file that declares its own charts or queries is placed a second
+    time in one board, from the same file or through two different files that both place
+    it. The message names the file and both places.
+  summary: A board places the same file twice.
+  docs_topic: board
 - code: ERR-JINJA-ERROR
   level: error
   title: Jinja template in a query failed to render
@@ -621,14 +633,25 @@
   level: error
   title: Log scale is not supported on bar charts
   template: 'Chart {chart_id!r} (bar): axis_y.scale.continuous.type: log is not supported:
-    a bar''s length encodes magnitude from zero, which a log scale makes meaningless. Use
-    axis_y.scale.continuous.type: symlog on the bar chart, or switch to a line or area chart
-    for a log scale.'
+    a bar''s length encodes magnitude from zero, which a log scale makes meaningless. Switch
+    to a line or area chart for a log scale.'
   doc: 'Fired when a bar chart''s y axis is set to `axis_y.scale.continuous.type: log`. A
-    bar''s length encodes magnitude from zero, which a log scale makes meaningless. Use `axis_y.scale.continuous.type:
-    symlog` on the bar chart, or switch to a line or area chart for a log scale.'
+    bar''s length encodes magnitude from zero, which a log scale makes meaningless. Switch
+    to a line or area chart for a log scale.'
   summary: Fired when a bar chart's y-axis uses a log scale, which magnitude-from-zero bars
     can't represent.
+  docs_topic: charts
+- code: ERR-TORN-OUTLIER-UNSUPPORTED
+  level: error
+  title: Torn outlier bars are not supported here
+  template: 'Chart {chart_id!r}: style.torn_outlier.enabled is not supported {reason}. Set
+    style.torn_outlier.enabled: false, or change the chart.'
+  doc: 'Fired when `style.torn_outlier.enabled` is on for a chart the tear cannot draw truthfully:
+    a normalized, ranged (`y_start`), layered, small-multiples or histogram chart; one with an
+    authored `axis_y` domain or `zero: false`; one with a negative bar; or one with an annotation
+    past the break. A torn bar''s cap is positioned by its end value above a zero-based break,
+    so these shapes have no honest tear.'
+  summary: Fired when torn outlier bars are enabled on a chart shape that cannot be torn.
   docs_topic: charts
 - code: ERR-FUNNEL-BAND-WIDTH-TOO-THIN
   level: error
@@ -1602,6 +1625,19 @@
     label. Heading detection uses the same markdown parser that renders the text, so a fenced
     code block opening with a `#` comment is not mistaken for a heading. Emitted by `compile/validate/board_warnings.py`.'
   docs_topic: board
+- code: WARN-TEXT-UNDECLARED-NAME
+  level: warning
+  title: Board text reads a name nothing declares
+  template: Board {field} reads {name!r}, which no variable declares, so it renders as nothing.
+  fix: Fix the name, or declare it under `variables:`.
+  doc: 'Fires at compile time when a board''s `text:` or `title:` reads a Jinja name that no
+    variable anywhere in the board declares and that is not a built-in (`queries`, `glob_boards`,
+    `glob_folders`, `range`, a `{% set %}` or `{% for %}` name). Board text renders an unknown
+    name as nothing, so a typo would otherwise vanish without a trace. A declared variable that
+    has no value yet does not fire. The hint names the closest variable, or `queries.<name>`
+    when the name is a query''s. Fenced code is not Jinja and is not read. Emitted by `compile/validate/board_warnings.py`.'
+  summary: A board's text or title reads a name that no variable declares.
+  docs_topic: variables
 - code: ERR-AXIS-COLUMN-REQUIRES-TABULAR-FONT
   level: error
   title: A column-forming quantitative axis needs a tabular label font

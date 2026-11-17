@@ -30,6 +30,7 @@ from dbt_charts.core.execute import plan as execute_plan
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render import render
 from dbt_charts.core.render.variables_resolve import (
+    empty_filters,
     format_variable_display_value,
     linked_variable_options,
     resolve_controls,
@@ -359,6 +360,7 @@ variables:
       static: [strict, loose]
   regions:
     input: multiselect
+    label: Regions
     options:
       static: [east, west]
   note:
@@ -748,3 +750,108 @@ def test_an_options_query_value_column_is_found_ignoring_case() -> None:
 
     rows = [{"Label": "East", "Value": "e"}, {"Label": "West", "Value": "w"}]
     assert _option_cells(rows, "regions") == ["e", "w"]
+
+
+_FILTERED_BOARD = """
+variables:
+  source_rollup:
+    input: select
+    label: Source rollup
+    options:
+      static: [6sense, hubspot]
+  regions:
+    input: multiselect
+    label: Regions
+    options:
+      static: [EMEA, APAC, NA]
+    default: [NA]
+  other:
+    input: text
+queries:
+  q:
+    source: warehouse
+    sql: "select 1 where '{{ source_rollup }}' = '' and '{{ regions }}' = '' and '{{ other }}' = ''"
+  free:
+    source: warehouse
+    sql: "select 1"
+charts:
+  filtered:
+    query: q
+    type: bar
+    x: a
+    y: b
+  unfiltered:
+    query: free
+    type: bar
+    x: a
+    y: b
+rows:
+  - filtered
+  - unfiltered
+"""
+
+
+def _filters(chart_id: str, **values: Any) -> list[tuple[str, str]]:
+    board = compile(_FILTERED_BOARD).board
+    assert board is not None
+    return empty_filters(board.charts[chart_id], board.variables, values, _vs())
+
+
+def test_an_empty_chart_names_the_non_default_filters_it_reads() -> None:
+    filters = _filters(
+        "filtered", source_rollup="6sense", regions=["EMEA", "APAC"], other=""
+    )
+    assert filters == [("Source rollup", "6sense"), ("Regions", "EMEA, APAC")]
+
+
+def test_a_filter_at_its_default_or_unset_is_not_named() -> None:
+    assert _filters("filtered", source_rollup="", regions=["NA"]) == []
+    assert _filters("filtered", source_rollup=None, regions=[]) == []
+
+
+def test_a_filter_the_charts_query_does_not_read_is_not_named() -> None:
+    assert _filters("unfiltered", source_rollup="6sense") == []
+
+
+_DATERANGE_BOARD = """
+variables:
+  window:
+    input: daterange
+    label: Date
+    default: last_30_days
+queries:
+  q:
+    source: warehouse
+    sql: "select 1 where '{{ window[0] }}' = ''"
+charts:
+  dated:
+    query: q
+    type: bar
+    x: a
+    y: b
+rows:
+  - dated
+"""
+
+
+def _dated_filters(value: list[str], committed_preset: str | None) -> list:
+    from dbt_charts.core.render.board_variables import daterange_presets
+
+    board = compile(_DATERANGE_BOARD).board
+    assert board is not None
+    presets = {} if committed_preset is None else {"window": committed_preset}
+    with daterange_presets(presets):
+        return empty_filters(
+            board.charts["dated"], board.variables, {"window": value}, _vs()
+        )
+
+
+def test_a_daterange_at_its_preset_default_is_not_named() -> None:
+    """Render narrows the preset to its ISO dates before the filter line reads
+    it; the committed preset id is what says it is still the default."""
+    assert _dated_filters(["2026-10-13", "2026-11-12"], "last_30_days") == []
+
+
+def test_a_daterange_off_its_default_is_named() -> None:
+    assert _dated_filters(["2026-11-05", "2026-11-12"], "last_7_days") != []
+    assert _dated_filters(["2026-01-01", "2026-02-01"], None) != []

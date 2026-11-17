@@ -41,6 +41,12 @@ const HOVER_TARGET_SIZE: f64 = 320.0;
 /// The gap a continuous x range keeps between its end marks and the plot edge (`common.rs`: `x_edge_pad`).
 const X_EDGE_GAP_PX: f64 = 2.0;
 
+/// The pixels a continuous x range keeps off each plot edge around a mark of area `point_size`: its radius and
+/// two, so the gap holds whether or not the mark draws (`common.rs`: `x_edge_pad`, shared by scatter, line and area).
+pub fn x_edge_pad(point_size: f64) -> f64 {
+    VegaSymbol::radius(point_size) + X_EDGE_GAP_PX
+}
+
 /// What the cell's width and the data's density make of a line chart's marks.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Metrics {
@@ -67,7 +73,7 @@ impl Metrics {
         Ok(Self {
             stroke,
             point: (px_per_point >= POINT_MIN_PX_PER_POINT).then_some(size),
-            pad: VegaSymbol::radius(size) + X_EDGE_GAP_PX,
+            pad: x_edge_pad(size),
         })
     }
 

@@ -97,13 +97,27 @@ impl<T: Spell> Spell for Box<T> {
 
 /// A patch as the nested object of its set leaves.
 pub fn spell_leaves(patch: &impl LeafValues) -> Value {
+    spell_leaves_where(patch, |_| true)
+}
+
+/// [`spell_leaves`] of the leaves whose authored path `keep` accepts, for a caller that reads a few
+/// subtrees of a large patch: a rejected leaf is neither spelled nor stored. `keep` must accept
+/// every path below one it accepts, or a kept model's own path would stand for leaves it dropped.
+pub fn spell_leaves_where(patch: &impl LeafValues, keep: impl Fn(&str) -> bool) -> Value {
     let mut all: Vec<(String, Value)> = Vec::new();
-    patch.leaf_values("", &mut |p, v| all.push((p.to_string(), v.spell())));
+    patch.leaf_values("", &mut |p, v| {
+        if keep(p) {
+            all.push((p.to_string(), v.spell()));
+        }
+    });
+    let mut covered = std::collections::HashSet::new();
+    for (path, _) in &all {
+        covered.extend(path.match_indices('.').map(|(i, _)| &path[..i]));
+    }
     let mut root = serde_json::Map::new();
     for (path, v) in &all {
         // A model reports its own path beside its leaves: the deeper leaves speak for it.
-        let below = format!("{path}.");
-        if all.iter().any(|(q, _)| q.starts_with(&below)) {
+        if covered.contains(path.as_str()) {
             continue;
         }
         insert(&mut root, path, v.clone());
@@ -321,12 +335,12 @@ impl<T: Leaf, R: Leaf> Leaf for Engine<T, R> {
 }
 
 impl<T: Leaf, R: Leaf> crate::Build for Engine<T, R> {
-    fn build(slot: Self::Patch, at: &str) -> Result<Self, crate::Unset> {
+    fn build(slot: Self::Patch, at: &crate::At<'_>) -> Result<Self, crate::Unset> {
         slot.ok_or_else(|| crate::Unset {
             paths: vec![at.to_string()],
         })
     }
-    fn build_authored(slot: Self::Authored, at: &str) -> Result<Self, crate::Unset> {
+    fn build_authored(slot: Self::Authored, at: &crate::At<'_>) -> Result<Self, crate::Unset> {
         slot.ok_or_else(|| crate::Unset {
             paths: vec![at.to_string()],
         })
@@ -480,24 +494,34 @@ where
 pub trait ToAuthored {
     type Out;
     fn to_authored(self) -> Self::Out;
+    /// [`ToAuthored::to_authored`] of a copy, without first making the copy: a style patch is tens
+    /// of kilobytes, and a board is built from one converted copy per scope.
+    fn to_authored_ref(&self) -> Self::Out;
 }
 
-impl<T> ToAuthored for Option<T> {
+impl<T: Clone> ToAuthored for Option<T> {
     type Out = Option<T>;
     fn to_authored(self) -> Self::Out {
         self
+    }
+    fn to_authored_ref(&self) -> Self::Out {
+        self.clone()
     }
 }
 
 impl ToAuthored for () {
     type Out = ();
     fn to_authored(self) -> Self::Out {}
+    fn to_authored_ref(&self) -> Self::Out {}
 }
 
 impl<P: ToAuthored> ToAuthored for Box<P> {
     type Out = Box<P::Out>;
     fn to_authored(self) -> Self::Out {
         Box::new((*self).to_authored())
+    }
+    fn to_authored_ref(&self) -> Self::Out {
+        Box::new((**self).to_authored_ref())
     }
 }
 
@@ -506,6 +530,11 @@ impl<P: ToAuthored> ToAuthored for IndexMap<String, P> {
     fn to_authored(self) -> Self::Out {
         self.into_iter()
             .map(|(k, v)| (k, v.to_authored()))
+            .collect()
+    }
+    fn to_authored_ref(&self) -> Self::Out {
+        self.iter()
+            .map(|(k, v)| (k.clone(), v.to_authored_ref()))
             .collect()
     }
 }

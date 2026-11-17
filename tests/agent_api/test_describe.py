@@ -583,6 +583,80 @@ rows:
         assert result.success is True, result.errors
         assert {q.name for q in result.queries} == {"by_category", "totals"}
 
+    def test_chart_scope_keeps_queries_its_sql_builds_on(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.describe import describe_board
+
+        board = _write_board(
+            tmp_path,
+            """
+title: Layered SQL
+queries:
+  base2:
+    sql: SELECT region, amount FROM orders WHERE status = 'paid'
+    source: analytics
+  base:
+    sql: SELECT region, amount FROM {{ queries.base2 }} WHERE amount > 0
+    source: analytics
+  top:
+    sql: SELECT region, SUM(amount) AS total FROM {{ queries.base }} GROUP BY 1
+    source: analytics
+  unrelated:
+    sql: SELECT 1 AS v
+    source: analytics
+charts:
+  totals:
+    query: top
+    type: bar
+    x: region
+    y: total
+  other:
+    query: unrelated
+    type: kpi
+    value: v
+rows:
+  - totals
+  - other
+""",
+        )
+        result = describe_board(board, project=local_project(tmp_path), chart="totals")
+
+        assert result.success is True, result.errors
+        assert {q.name for q in result.queries} == {"top", "base", "base2"}
+
+    def test_chart_scope_reports_a_sql_reference_to_a_missing_query(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.describe import describe_board
+
+        board = _write_board(
+            tmp_path,
+            """
+title: Broken ref
+queries:
+  base:
+    sql: SELECT region FROM orders
+    source: analytics
+  top:
+    sql: SELECT region FROM {{ queries.bse }}
+    source: analytics
+charts:
+  totals:
+    query: top
+    type: table
+rows:
+  - totals
+""",
+        )
+        result = describe_board(board, project=local_project(tmp_path), chart="totals")
+
+        assert result.success is False
+        (err,) = result.errors
+        assert err.code == "ERR-UNKNOWN-QUERY"
+        assert "bse" in err.message
+        assert err.hint is not None and "base" in err.hint
+
     def test_unknown_chart_fails_with_available_charts(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:

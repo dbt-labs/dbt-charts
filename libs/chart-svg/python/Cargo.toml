@@ -18,7 +18,9 @@ name = "_engine"
 crate-type = ["cdylib"]
 
 [dependencies]
+bind = { path = "../bind" }
 chart-renderer = { path = "../chart-renderer" }
+column-types = { path = "../column-types" }
 diagnostic = { path = "../diagnostic" }
 display-text = { path = "../display-text" }
 engine = { path = "../engine" }

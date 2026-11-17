@@ -6,7 +6,7 @@ use yaml::{Kind, Node, Value};
 use crate::catalog::{current_grammar, grammar};
 use crate::decl::{KeyPath, Mapped, Move, ScalarKey, ValueMap};
 use crate::doc::{at, child, map};
-use crate::schema::{Pos, Schema};
+use crate::schema::{Pos, Probe, Schema};
 
 /// A source key a move rewrites: its concrete document path, and the segments
 /// bound to the path's wildcards (board path first for a nested board).
@@ -18,8 +18,9 @@ pub struct Loc {
 
 /// Schema positions of the value at `path` below `node`, narrowed by each
 /// mapping on the way down.
-pub fn positions_along(
-    node: &Node,
+pub fn positions_along<'d>(
+    probe: &Probe<'d>,
+    node: &'d Node,
     path: &[String],
     schema: &'static Schema,
     positions: Vec<Pos>,
@@ -29,8 +30,8 @@ pub fn positions_along(
     for part in path {
         match &node.kind {
             Kind::Map(m) => {
-                positions = schema.plausible(&positions, node);
-                positions = schema.child_positions(&positions, part);
+                positions = probe.plausible(schema, &positions, node);
+                positions = probe.child_positions(schema, &positions, part);
                 match m.get(part) {
                     Some(e) => node = &e.value,
                     None => break,
@@ -86,8 +87,9 @@ pub struct Board {
 
 /// The root and every board nested in it that holds `lead` (`*`: every board),
 /// with the positions each sits at in `schema` and `live`.
-pub fn boards(
-    doc: &Node,
+pub fn boards<'d>(
+    probe: &Probe<'d>,
+    doc: &'d Node,
     prefixes: &[KeyPath],
     lead: &str,
     schema: &'static Schema,
@@ -99,8 +101,8 @@ pub fn boards(
         let Some(node) = at(doc, &here) else { continue };
         if lead == "*" || child(node, lead).is_some() {
             out.push(Board {
-                positions: positions_along(doc, &here, schema, vec![schema.root()]),
-                live_positions: positions_along(doc, &here, live, vec![live.root()]),
+                positions: positions_along(probe, doc, &here, schema, vec![schema.root()]),
+                live_positions: positions_along(probe, doc, &here, live, vec![live.root()]),
                 at: here.clone(),
             });
         }
@@ -118,8 +120,9 @@ pub fn boards(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn source_locations(
-    node: &Node,
+fn source_locations<'d>(
+    probe: &Probe<'d>,
+    node: &'d Node,
     parts: &[String],
     schema: &'static Schema,
     positions: &[Pos],
@@ -154,8 +157,8 @@ fn source_locations(
             }
             (Kind::Map(m), p) => {
                 if let Some(e) = m.get(p) {
-                    let plausible = schema.plausible(positions, node);
-                    let live_plausible = live.plausible(live_positions, node);
+                    let plausible = probe.plausible(schema, positions, node);
+                    let live_plausible = probe.plausible(live, live_positions, node);
                     if schema.declares_tail(&plausible, std::slice::from_ref(part))
                         && !schema.open_map_claims(&plausible, live, &live_plausible, p, &e.value)
                     {
@@ -170,10 +173,10 @@ fn source_locations(
         }
         return;
     }
-    let mut descend = |key: &str, c: &Node, wild: bool, kp: Vec<Pos>, lp: Vec<Pos>| {
+    let mut descend = |key: &str, c: &'d Node, wild: bool, kp: Vec<Pos>, lp: Vec<Pos>| {
         let (path, b) = extend(key, bindings);
         let b = if wild { b } else { bindings.to_vec() };
-        source_locations(c, rest, schema, &kp, live, &lp, &path, &b, out);
+        source_locations(probe, c, rest, schema, &kp, live, &lp, &path, &b, out);
     };
     match (&node.kind, part.as_str()) {
         (Kind::Map(m), "*") => {
@@ -182,8 +185,8 @@ fn source_locations(
                     k,
                     &e.value,
                     true,
-                    schema.child_positions(positions, k),
-                    live.child_positions(live_positions, k),
+                    probe.child_positions(schema, positions, k),
+                    probe.child_positions(live, live_positions, k),
                 );
             }
         }
@@ -202,8 +205,8 @@ fn source_locations(
                     p,
                     &e.value,
                     false,
-                    schema.child_positions(positions, p),
-                    live.child_positions(live_positions, p),
+                    probe.child_positions(schema, positions, p),
+                    probe.child_positions(live, live_positions, p),
                 );
             }
         }
@@ -311,13 +314,14 @@ fn location_applies(doc: &Node, m: &Move, identity: bool, loc: &Loc) -> bool {
     }
 }
 
-/// Document positions `m` rewrites, gated on the source grammar.
-pub fn move_source_locations(doc: &Node, m: &Move) -> Vec<Loc> {
+/// Document positions `m` rewrites, gated on the source grammar. `probe` answers the schema
+/// questions: a pass over one unchanged document shares one probe across its moves.
+pub fn move_source_locations<'d>(probe: &Probe<'d>, doc: &'d Node, m: &Move) -> Vec<Loc> {
     let (Some(schema), Some(live)) = (grammar(m.source), current_grammar()) else {
         return Vec::new();
     };
     if m.expansion.is_some() {
-        return expansion_locations(doc, m)
+        return expansion_locations(probe, doc, m)
             .into_iter()
             .map(|(_, loc)| loc)
             .collect();
@@ -326,12 +330,13 @@ pub fn move_source_locations(doc: &Node, m: &Move) -> Vec<Loc> {
     let lead = m.old_path.first().map_or("*", String::as_str);
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    for b in boards(doc, &m.sub_board_prefixes, lead, schema, live) {
+    for b in boards(probe, doc, &m.sub_board_prefixes, lead, schema, live) {
         let Some(board) = at(doc, &b.at) else {
             continue;
         };
         let mut found = Vec::new();
         source_locations(
+            probe,
             board,
             &m.old_path,
             schema,
@@ -359,7 +364,11 @@ pub fn move_source_locations(doc: &Node, m: &Move) -> Vec<Loc> {
 }
 
 /// Where `m`'s expansion fires: the board it sits in, and the location relative to that board.
-pub fn expansion_locations(doc: &Node, m: &Move) -> Vec<(Vec<String>, Loc)> {
+pub fn expansion_locations<'d>(
+    probe: &Probe<'d>,
+    doc: &'d Node,
+    m: &Move,
+) -> Vec<(Vec<String>, Loc)> {
     let (Some(schema), Some(live), Some(expansion)) =
         (grammar(m.source), current_grammar(), &m.expansion)
     else {
@@ -368,12 +377,13 @@ pub fn expansion_locations(doc: &Node, m: &Move) -> Vec<(Vec<String>, Loc)> {
     let lead = m.old_path.first().map_or("*", String::as_str);
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    for b in boards(doc, &m.sub_board_prefixes, lead, schema, live) {
+    for b in boards(probe, doc, &m.sub_board_prefixes, lead, schema, live) {
         let Some(board) = at(doc, &b.at) else {
             continue;
         };
         let mut found = Vec::new();
         source_locations(
+            probe,
             board,
             &m.old_path,
             schema,

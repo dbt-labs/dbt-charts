@@ -117,9 +117,11 @@ pub fn stamp(diagnostics: &mut [Diagnostic], root: &Node, text: &str) {
             .map(str::to_string);
         if d.range.is_none() {
             // Python ranges a finding that sets no path from its `field_path` param.
-            let named = d.params.get("field_path").and_then(Value::as_str).map(|p| {
-                ModelPath(p.split('.').map(str::to_string).collect())
-            });
+            let named = d
+                .params
+                .get("field_path")
+                .and_then(Value::as_str)
+                .map(|p| ModelPath(p.split('.').map(str::to_string).collect()));
             if let Some(path) = d.path.as_ref().or(named.as_ref()) {
                 d.range = resolve(root, text, path, needle.as_deref());
             }
@@ -229,7 +231,12 @@ fn syntax_range(d: &Diagnostic, file: &ProjectPath) -> Option<WireRange> {
     if d.code != "ERR-YAML-SYNTAX" || named != file.as_str() {
         return None;
     }
-    let at = |name: &str| d.params.get(name).and_then(Value::as_u64).map(|n| n as usize);
+    let at = |name: &str| {
+        d.params
+            .get(name)
+            .and_then(Value::as_u64)
+            .map(|n| n as usize)
+    };
     let (line, column) = (at("line")?, at("column")?);
     Some(WireRange {
         file: file.as_str().into(),
@@ -270,7 +277,10 @@ pub fn wire(d: &Diagnostic, source: &Source) -> Value {
         params: &d.params,
         level: d.registered().map(|code| code.level.as_str()),
         path: d.path.as_ref().map(ToString::to_string),
-        range: source.file.as_ref().and_then(|file| syntax_range(d, file))
+        range: source
+            .file
+            .as_ref()
+            .and_then(|file| syntax_range(d, file))
             .or_else(|| d.range.as_ref().and_then(|r| wire_range(source, r))),
         hint: d.hint(),
         related: d.related.iter().map(|r| wire_related(source, r)).collect(),

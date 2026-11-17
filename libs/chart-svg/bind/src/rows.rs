@@ -776,3 +776,27 @@ mod cell_tests {
         assert!(decode_cells(&mut unknown).is_err());
     }
 }
+
+/// `coerce_numeric_cell` (`core/utils.py`): a number, or a string Python's `float()` reads, as a finite
+/// `f64`; a bool, a non-numeric string, a non-finite value or a null is no number.
+pub fn coerce_numeric_cell(cell: Option<&Value>) -> Option<f64> {
+    let value = match cell? {
+        Value::Number(n) => n.as_f64()?,
+        Value::String(text) => py_float(text)?,
+        _ => return None,
+    };
+    value.is_finite().then_some(value)
+}
+
+/// Python's `float(str)`: the text between whitespace, a single `_` allowed between two digits.
+fn py_float(text: &str) -> Option<f64> {
+    let text = text.trim_matches(d3rs::py_str::is_py_space);
+    let chars: Vec<char> = text.chars().collect();
+    let underscores_between_digits = chars.iter().enumerate().all(|(i, &c)| {
+        c != '_' || (i > 0 && i + 1 < chars.len() && chars[i - 1].is_ascii_digit() && chars[i + 1].is_ascii_digit())
+    });
+    if !underscores_between_digits {
+        return None;
+    }
+    text.replace('_', "").parse::<f64>().ok()
+}

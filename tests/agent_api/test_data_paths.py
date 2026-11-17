@@ -71,7 +71,7 @@ class TestValidateDataAliasesSourceCheck:
 
 
 # ---------------------------------------------------------------------------
-# annotate_with_data_lint integration
+# annotate_with_alias_lint integration
 # ---------------------------------------------------------------------------
 
 _BOARD_NO_DATA_ALIAS = """\
@@ -90,8 +90,8 @@ rows:
 """
 
 
-class TestAnnotateWithDataLint:
-    """annotate_with_data_lint adds data alias errors to ValidateResult list."""
+class TestAnnotateWithAliasLint:
+    """annotate_with_alias_lint adds data alias errors to ValidateResult list."""
 
     def test_no_data_alias_no_extra_errors(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -100,13 +100,13 @@ class TestAnnotateWithDataLint:
         board.parent.mkdir()
         board.write_text(_BOARD_NO_DATA_ALIAS)
 
-        from dbt_charts.agent_api.validate import annotate_with_data_lint, validate
+        from dbt_charts.agent_api.validate import annotate_with_alias_lint, validate
 
         project = local_project(tmp_path)
         result = validate(board, project=project)
         assert result.success is True
 
-        annotated = annotate_with_data_lint([result], project=project)
+        annotated = annotate_with_alias_lint([result], project=project)
 
         assert len(annotated) == 1
         assert annotated[0].success is True
@@ -136,13 +136,13 @@ rows:
   - t
 """
         )
-        from dbt_charts.agent_api.validate import annotate_with_data_lint, validate
+        from dbt_charts.agent_api.validate import annotate_with_alias_lint, validate
 
         project = local_project(tmp_path)
         result = validate(board, project=project)
         assert result.success is True  # compile passes (alias is valid syntax)
 
-        annotated = annotate_with_data_lint([result], project=project)
+        annotated = annotate_with_alias_lint([result], project=project)
 
         assert len(annotated) == 1
         assert annotated[0].success is False
@@ -150,17 +150,17 @@ rows:
 
 
 # ---------------------------------------------------------------------------
-# annotate_with_data_lint — no DB connection asserted
+# annotate_with_alias_lint — no DB connection asserted
 # ---------------------------------------------------------------------------
 
 
 class TestAnnotateNoDBConnection:
-    """annotate_with_data_lint must not open any warehouse connection."""
+    """annotate_with_alias_lint must not open any warehouse connection."""
 
     def test_validate_does_not_build_exec_env(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """annotate_with_data_lint must not build an exec env."""
+        """annotate_with_alias_lint must not build an exec env."""
         board = tmp_path / "charts" / "override.yml"
         board.parent.mkdir()
         board.write_text(
@@ -181,20 +181,44 @@ rows:
   - t
 """
         )
-        from dbt_charts.agent_api.validate import annotate_with_data_lint, validate
+        from dbt_charts.agent_api.validate import annotate_with_alias_lint, validate
 
         project = local_project(tmp_path)
         result = validate(board, project=project)
 
-        # No exec env may be constructed during annotate_with_data_lint.
+        # No exec env may be constructed during annotate_with_alias_lint.
         # Patching the constructor itself catches every build path, regardless of
         # how build_exec_env is imported at the call site.
         with patch(
             "dbt_charts.core.execute.env.ExecEnv.__init__",
             side_effect=AssertionError("env must not be built during validate"),
         ):
-            annotated = annotate_with_data_lint([result], project=project)
+            annotated = annotate_with_alias_lint([result], project=project)
 
         assert len(annotated) == 1
         assert annotated[0].success is False
         assert any("no_such_src" in e.message for e in annotated[0].errors)
+
+
+def test_an_alias_another_board_claims_fails_the_validated_board(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """Uniqueness is project-wide: validating one board checks every other's claims."""
+    from dbt_charts.agent_api.validate import annotate_with_alias_lint, validate
+
+    charts = tmp_path / "charts"
+    charts.mkdir()
+    claim = "aliases:\n  - /looker/account_summary\n"
+    (charts / "existing.yml").write_text(claim + _BOARD_NO_DATA_ALIAS)
+    new = charts / "migrated.yml"
+    new.write_text(claim + _BOARD_NO_DATA_ALIAS)
+    project = local_project(tmp_path)
+
+    (annotated,) = annotate_with_alias_lint(
+        [validate(new, project=project)], project=project
+    )
+
+    assert annotated.success is False
+    (error,) = annotated.errors
+    assert error.code == "ERR-BOARD-ALIAS"
+    assert "charts/existing.yml" in error.message

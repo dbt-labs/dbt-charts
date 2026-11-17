@@ -75,6 +75,7 @@ from dbt_charts.core.render.board_variables import (
     context_variables,
     daterange_presets,
     overridden_variables,
+    variable_defs,
     variable_options,
 )
 from dbt_charts.core.render.boards import render_board_svg
@@ -144,6 +145,7 @@ from dbt_charts.core.render.controls import (
     page_runtime,
 )
 from dbt_charts.core.render.converters import to_html, to_pdf, to_png
+from dbt_charts.core.render.engine_cell import EngineBoard, engine_board
 from dbt_charts.core.render.errors import (
     FormatError,
     MissingRequiredVariablesError,
@@ -162,6 +164,7 @@ from dbt_charts.core.render.variables_buttons_overflow import (
     collect_buttons_overflows,
 )
 from dbt_charts.core.render.variables_resolve import (
+    board_variable_defs,
     linked_variable_options,
     resolve_option_values,
 )
@@ -814,6 +817,23 @@ def _render(
 
     _link_context = options.get("link_context")
     _set_link_context(_link_context)
+    render_sinks = contextlib.ExitStack()
+    render_sinks.enter_context(
+        engine_board(
+            EngineBoard(
+                ctx.compiled,
+                ctx.plan,
+                results.results,
+                results.errors,
+                frozenset(parsed_variables),
+                frozenset()
+                if builtin_variables is None
+                else frozenset(builtin_variables),
+                ctx.rendered_at,
+                _link_context,
+            )
+        )
+    )
     _filter_var_names = (
         frozenset(variable_registry) if variable_registry else frozenset()
     )
@@ -832,7 +852,6 @@ def _render(
 
     # Every painted render of a chart records into these; the narrowest placement's set
     # is kept and sizing probes record none (see `claim_placement`).
-    render_sinks = contextlib.ExitStack()
     geometry_warnings = render_sinks.enter_context(collect_geometry_warnings())
     series_label_truncations = render_sinks.enter_context(
         collect_series_label_truncations()
@@ -861,10 +880,9 @@ def _render(
 
     render_cache: RenderCache
     # Open the sizing-pass sinks before build_resolved_board so that chart
-    # title truncations and callout overflow
-    # (height cap) detected during render-first sizing are captured. Callout
-    # is cached after the sizing pass; KPI/table/spark_bar re-render in the
-    # main pass and are caught by the inner sink below.
+    # title truncations detected during render-first sizing are captured.
+    # KPI, callout, table and spark_bar draw again in the main pass and are
+    # caught by the inner sink below.
     # The x-domain verdict is recorded by the VL emitter, which for a Vega
     # family runs *only* here — the main pass serves those charts from the
     # render cache — so this is the sink that has to catch it.
@@ -901,8 +919,11 @@ def _render(
         ),
     ):
         try:
-            with variable_options(
-                linked_variable_options(board, results, merged_variables)
+            with (
+                variable_options(
+                    linked_variable_options(board, results, merged_variables)
+                ),
+                variable_defs(board_variable_defs(board)),
             ):
                 resolved_board, render_cache = build_resolved_board(
                     board,

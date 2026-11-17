@@ -156,6 +156,11 @@ pub fn inline_derived_label(label: &str) -> Result<String, String> {
     Ok(label.to_string())
 }
 
+/// An authored title's newlines read as spaces: only a wrapped axis title puts line breaks in a title.
+pub fn collapse_title_newlines(text: &str) -> String {
+    text.replace('\n', " ")
+}
+
 /// `core/text/case.py::field_title`: the chart's authored `field_labels`
 /// entry verbatim, else `slug_to_text(field)`.
 pub fn field_title(

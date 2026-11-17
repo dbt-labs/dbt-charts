@@ -4,11 +4,11 @@
 use std::collections::{HashMap, HashSet};
 
 use d3rs::py_float::py_float_sum;
-use diagnostic::{diag, Diagnostic};
+use diagnostic::{diag, refuse, Diagnostic};
 use serde_json::{Map, Value};
 
 use crate::bound::{BandDomain, Key};
-use crate::rows::raw_x_order;
+use crate::rows::{raw_x_order, vega_ascending_sort};
 
 /// How a category's rows fold to the one value it ranks by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,6 +66,32 @@ pub fn band_domain(
     };
     let text = keys.iter().map(text).collect();
     Ok(BandDomain::new(keys, text).expect("distinct keys, one text each"))
+}
+
+/// The domain of a point scale Vega orders with no authored sort, which is how a scatter's category axis
+/// is drawn: the distinct `categories` of the drawn rows (`None` is a null one) ascending as JavaScript
+/// sorts them (`vega_ascending_sort`, a mixed column in V8's order), a null category a band of its own that
+/// Vega prints `null` (`scatter.rs::point_scale_domain`, `category_text`).
+pub fn ascending_domain(categories: &[Option<&str>]) -> Result<BandDomain, Diagnostic> {
+    let mut seen: HashSet<Option<&str>> = HashSet::new();
+    let values: Vec<Value> = categories
+        .iter()
+        .copied()
+        .filter(|category| seen.insert(*category))
+        .map(|category| category.map_or(Value::Null, |text| Value::String(text.to_string())))
+        .collect();
+    if seen.contains(&None) && seen.contains(&Some("null")) {
+        return Err(Diagnostic::refused(refuse!("a category column holding both a null and the text `null` is not supported")));
+    }
+    let sorted = vega_ascending_sort(values).expect("distinct text and null values order");
+    let (keys, text) = sorted
+        .into_iter()
+        .map(|value| match value {
+            Value::String(text) => (Key::Text(text.clone()), text),
+            _ => (Key::Null, "null".to_string()),
+        })
+        .unzip();
+    Ok(BandDomain::new(keys, text).expect("distinct categories, one text each"))
 }
 
 fn ranked(

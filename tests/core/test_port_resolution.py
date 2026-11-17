@@ -7,9 +7,12 @@ from unittest.mock import patch
 import pytest
 
 from dbt_charts.core.serve.port import (
+    PORT_SCAN_ATTEMPTS,
     find_available_port,
     is_port_available,
     port_from_project_dir,
+    preferred_port,
+    resolve_listener,
     resolve_port,
 )
 
@@ -125,12 +128,14 @@ def test_resolve_port_config_file_invalid(tmp_path):
         resolve_port(project_dir=tmp_path)
 
 
-def test_resolve_port_hash_based_default(tmp_path):
-    """Falls back to hash-based port when nothing else is set."""
-    port = resolve_port(project_dir=tmp_path)
-    assert 9000 <= port <= 9999
-    # Should be deterministic
-    assert port == resolve_port(project_dir=tmp_path)
+def test_resolve_port_hash_based_default(tmp_path, monkeypatch):
+    """Falls back to the hash-based port when nothing else is set."""
+    monkeypatch.delenv("DCT_PORT", raising=False)
+    hashed = port_from_project_dir(tmp_path)
+    assert preferred_port(project_dir=tmp_path) == hashed
+    # resolve_port only probes, so a neighbor may hold the hashed port and
+    # push the answer up; the scan stays inside its window.
+    assert hashed <= resolve_port(project_dir=tmp_path) < hashed + PORT_SCAN_ATTEMPTS
 
 
 def test_resolve_port_auto_increment_on_occupied(tmp_path):
@@ -210,3 +215,33 @@ def test_is_port_available_false_while_listening(listen_on: str):
         server.bind((listen_on, 0))
         server.listen(1)
         assert not is_port_available(server.getsockname()[1], "127.0.0.1")
+
+
+# --- resolve_listener ---
+
+
+def test_resolve_listener_listens_on_the_explicit_port(tmp_path):
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        free = probe.getsockname()[1]
+    with resolve_listener(explicit_port=free, project_dir=tmp_path, host="127.0.0.1"):
+        socket.create_connection(("127.0.0.1", free), timeout=1).close()
+
+
+def test_resolve_listener_refuses_a_taken_explicit_port(tmp_path):
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        port = taken.getsockname()[1]
+        with pytest.raises(OSError, match=f"{port}"):
+            resolve_listener(explicit_port=port, project_dir=tmp_path, host="127.0.0.1")
+
+
+def test_resolve_listener_skips_a_taken_preferred_port(tmp_path, monkeypatch):
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        port = taken.getsockname()[1]
+        monkeypatch.setenv("DCT_PORT", str(port))
+        with resolve_listener(project_dir=tmp_path, host="127.0.0.1") as listener:
+            assert listener.getsockname()[1] > port

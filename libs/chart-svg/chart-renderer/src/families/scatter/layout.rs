@@ -775,7 +775,6 @@ pub(super) fn fit(
     let x_axis_offset = ax_x.ticks.offset.unwrap_or(0.0);
     let x_ticks_visible = ax_x.ticks.visible.unwrap_or(true);
     let x_tick_len = ax_x.ticks.length.unwrap_or(6.0);
-    let x_tick_eff = if x_ticks_visible { x_tick_len } else { 0.0 };
     let x_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     // The x label's `labelFlush` anchor at a position on a plot `pw` wide.
     let x_flush_align =
@@ -949,7 +948,7 @@ pub(super) fn fit(
     let y_title_plain = if wide_series.is_empty() {
         crate::common::axis_title_text(&r.y, r.y_label.as_deref(), &r.field_labels)?
     } else {
-        match r.y_label.as_deref() { Some(l) => crate::common::collapse_title_newlines(l), None => crate::common::wide_measures_title(&r.wide_measures, &r.field_labels)? }
+        match r.y_label.as_deref() { Some(l) => display_text::collapse_title_newlines(l), None => crate::common::wide_measures_title(&r.wide_measures, &r.field_labels)? }
     };
     let base_y_title = y_title_plain.clone();
     let y_title_plain = if overlays.is_empty() || independent {
@@ -1552,7 +1551,7 @@ pub(super) fn fit(
                 // always center, edges included — tilted per the ladder
                 // above (`x_cat_angle`), reusing bar's own rotated-ink law
                 // (`common::rotated_category_label_ink`).
-                let row_y = x_edge.at(ph, x_axis_offset + x_tick_eff + x_label_pad);
+                let row_y = x_edge.at(ph, x_axis_offset + x_label_pad);
                 // The x axis's own bounds: Vega's `yBounds` beyond the plot
                 // rect (`ViewLayout.js:62-65`), read by a bottom legend.
                 let mut x_axis = vega_fit::Bounds::new(0.0, 0.0, pw, ph);

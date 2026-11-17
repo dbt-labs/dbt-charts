@@ -1,0 +1,3 @@
+kind: Fixes
+body: A board alias claimed by two boards fails just those boards in dct serve and dct validate instead of taking down every page.
+time: 2026-11-13T17:49:01.546329-08:00

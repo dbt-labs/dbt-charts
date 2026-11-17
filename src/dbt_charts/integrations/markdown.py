@@ -58,7 +58,11 @@ from markdown.preprocessors import Preprocessor
 
 from dbt_charts.agent_api import ProjectSession, hover_runtime_source
 from dbt_charts.agent_api.cache import project_cache_ctx
-from dbt_charts.agent_api.markdown import render_chart_fences, splice_lines
+from dbt_charts.agent_api.markdown import (
+    markdown_page,
+    render_chart_fences,
+    splice_lines,
+)
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import (
     BoardRenderResult,
@@ -105,11 +109,6 @@ _EXAMPLE_FENCE_RE = re.compile(
     r"([ \t]*)(?:`{3,}|~{3,})[ \t]*charts-example(?![\w-])[ \t]*(?:\{(.*)\})?[ \t]*$"
 )
 _OPTION_RE = re.compile(r'([\w-]+)=("[^"]*"|\S+)')
-
-# A page has no location of its own here: it is read as a note in the
-# project's charts/ folder, so file paths resolve from there and charts/meta.yml
-# (a default source, the theme, the footer) applies to it.
-_PAGE_RELPATH = f"{CHARTS_SUBDIR}/page.md"
 
 
 class ChartFenceError(ValueError):
@@ -597,7 +596,7 @@ class _ChartFencePreprocessor(Preprocessor):
             ):
                 page = render_chart_fences(
                     session,
-                    InMemoryBoard(text, path=project.path(_PAGE_RELPATH)),
+                    markdown_page(project, text),
                     self.embed_fonts,
                     variables=self.variables,
                 )

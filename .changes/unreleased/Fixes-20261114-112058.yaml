@@ -1,0 +1,3 @@
+kind: Fixes
+body: A typo in a board's text or title, such as `{{ regoin }}`, now warns instead of rendering nothing.
+time: 2026-11-14T11:20:58.600309-08:00

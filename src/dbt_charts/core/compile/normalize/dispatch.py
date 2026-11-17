@@ -99,6 +99,7 @@ from dbt_charts.core.compile.normalize.charts import (
 )
 from dbt_charts.core.compile.normalize.layout import (
     AuthoringPathPrefix,
+    Placements,
     build_unified_layout,
     prefixed,
 )
@@ -1244,8 +1245,8 @@ def normalize_board(
         links=links,
         cache_root=cache_root,
         path_prefix=path_prefix,
-        importing=parent_context.get(
-            "importing", ()
+        placements=parent_context.get(
+            "placements", Placements()
         ),  # type-state: silent_fallback — a board normalized on its own has no file above it
     )
 

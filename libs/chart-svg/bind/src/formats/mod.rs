@@ -18,7 +18,7 @@ pub mod locale;
 mod lanes;
 mod paint;
 
-pub use lanes::Lanes;
+pub use lanes::{ColumnScale, Lanes};
 
 use diagnostic::{diag, Diagnostic};
 use indexmap::IndexMap;
@@ -208,15 +208,20 @@ pub fn aliases(formats: &IndexMap<String, board_model::primitives::FormatConfig>
 
 /// The board's `style.formats` aliases (none when the board has no table).
 #[derive(Clone, Copy)]
-pub struct Formats<'a>(Option<&'a IndexMap<String, Alias>>);
+pub struct Formats<'a> {
+    aliases: Option<&'a IndexMap<String, Alias>>,
+    /// The board's currency has no minor unit (`FormatTable.currency`).
+    whole_currency: bool,
+}
 
 impl<'a> Formats<'a> {
+    /// The table of the board being drawn: its `style.formats` aliases and the currency the active number locale carries.
     pub fn new(aliases: Option<&'a IndexMap<String, Alias>>) -> Self {
-        Self(aliases)
+        Self { aliases, whole_currency: locale::active_number_locale().whole_currency }
     }
 
     fn get(&self, name: &str) -> Option<&'a Alias> {
-        self.0?.get(name)
+        self.aliases?.get(name)
     }
 
     /// Whether the board's `style.formats` defines `name`.
@@ -295,7 +300,13 @@ pub fn resolve_format(input: &AuthoredFormat, formats: Formats<'_>) -> Result<St
     let Some(name) = input.spec.as_deref() else {
         return Ok(String::new());
     };
-    d3rs::format_spec::resolve_spec(name, &|n| formats.get(n).map(Alias::spec)).map_err(|_| {
+    // `_engine_spec`: `currency_full` under a currency with no minor unit is the engine's own `currency_whole` spec, whatever
+    // the board made of that name.
+    let whole = |n: &str| {
+        let whole = d3rs::format::predefined_spec("currency_whole").map(|spec| spec.d3);
+        (formats.whole_currency && n == "currency_full" && !formats.defines(n)).then_some(whole)
+    };
+    d3rs::format_spec::resolve_spec(name, &|n| whole(n).or_else(|| formats.get(n).map(Alias::spec))).map_err(|_| {
         diag::err_format_grain_name_not_redefined(name, d3rs::format_spec::UNPLACED_SLOT, d3rs::format_spec::grain_strftime(name))
     })
 }
@@ -482,6 +493,26 @@ pub struct Tiers<'a> {
     pub own: Option<&'a AuthoredFormat>,
     pub column: Option<&'a AuthoredFormat>,
     pub board: Option<&'a AuthoredFormat>,
+    /// The column's type-default name ([`inferred_number_format`]): it replaces the kind's default as the
+    /// weakest tier, unless the board redefined that default.
+    pub inferred: Option<&'static str>,
+}
+
+/// `inferred_number_format` (`compile/format.py`): `year` for a column named for one whose cells are all
+/// whole numbers in 1000-2999, `integer` for any column of whole numbers, else no type to speak of.
+pub fn inferred_number_format(name: &str, cells: &[Option<&serde_json::Number>]) -> Option<&'static str> {
+    let mut whole = Vec::new();
+    for cell in cells.iter().flatten() {
+        if !(cell.is_i64() || cell.is_u64()) {
+            return None;
+        }
+        whole.push(cell.as_i64());
+    }
+    if whole.is_empty() {
+        return None;
+    }
+    let year = name.to_lowercase().contains("year") && whole.iter().all(|cell| cell.is_some_and(|whole| (1000..=2999).contains(&whole)));
+    Some(if year { "year" } else { "integer" })
 }
 
 /// A tier that spells a look of the other kind has nothing to say about this slot's
@@ -496,6 +527,20 @@ fn fill(own: &str, lower: &str) -> String {
     if own.is_empty() { lower } else { own }.to_string()
 }
 
+/// The tiers `_merge_tiers` keeps, strongest first, each resolved: the first is the slot's own
+/// whatever its kind, a later one that spells the other kind is dropped.
+pub fn tier_fields(kind: Kind, tiers: Tiers<'_>, formats: Formats<'_>) -> Result<Vec<ResolvedFormat>, Diagnostic> {
+    let mut resolved = Vec::new();
+    for (position, tier) in [tiers.own, tiers.column, tiers.board].into_iter().enumerate() {
+        let Some(tier) = tier else { continue };
+        let fields = resolve_format_parts(tier, formats)?;
+        if position == 0 || !is_other_kind(&fields, kind) {
+            resolved.push(fields);
+        }
+    }
+    Ok(resolved)
+}
+
 /// `_merge_tiers`: each field comes from the strongest tier that sets it. The first tier
 /// is the slot's own and keeps whatever kind it is; the later ones are defaults for a
 /// column with none of its own, and one that spells the other kind contributes nothing,
@@ -507,18 +552,13 @@ fn merge_tiers(
     formats: Formats<'_>,
     engine_default: Option<&str>,
 ) -> Result<ResolvedFormat, Diagnostic> {
-    let mut resolved = Vec::new();
-    for (position, tier) in [tiers.own, tiers.column, tiers.board].into_iter().enumerate() {
-        let Some(tier) = tier else { continue };
-        let fields = resolve_format_parts(tier, formats)?;
-        if position == 0 || !is_other_kind(&fields, kind) {
-            resolved.push(fields);
-        }
-    }
+    let mut resolved = tier_fields(kind, tiers, formats)?;
     if resolved.iter().all(|tier| tier.spec.is_empty()) {
         let name = kind.default_name();
-        let mut default = resolve_format_parts(&AuthoredFormat::named(name), formats)?;
-        if let Some(instead) = engine_default.filter(|_| default.raw.as_deref() == Some(name)) {
+        // A board that redefined the default prints it as written, whatever the type.
+        let inferred = tiers.inferred.filter(|_| !formats.defines(name));
+        let mut default = resolve_format_parts(&AuthoredFormat::named(inferred.unwrap_or(name)), formats)?;
+        if let Some(instead) = engine_default.filter(|_| inferred.is_none() && default.raw.as_deref() == Some(name)) {
             // The destination's name resolves through the board like any other, so a
             // board that redefined it (affix included) prints it whole.
             let instead = resolve_format_parts(&AuthoredFormat::named(instead), formats)?;

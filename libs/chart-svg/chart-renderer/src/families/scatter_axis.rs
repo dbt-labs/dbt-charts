@@ -236,6 +236,8 @@ pub(crate) struct TemporalXAxis {
     edge_points: Option<EdgeFormat>,
     /// Every date the axis places, read once: the ladder, the kept dates and an authored domain's ends.
     time: TimeAxis,
+    /// `style.conditional`'s x-column rules, tested at each label's instant.
+    pub(crate) label_rules: crate::conditional::XLabelRules,
 }
 
 /// A date column as the axis sees it.
@@ -397,6 +399,7 @@ impl TemporalXAxis {
             }),
             edge_points: None,
             time: TimeAxis::new(AxisGrain::default(), std::collections::HashMap::new()),
+            label_rules: crate::conditional::XLabelRules::default(),
         };
         let grain = match col.law.grain {
             Grain::Calendar(tu) => Some(tu),
@@ -1188,14 +1191,10 @@ impl TemporalXAxis {
         }
     }
 
-    fn tick_eff(&self) -> f64 {
-        if self.ticks_visible { self.tick_len } else { 0.0 }
-    }
-
     /// The label anchor's row below the plot bottom, before the axis group's
     /// half pixel.
     fn label_top(&self) -> f64 {
-        self.axis_offset + self.tick_eff() + self.label_pad
+        self.axis_offset + self.label_pad
     }
 
     /// `pw` is the plot width `frac` is a share of: `labelFlush` is a pixel test against the range ends.
@@ -1232,7 +1231,7 @@ impl TemporalXAxis {
             (Some(anchor(self.align(first, labels[0].0, plot_w))?), Some(anchor(first.baseline)?), None)
         };
         let angle = vega_fit::normalize_angle(self.angle);
-        let spec = AxisSpec { orient: Orient::Bottom, offset: self.tick_eff() + self.label_pad, shift: 0.0, align, baseline, angle, flush, style: ax_x.labels.item_style()? };
+        let spec = AxisSpec { orient: Orient::Bottom, offset: self.label_pad, shift: 0.0, align, baseline, angle, flush, style: ax_x.labels.item_style()? };
         register_axis("x", spec);
         Ok(())
     }
@@ -1355,7 +1354,7 @@ impl TemporalXAxis {
             self.register_item_axis(&labels, plot_w, ax_x)?;
         }
         let kept = self.kept(&labels, plot_w);
-        let anchor_y = group_y + sign * (self.tick_eff() + self.label_pad);
+        let anchor_y = group_y + sign * self.label_pad;
         let flat_y = anchor_y + measure::baseline_shift(self.edge.baseline(), fs);
         let edge_half = ax_x.edge_rule_half_width(self.ticks_visible);
         let mut reach = 0.0_f64;
@@ -1363,6 +1362,12 @@ impl TemporalXAxis {
             if self.labels_hidden || !is_painted(*keep, &l.text) {
                 continue;
             }
+            let fill = match (self.label_rules.any(), &l.at) {
+                (false, _) => None,
+                (true, At::Day(day)) => self.label_rules.fill(&crate::conditional::iso_day(*day)).map_err(|e| e.to_string())?,
+                (true, At::Index(_)) => return Err("x axis: a style.conditional rule cannot color the labels of a point-scale time axis".into()),
+            };
+            let fill = fill.as_deref().unwrap_or(self.color.as_str());
             let ink = self.ink(l, *frac, plot_w, 0.0);
             reach = reach.max(match self.edge {
                 crate::common::XEdge::Bottom => ink.y2,
@@ -1376,7 +1381,7 @@ impl TemporalXAxis {
                     .vega("font-family", self.family.as_str())
                     .num("font-size", fs).quick_some("font-style", self.style.as_deref())
                     .set("font-weight", self.weight.as_str())
-                    .set("fill", self.color.as_str());
+                    .set("fill", fill);
                 let chars = |text: String| vec![Run::Chars(Chars::new(text, Escape::Attr))];
                 let label = match &l.row2 {
                     Some(row2) => Node::new(
@@ -1410,7 +1415,7 @@ impl TemporalXAxis {
             };
             let gx = gx + flush;
             let row = |y: f64, text: &str| -> Result<Node, String> {
-                Ok(crate::text::label(Role::Axis, (gx, y), Attrs::new().set("text-anchor", anchor).vega("font-family", self.family.as_str()).num("font-size", fs).quick_some("font-style", self.style.as_deref()).set("font-weight", self.weight.as_str()).set("fill", self.color.as_str()), ax_x.labels.clip(text, fonts)?))
+                Ok(crate::text::label(Role::Axis, (gx, y), Attrs::new().set("text-anchor", anchor).vega("font-family", self.family.as_str()).num("font-size", fs).quick_some("font-style", self.style.as_deref()).set("font-weight", self.weight.as_str()).set("fill", fill), ax_x.labels.clip(text, fonts)?))
             };
             // The label block anchors on its far baseline: the second row hangs below the first
             // under a bottom axis, and the first sits above the second over a top one.

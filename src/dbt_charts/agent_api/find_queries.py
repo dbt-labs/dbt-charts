@@ -285,7 +285,7 @@ def _board_answer(
         return BoardAnswer(**shown, variables=[], queries=[], errors=errors)
     except ExecutionError as exc:
         return BoardAnswer(**shown, variables=[], queries=[], errors=[str(exc)])
-    defaults = plan_variables(board_plan)
+    defaults = plan_variables(board_plan.plan)
     slug = board_identity(hit.file_path)
     # Synthetic queries (`_inline_query_*`, `_var_options_*`) have no
     # `{{ queries.<name> }}` form, so SQL could not reach them.
@@ -299,7 +299,8 @@ def _board_answer(
             current = {
                 planned.name: cache.listed_key(planned.cache_key)[:2]
                 for planned in plan(
-                    ctx, [name for name, _ in named if name in board_plan["queries"]]
+                    ctx,
+                    [name for name, _ in named if name in board_plan.plan["queries"]],
                 )
             }
         except ExecutionError as exc:

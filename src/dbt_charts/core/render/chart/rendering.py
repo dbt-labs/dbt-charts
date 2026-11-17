@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.primitives import BorderStyle
 from dbt_charts.core.render.conditions import evaluate_visible
 from dbt_charts.core.render.engine import render_error_placard
+from dbt_charts.core.render.engine_cell import next_placement, placement_ordinal
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.svg_utils import (
     CardShadow,
@@ -206,6 +207,13 @@ def render_layout_item(
     else:
         rendered = ""
         actual_height = height
+        # Every drawn chart takes its placement's key, an error tile's included, so a
+        # later placement of the same chart keys as the engine counts it.
+        placement: str | None = None
+        if item.chart is not None:
+            placement = next_placement(item.chart.id)
+        elif item.chart_error is not None:
+            placement = next_placement(item.chart_error.identity.id)
         if item.chart_error is not None:
             rendered, actual_height = _render_chart_resolve_failure(
                 item.chart_error,
@@ -233,6 +241,7 @@ def render_layout_item(
                 error_collector=error_collector,
                 title_shift=item.title_shift,
                 pie_mode=item.pie_mode,
+                placement=placement,
             )
             if chart_svg:
                 rendered = chart_svg
@@ -479,6 +488,7 @@ def render_chart_item(
     error_collector: list[Diagnostic] | None = None,
     title_shift: TitleShift = NO_TITLE_SHIFT,
     pie_mode: PieMode | None = None,
+    placement: str | None = None,
 ) -> tuple[str, float]:
     """Render a chart item with explicit dimensions.
 
@@ -493,6 +503,8 @@ def render_chart_item(
         render_cache: Cache of pre-rendered SVGs shared with the sizing pass.
         pie_mode: A pie's mode as the size stage decided it for its layout item;
             required for a pie, whose render raises without it.
+        placement: The key of the placement drawn (``id``, ``id#2``); required for a
+            KPI, which the engine draws in its cell.
         padding: 4-sided padding dict (left/right/top/bottom). Vega-family and
             custom charts render at the outer size with their ink pre-inset by
             it; SVG-family (table/kpi/spark_bar) renders at the inner size and
@@ -545,6 +557,7 @@ def render_chart_item(
             inset=inset,
             title_shift=title_shift,
             pie_mode=pie_mode,
+            placement=placement,
         )
         return svg, actual_height
     except (RenderError, ExecutionError, DbtChartsError) as e:
@@ -592,6 +605,7 @@ def _render_chart_item_inner(
     inset: dict[str, float] | None,
     title_shift: TitleShift,
     pie_mode: PieMode | None,
+    placement: str | None,
 ) -> tuple[str, float]:
     """Internal chart rendering — raises on error.
 
@@ -621,7 +635,9 @@ def _render_chart_item_inner(
     # itself; a pie's SVG still needs the check here.
     paints_marks = chart_type in PAINTS_MARKS_GUARDED_IN_PYTHON
     cache_key = (chart.id, available_width, available_height, title_shift)
-    if not is_svg_family and cache_key in render_cache:
+    # The sizing pass drew the chart as its first placement; a later one mints its own ids.
+    first_placement = placement is None or placement_ordinal(chart.id, placement) == 0
+    if not is_svg_family and first_placement and cache_key in render_cache:
         chart_svg, _ = render_cache[cache_key]
         # The no-marks guard below needs the row count even on a cache hit.
         # Re-fetching here is a memo hit, never a re-execution: the ledger's
@@ -647,6 +663,7 @@ def _render_chart_item_inner(
             padding=padding,
             title_shift=title_shift,
             pie_mode=pie_mode,
+            placement=placement,
         )
         chart_svg = render_chart_artifact(artifact, "svg")
 

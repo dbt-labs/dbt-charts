@@ -22,6 +22,7 @@ from dbt_charts.core.compile.config import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("placement_scope")
 class TestVegaChartLayoutBehavior:
     """Vega charts in a layout must NOT get an outer SVG translate.
 

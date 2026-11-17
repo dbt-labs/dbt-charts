@@ -4,7 +4,8 @@ Root cause: vl-convert (resvg) cannot bind a variable font's ``wght`` axis from 
 numeric ``font-weight`` request. Weight 500/600 rendered byte-identical to weight
 400 through the real ``to_png()`` pipeline until ``fonts.WEIGHT_FACE_ALIASES`` +
 ``font_support.normalize_svg_font_weights_for_vl_convert`` routed those weights to
-dedicated static faces selected by family name instead. See fonts/README.md
+dedicated static faces selected by family name instead (700 and the ``bold``
+keyword included). See fonts/README.md
 "Select figure style by family" (weight section).
 """
 
@@ -21,7 +22,7 @@ FONT_STACKS = {
 }
 
 
-def _ink_pixel_count(family: str, weight: int, font_size: float = 80.0) -> int:
+def _ink_pixel_count(family: str, weight: int | str, font_size: float = 80.0) -> int:
     Image = pytest.importorskip("PIL.Image")
     pytest.importorskip("vl_convert")
 
@@ -58,6 +59,22 @@ def test_weight_500_and_600_render_strictly_heavier_than_regular(
         f"{family} ink density did not strictly increase with weight "
         f"(400={regular}, 500={medium}, 600={semibold}) — vl-convert is not "
         f"binding the weight-specific static face."
+    )
+
+
+@pytest.mark.parametrize("family", ["dbt Sans Tabular", "Inter Variable"])
+@pytest.mark.parametrize("bold", [700, "bold"])
+def test_bold_renders_strictly_heavier_than_semibold(
+    family: str, bold: int | str
+) -> None:
+    """``bold`` is the keyword a conditional table cell emits; it and 700 both
+    rasterized as Regular before the static Bold faces existed."""
+    semibold = _ink_pixel_count(family, 600)
+    heavy = _ink_pixel_count(family, bold)
+
+    assert semibold < heavy, (
+        f"{family} weight {bold!r} painted no heavier than 600 "
+        f"(600={semibold}, {bold}={heavy})"
     )
 
 

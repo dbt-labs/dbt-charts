@@ -4,8 +4,8 @@
 //! Python asks Pygments for a lexer by the fence's alias and for a style by
 //! the theme name. Here the alias table and the corpus styles are data
 //! (`pygments_data.rs`, generated from Pygments 2.21.0), and the lexers are
-//! ports: YAML (`pygments_yaml.rs`) and the `RegexLexer`s SQL, Python and
-//! Bash (`pygments_lexer.rs`). An alias Pygments resolves to a lexer that is
+//! ports: YAML (`pygments_yaml.rs`), the `RegexLexer`s SQL, Python and
+//! Bash (`pygments_lexer.rs`), and plain `text`. An alias Pygments resolves to a lexer that is
 //! not ported, and a theme that is not ported, refuse by name, since
 //! production would have colored the block; an alias Pygments does not know
 //! is `Ok(None)`, the plain block, as in Python.
@@ -109,6 +109,13 @@ fn preprocess(code: &str) -> String {
     code.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+/// The ported lexer a fence's alias resolves to.
+enum Port {
+    Regex(&'static pygments_lexer::Lexer),
+    Yaml,
+    Text,
+}
+
 /// Tokenize `code` and return per-source-line colored segments
 /// (`highlight.py::highlight_code`). `Ok(None)` when Pygments knows no
 /// lexer by `language`: render the plain block.
@@ -126,17 +133,18 @@ pub fn highlight_code(
         return Ok(None);
     };
     let port = match (class, pygments_lexer::lexer(class)) {
-        ("YamlLexer", _) => None,
-        (_, Some(lexer)) => Some(lexer),
+        ("YamlLexer", _) => Port::Yaml,
+        ("TextLexer", _) => Port::Text,
+        (_, Some(lexer)) => Port::Regex(lexer),
         _ => {
             return Err(format!(
-                "mdsvg-rs: fenced code highlighting for language `{language}` not ported"
+                "mdsvg-rs: fenced code highlighting for language `{language}` is not supported"
             ))
         }
     };
     let Some(style) = STYLES.iter().find(|s| s.name == theme) else {
         return Err(format!(
-            "mdsvg-rs: fenced code highlighting theme `{theme}` not ported"
+            "mdsvg-rs: fenced code highlighting theme `{theme}` is not supported"
         ));
     };
 
@@ -144,8 +152,10 @@ pub fn highlight_code(
     let known = known_types(style);
     let mut lines: Vec<Vec<CodeSegment>> = vec![Vec::new()];
     let spans: Vec<Span> = match port {
-        Some(lexer) => lexer.tokenize(&text),
-        None => pygments_yaml::tokenize(&text),
+        Port::Regex(lexer) => lexer.tokenize(&text),
+        Port::Yaml => pygments_yaml::tokenize(&text),
+        // `TextLexer.get_tokens_unprocessed`: the whole text, one `Token.Text`.
+        Port::Text => vec![("Token.Text", 0, text.len())],
     };
     for (token, start, end) in spans {
         let color = token_color(style, &known, token);
@@ -199,5 +209,19 @@ mod tests {
         for (token, color) in want {
             assert_eq!(style_color(&defs, token), color, "{token}");
         }
+    }
+
+    /// Pygments' `TextLexer` yields the whole block as one `Token.Text`: each line is plain text in
+    /// the theme's text color (Python's `highlight_code("a: 1\n  b  \n\nc\n", "text", theme)`).
+    #[test]
+    fn a_text_fence_is_one_text_token_per_line() {
+        let seg = |text: &str, color: &str| (text.to_string(), color.to_string());
+        let code = "a: 1\n  b  \n\nc\n";
+        let monokai = super::highlight_code(code, "text", "monokai").unwrap().unwrap();
+        let ink = "#f8f8f2";
+        assert_eq!(monokai, vec![vec![seg("a: 1", ink)], vec![seg("  b  ", ink)], vec![], vec![seg("c", ink)], vec![]]);
+        let default = super::highlight_code(code, "TEXT", "default").unwrap().unwrap();
+        assert_eq!(default, vec![vec![seg("a: 1", "")], vec![seg("  b  ", "")], vec![], vec![seg("c", "")], vec![]]);
+        assert_eq!(super::highlight_code("", "text", "default").unwrap().unwrap(), vec![Vec::<super::CodeSegment>::new()]);
     }
 }

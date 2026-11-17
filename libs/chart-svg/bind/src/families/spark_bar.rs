@@ -22,13 +22,10 @@ const LABEL_NAMES: [&str; 4] = ["value", "label", "category", "name"];
 const COUNT_NAMES: [&str; 5] = ["frequency", "count", "freq", "n", "total"];
 
 pub fn bind(id: &ChartId, chart: &SparkBarChart, style: &SparkBarChartStyle, board: &Board, run: &RunResult) -> Result<Result<Family, Failure>, Diagnostic> {
-    let unmodeled = [
-        (chart.shared.title.is_some() || chart.shared.subtitle.is_some(), "a spark_bar `title` or `subtitle`"),
-        (chart.shared.base.link.is_some(), "a spark_bar `link`"),
-        (board.regional.is_some(), "a number locale other than en-US"),
-    ];
-    if let Some((_, what)) = unmodeled.iter().find(|(set, _)| *set) {
-        return Err(Diagnostic::refused(refuse!("{what} is not supported")));
+    // A spark_bar draws no link, authored or automatic: production hands its renderer none
+    // (engine.py:`build_chart_layout`), so its `link:` is never read here.
+    if board.regional.is_some() {
+        return Err(Diagnostic::refused(refuse!("a number locale other than en-US is not supported")));
     }
     let Some(ChartQuery::Hoisted(query)) = &chart.shared.base.query else {
         return Err(diag::err_internal(format!("chart {id} has no hoisted query")));
@@ -39,8 +36,11 @@ pub fn bind(id: &ChartId, chart: &SparkBarChart, style: &SparkBarChartStyle, boa
         return failure(mismatch.into_diagnostic().with_sink_param("chart_id", json!(id.as_str())));
     }
     let rows = &dataset.rows;
+    let authored = |text: &Option<board_model::facet::DisplayText>| text.as_ref().map(|t| t.as_str().to_string()).filter(|t| !t.is_empty());
+    let (title, subtitle) = (authored(&chart.shared.title), authored(&chart.shared.subtitle));
+    // Production validates no field of an empty result and draws no row.
     let Some(first) = rows.first() else {
-        return Err(Diagnostic::refused(refuse!("a spark_bar whose query returned no rows is not supported")));
+        return Ok(Ok(Family::SparkBar(SparkBar { rows: Vec::new(), max_value: 1.0, signed: false, more: 0, title, subtitle })));
     };
     let numeric = |column: &str| matches!(dataset.schema.0.get(column), Some(ColumnType::Integer | ColumnType::Float));
     let named = |names: &[&str]| first.keys().find(|k| names.contains(&k.to_lowercase().as_str())).cloned();
@@ -60,32 +60,60 @@ pub fn bind(id: &ChartId, chart: &SparkBarChart, style: &SparkBarChartStyle, boa
         let available: BTreeSet<&String> = rows.iter().flat_map(|row| row.keys()).collect();
         return failure(diag::err_spark_bar_value_field_not_found(id.as_str(), x.as_str(), json!(available)));
     }
-    if !numeric(&x) {
-        return Err(Diagnostic::refused(refuse!("a spark_bar magnitude column that is not an integer or float is not supported")));
+    // spark_bar.rs:`validate_value_field`, over every row of the result, never only the drawn ones:
+    // a null is sparse data, any other non-number fails the chart, and a column of nulls alone holds
+    // nothing to draw.
+    let mut has_numeric = false;
+    for row in rows {
+        match row.get(&x) {
+            None | Some(Value::Null) => {}
+            Some(Value::Number(_)) => has_numeric = true,
+            Some(other) => return not_numeric(&x, &format!("row value {} is not numeric", diagnostic::py_repr(other))),
+        }
+    }
+    if !has_numeric {
+        return not_numeric(&x, "the column holds no numeric values");
     }
 
     let visible = &rows[..rows.len().min(style.max_bars as usize)];
+    let datetime = y.as_ref().is_some_and(|y| matches!(dataset.schema.0.get(y), Some(ColumnType::Datetime | ColumnType::DatetimeTz)));
     let mut bound = Vec::with_capacity(visible.len());
-    for row in visible {
-        let label = label(row, y.as_deref())?;
+    for (i, row) in visible.iter().enumerate() {
+        let label = label(row, y.as_deref(), datetime, i + 1)?;
         let (value, count) = match row.get(&x) {
             Some(Value::Number(n)) => (n.as_f64().ok_or_else(|| diag::err_internal(format!("the number {n} is not a double")))?, count_text(n)?),
-            _ => return Err(Diagnostic::refused(refuse!("a spark_bar magnitude that is not a number is not supported"))),
+            // A null magnitude draws no bar and counts `0` (spark_bar.rs:`format_count`).
+            None | Some(Value::Null) => (0.0, "0".to_string()),
+            Some(other) => return Err(diag::err_internal(format!("the validated magnitude {other} is not a number"))),
         };
         bound.push(SparkBarRow { label, value, count: style.count.visible.then_some(count) });
     }
     let signed = bound.iter().any(|row| row.value < 0.0);
     let max = bound.iter().fold(0.0_f64, |m, row| m.max(row.value.abs()));
-    Ok(Ok(Family::SparkBar(SparkBar { rows: bound, max_value: if max == 0.0 { 1.0 } else { max }, signed, more: rows.len() - visible.len() })))
+    Ok(Ok(Family::SparkBar(SparkBar { rows: bound, max_value: if max == 0.0 { 1.0 } else { max }, signed, more: rows.len() - visible.len(), title, subtitle })))
 }
 
-/// The row's label: a text cell as is. Production's `str()` of any other cell, and its numbered
-/// placeholder for a chart with no label column, are not modeled.
-fn label(row: &Map<String, Value>, y: Option<&str>) -> Result<String, Diagnostic> {
-    match y.and_then(|y| row.get(y)) {
-        Some(Value::String(text)) => Ok(text.clone()),
-        _ => Err(Diagnostic::refused(refuse!("a spark_bar label that is not text is not supported"))),
-    }
+/// The row's label, as production's `str(row.get(y_field, ""))` prints it (spark_bar.rs:`bind`): a
+/// text cell as is, a null `None`, a boolean `True`/`False`, a number as Python prints it, and a row
+/// without the column empty; with no label column, the `n`th row is "Item n". A datetime travels
+/// as `isoformat()` and Python prints `isoformat(" ")`.
+fn label(row: &Map<String, Value>, y: Option<&str>, datetime: bool, n: usize) -> Result<String, Diagnostic> {
+    let Some(y) = y else {
+        return display_text::language::tr("spark.item", None, &[("n", &n.to_string())]).map_err(diag::err_internal);
+    };
+    Ok(match row.get(y) {
+        None => String::new(),
+        Some(Value::String(text)) if datetime => {
+            let (date, time) = text.split_once('T').ok_or_else(|| diag::err_internal(format!("the datetime {text} has no `T`")))?;
+            format!("{date} {time}")
+        }
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Null) => "None".to_string(),
+        Some(Value::Bool(b)) => if *b { "True" } else { "False" }.to_string(),
+        Some(Value::Number(n)) if n.is_f64() => d3rs::py_float::float_repr(n.as_f64().ok_or_else(|| diag::err_internal(format!("the number {n} is not a double")))?),
+        Some(Value::Number(n)) => n.to_string(),
+        Some(other) => return Err(diag::err_internal(format!("a spark_bar label {other} is neither text, a number nor a boolean"))),
+    })
 }
 
 /// Production keys on the Python type, which the JSON number keeps: an integral float prints

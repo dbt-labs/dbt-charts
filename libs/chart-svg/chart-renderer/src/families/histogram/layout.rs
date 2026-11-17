@@ -149,7 +149,6 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let x_axis_offset = ax_x.ticks.offset.unwrap_or(0.0);
     let x_ticks_visible = ax_x.ticks.visible.unwrap_or(true);
     let x_tick_len = ax_x.ticks.length.unwrap_or(6.0);
-    let x_tick_eff = if x_ticks_visible { x_tick_len } else { 0.0 };
     let x_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     let x_label_ws = measure.widths(x_tick_labels, x_family, x_font_size)?;
 
@@ -307,7 +306,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                     b.union(&ink.rotate(y_angle, x, y));
                 }
             }
-            let row_y = x_edge.at(ph, x_axis_offset + x_tick_eff + x_label_pad);
+            let row_y = x_edge.at(ph, x_axis_offset + x_label_pad);
             let pass_x_scale = Continuous::linear([bin_start, bin_stop], [0.0, pw]);
             for ((&tv, &lw), lbl) in x_ticks_domain.iter().zip(x_label_ws.iter()).zip(x_tick_labels) {
                 let pos = pass_x_scale.scale(tv);
@@ -374,7 +373,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         use ::layout::labels_expr::view::{register_axis, register_linear, AxisSpec, Orient, Span};
         register_linear("x", bin_start, bin_stop, Span::Width);
         register_linear("y", 0.0, y_domain_max, Span::Height);
-        let x_spec = AxisSpec { orient: Orient::Bottom, offset: x_tick_eff + x_label_pad, shift: 0.0, align: None, baseline: None, angle: 0.0, flush: x_flush, style: ax_x.labels.item_style()? };
+        let x_spec = AxisSpec { orient: Orient::Bottom, offset: x_label_pad, shift: 0.0, align: None, baseline: None, angle: 0.0, flush: x_flush, style: ax_x.labels.item_style()? };
         if ax_x.labels.upright() {
             register_axis("x", x_spec);
         }
@@ -516,7 +515,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let x_label_weight = ax_x.labels.font.weight_str();
     let x_label_y =
-        x_group_y + x_edge.sign() * (x_tick_eff + x_label_pad) + measure::baseline_shift(x_edge.baseline(), x_font_size);
+        x_group_y + x_edge.sign() * x_label_pad + measure::baseline_shift(x_edge.baseline(), x_font_size);
     for (&tv, lbl) in x_ticks_domain.iter().zip(x_tick_labels.iter()) {
         let pos = x_scale.scale(tv);
         // labelOverlap: allow — every tick always draws; the

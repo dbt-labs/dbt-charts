@@ -5,7 +5,7 @@
 //! What the bind does not model yet refuses by name.
 //!
 //! A datum's hover text opens with its date's tooltip header (`temporal::tooltip_header_date`), the
-//! x axis' style carries how its labels crowd (`bound::TimeLabelStyle`), and the mark style the halo
+//! x axis' style carries how its labels crowd (`bound::LabelCrowding`), and the mark style the halo
 //! multiplier; the stroke and the points are the density-adaptive law's, which layout derives from
 //! the cell.
 //!
@@ -17,14 +17,11 @@
 //! id. A text-declared y the rule does not call non-numeric is refused by name.
 //! `tests/it/line.rs` replays `line_production.json`, recorded by `record_line_bind.py`.
 
-use std::collections::HashSet;
-
 use board_model::board::Board;
 use board_model::chart::{Columns, LineChart};
 use board_model::ids::ChartId;
 use board_model::style::marks::labels_drawn;
 use board_model::primitives::{Curve, LineCap, LineJoin};
-use board_model::style::axis::FillMode;
 use diagnostic::{codes, diag, py_str_repr, refuse, Diagnostic};
 use board_model::rule::Auto;
 use model_core::Engine;
@@ -35,21 +32,15 @@ use crate::derived::{DerivedChart, Placed};
 use crate::families::cartesian::{self, axis_format, measure_axis, no_data, plain_text, single_series, unsupported, value, zero_rule, Prelude};
 use crate::formats::locale::active_number_locale;
 use crate::bound::{self,
-    AuthoredLegend, AxisStyles, Baselines,  Datum, Failure, GrainDrop, Key, LineStyle, Mark, MarkLayer, MarkStyle, Naming, Orient,
-    Panels, Pos, RowRef, Scale, ScaleKind, Series, Tooltip, TooltipEntry, TooltipHeader,
+    AuthoredLegend, AxisStyles, Baselines,  Datum, Failure, Key, LineStyle, Mark, MarkLayer, MarkStyle, Naming, Orient,
+    Panels, Pos, RowRef, Scale, ScaleKind, Series, Tooltip, TooltipEntry, TooltipHeader, ValueAxis, ValueScale, Zero,
 };
-use crate::plot::domain;
-use crate::plot::time::{time_domain, TimeInput, TimeUnitSetting};
+use crate::plot::domain::{self, LogUse, Side};
+use crate::plot::time;
 use crate::plot::zero::{self, Family};
 use crate::rows::is_year_shaped;
 use crate::run::RunResult;
-use crate::style::Tiers as StyleTiers;
-use crate::temporal::{tooltip_header_date, x_is_standard_date, VegaType};
-use crate::x_type::{resolve_cartesian_x_type, Grain, XAxis};
-
-/// `core/constants/axis.py::MAX_ORDINAL_BUCKETS`: the most empty buckets a calendar grain may
-/// span before the x-type law drops it.
-const MAX_ORDINAL_BUCKETS: usize = 60;
+use crate::temporal::{tooltip_header_date, x_is_standard_date};
 
 /// What a line chart's laws bind: the two scales, the one series and a datum per row.
 #[derive(Debug)]
@@ -88,7 +79,6 @@ fn refuse_unported(chart: &LineChart) -> Result<(), Diagnostic> {
         ("`sort:`", fields.sort.is_some()),
         ("`connect:`", chart.connect.is_some()),
         ("`link:`", fields.shared.base.link.is_some()),
-        ("`x_label:` or `y_label:`", fields.x_label.is_some() || fields.y_label.is_some()),
         ("`support_table:`", fields.support_table.is_some()),
         ("`style.conditional`", !chart.style.conditional.is_empty()),
         (
@@ -125,19 +115,6 @@ fn refuse_unported(chart: &LineChart) -> Result<(), Diagnostic> {
     Ok(())
 }
 
-/// The gap fill and the fiscal year move the x-type law's verdict; no tier of the time axis
-/// may set either to other than the default.
-fn refuse_time_axis_leaves(tiers: &StyleTiers<'_>) -> Result<(), Diagnostic> {
-    let board = Some(&tiers.charts.axis_x);
-    let moved = [tiers.own.axis_x, tiers.family.axis_x, board].into_iter().flatten().any(|axis| {
-        axis.fill.is_some_and(|fill| fill != FillMode::Null) || axis.fiscal_year_start_month.is_some_and(|month| month != 1)
-    });
-    if moved {
-        return Err(unsupported(refuse!("a line time axis that sets `fill` or `fiscal_year_start_month` is not supported")));
-    }
-    Ok(())
-}
-
 /// The laws of a line chart over its rows; `None` when the query returned no rows.
 pub fn lines(
     id: &ChartId,
@@ -146,12 +123,10 @@ pub fn lines(
     run: &RunResult,
     placed: &Placed<'_>,
 ) -> Result<Option<Lines>, Diagnostic> {
-    let p = Prelude::of(&chart.cartesian, ChannelType::Temporal, placed)?;
+    let p = Prelude::of(&chart.cartesian, ChannelType::Temporal, ChannelType::Quantitative, placed)?;
+    cartesian::refuse_scale(p.y_scale, "line", "y", true)?;
     let (x_field, y_field) = (p.x_field, p.y_field);
-    refuse_time_axis_leaves(&p.tiers)?;
-    if p.x_ladder.labels_format().is_some() {
-        return Err(unsupported(refuse!("a line time axis with a label format is not supported")));
-    }
+    time::refuse_unmodeled_leaves(&p.tiers, &p.x_ladder, "line")?;
     if p.x_ladder.ticks_count().is_some() {
         return Err(unsupported(refuse!("a line time axis with `ticks.count` is not supported")));
     }
@@ -187,32 +162,7 @@ pub fn lines(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let authored_none = p.x_ladder.time_unit_none();
-    let law_axis = XAxis {
-        time_unit: authored_none.then_some("none"),
-        authored_type: None,
-        raw_type: None,
-        fill: Some("null"),
-        fiscal_year_start_month: 1,
-        max_ordinal_buckets: MAX_ORDINAL_BUCKETS,
-    };
-    let law = resolve_cartesian_x_type(&dataset.schema, &dataset.rows, x_field, &law_axis, "line", false, &[])
-        .map_err(Diagnostic::refused)?;
-    if law.vl_type != VegaType::Temporal {
-        return Err(unsupported(refuse!("a line on an x the x-type law does not read as a time scale is not supported")));
-    }
-    let time_unit = match law.grain {
-        Grain::Calendar(unit) => TimeUnitSetting::Unit(unit),
-        Grain::None => TimeUnitSetting::Absent,
-        Grain::Part(_) => return Err(diag::err_internal("no time part is authored on a line")),
-    };
-    let mut seen = HashSet::new();
-    let distinct: Vec<String> = texts.iter().filter(|text| seen.insert(**text)).map(|text| text.to_string()).collect();
-    // The grain is still read into the domain (`unit`); the reason says why production labels the
-    // axis without it.
-    let grain_drop = (law.grain == Grain::None).then_some(if authored_none { GrainDrop::AuthoredNone } else { GrainDrop::ScaffoldBudget });
-    let input = TimeInput { chart_id: id.as_str(), family: "line", x_field, time_unit, grain_drop, fill_gaps: false, fiscal_start: None };
-    let domain = time_domain(&distinct, &input)?.ok_or_else(|| diag::err_internal("a line with rows has an x to span"))?;
+    let domain = time::x_domain(id.as_str(), "line", dataset, x_field, p.x_ladder.time_unit_none(), &texts)?;
     let instants = texts
         .iter()
         .map(|text| domain.axis.get(text).ok_or_else(|| diag::err_internal(format!("the time axis read every x, but not {text:?}"))))
@@ -231,11 +181,22 @@ pub fn lines(
         return Err(unsupported(refuse!("a line whose rows hold no value is not supported")));
     }
 
-    let y_zero = zero::verdict(Family::Line, p.y_ladder.zero_setting(), &drawn);
-    // A single series is production's `apply_nice == false` arm: its baked headroom bounds stand
-    // unrounded (`resolve_measure_domain`; only a rail or layers re-nice).
-    let y_axis = measure_axis(&p.y_ladder, y_zero, &drawn, y_format, domain::Mark::Plotted, Some(false))?;
-    let (axis_styles, [x_shown, y_shown]) = cartesian::axes((&p.x_ladder, p.x_title.clone(), false), (&p.y_ladder, p.y_title.clone(), false), &y_axis.domain, placed.scope, "line", false, true)?;
+    let (y_zero, y_axis) = match p.y_scale {
+        // A log axis has no zero to anchor or cross, and bakes no ladder or bounds.
+        ValueScale::Log { base } => {
+            domain::require_positive(placed.public_id, Side::Y, y_field, &drawn)?;
+            domain::refuse_log(placed.public_id, LogUse::Other, cartesian::count(&p.y_ladder)?)?;
+            let domain = cartesian::log_domain(base, cartesian::LOG_TICK_COUNT, &p.y_ladder, &drawn, &y_format, "y domain")?;
+            (Zero::Free, ValueAxis { domain, format: y_format })
+        }
+        _ => {
+            let y_zero = zero::verdict(Family::Line, p.y_ladder.zero_setting(), &drawn);
+            // A single series is production's `apply_nice == false` arm: its baked headroom bounds stand
+            // unrounded (`resolve_measure_domain`; only a rail or layers re-nice).
+            (y_zero, measure_axis(&p.y_ladder, y_zero, &drawn, y_format, domain::Mark::Plotted, Some(false))?)
+        }
+    };
+    let (axis_styles, [x_shown, y_shown]) = cartesian::axes(&p, Some(&y_axis.domain), placed.scope, "line", false, true)?;
 
     let tooltip_format = p.tooltip_format(&drawn)?;
     if tooltip_format.spec.is_empty() {
@@ -262,7 +223,7 @@ pub fn lines(
                 series: 0,
                 row: RowRef(row),
                 label: None,
-                tooltip: Tooltip { header: Some(TooltipHeader::date(header)), entries },
+                tooltip: Tooltip { heads: vec![TooltipHeader::plain(header)], entries },
                 href: None,
                 defined: y.is_some(),
             })
@@ -305,8 +266,7 @@ pub fn bind(
         other => other?,
     };
     let Some(lines) = lines else {
-        let frame = Some(placed.derive()?.frame);
-        return Ok(bound::Chart { title, subtitle, frame, family: Ok(bound::Family::Cartesian(no_data(placed, "line")?)) });
+        return Ok(no_data(placed.derive()?, placed.public_id, run, title, subtitle));
     };
     let frame = Some(lines.derived.frame.clone());
     let plot = bound::Plane::new(bound::PlaneParts {

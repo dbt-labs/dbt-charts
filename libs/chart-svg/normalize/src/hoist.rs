@@ -248,7 +248,11 @@ pub fn hoist_charts(
         below: BTreeSet::new(),
         variable_boards: BTreeMap::new(),
         board: ItemId::root(),
-        scope_of_board: BoardScope::default().under(&patch.body.cache, &patch.body.incremental, &[])?,
+        scope_of_board: BoardScope::default().under(
+            &patch.body.cache,
+            &patch.body.incremental,
+            &[],
+        )?,
         boards: BTreeMap::new(),
         query_owners: BTreeMap::new(),
     };
@@ -1298,13 +1302,11 @@ fn item<'a>(
             found.scopes.boards.extend(inner.clone());
             let outer = std::mem::replace(&mut found.scope, inner);
             let board = ItemId::at(at);
-            let folded = found
-                .scope_of_board
-                .under(
-                    &nested.body.cache,
-                    &nested.body.incremental,
-                    &at.iter().map(step_loc).collect::<Vec<_>>(),
-                )?;
+            let folded = found.scope_of_board.under(
+                &nested.body.cache,
+                &nested.body.incremental,
+                &at.iter().map(step_loc).collect::<Vec<_>>(),
+            )?;
             found.boards.insert(board.clone(), folded.clone());
             let outer_board = std::mem::replace(&mut found.board, board);
             let outer_board_scope = std::mem::replace(&mut found.scope_of_board, folded);

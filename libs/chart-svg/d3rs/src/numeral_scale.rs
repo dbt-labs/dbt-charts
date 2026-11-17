@@ -94,6 +94,62 @@ pub fn shared_scale_for_ladder(ticks: &[f64]) -> Option<SharedScale> {
     })
 }
 
+/// `_natural_tier`: the SI tier `value`'s own magnitude falls into, `None` below thousands.
+fn natural_tier(value: f64) -> Option<i32> {
+    TIERS.iter().rev().copied().find(|&tier| value.abs() >= 10f64.powi(tier))
+}
+
+/// `shared_scale_for_column`: the one magnitude a table column's non-zero values share, or `None` when the
+/// column does not compact. Every non-zero value votes its natural tier, and a value below thousands votes
+/// `None`. The majority tier wins, and where tiers tie the higher one does; a tie that includes `None` leaves
+/// no shared scale. A column also has none when its extreme value is short of the compaction digits or has
+/// outgrown its tier (a repeating suffix).
+pub fn shared_scale_for_column(values: &[f64]) -> Option<SharedScale> {
+    let mut tally: Vec<(Option<i32>, usize)> = Vec::new();
+    for tier in values.iter().filter(|&&value| value != 0.0).map(|&value| natural_tier(value)) {
+        match tally.iter_mut().find(|(seen, _)| *seen == tier) {
+            Some((_, count)) => *count += 1,
+            None => tally.push((tier, 1)),
+        }
+    }
+    let top_count = tally.iter().map(|&(_, count)| count).max()?;
+    let tied: Vec<Option<i32>> = tally.iter().filter(|&&(_, count)| count == top_count).map(|&(tier, _)| tier).collect();
+    if tied.contains(&None) {
+        return None;
+    }
+    let majority_tier = tied.into_iter().flatten().max()?;
+    let extreme = values.iter().fold(0.0_f64, |acc, &value| acc.max(value.abs()));
+    if integer_digit_count(extreme) < COMPACTION_DIGIT_THRESHOLD {
+        return None;
+    }
+    match mode_for_scaled_extreme(extreme / 10f64.powi(majority_tier)) {
+        SuffixMode::Repeat => None,
+        mode => Some(SharedScale { exponent: majority_tier, mode }),
+    }
+}
+
+/// `forced_shared_scale`: the scale a column takes when a sibling prints SI and its own vote declined: the
+/// unit of its largest value. `None` when that value is below thousands or has outgrown the unit.
+pub fn forced_shared_scale(values: &[f64]) -> Option<SharedScale> {
+    let extreme = values.iter().fold(0.0_f64, |acc, &value| acc.max(value.abs()));
+    let exponent = natural_tier(extreme)?;
+    match mode_for_scaled_extreme(extreme / 10f64.powi(exponent)) {
+        SuffixMode::Repeat => None,
+        mode => Some(SharedScale { exponent, mode }),
+    }
+}
+
+/// `column_digit_format`: the fixed-point spec a shared-scale column's scaled values print through. Its
+/// decimals bring the smallest value at or above the unit (`majority_scaled`) to the source spec's
+/// significant figures (6 when it has none), never fewer than `min_precision`, the most a sibling column on
+/// the same scale needs.
+pub fn column_digit_spec(sign: char, sig_figs: Option<usize>, majority_scaled: f64, min_precision: usize) -> String {
+    // `_decimal_exponent`: the digits before the decimal point, negative below 1.
+    let exponent = if majority_scaled == 0.0 { 1 } else { majority_scaled.abs().log10().floor() as i64 + 1 };
+    let precision = (sig_figs.unwrap_or(6) as i64 - exponent).max(min_precision as i64).max(0);
+    digit_spec_str(sign, precision as usize)
+}
+
 /// `_digit_spec`/`ruler_digit_format`'s/`non_compacting_tick_format`'s
 /// shared tail: `dataclasses.replace(parsed, type="f", precision=…,
 /// trim=True, comma=True, symbol="", width=None, zero=False)` serialized —
@@ -364,4 +420,34 @@ pub fn render_align<'a>(
     fallback_fires: bool,
 ) -> Option<&'a str> {
     effective_align(if fallback_fires { None } else { label_align }, edge)
+}
+
+#[cfg(test)]
+mod column_scale_tests {
+    use super::*;
+
+    #[test]
+    fn a_column_shares_the_majority_tier_once_its_extreme_has_six_digits() {
+        let scale = shared_scale_for_column(&[150_000.0, 220_000.0, -310_000.0]).expect("one tier");
+        assert_eq!((scale.exponent, scale.mode), (3, SuffixMode::Anchor));
+        assert!(shared_scale_for_column(&[15_000.0, 22_000.0]).is_none(), "five digits do not compact");
+    }
+
+    #[test]
+    fn a_forced_scale_takes_the_unit_of_the_largest_value_and_a_digit_spec_its_decimals_from_the_smallest() {
+        assert_eq!(forced_shared_scale(&[858.0, 1270.0]).map(|s| s.exponent), Some(3));
+        assert!(forced_shared_scale(&[858.0, 12.0]).is_none(), "below thousands");
+        assert!(forced_shared_scale(&[2_659_000.0, 12.0]).map(|s| s.exponent) == Some(6));
+        assert_eq!(column_digit_spec('-', Some(3), 12.3, 0), ",.1~f");
+        assert_eq!(column_digit_spec('-', Some(3), 150.0, 0), ",.0~f");
+        assert_eq!(column_digit_spec('-', Some(3), 150.0, 1), ",.1~f");
+        assert_eq!(column_digit_spec('-', None, 1.25, 0), ",.5~f");
+    }
+
+    #[test]
+    fn a_tie_with_no_tier_or_an_outgrown_unit_shares_nothing() {
+        assert!(shared_scale_for_column(&[1234.5, -99.6, 0.5, 1_000_000.0]).is_none(), "None ties the thousands");
+        assert!(shared_scale_for_column(&[2_659_000.0, 631_000.0, 800_000.0, 900_000.0, 700_000.0]).is_none(), "2,659 K has outgrown the thousands");
+        assert!(shared_scale_for_column(&[0.0, 0.0]).is_none());
+    }
 }

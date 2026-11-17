@@ -1,0 +1,3 @@
+kind: Fixes
+body: A side-by-side example in rendered Markdown grows to fit a board taller than its YAML instead of spilling onto the text below.
+time: 2026-11-12T17:38:38.383475-08:00

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from platformdirs import user_state_dir
 from pydantic import BaseModel, ConfigDict
 
 from dbt_charts.core.diagnostics import Diagnostic
@@ -36,6 +38,9 @@ class ServeSetup(BaseModel):
 
     app: Any
     server: Any
+    # Already listening, so the server runs on it: a request sent during startup
+    # waits for the server instead of being refused.
+    listener: socket.socket
     port: int
     dialect: str
     dialect_inferred: bool
@@ -61,7 +66,7 @@ def prepare_serve(
     unchanged from before this function existed.
     """
     from dbt_charts.core.compile.config import get_default_theme_name, load_config
-    from dbt_charts.core.serve.port import resolve_port
+    from dbt_charts.core.serve.port import resolve_listener
     from dbt_charts.core.serve.server import create_server
     from dbt_charts.core.serve.shutdown import build_server
 
@@ -76,7 +81,6 @@ def prepare_serve(
     load_config(project)
 
     project_dir = project.root
-    resolved_port = resolve_port(explicit_port=port, project_dir=project_dir, host=host)
 
     settings, dialect_inferred = resolve_serve_settings(
         project,
@@ -96,6 +100,8 @@ def prepare_serve(
         cache_path=settings.cache_path,
     )
 
+    listener = resolve_listener(explicit_port=port, project_dir=project_dir, host=host)
+    resolved_port = listener.getsockname()[1]
     return ServeSetup(
         app=app,
         # 3s bounds a slow in-flight render; the live-reload streams end on
@@ -107,6 +113,7 @@ def prepare_serve(
             timeout_graceful_shutdown=3,
             exit_deadline=8,
         ),
+        listener=listener,
         port=resolved_port,
         dialect=settings.dialect,
         dialect_inferred=dialect_inferred,
@@ -207,7 +214,9 @@ class _State(BaseModel):
 
 
 def _state_path(port: int) -> Path:
-    return Path(tempfile.gettempdir()) / f"dct-serve-{port}.json"
+    """The record's per-user location: shells in one session can see different
+    ``TMPDIR`` values, so a temp-dir record is invisible to ``--stop``."""
+    return Path(user_state_dir()) / "com.getdbt" / "charts" / f"serve-{port}.json"
 
 
 def _read_state(port: int) -> _State | None:
@@ -512,6 +521,7 @@ def start_detached(
                 "pick a free one with --port."
             )
         pid = _spawn(root, host, resolved, settings, startup_timeout)
+        state_file.parent.mkdir(parents=True, exist_ok=True)
         state_file.write_text(
             _State(pid=pid, host=host, settings=settings).model_dump_json(),
             encoding="utf-8",

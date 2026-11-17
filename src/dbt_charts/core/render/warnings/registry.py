@@ -95,6 +95,7 @@ import dbt_charts.core.render.warnings.table_text_truncated as table_text_trunca
 import dbt_charts.core.render.warnings.temporal_single_point as temporal_single_point
 import dbt_charts.core.render.warnings.too_many_color_categories as too_many_color_categories
 import dbt_charts.core.render.warnings.too_many_x_categories as too_many_x_categories
+import dbt_charts.core.render.warnings.torn_outlier_no_outlier as torn_outlier_no_outlier
 import dbt_charts.core.render.warnings.trend_on_bars as trend_on_bars
 import dbt_charts.core.render.warnings.value_labels_crowd_width as value_labels_crowd_width
 import dbt_charts.core.render.warnings.value_labels_no_markers as value_labels_no_markers
@@ -180,6 +181,7 @@ _DATA_DETECTORS: list[ModuleType] = [
     temporal_single_point,
     too_many_color_categories,
     too_many_x_categories,
+    torn_outlier_no_outlier,
     variable_buttons_overflow,
     wide_measure_label_collision,
     y_encoding_mostly_null,

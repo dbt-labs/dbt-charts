@@ -6,6 +6,7 @@ const TABULAR_FAMILIES: &[&str] = &[
     "dbt Sans Tabular",
     "dbt Sans Tabular Medium",
     "dbt Sans Tabular SemiBold",
+    "dbt Sans Tabular Bold",
     "dbt Serif Oldstyle Tabular",
 ];
 

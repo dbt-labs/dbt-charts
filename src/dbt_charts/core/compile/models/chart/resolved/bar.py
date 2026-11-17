@@ -78,6 +78,13 @@ class ResolvedBarChart(
             "None for grouped, non-stacked, normalize, or single-series bars."
         ),
     )
+    torn_break: float | None = Field(
+        default=None,
+        description=(
+            "Value where outlier bars are torn; the measure axis ends exactly "
+            "here. None when no bar is torn."
+        ),
+    )
     style: ResolvedBarStyle = Field(
         description="Bar family style slice — self-contained, globals merged down by resolve.",
     )

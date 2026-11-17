@@ -67,8 +67,6 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
-from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
 from dbt_charts.core.text.predefined_formats import PREDEFINED_TEXT_NAMES
 from dbt_charts.core.utils import coerce_numeric_cell
 
@@ -88,10 +86,6 @@ def _resolve_kpi(
     display_text: ChartDisplayText = None,
 ) -> ResolvedKpiChart:
     value = normalized.value
-    if value is None:
-        # resolve() binds value from the rows; only a zero-row result still
-        # arrives without one, and that fails the way it fails a named KPI.
-        raise ChartDataError.from_code(ERR_KPI_NO_DATA, chart_id=normalized.id)
     primary = _with_color_tokens(normalized.style, chart_style_context)
     # The chart-local context re-runs inherit, so a chart's own `style.font`
     # reaches every slot font.
@@ -106,7 +100,7 @@ def _resolve_kpi(
         else {}
     )
     formats = chart_style_context.formats
-    headline = _headline_numeric_value(value, data)
+    headline = None if value is None else _headline_numeric_value(value, data)
     chart_value = (
         primary.value.format if primary is not None and primary.value else None
     )
@@ -154,7 +148,7 @@ def _resolve_kpi(
             data,
             kpi.value.glyph,
         )
-        if normalized.good is not None
+        if value is not None and normalized.good is not None
         else None
     )
     value_format = finalize_kpi_value_format(
@@ -296,7 +290,7 @@ def _good_rules(
 def _kpi_text_link(
     value_format: ResolvedFormat | None,
     data: list[dict[str, Any]],  # type-state: explicit_any — rows are raw query output
-    value_column: str,
+    value_column: str | None,
     chart_id: str,
     has_link: bool,
 ) -> str | None:
@@ -307,7 +301,11 @@ def _kpi_text_link(
     """
     if value_format is None or value_format.raw not in PREDEFINED_TEXT_NAMES:
         return None
-    cell = data[0].get(value_column) if len(data) == 1 else None
+    cell = (
+        data[0].get(value_column)
+        if len(data) == 1 and value_column is not None
+        else None
+    )
     if coerce_numeric_cell(cell) is not None:
         raise_if_format_cannot_print_number(value_format.raw)
     if has_link:

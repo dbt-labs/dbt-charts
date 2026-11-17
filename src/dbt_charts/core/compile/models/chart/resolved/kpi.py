@@ -61,8 +61,10 @@ class ResolvedKpiChart(_BaseResolvedChartFields):
         default=None,
         description="Always None — KPI has no subtitle.",
     )
-    value: str = Field(
-        description="Data column supplying the headline KPI value (required).",
+    # None only when the query returned no rows and the chart names no column: there is no
+    # cell to read and the card draws its empty state.
+    value: str | None = Field(
+        description="Data column supplying the headline KPI value.",
     )
     label: str = Field(
         default="",

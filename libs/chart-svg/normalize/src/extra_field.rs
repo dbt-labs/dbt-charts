@@ -352,7 +352,11 @@ fn supported_types(chart_type: &str, field: &str) -> Option<String> {
     if supporting.is_empty() {
         return None;
     }
-    let more = if own.len() > MAX_LISTED_KEYS { ", ..." } else { "" };
+    let more = if own.len() > MAX_LISTED_KEYS {
+        ", ..."
+    } else {
+        ""
+    };
     let accepted = own
         .iter()
         .take(MAX_LISTED_KEYS)

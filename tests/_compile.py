@@ -17,7 +17,7 @@ from dbt_charts.core.compile.models.board.normalized import Board, VariableValue
 from dbt_charts.core.compile.normalize.queries import is_file_source_ref
 from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.plan_reader import env_sources
-from dbt_charts.core.execute.query_plan import QueryPlan
+from dbt_charts.core.execute.planned import Planned
 from dbt_charts.core.project import InMemoryBoard, ProjectDirectory
 
 _TEXTS: dict[int, tuple[str, ProjectDirectory | None, ProjectSourcesConfig | None]] = {}
@@ -85,7 +85,7 @@ def plan_of(
     strict: bool = False,
     active_tab_only: bool = False,
     all_queries: bool = False,
-) -> QueryPlan:
+) -> Planned:
     """The engine's plan of the text *board* was compiled from, under *variables*."""
     recorded = _TEXTS.get(id(board))
     if recorded is None:

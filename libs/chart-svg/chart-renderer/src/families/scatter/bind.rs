@@ -211,6 +211,10 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
         r.whole_rows = Some(narrowed.whole);
         prepared = Cow::Owned(narrowed.payload);
     }
+    if !x_dates {
+        crate::point_conditional::axis_label_rules("scatter", r.style.conditional.as_ref(), &r.x)
+            .refuse_all("a scatter's non-date x axis draws its labels per tick")?;
+    }
     Ok(Bound {
         payload: prepared,
         r,

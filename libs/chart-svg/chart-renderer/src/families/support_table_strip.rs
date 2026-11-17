@@ -620,7 +620,7 @@ fn reduce(op: &str, vals: &[f64]) -> Result<Option<f64>, String> {
 /// cells leave out kept in `unit` for the row label to name (`Pipeline, $K`). An `s`-type (SI)
 /// format is COMPOSED: the row divides by one shared magnitude and formats through a rebuilt
 /// fixed-point spec. A row that cannot share a tier (values a tier apart, or a sliver that would
-/// print as zero) prints its values in full, unrounded digits and names no tier, so no cell ever
+/// print as zero) prints every integer digit of its values and names no tier, so no cell ever
 /// carries a magnitude letter the label does not name.
 pub struct StripNumerals {
     pub(crate) digit_spec: String,
@@ -630,9 +630,10 @@ pub struct StripNumerals {
     /// (`+` or a space); a negative one leads with the locale's minus instead.
     plus: String,
     divisor: f64,
-    /// Each cell prints its value's shortest exact digits (`digit_spec`'s `~f` takes the
-    /// value's own decimals): a row that names no tier must not round.
-    exact: bool,
+    /// A row that names no tier: each cell keeps every integer digit (a rounded `951,000` would
+    /// read as exact) and its shortest decimals up to this many significant digits, the spec's
+    /// precision, so a float's representation noise never prints.
+    exact: Option<i32>,
     /// The pieces of the unit, in reading order (`$`, `K`), so a label that names some of them is
     /// given only the rest.
     unit: Vec<String>,
@@ -647,16 +648,16 @@ impl StripNumerals {
         if parts.type_ != 's' {
             let percent = if parts.type_ == '%' { active_number_locale().locale.percent.clone() } else { String::new() };
             let unit = currency.into_iter().chain((!percent.is_empty()).then(|| percent.clone())).collect();
-            return Ok(StripNumerals { digit_spec: spec, percent, plus: String::new(), divisor: 1.0, exact: false, unit });
+            return Ok(StripNumerals { digit_spec: spec, percent, plus: String::new(), divisor: 1.0, exact: None, unit });
         }
         let sign = if parts.sign == '-' { String::new() } else { parts.sign.to_string() };
-        // Unrounded: under a label that names no tier, a rounded `951,000` would read as exact.
+        let significant = parts.precision.unwrap_or(6).max(1) as i32;
         let full_digits = || StripNumerals {
             digit_spec: format!("{sign},~f"),
             percent: String::new(),
             plus: String::new(),
             divisor: 1.0,
-            exact: true,
+            exact: Some(significant),
             unit: currency.clone(),
         };
         let voters: Vec<f64> = values.iter().copied().filter(|v| *v != 0.0 && v.is_finite()).collect();
@@ -679,7 +680,7 @@ impl StripNumerals {
             Some(own) if tier_index(majority) - tier_index(own) <= 1 => {}
             _ => return Ok(full_digits()),
         }
-        let decimals = (parts.precision.unwrap_or(6) as i32 - decimal_exponent(finest.abs() / magnitude)).max(0);
+        let decimals = (significant - decimal_exponent(finest.abs() / magnitude)).max(0);
         let digit_spec = format!(",.{decimals}~f");
         // A voter whose scaled form prints no non-zero digit would be indistinguishable from a genuine zero.
         for v in &voters {
@@ -691,7 +692,7 @@ impl StripNumerals {
         }
         let plus = if matches!(parts.sign, '+' | ' ') { parts.sign.to_string() } else { String::new() };
         let unit = currency.into_iter().chain([crate::common::suffix_at_register(majority, true)?]).collect();
-        Ok(StripNumerals { digit_spec, percent: String::new(), plus, divisor: magnitude, exact: false, unit })
+        Ok(StripNumerals { digit_spec, percent: String::new(), plus, divisor: magnitude, exact: None, unit })
     }
 
     /// The unit around `self`'s own: an authored `prefix` leads it and a `suffix` trails it.
@@ -735,9 +736,10 @@ impl StripNumerals {
     /// The text one cell paints: digits alone.
     pub fn cell_text(&self, v: f64) -> Result<String, String> {
         let wrong = |e: String| format!("support_table: format {:?}: {e}", self.digit_spec);
-        let text = if self.exact {
+        let text = if let Some(significant) = self.exact {
             // Rust's `Display` for `f64` is the shortest round-trip form, never exponent notation.
-            let decimals = v.abs().to_string().split_once('.').map_or(0, |(_, fraction)| fraction.len());
+            let shortest = v.abs().to_string().split_once('.').map_or(0, |(_, fraction)| fraction.len());
+            let decimals = shortest.min((significant - decimal_exponent(v)).max(0) as usize);
             let spec = self.digit_spec.replacen("~f", &format!(".{decimals}f"), 1);
             ::bind::formats::locale::d3_format(&spec, v).map_err(wrong)?
         } else if self.divisor != 1.0 {
@@ -1273,8 +1275,8 @@ fn narrowest_gap<'a>(rows: impl IntoIterator<Item = &'a ComposedRow>, kept: &[us
         .fold(f64::INFINITY, f64::min)
 }
 
-/// `WARN-SUPPORT-TABLE-CELL-OVERFLOW`: the cells a strip paints run together
-/// even after it skipped what it could.
+/// `WARN-SUPPORT-TABLE-CELL-OVERFLOW`: the cells a strip paints at the axis's
+/// label cadence run together.
 fn warn_cell_overflow(chart_id: &str, clearance: f64, gap: f64) {
     diagnostic::warn(Diagnostic::new(
         &codes::WARN_SUPPORT_TABLE_CELL_OVERFLOW,
@@ -1307,20 +1309,14 @@ pub fn label_period_keep(dates: &[Option<(i32, u8, u8)>], data_tu: TimeUnit, vis
     })
 }
 
-/// Reduces an ordered (date) strip to the columns the axis labels, skipping
-/// some of those until the cells it paints clear each other, the way axis
-/// labels skip on a date ramp.
-///
-/// The candidates are the first bucket and the buckets `labeled` marks (the ones
-/// the axis labels), or all of them when it is `None`. The stride is the
-/// smallest whole step through the candidates at which every row's kept
-/// neighbors clear each other ([`narrowest_gap`]), step 1 being all of them;
-/// every row keeps the same buckets, so a column stays a column. A stride never
-/// keeps fewer than the first and last candidate, and `WARN-SUPPORT-TABLE-CELL-OVERFLOW` fires
-/// only if those still collide. Each row's first carrying kept cell declares
-/// the unit ([`thinned`]), and its wider text is part of the clearance.
+/// Reduces an ordered (date) strip to the columns the axis labels: the first
+/// bucket and the buckets `labeled` marks, or all of them when it is `None`.
+/// Every row keeps the same buckets, so a column stays a column. A strip never
+/// thins past the axis labels: when its kept cells crowd each other
+/// ([`narrowest_gap`]), every one still paints and `WARN-SUPPORT-TABLE-CELL-OVERFLOW`
+/// fires. Each row's first carrying kept cell declares the unit ([`thinned`]).
 pub fn skip_strip(chart_id: &str, rows: &mut Vec<ComposedRow>, labeled: Option<&[bool]>, row_padding_horizontal: f64) {
-    let (kept, gap) = thinned_strip(rows, labeled, row_padding_horizontal);
+    let (kept, gap) = thinned_strip(rows, labeled);
     if gap < row_padding_horizontal {
         warn_cell_overflow(chart_id, row_padding_horizontal, gap);
     }
@@ -1330,21 +1326,15 @@ pub fn skip_strip(chart_id: &str, rows: &mut Vec<ComposedRow>, labeled: Option<&
 /// [`skip_strip`]'s verdict without its side effects: the rows it keeps and the
 /// narrowest gap between their kept cells. A fit that reads the strip's ink
 /// calls this before it measures, so it sizes what the strip will paint.
-pub fn thinned_strip(rows: &[ComposedRow], labeled: Option<&[bool]>, row_padding_horizontal: f64) -> (Vec<ComposedRow>, f64) {
-    let clearance = row_padding_horizontal;
-    let candidates = columns_kept(rows.first().map_or(0, |row| row.cells.len()), labeled);
-    let widest_step = candidates.len().saturating_sub(1).max(1);
-    let thinned_at = |step: usize| thinned(rows, &candidates.iter().copied().step_by(step).collect::<Vec<_>>());
-    let gap_of = |kept: &[ComposedRow]| narrowest_gap(kept.iter(), &(0..kept.first().map_or(0, |r| r.cells.len())).collect::<Vec<_>>());
-    let step = (1..widest_step).find(|&step| gap_of(&thinned_at(step)) >= clearance).unwrap_or(widest_step);
-    let kept = thinned_at(step);
-    let gap = gap_of(&kept);
+pub fn thinned_strip(rows: &[ComposedRow], labeled: Option<&[bool]>) -> (Vec<ComposedRow>, f64) {
+    let kept = thinned(rows, &columns_kept(rows.first().map_or(0, |row| row.cells.len()), labeled));
+    let gap = narrowest_gap(kept.iter(), &(0..kept.first().map_or(0, |r| r.cells.len())).collect::<Vec<_>>());
     (kept, gap)
 }
 
 /// Whether `rows`, fitted at the pane the reserved gutter left, stay where the layout
 /// put them: within `reserved_left` px left of the plot, with no bucket past its right
-/// edge (a hung suffix is not a bucket). Skipping drops cells, but a bucket can still land outside the
+/// edge (a hung suffix is not a bucket). Thinning drops cells, but a bucket can still land outside the
 /// plot (a date past an authored x domain) and a first cell can sit nearer the plot's
 /// edge on a narrower pane: that strip hides with a warning. A lane's overhang past the
 /// edge is not a bucket past it.
@@ -1928,8 +1918,28 @@ mod numerals_tests {
         let sliver = StripNumerals::for_values(&[4e-7, 2e-7], ".3~s").unwrap();
         assert_eq!(sliver.cell_text(4e-7).unwrap(), "0.0000004");
         let fine = StripNumerals::for_values(&[1.23456789, 2_000_000.0], ".3~s").unwrap();
-        assert_eq!(fine.cell_text(1.23456789).unwrap(), "1.23456789");
+        assert_eq!(fine.cell_text(1.23456789).unwrap(), "1.23");
         assert_eq!(fine.cell_text(2_000_000.0).unwrap(), "2,000,000");
+    }
+
+    /// Full digits keep every integer digit but no more decimals than the spec's significant
+    /// digits: a float's representation noise is not data.
+    #[test]
+    fn full_digits_stop_at_the_specs_significant_digits() {
+        let tierless = StripNumerals::for_values(&[448.1915451070001, 463.92677327099994, 252.223], ".3~s").unwrap();
+        assert_eq!(tierless.cell_text(448.1915451070001).unwrap(), "448");
+        assert_eq!(tierless.cell_text(463.92677327099994).unwrap(), "464");
+        assert_eq!(tierless.cell_text(252.223).unwrap(), "252");
+        assert_eq!(tierless.labeled("Target"), "Target");
+        let small = StripNumerals::for_values(&[0.5, 1.5, 12.25], ".3~s").unwrap();
+        assert_eq!(small.cell_text(0.5).unwrap(), "0.5");
+        assert_eq!(small.cell_text(12.25).unwrap(), "12.3");
+        let mixed = StripNumerals::for_values(&[951_234.5678, 120.0], ".3~s").unwrap();
+        assert_eq!(mixed.cell_text(951_234.5678).unwrap(), "951,235");
+        let sliver = StripNumerals::for_values(&[4.123456e-7, 2e-7], ".3~s").unwrap();
+        assert_eq!(sliver.cell_text(4.123456e-7).unwrap(), "0.000000412");
+        let no_precision = StripNumerals::for_values(&[0.3, 0.25], ".0~s").unwrap();
+        assert_eq!(no_precision.cell_text(0.3).unwrap(), "0.3");
     }
 
     /// A signed row keeps one sign per cell, and a sliver is not rounded to a zero cell.
@@ -3142,8 +3152,9 @@ mod tests {
         let mut out = rows.expect("an ordered strip is never hidden");
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(out[0].cells.len(), 12);
-        skip_strip("c", &mut out, None, 4.0);
-        assert!(out[0].cells.len() < 12, "{:?}", out[0].cells.len());
+        let warnings = diagnostic::collect(|| skip_strip("c", &mut out, None, 4.0)).1;
+        assert_eq!(out[0].cells.len(), 12, "an axis labeling every bucket keeps every cell");
+        assert!(warnings.iter().any(|d| d.code == "WARN-SUPPORT-TABLE-CELL-OVERFLOW"), "{warnings:?}");
     }
 
     /// The gutter reserved from the authored strip holds a fitted strip that
@@ -3276,20 +3287,20 @@ mod tests {
     }
 
     #[test]
-    fn an_overflowing_strip_keeps_the_smallest_stride_whose_narrowest_gap_fits() {
+    fn an_overflowing_strip_keeps_every_labeled_cell_and_warns() {
         let mut rows = vec![strip_row(14.0, &[50.0; 26])];
         let warnings = skipped(&mut rows, None);
-        // 3 buckets leave 42 - 50 < 0, short of the 4px of padding; 4 leave 6px.
-        assert_eq!(kept_buckets(&rows[0], 14.0), vec![0, 4, 8, 12, 16, 20, 24]);
-        assert!(warnings.is_empty(), "skipping resolved the overflow: {warnings:?}");
+        assert_eq!(rows[0].cells.len(), 26, "a strip never thins past the axis labels");
+        assert!(warnings.iter().any(|d| d.code == "WARN-SUPPORT-TABLE-CELL-OVERFLOW"), "{warnings:?}");
     }
 
     #[test]
     fn every_row_keeps_the_same_buckets_whatever_its_own_width() {
+        let labeled: Vec<bool> = (0..26).map(|i| i % 4 == 2).collect();
         let mut rows = vec![strip_row(14.0, &[50.0; 26]), strip_row(14.0, &[6.0; 26])];
-        skipped(&mut rows, None);
+        skipped(&mut rows, Some(&labeled));
         assert_eq!(kept_buckets(&rows[1], 14.0), kept_buckets(&rows[0], 14.0));
-        assert_eq!(rows[1].cells.len(), 7, "the narrow row is thinned with the wide one");
+        assert_eq!(rows[1].cells.len(), 7, "the narrow row keeps the wide one's buckets");
     }
 
     #[test]
@@ -3313,12 +3324,12 @@ mod tests {
     }
 
     #[test]
-    fn labeled_buckets_are_skipped_in_their_own_order_when_they_crowd() {
+    fn crowded_labeled_buckets_all_keep_their_cells_and_warn() {
         let labeled: Vec<bool> = (0..26).map(|i| i % 2 == 0).collect();
         let mut rows = vec![strip_row(10.0, &[30.0; 26])];
-        skipped(&mut rows, Some(&labeled));
-        // Labeled buckets are 20px apart: 2 of them leave 40 - 30 = 10px.
-        assert_eq!(kept_buckets(&rows[0], 10.0), vec![0, 4, 8, 12, 16, 20, 24]);
+        let warnings = skipped(&mut rows, Some(&labeled));
+        assert_eq!(kept_buckets(&rows[0], 10.0), (0..26).step_by(2).collect::<Vec<_>>());
+        assert!(warnings.iter().any(|d| d.code == "WARN-SUPPORT-TABLE-CELL-OVERFLOW"), "{warnings:?}");
     }
 
     #[test]
@@ -3333,10 +3344,10 @@ mod tests {
     }
 
     #[test]
-    fn a_strip_that_still_overflows_after_skipping_warns() {
+    fn a_strip_that_overflows_warns() {
         let mut rows = vec![strip_row(10.0, &[200.0; 3])];
         let warnings = skipped(&mut rows, None);
-        assert_eq!(kept_buckets(&rows[0], 10.0), vec![0, 2], "the first and last are the least a strip can keep");
+        assert_eq!(kept_buckets(&rows[0], 10.0), vec![0, 1, 2]);
         assert!(warnings.iter().any(|d| d.code == "WARN-SUPPORT-TABLE-CELL-OVERFLOW"), "{warnings:?}");
     }
 
@@ -3345,8 +3356,8 @@ mod tests {
         let mut rows = vec![strip_row(30.0, &[10.0, 10.0, 50.0, 10.0])];
         let warnings = skipped(&mut rows, None);
         // Right-aligned at x: the wide third cell reaches back over the second.
-        assert_eq!(kept_buckets(&rows[0], 30.0), vec![0, 2]);
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(kept_buckets(&rows[0], 30.0), vec![0, 1, 2, 3]);
+        assert!(warnings.iter().any(|d| d.code == "WARN-SUPPORT-TABLE-CELL-OVERFLOW"), "{warnings:?}");
     }
 
     /// Rules between every adjacent visual row, `n_series - 1` inside the

@@ -122,24 +122,6 @@ pub fn bind(payload: &Payload, mode: Mode) -> Result<Bound<'_>, Diagnostic> {
     Ok(Bound { payload, r, thetas, total, wheel, attached, faded })
 }
 
-/// A pie over no rows: production compiles the arc and label layers over an empty
-/// dataset, so Vega draws the two empty mark groups inside the negotiated frame. Its
-/// zero total is the empty dataset's, not a chart of zero-valued slices (that stays
-/// refused in [`bind`]).
-pub fn bind_empty(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
-    let r = Resolved::of(payload)?;
-    if legend_is_drawn(&r) {
-        return Err("pie: a visible legend over an empty result set is not ported".into());
-    }
-    let wheel = bind_wheel(&r, &payload.rows, &payload.schema.rows, &[], 0.0, Mode::Direct.parts())?;
-    Ok(Bound { payload, r, thetas: Vec::new(), total: 0.0, wheel, attached: None, faded: false })
-}
-
-/// Whether a legend is drawn at all: visible and a color field to key it.
-pub(super) fn legend_is_drawn(r: &Resolved) -> bool {
-    r.legend.visible && color_field_of(r).is_some()
-}
-
 /// The color channel's data field, `None` when the chart authors no `color:`. Without
 /// it there is neither a color scale nor a legend.
 pub(super) fn color_field_of(r: &Resolved) -> Option<&str> {
@@ -261,7 +243,7 @@ pub(super) fn center_href(r: &Resolved, rows: &[serde_json::Map<String, Value>])
                     })
                 })
                 .transpose()?;
-            Ok(href.filter(|_| !names_channel))
+            href.filter(|_| !names_channel).map(|href| crate::href::hosted(href, r.link_context.as_ref())).transpose()
         }
         _ => Ok(None),
     }
@@ -374,10 +356,11 @@ fn row_href(
     r.link
         .as_deref()
         .map(|template| {
-            crate::href::resolve_channel_href(template, |channel| pie_link_value(r, &rows[idx], channel))
+            crate::href::hosted(crate::href::resolve_channel_href(template, |channel| pie_link_value(r, &rows[idx], channel))?, r.link_context.as_ref())
         })
         .transpose()
 }
+
 
 /// `_channel_field` for a pie (`click_interactivity.py:20-58`): `color` is the color
 /// channel's `data_field`, `theta` the measure. A pie has no `x`/`y` encoding, where
@@ -696,6 +679,7 @@ fn bind_table(
         variables: payload.variables.clone(),
         variable_options: Default::default(),
         filter_variables: payload.filter_variables.clone(),
+        empty_filters: Vec::new(),
         // A legend with a hidden header and no paging: nothing to sort or filter.
         interactive_controls: false,
         link_context: payload.link_context.clone(),

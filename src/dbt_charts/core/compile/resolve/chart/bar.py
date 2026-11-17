@@ -23,6 +23,7 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedBarLabels,
     ResolvedBarMarkStyle,
     ResolvedBarStyle,
+    ResolvedBarTornOutlierStyle,
     ResolvedBarTotalLabel,
 )
 from dbt_charts.core.compile.models.style.resolved._cartesian import (
@@ -127,6 +128,11 @@ from dbt_charts.core.compile.resolve.chart._plan import (
     quantitative_channel_values,
 )
 from dbt_charts.core.compile.resolve.chart._tooltip import resolve_tooltip
+from dbt_charts.core.compile.resolve.chart._torn_outlier import (
+    refuse_annotations_past,
+    resolve_torn_break,
+    torn_ticks,
+)
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_VALUE_FIELD,
@@ -151,6 +157,7 @@ from dbt_charts.core.compile.resolve.chart.tick_values import (
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
+from dbt_charts.core.compile.resolve.style.chart_style import funnel_context
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset, settled
 from dbt_charts.core.compile.resolve.style.legend_position import (
     merge_legend,
@@ -684,6 +691,8 @@ def _resolve_bar(
     rendered_at: datetime | None,
     display_text: ChartDisplayText = None,
 ) -> ResolvedBarChart:
+    if normalized.type == "funnel":
+        chart_style_context = funnel_context(chart_style_context)
     authored_color = normalized.color
     normalized = pattern_series(normalized, normalized.x, normalized.y)
     data = dataset.all_rows()
@@ -1191,9 +1200,27 @@ def _resolve_bar(
     bar_domain_max: float | None = None
     bar_domain_min: float | None = None
     authored_y_domain = _ay_cont_zero.domain if _ay_cont_zero is not None else None
-    if resolved_stack == "normalize" or not y_fields:
+    torn_break = (
+        resolve_torn_break(
+            normalized,
+            dataset,
+            ay_merged,
+            bar.torn_outlier,
+            stack=resolved_stack,
+            y_fields=y_fields,
+        )
+        if bar.torn_outlier.enabled
+        else None
+    )
+    tick_values: tuple[float, ...]
+    if torn_break is not None:
+        refuse_annotations_past(normalized.id, torn_break, annotations.y_values)
+        tick_values = torn_ticks(ay_merged, torn_break)
+        if not is_stacked:
+            bar_domain_max = torn_break
+    elif resolved_stack == "normalize" or not y_fields:
         # normalize-stack domain is always [0,1]; no y_field means no ticks.
-        tick_values: tuple[float, ...] = ()
+        tick_values = ()
         if resolved_stack == "normalize":
             ay_merged = _bake_normalize_domain(ay_merged)
     elif is_stacked and x_field:
@@ -1244,8 +1271,14 @@ def _resolve_bar(
     # directly; widening this bake too would change hover-band rendering
     # (render/chart/features/bar_hover_band.py) on every stacked bar,
     # vertical included, well outside anything this task touches.
-    stacked_domain_max: float | None = None
-    if is_stacked and resolved_stack != "normalize" and y_fields and x_field:
+    stacked_domain_max: float | None = torn_break if is_stacked else None
+    if (
+        torn_break is None
+        and is_stacked
+        and resolved_stack != "normalize"
+        and y_fields
+        and x_field
+    ):
         # x_field can itself be the multiples field — partition() strips a
         # panel's own partition column from its rows, so restamp it back
         # before grouping, or every row's x_field reads as absent and the
@@ -1450,6 +1483,7 @@ def _resolve_bar(
         ),
         stack=resolved_stack,
         stacked_domain_max=stacked_domain_max,
+        torn_break=torn_break,
         orientation=orientation,
         annotations=annotations.render(ay, style_tail["axis_x"], resolved_layers, None),
         annotation_gaps=annotations.gaps,
@@ -1472,6 +1506,9 @@ def _resolve_bar(
                 bar_mark.labels, chart_style_context
             ),
             grouped=bar.grouped,
+            torn_outlier=ResolvedBarTornOutlierStyle.model_validate(
+                bar.torn_outlier.model_dump(exclude={"at"})
+            ),
             total_label_is_house=total_label_is_house,
             **style_tail,
         ),
@@ -1647,6 +1684,12 @@ def _resolve_histogram(
                 hist_mark.labels, chart_style_context
             ),
             grouped=chart_style_context.bar.grouped,
+            torn_outlier=ResolvedBarTornOutlierStyle.model_validate(
+                {
+                    **chart_style_context.bar.torn_outlier.model_dump(exclude={"at"}),
+                    "enabled": False,
+                }
+            ),
             total_label_is_house=False,
             label_usable_ratio=chart_style_context.label_usable_ratio,
             title_font=_tf,

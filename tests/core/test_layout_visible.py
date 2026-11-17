@@ -30,6 +30,8 @@ from dbt_charts.core.render.layouts import render_rows_layout
 from .._compile import remember
 from .._run import Run
 
+pytestmark = pytest.mark.usefixtures("placement_scope")
+
 
 def _rs():
     return resolve_style(get_theme_style())

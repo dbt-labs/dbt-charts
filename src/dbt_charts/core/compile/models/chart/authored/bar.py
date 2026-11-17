@@ -56,6 +56,12 @@ class BarChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
             when=(ValueIn("type", ("histogram",)),),
         ),
         Forbids(
+            ("style.torn_outlier",),
+            "style.torn_outlier is not supported on type: histogram: its bars "
+            "are bins of rows, so there is no bar to tear.",
+            when=(ValueIn("type", ("histogram",)),),
+        ),
+        Forbids(
             ("style.legend.position.edge",),
             "legend position `endpoints` is not supported on type: histogram: "
             "it has one series, so there are no endpoint labels to print. Set "

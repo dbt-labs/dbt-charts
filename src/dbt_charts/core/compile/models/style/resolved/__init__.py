@@ -85,7 +85,10 @@ from dbt_charts.core.compile.models.style.resolved._marks import (
     ResolvedStrokeStyle,
 )
 from dbt_charts.core.compile.models.style.resolved.area import ResolvedAreaStyle
-from dbt_charts.core.compile.models.style.resolved.bar import ResolvedBarStyle
+from dbt_charts.core.compile.models.style.resolved.bar import (
+    ResolvedBarStyle,
+    ResolvedBarTornOutlierStyle,
+)
 from dbt_charts.core.compile.models.style.resolved.callout import (
     ResolvedCalloutElementStyle,
     ResolvedCalloutStyle,
@@ -162,6 +165,7 @@ __all__ = [
     # per-family slices
     "ResolvedAreaStyle",
     "ResolvedBarStyle",
+    "ResolvedBarTornOutlierStyle",
     "ResolvedColumnScaleConfig",
     "ResolvedColumnSharedScale",
     "ResolvedGeoshapeChartStyle",

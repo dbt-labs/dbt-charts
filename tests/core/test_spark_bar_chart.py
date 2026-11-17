@@ -25,6 +25,7 @@ from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.placeholder import generate_placeholder_data
 
 from ._engine_render import render_spark_bar_svg
+from ._one_chart_board import chart_svg
 
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
@@ -295,19 +296,21 @@ class TestSparkBarMaxBars:
 class TestSparkBarRenderChart:
     """Tests for render_chart with spark_bar type."""
 
-    def test_render_chart_spark_bar_svg(self, make_chart) -> None:
-        """render_chart routes spark_bar to correct renderer."""
-        chart = make_chart("spark_bar", x="frequency", y="value")
-        data = [
-            {"value": "A", "frequency": 100},
-            {"value": "B", "frequency": 50},
-        ]
-
-        svg = render_chart(
-            chart, _BOARD_STYLE, _BOARD_CTX, rows_result(data), format="svg"
+    def test_a_spark_bar_board_draws_its_bars(self) -> None:
+        """A spark_bar draws in the engine's cell, only inside a board render."""
+        svg = chart_svg(
+            {"type": "spark_bar", "query": "q", "x": "frequency", "y": "value"},
+            {
+                "q": {
+                    "type": "values",
+                    "columns": ["value", "frequency"],
+                    "values": [["A", 100], ["B", 50]],
+                }
+            },
         )
 
         assert svg.startswith("<svg")
+        assert 'data-chart-type="spark_bar"' in svg
         assert "<rect" in svg
 
     def test_render_chart_spark_bar_json(self, make_chart) -> None:

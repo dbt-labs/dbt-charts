@@ -77,7 +77,7 @@ ALLOWED: dict[tuple[str, int], str] = {
         "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_project.exists, same narrow as the line above)"
     ),
-    ("core/execute/plan.py", 443): (
+    ("core/execute/plan.py", 449): (
         "isinstance(project, FilesystemProject)-guarded database_file_stat_version: "
         "roots a relative DuckDB/SQLite path where the adapters root it"
     ),
@@ -85,20 +85,20 @@ ALLOWED: dict[tuple[str, int], str] = {
     # and app.state.project are FilesystemProject throughout server.py — no
     # runtime isinstance narrow needed, only the FilesystemProject import
     # (under TYPE_CHECKING) and explicit local annotations below.
-    ("core/serve/server.py", 234): (
+    ("core/serve/server.py", 239): (
         "_all_board_roots_mtime(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1062): (
+    ("core/serve/server.py", 1210): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1103): (
+    ("core/serve/server.py", 1252): (
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1137): (
+    ("core/serve/server.py", 1286): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1251): (
+    ("core/serve/server.py", 1414): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
     (
@@ -130,16 +130,16 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/project_session.py", 317): (
         'ProjectSession.charts_dir: cast("FilesystemProject", self.project)-narrowed'
     ),
-    ("agent_api/serve.py", 78): (
+    ("agent_api/serve.py", 83): (
         "prepare_serve(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1185): (
+    ("core/serve/server.py", 1348): (
         "health: create_server's FilesystemProject parameter, closed over"
     ),
-    ("agent_api/serve.py", 469): (
+    ("agent_api/serve.py", 478): (
         "start_detached(project: FilesystemProject) — already FS-typed"
     ),
-    ("agent_api/serve.py", 159): (
+    ("agent_api/serve.py", 166): (
         "prepare_serve(project: FilesystemProject), already FS-typed "
         "(dbt_root, dialect inference reads the linked dbt project directory)"
     ),

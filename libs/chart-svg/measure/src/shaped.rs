@@ -150,12 +150,22 @@ impl FontBook {
     /// with "regular" or "variable" after it, then any prefix, then containment, the first of
     /// the sorted stems winning a tie), else the body face. Only [`Self::raw_advance`] and [`Self::weighted_advance`] read it.
     fn production_face(&self, family_list: &str) -> &[u8] {
+        self.production_file(family_list).bytes()
+    }
+
+    fn production_file(&self, family_list: &str) -> &Arc<FontFile> {
         let primary = family_list.split(',').next().unwrap_or_default();
         let found = self
             .match_shipped(primary)
             .or_else(|| self.match_shipped(DEFAULT_SANS))
             .expect("the body face is a shipped file");
-        self.files[found].file.bytes()
+        &self.files[found].file
+    }
+
+    /// The mdsvg measurer of the face [`Self::production_face`] picks for `family_list`: the one
+    /// `font_measure.py`'s reservation composition measures a glyph's advance through.
+    pub fn production_measurer(&self, family_list: &str) -> Arc<crate::fonts::FontMeasurer> {
+        self.production_file(family_list).measurer(0, None)
     }
 
     fn match_shipped(&self, family: &str) -> Option<usize> {

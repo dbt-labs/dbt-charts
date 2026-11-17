@@ -188,3 +188,74 @@ def test_splice_keeps_the_fence_indent() -> None:
     assert splice_lines(text, [(2, 4, "![x](p-1.svg)\n\nmore")]) == (
         "- item\n\n   ![x](p-1.svg)\n\n   more\nafter"
     )
+
+
+SHARED_VARIABLE_PAGE = """\
+```charts
+source: ./data/orders.csv
+variables:
+  region:
+    column: orders.region
+queries:
+  totals:
+    columns: [revenue]
+    values:
+      - [250]
+charts:
+  total:
+    type: kpi
+    query: totals
+    value: revenue
+rows:
+  - total
+```
+
+```charts
+queries:
+  picked:
+    source: ./data/orders.csv
+    sql: "SELECT COUNT(*) AS n FROM orders WHERE region = '{{ region }}'"
+charts:
+  picked_n:
+    type: kpi
+    query: picked
+    value: n
+rows:
+  - picked_n
+```
+"""
+
+
+def test_a_fence_reads_a_variable_another_fence_declares(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    _page(tmp_path, SHARED_VARIABLE_PAGE)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "orders.csv").write_text("region\neast\nwest\n")
+    project = local_project(tmp_path)
+
+    with ProjectSession.from_project(project) as session:
+        result = render_chart_fences(
+            session, project.path("docs/post.md").read_board(named=True), False
+        )
+
+    assert result.errors == []
+    assert len(result.fences) == 2
+
+
+def test_a_page_variable_reaches_only_the_fences_that_read_it(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    _page(tmp_path, SHARED_VARIABLE_PAGE)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "orders.csv").write_text("region\neast\nwest\n")
+    project = local_project(tmp_path)
+
+    with ProjectSession.from_project(project) as session:
+        page = project.path("docs/post.md").read_board(named=True)
+        result = render_chart_fences(session, page, False, {"region": "west"})
+        unknown = render_chart_fences(session, page, False, {"nope": "west"})
+
+    assert result.errors == []
+    assert len(result.fences) == 2
+    assert {e.code for e in unknown.errors} == {"ERR-UNKNOWN-VARIABLE-OVERRIDE"}

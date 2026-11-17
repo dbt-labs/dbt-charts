@@ -249,11 +249,13 @@ def _apply_duckdb_extensions(
     """
 
     def install_and_load(name: str) -> None:
-        row = conn.execute(
+        # fetchall drains the result; DuckDB 2 refuses further work on the
+        # connection while a fetchone result is still open.
+        rows = conn.execute(
             "SELECT installed FROM duckdb_extensions() WHERE extension_name = ?",
             [name],
-        ).fetchone()
-        if row is None or not row[0]:
+        ).fetchall()
+        if not rows or not rows[0][0]:
             conn.install_extension(name)
         conn.load_extension(name)
 

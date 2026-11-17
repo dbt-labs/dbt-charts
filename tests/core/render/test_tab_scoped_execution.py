@@ -126,16 +126,14 @@ def _spied_render(
     env = build_exec_env(local_project(Path.cwd()))
     executor = Run(result.board, env=env)
     # A render plans the tab it draws only (every tab for a walking format).
-    executor.ctx = replace(
-        executor.ctx,
-        plan=plan_of(
-            result.board,
-            env,
-            executor.ctx.rendered_at,
-            planned_variables,
-            active_tab_only=render_kwargs["format"] not in EVERY_TAB_FORMATS,
-        ),
+    planned = plan_of(
+        result.board,
+        env,
+        executor.ctx.rendered_at,
+        planned_variables,
+        active_tab_only=render_kwargs["format"] not in EVERY_TAB_FORMATS,
     )
+    executor.ctx = replace(executor.ctx, plan=planned.plan, compiled=planned.compiled)
     seen: list[str] = []
     original = run_stage.execute_miss
 
@@ -152,9 +150,8 @@ def _prefetch(board: Board, executor: Run) -> dict[str, Exception | None]:
     """Prefetch what the drawn render's plan listed, over a plan of every tab: the
     active-tab plan omits the hidden tabs' queries."""
     ctx = executor.ctx
-    every_tab = replace(
-        ctx, plan=plan_of(board, ctx.env, ctx.rendered_at, active_tab_only=False)
-    )
+    planned = plan_of(board, ctx.env, ctx.rendered_at, active_tab_only=False)
+    every_tab = replace(ctx, plan=planned.plan, compiled=planned.compiled)
     return prefetch_tab_queries(
         every_tab, executor.ledger, ctx.plan["prefetch"], max_workers=2
     )

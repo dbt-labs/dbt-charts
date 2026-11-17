@@ -219,6 +219,100 @@ def test_failed_replacement_keeps_new_version_retryable(
     )[0] == [{"value": 2}]
 
 
+@pytest.mark.parametrize("fmt", ["csv", "parquet"])
+def test_small_local_file_loads_and_counts(
+    fmt: str, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """A three-row file loads whatever DuckDB release is installed."""
+    import pyarrow as pa
+    import pyarrow.csv as pacsv
+    import pyarrow.parquet as pq
+
+    table = pa.table({"platform": ["a", "b", "c"], "n": [1, 2, 3]})
+    path = tmp_path / f"data/platforms.{fmt}"
+    path.parent.mkdir(parents=True)
+    if fmt == "csv":
+        pacsv.write_csv(table, path)
+        source: CsvSourceConfig | ParquetSourceConfig = _csv_source(
+            {"platforms": f"data/platforms.{fmt}"}
+        )
+    else:
+        pq.write_table(table, path)  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
+        source = ParquetSourceConfig(
+            type="parquet", files={"platforms": f"data/platforms.{fmt}"}
+        )
+
+    rows = FileSourceMaterializer(local_project(tmp_path)).materialize_and_run(
+        source, "SELECT count(*) AS n FROM platforms", {}, "platforms", time_zone="UTC"
+    )[0]
+
+    assert rows == [{"n": 3}]
+
+
+@pytest.mark.parametrize(
+    ("fmt", "patched"), [("csv", "ingest"), ("json", "insert_rows")], ids=str
+)
+def test_only_type_failures_map_to_unsupported_type(
+    fmt: str,
+    patched: str,
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import duckdb
+
+    from dbt_charts.core.execute import file_source_materializer
+
+    path = tmp_path / f"data/t.{fmt}"
+    path.parent.mkdir(parents=True)
+    path.write_text("a\n1\n" if fmt == "csv" else '[{"a": 1}]')
+    source: CsvSourceConfig | JsonSourceConfig = (
+        _csv_source({"t": f"data/t.{fmt}"})
+        if fmt == "csv"
+        else _json_source({"t": f"data/t.{fmt}"})
+    )
+    project = local_project(tmp_path)
+
+    def fail_with(error: duckdb.Error) -> None:
+        def raiser(*_: Any, **__: Any) -> None:
+            raise error
+
+        monkeypatch.setattr(file_source_materializer, patched, raiser)
+
+    type_failures: list[duckdb.Error] = [
+        duckdb.NotImplementedException("Unsupported Internal Arrow Type"),
+        duckdb.ConversionException("Could not convert string 'x' to INT64"),
+    ]
+    for error in type_failures:
+        fail_with(error)
+        with pytest.raises(DbtChartsError) as type_failure:
+            FileSourceMaterializer(project).materialize_and_run(
+                source, "SELECT * FROM t", {}, "t", time_zone="UTC"
+            )
+        assert type_failure.value.code.code == "ERR-FILE-SOURCE-UNSUPPORTED-TYPE"
+
+    fail_with(duckdb.InvalidInputException("engine said something else"))
+    with pytest.raises(duckdb.InvalidInputException, match="something else"):
+        FileSourceMaterializer(project).materialize_and_run(
+            source, "SELECT * FROM t", {}, "t", time_zone="UTC"
+        )
+
+
+def test_json_value_the_column_type_cannot_hold_is_an_unsupported_type(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    path = tmp_path / "data/t.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('[{"a": 1}, {"a": "x"}]')
+
+    with pytest.raises(DbtChartsError) as failure:
+        FileSourceMaterializer(local_project(tmp_path)).materialize_and_run(
+            _json_source({"t": "data/t.json"}), "SELECT * FROM t", {}, "t", "UTC"
+        )
+
+    assert failure.value.code.code == "ERR-FILE-SOURCE-UNSUPPORTED-TYPE"
+
+
 # ---------------------------------------------------------------------------
 # 1. CSV: materialize and SQL-query
 # ---------------------------------------------------------------------------

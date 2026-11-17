@@ -57,7 +57,7 @@ mod tri;
 pub use build::{
     build_defaulted, build_defaulted_authored, build_field, build_field_authored, build_nullable,
     build_nullable_authored, build_omitted, build_omitted_authored, build_payload, build_whole,
-    join, or_fill, Build, Unset,
+    join, or_fill, At, Build, Unset,
 };
 pub use cascade::{CascadeError, Csr, Resolved, Tables};
 pub use from_node::{
@@ -73,9 +73,9 @@ pub use law::{
     bad_item, clash, first_violation, satisfied, set_keys, Clash, Doc, Keyed, State, Unanswerable,
 };
 pub use leaf::{
-    merge_map_deep, merge_nullable, merge_patch_slot, spell_leaves, tri_drop_nulls, tri_to_authored,
-    tri_to_patch, DropNulls, Empty, Fold, Leaf, LeafValues, Lift, SetLeaves, Slot, Spell,
-    ToAuthored, ToPatch,
+    merge_map_deep, merge_nullable, merge_patch_slot, spell_leaves, spell_leaves_where,
+    tri_drop_nulls, tri_to_authored, tri_to_patch, DropNulls, Empty, Fold, Leaf, LeafValues, Lift,
+    SetLeaves, Slot, Spell, ToAuthored, ToPatch,
 };
 pub use parse::{
     nearest, render_path, variant_keys, Cx, Hint, MapRead, Parse, ParseError, Retired, Retirement,

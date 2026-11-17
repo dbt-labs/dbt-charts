@@ -55,7 +55,7 @@ pub struct BoardPayload {
     /// Every geo document the board's geo charts draw from, as JSON text keyed by
     /// source URL; the engine reads no files.
     #[serde(default)]
-    pub geometries: crate::families::geo::source::Geometries,
+    pub geometries: ::bind::geo_source::Geometries,
     pub background: Option<String>,
     pub fonts_dir: Option<String>,
     /// Production's own `portable_strftime` output for the data-freshness
@@ -2244,6 +2244,7 @@ fn render_error_card_svg(
         variables: Default::default(),
         variable_options: Default::default(),
         filter_variables: Default::default(),
+        empty_filters: Default::default(),
         interactive_controls: Default::default(),
         link_context: None,
         measuring: false,
@@ -2567,6 +2568,7 @@ fn render_chart_item(
         variables: payload.variable_values.clone(),
         variable_options: Default::default(),
         filter_variables: Default::default(),
+        empty_filters: Default::default(),
         title_shift: item.title_shift,
         interactive_controls: Default::default(),
         link_context: None,

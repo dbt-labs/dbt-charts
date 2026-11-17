@@ -128,8 +128,8 @@ class _Files:
 
 
 def _kept_variables(board: Board) -> set[str]:
-    """What ``focus_on_item`` keeps: the root's variables a chart reads, and every variable of
-    every nested board in the item, read or not."""
+    """The variables ``focus_on_item`` keeps, on the root and on every board nested in
+    the item: those the item's charts read."""
     kept = set(board.variables)
     for item in board.layout.items:
         if item.board is not None:
@@ -138,20 +138,11 @@ def _kept_variables(board: Board) -> set[str]:
 
 
 @pytest.mark.parametrize(
-    ("page", "left_out"),
-    [
-        (_SHARED_QUERY, set()),
-        (_NESTED_TABLE, set()),
-        (_NESTED_VARIABLE, set()),
-        # `focus_on_item` keeps a nested board's variables wholesale; the plan holds only the ones
-        # a named chart depends on.
-        (_NESTED_UNREAD_VARIABLE, {"unused"}),
-    ],
+    "page",
+    [_SHARED_QUERY, _NESTED_TABLE, _NESTED_VARIABLE, _NESTED_UNREAD_VARIABLE],
     ids=["shared-query", "nested-table", "nested-variable", "nested-unread-variable"],
 )
-def test_a_fence_plans_what_focus_on_item_keeps(
-    page: str, left_out: set[str], tmp_path: Path
-) -> None:
+def test_a_fence_plans_what_focus_on_item_keeps(page: str, tmp_path: Path) -> None:
     project = FilesystemProject(tmp_path)
     compiled = compile_file(InMemoryBoard(page, path=project.path("charts/page.md")))
     assert compiled.board is not None, compiled.errors
@@ -175,9 +166,7 @@ def test_a_fence_plans_what_focus_on_item_keeps(
         plan = parse_query_plan(
             _engine.plan(engine, "{}", "{}", _NOW, False, False, True, ids)
         )
-        kept = _kept_variables(focused)
-        assert left_out <= kept
-        assert set(plan["variables"]["query"]) == kept - left_out
+        assert set(plan["variables"]["query"]) == _kept_variables(focused)
         queries = {c.query.model_dump_json(): c.query for c in focused.placed_charts()}
         assert len(plan["queries"]) == len(queries)
         kept_sql = {q.sql for q in queries.values() if q.query_type == "sql"}

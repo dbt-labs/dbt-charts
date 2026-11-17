@@ -196,7 +196,11 @@ pub fn palette_checks(
         found.extend(styled.unwrap_or_default());
         if let ChartAuthored::Kpi(k) = chart {
             if let Tri::Value(KpiBackground::Gradient(gradient)) = &k.style.background {
-                found.extend(background_fault(&model_core::Spell::spell(gradient), false, &format!("charts.{id}.style.background")));
+                found.extend(background_fault(
+                    &model_core::Spell::spell(gradient),
+                    false,
+                    &format!("charts.{id}.style.background"),
+                ));
             }
         }
     }

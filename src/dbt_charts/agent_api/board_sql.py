@@ -32,6 +32,7 @@ from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.lookup import Ledger, data_age
 from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE, make_context, utc_now
 from dbt_charts.core.execute.plan_reader import embedded_queries, with_adhoc_query
+from dbt_charts.core.execute.planned import Planned
 from dbt_charts.core.execute.query_plan import PlannedQuery
 from dbt_charts.core.execute.query_result import resolve_effective_row_limit
 from dbt_charts.core.execute.query_results import execute
@@ -97,7 +98,7 @@ def execute_board_sql(
         return _failed(loaded.errors, loaded.error_code)
     overrides = variables or {}
     try:
-        plan = plan_for_board(
+        planned = plan_for_board(
             loaded.board_file,
             project,
             overrides,
@@ -107,6 +108,7 @@ def execute_board_sql(
             active_tab_only=False,
             all_queries=True,
         )
+        plan = planned.plan
         unknown = [n for n in embedded_queries(sql) if n not in plan["queries"]]
         if unknown:
             raise DbtChartsError.from_code(
@@ -134,7 +136,7 @@ def execute_board_sql(
     # One more row than the caller's limit: enough to tell a truncated result.
     ctx = make_context(
         loaded.board,
-        plan,
+        Planned(planned.compiled, planned.record, plan),
         env,
         result_cache=result_cache,
         board_slug=board_identity(str(loaded.path)),

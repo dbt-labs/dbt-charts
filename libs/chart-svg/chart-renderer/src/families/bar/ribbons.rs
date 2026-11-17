@@ -78,14 +78,18 @@ struct RibbonBar {
 /// The bars a panel draws, kept while it draws them so the ribbons between them can be painted under.
 pub(super) struct RibbonDraft<'a> {
     visible: bool,
+    /// The color is 1:1 with the category: each category is its own series, so a ribbon joins a
+    /// category's bar to the next category's, whatever its series.
+    by_category: bool,
     bars: Vec<RibbonBar>,
     labels: Option<LabelPlan<'a>>,
 }
 
 impl<'a> RibbonDraft<'a> {
-    /// `grouped` is an unstacked multi-series bar, which has no one bar to join a ribbon to. Labels are
-    /// drawn between horizontal bars: `labels` is that bar's context, `None` elsewhere.
-    pub(super) fn new(ribbons: &Ribbons, grouped: bool, labels: Option<RibbonLabelCtx<'a>>) -> Result<Self, String> {
+    /// `grouped` is an unstacked multi-series bar, which has no one bar to join a ribbon to;
+    /// `by_category` a bar whose color is 1:1 with its category. Labels are drawn between horizontal
+    /// bars: `labels` is that bar's context, `None` elsewhere.
+    pub(super) fn new(ribbons: &Ribbons, grouped: bool, by_category: bool, labels: Option<RibbonLabelCtx<'a>>) -> Result<Self, String> {
         if ribbons.visible && grouped {
             return Err(diagnostic::refuse!("bar: ribbons on grouped bars are not supported; stack the series or draw one"));
         }
@@ -97,7 +101,7 @@ impl<'a> RibbonDraft<'a> {
                 Some(LabelPlan { template: Template::parse(source).map_err(|e| owned_by("bar", e))?, ctx })
             }
         };
-        Ok(Self { visible: ribbons.visible, bars: Vec::new(), labels })
+        Ok(Self { visible: ribbons.visible, by_category, bars: Vec::new(), labels })
     }
 
     /// Notes the bar at `key`, `(category, series)`, in `color` (the series' base color, never a pattern).
@@ -129,7 +133,8 @@ impl<'a> RibbonDraft<'a> {
         let mut labels = Vec::new();
         for pair in cats.windows(2) {
             for from in by_cat.get(pair[0].as_str()).into_iter().flatten() {
-                let Some(to) = by_key.get(&(pair[1].as_str(), from.series.as_str())) else { continue };
+                let to = if self.by_category { by_cat.get(pair[1].as_str()).and_then(|bars| bars.first()) } else { by_key.get(&(pair[1].as_str(), from.series.as_str())) };
+                let Some(to) = to else { continue };
                 // The edge that faces the other bar is the one nearer it along the category axis.
                 let ((x, y, w, h), (x2, y2, w2, h2)) = match (horizontal, from.rect, to.rect) {
                     (true, a, b) if a.1 > b.1 => (b, a),
@@ -146,7 +151,8 @@ impl<'a> RibbonDraft<'a> {
                 };
                 let fill = dbt_charts_color::recede(&from.color, canvas, RIBBON_CONTRAST)?;
                 if let Some(plan) = &self.labels {
-                    labels.push(plan.node(from, to, ((x, y, w, h), (x2, y2, w2, h2)), &fill, canvas)?);
+                    let first = cats.first().and_then(|cat| by_key.get(&(cat.as_str(), from.series.as_str()))).copied();
+                    labels.push(plan.node((first, from, to), ((x, y, w, h), (x2, y2, w2, h2)), &fill, canvas)?);
                 }
                 // Hover keeps a ribbon lit while either bar it joins is, and a legend preview recedes it with its series.
                 let mut attrs = Attrs::new().set("fill", fill);
@@ -174,8 +180,9 @@ const RIBBON_INK_CONTRAST: f64 = 4.5;
 
 impl LabelPlan<'_> {
     /// The label of the ribbon from `from`'s bar to `to`'s: what the stage lost, in the template's
-    /// terms. `flow` is the two bars' boxes, the nearer one first.
-    fn node(&self, from: &RibbonBar, to: &RibbonBar, flow: (Rect, Rect), fill: &str, canvas: &str) -> Result<Node, String> {
+    /// terms. `first` is the series' bar at the first stage, if it has one; `flow` is the two bars' boxes, the
+    /// nearer one first.
+    fn node(&self, (first, from, to): (Option<&RibbonBar>, &RibbonBar, &RibbonBar), flow: (Rect, Rect), fill: &str, canvas: &str) -> Result<Node, String> {
         let ctx = &self.ctx;
         let stage = |bar: &RibbonBar| -> Result<(&Map<String, Value>, f64), String> {
             let row = ctx
@@ -187,13 +194,18 @@ impl LabelPlan<'_> {
             Ok((row, value))
         };
         let ((_, before), (row, after)) = (stage(from)?, stage(to)?);
-        if before == 0.0 {
-            return Err(format!("bar: a ribbon label's percent divides by the stage before, {:?}, whose value is 0", from.cat));
-        }
         let lost = after - before;
+        let mut names = vec![("value", lost)];
+        // A percent whose divisor is 0 or absent (a series with no first stage) is undefined.
+        if before != 0.0 {
+            names.push(("percent_of_previous", lost / before));
+        }
+        if let Some(start) = first.and_then(|bar| stage(bar).ok()).map(|(_, start)| start).filter(|start| *start != 0.0) {
+            names.push(("percent_of_first", lost / start));
+        }
         let lines = self
             .template
-            .render(&RowScope { row, names: &[("value", lost), ("percent", lost / before)] })
+            .render(&RowScope { row, names: &names })
             .map_err(|e| owned_by("bar", e))?;
         let [text] = lines.as_slice() else {
             return Err(format!("bar: a ribbon label is one line; its template printed {}", lines.len()));

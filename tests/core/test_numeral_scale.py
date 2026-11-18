@@ -78,17 +78,36 @@ def test_450k_ladder_compacts_anchor_thousands():
     assert scale.mode is SuffixMode.ANCHOR
 
 
-def test_900k_ladder_compacts_repeat():
-    """0-900k: the data never leaves thousands, but the ladder overshoots to
-    1,000,000 — 4 integer digits at the thousands scale — so the suffix
-    repeats on every tick instead of anchoring once.
+def test_900k_ladder_rolls_up_to_millions_anchor():
+    """0-900k: the ladder overshoots to 1,000,000 — 4 integer digits at the
+    thousands scale — and its 200k step is two tenths of a million, so it
+    reads ``0 0.2 ... 1.0M`` with the unit on the top tick only.
     """
     ticks = _ladder(0, 900_000)
     assert ticks == [0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0]
     scale = shared_scale_for_ladder(ticks)
-    assert scale is not None
-    assert scale.exponent == 3
-    assert scale.mode is SuffixMode.REPEAT
+    assert scale == SharedScale(exponent=6, mode=SuffixMode.ANCHOR)
+
+
+def test_1_75m_ladder_anchors_in_millions():
+    """0-1.75M steps 500k: ``1,500k`` would flip the axis to repeat, so the
+    ladder rolls up to ``0 0.5 1.0 1.5M``.
+    """
+    ticks = _ladder(0, 1_750_000)
+    assert ticks[1] - ticks[0] == 500_000
+    assert shared_scale_for_ladder(ticks) == SharedScale(
+        exponent=6, mode=SuffixMode.ANCHOR
+    )
+
+
+def test_quarter_million_step_stays_in_thousands():
+    """A 250k step is 2.5 tenths of a million, not a whole number of them, so
+    the ladder keeps thousands and repeats the suffix.
+    """
+    ticks = [0.0, 250_000.0, 500_000.0, 750_000.0, 1_000_000.0, 1_250_000.0]
+    assert shared_scale_for_ladder(ticks) == SharedScale(
+        exponent=3, mode=SuffixMode.REPEAT
+    )
 
 
 def test_200trn_ladder_compacts_anchor():
@@ -102,50 +121,20 @@ def test_200trn_ladder_compacts_anchor():
     assert scale.mode is SuffixMode.ANCHOR
 
 
-def test_half_billion_step_resolves_to_millions_not_billions():
-    """0-2.5bn: step 5e8 is half a billion, but a whole multiple (500) of a
-    million. A fractional-ratio exception used to bump this to billions
-    (one significant figure: 2.5 / 2 / 1.5 / 1 / 0.5 / 0 B); that exception
-    was reverted (it fired on any tier, breaking a 500,000-step ladder the
-    same way) -- whole-multiple-only means this now lands one tier down, in
-    REPEAT mode: 2,500 / 2,000 / 1,500 / 1,000 / 500 / 0 M.
+def test_half_billion_step_rolls_up_to_billions():
+    """0-2.5bn steps half a billion: ``2,500M`` would repeat, so it rolls up
+    to ``0 0.5 1.0 1.5 2.0 2.5B``.
     """
     ticks = _ladder(0, 2.5e9)
     assert ticks == [0.0, 5e8, 1e9, 1.5e9, 2e9, 2.5e9]
-    scale = shared_scale_for_ladder(ticks)
-    assert scale is not None
-    assert scale.exponent == 6
-    assert scale.mode is SuffixMode.REPEAT
+    assert shared_scale_for_ladder(ticks) == SharedScale(
+        exponent=9, mode=SuffixMode.ANCHOR
+    )
 
 
-def test_half_billion_step_ladder_1_5bn_resolves_to_millions():
-    ticks = _ladder(0, 1.5e9)
-    scale = shared_scale_for_ladder(ticks)
-    assert scale is not None
-    assert scale.exponent == 6
-    assert scale.mode is SuffixMode.REPEAT
-
-
-def test_half_trillion_step_ladder_1_5trn_resolves_to_billions():
-    ticks = _ladder(0, 1.5e12)
-    scale = shared_scale_for_ladder(ticks)
-    assert scale is not None
-    assert scale.exponent == 9
-    assert scale.mode is SuffixMode.REPEAT
-
-
-def test_one_fifth_step_is_not_permitted_as_a_tier_divisor():
-    """0-900k's step (2e5) is 0.2 of a million as well as 200x a thousand.
-    Only a whole-multiple ratio is permitted, so this must still resolve to
-    thousands — the regression test_900k_ladder_compacts_repeat above pins
-    the resulting mode; this test pins the ratio boundary directly.
-    """
-    ticks = _ladder(0, 900_000)
-    step = ticks[1] - ticks[0]
-    assert step / 1e6 == 0.2
-    scale = shared_scale_for_ladder(ticks)
-    assert scale is not None
-    assert scale.exponent == 3
+def test_half_trillion_step_ladder_1_5trn_rolls_up_to_trillions():
+    scale = shared_scale_for_ladder(_ladder(0, 1.5e12))
+    assert scale == SharedScale(exponent=12, mode=SuffixMode.ANCHOR)
 
 
 def test_hundred_thousands_ladder_compacts_anchor():

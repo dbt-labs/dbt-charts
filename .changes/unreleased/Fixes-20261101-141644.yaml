@@ -1,0 +1,3 @@
+kind: Fixes
+body: A board that sets style.font.family now paints its digits in that family too.
+time: 2026-11-01T14:16:44.697652-08:00

@@ -271,18 +271,20 @@ def target_tick_count(count: int | Literal["auto"] | None) -> int | None:
 
 
 def ladderless_tick_label(
-    fmt: ResolvedFormat, measure_values: Sequence[float]
+    fmt: ResolvedFormat, measure_values: Sequence[float], column_forming: bool
 ) -> ResolvedTickLabel:
     """The tick label of an SI axis with no ladder: sub-1 values paint plain
-    digits, the rest keep the SI spec. An anchored affix sits on the last tick
-    when any value is positive, else the first (bottom), as
-    ``ladder_anchor_at_start``."""
+    digits, the rest keep the SI spec until render draws the ladder and labels
+    it at one shared tier (``column_forming`` says whether it anchors the unit
+    or repeats it). An anchored affix sits on the last tick when any value is
+    positive, else the first (bottom), as ``ladder_anchor_at_start``."""
     anchor_at_start = bool(measure_values) and max(measure_values) <= 0
     return ResolvedTickLabel(
         format=sub_unit_digit_format(fmt.spec),
         anchor_at_start=anchor_at_start if _anchors_affix(fmt) else None,
         si_format=fmt.spec,
         scientific_format=sub_unit_scientific_format(fmt.spec),
+        column_forming=column_forming,
     )
 
 
@@ -439,8 +441,6 @@ def build_resolved_axis(
     grid_torn_baseline = ResolvedAxisGridTornBaselineStyle(
         enabled=settled(_torn.enabled),
         amplitude=settled(_torn.amplitude),
-        wavelength=settled(_torn.wavelength),
-        sharpness=settled(_torn.sharpness),
     )
 
     # label passthrough: x-axis adds tilt_increments/values/time_unit/clock from DimensionLabelStyle.
@@ -662,7 +662,7 @@ def build_resolved_axis(
         # See the docstring above for the mechanism; `inject_axis_numeral_expr`
         # is the authoritative account of how the three specs below compose.
         assert format is not None  # _si_format implies a format
-        tick_label = ladderless_tick_label(format, measure_values)
+        tick_label = ladderless_tick_label(format, measure_values, column_forming)
     elif ruler is None and format is not None and axis.labels.expr is None:
         tick_label = affix_tick_label(format, drawn_ticks)
 
@@ -681,7 +681,9 @@ def build_resolved_axis(
             # One shared scale: the mirror paints the primary's digits.
             mirror_format = column_format("number", formats, authored_mirror.format)
             if not tick_values and mirror_format.raw in PREDEFINED_SUB_UNIT_FALLBACK:
-                mirror_tick_label = ladderless_tick_label(mirror_format, measure_values)
+                mirror_tick_label = ladderless_tick_label(
+                    mirror_format, measure_values, column_forming
+                )
             elif (
                 mirror_format.raw in PREDEFINED_SUB_UNIT_FALLBACK
                 and raw_scale is None

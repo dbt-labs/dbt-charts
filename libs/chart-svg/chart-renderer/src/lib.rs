@@ -3,6 +3,7 @@
 //! their payload structs and deserialize the raw `resolved` JSON themselves.
 
 pub mod annotation;
+mod axis_unit;
 pub mod board;
 pub mod common;
 pub mod conditional;
@@ -806,6 +807,9 @@ fn draw_family(
         "sankey" => families::sankey::render(payload, fonts).and_then(contract::stamp_view_root)?,
         other => return Err(format!("chart family not implemented: {other}").into()),
     };
+    if matches!(chart_type, "bar" | "line" | "area" | "scatter" | "histogram") {
+        axis_unit::check(&payload.resolved, &svg)?;
+    }
     Ok((svg, None))
 }
 

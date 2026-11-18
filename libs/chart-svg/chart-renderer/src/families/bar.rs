@@ -5898,6 +5898,34 @@ mod tests {
             assert_eq!(plot_origin(&with), plot_origin(&without));
         }
 
+        /// A genuine zero turns the auto zero-label layer on; the outlier's muted label must still
+        /// bound nothing, so the shared scale holds.
+        #[test]
+        fn an_outlier_beside_a_zero_bar_leaves_the_plot_the_size_it_would_have_without_it() {
+            let auto_labels = |payload_json: &mut serde_json::Value| {
+                payload_json["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
+                    "visible": "auto", "position": "top", "field": null, "format": ",.0f", "dx": null, "dy": null, "font": null
+                });
+            };
+            let (with, without) = (card_with(&[320.0, 5000.0, 0.0], "T", auto_labels), card_with(&[320.0, 540.0, 0.0], "T", auto_labels));
+            assert_eq!(gridline_positions(&with, "y1"), gridline_positions(&without, "y1"));
+            assert_eq!(plot_origin(&with), plot_origin(&without));
+        }
+
+        /// A bar clamped to exactly the authored max would add top ink to the fit; the outlier
+        /// is drawn off the plot, so it must leave the fit entirely.
+        #[test]
+        fn an_outlier_adds_no_top_ink_to_the_fit_at_the_axis_max() {
+            // The max sits above the top tick, so no gridline already covers the bar's top ink.
+            let no_top_tick = |payload_json: &mut serde_json::Value| {
+                payload_json["resolved"]["style"]["axis_y"]["tick_values"] = serde_json::json!([0.0, 1000.0, 2000.0, 3000.0]);
+                payload_json["resolved"]["style"]["mark"]["border"] = serde_json::json!({"width": 1.0, "color": "#FFFFFF", "radius": 2.0});
+            };
+            let (with, without) = (card_with(&[320.0, 5000.0, 100.0], "T", no_top_tick), card_with(&[320.0, 540.0, 100.0], "T", no_top_tick));
+            assert_eq!(gridline_positions(&with, "y1"), gridline_positions(&without, "y1"));
+            assert_eq!(plot_origin(&with), plot_origin(&without));
+        }
+
         #[test]
         fn an_outlier_runs_to_the_cards_top_edge_and_ends_torn() {
             let svg = card(&[320.0, 5000.0], "Test Vertical Bar");

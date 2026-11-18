@@ -40,7 +40,7 @@ use layout::family::{Env, Family as _};
 use layout::families::kpi::{KpiCard, KpiFaces};
 use layout::families::spark_bar::{self, SparkBarCard};
 use layout::families::pie;
-use layout::families::table::{self, TableCard, TableFaces};
+use layout::families::table::{self, Cell as TableCell, TableCard, TableFaces};
 use layout::geom::{Rect, Size};
 use layout::board::band::TitleShift;
 use layout::board::bands::{self, Page};
@@ -195,13 +195,16 @@ pub(crate) fn spark_bar_card(placed: &Style, body: &BoardBody, spark: &bind::bou
     Ok((extent, content, planned.diagnostics))
 }
 
+/// `sizing.rs`'s `RERENDER_MIN_DELTA_PX`: a chart this much shorter than its row is re-rendered at the row's height.
+const STRETCH_MIN_PX: f64 = 1.0;
+
 /// A pie's card in a box `width` wide and `height` tall, or at its natural height with no height: the
 /// height it draws to, its own `<svg>`, the inner selection box and the warnings its plan raised. The
 /// size stage decides the mode in the slot's own box, and a cols row aligns a pie no taller than it
 /// sizes (`_effective_alignment_target_for_chart`), which under an authored `height:` is the whole cell
 /// (`render_svg_family` draws at the slot). A table pie composes its own canvas, which the slot was
 /// sized to; its wheel and table sit in the chart's box with no card padding around them.
-pub(crate) fn pie_card(site: &crate::slot::PieSite, heights: &crate::slot::Heights, pie: &bind::bound::Pie, (width, height): (f64, Option<f64>), shift: TitleShift, book: &FontBook) -> Result<(f64, Node, (f64, f64, f64, f64), Vec<Diagnostic>), Diagnostic> {
+pub(crate) fn pie_card(site: &crate::slot::ChartSite, heights: &crate::slot::Heights, pie: &bind::bound::Pie, (width, height): (f64, Option<f64>), shift: TitleShift, book: &FontBook) -> Result<(f64, Node, (f64, f64, f64, f64), Vec<Diagnostic>), Diagnostic> {
     let card = crate::slot::pie_card(site, pie)?;
     let natural = crate::slot::pie_natural_height(site, heights, width)?;
     let authored = matches!(site.chart, ModelChart::Pie(c) | ModelChart::Donut(c) if c.radial.height.is_some());
@@ -219,6 +222,21 @@ pub(crate) fn pie_card(site: &crate::slot::PieSite, heights: &crate::slot::Heigh
     };
     let svg = pie::draw(&card, &planned, (width, drawn))?;
     Ok((drawn, svg, inner, planned.diagnostics().to_vec()))
+}
+
+/// A map's card in `(width, height)`: its height, its `<svg>`, the card's inner box and the title's warnings. The
+/// height is the slot's, or the aspect ratio's natural one when the host gives none.
+pub(crate) fn geoshape_card(site: &crate::slot::ChartSite, heights: &crate::slot::Heights, geo: &bind::bound::Geoshape, (width, height): (f64, Option<f64>), book: &FontBook) -> Result<(f64, Node, (f64, f64, f64, f64), Vec<Diagnostic>), Diagnostic> {
+    let height = match height {
+        Some(height) => height,
+        None => crate::slot::geoshape_natural_height(site, heights, width)?,
+    };
+    let card = layout::families::geo::geoshape::GeoshapeCard { geo, placed: site.placed, chart_id: site.id, emoji: &total_style(site.body)?.font.emoji };
+    let pad = crate::slot::additive_padding(heights.card_padding, &site.placed.charts.geoshape.geo.base.padding);
+    let planned = layout::families::geo::geoshape::plan(&card, book, (width, height), pad)?;
+    let svg = layout::families::geo::geoshape::draw(&card, &planned, (width, height))?;
+    let inner = (px(pad.0), px(pad.2), px(width - pad.0 - pad.1), px(height - pad.2 - pad.3));
+    Ok((height, svg, inner, planned.diagnostics().to_vec()))
 }
 
 /// A card or title drawn as one `<svg>`: its extent and its children, which the wrapper takes in its place.
@@ -442,7 +460,8 @@ pub(crate) fn board<F: EngineFacts>(
         layout.extend(translated([vec![layout_bg], items].concat(), px(page_padding), px(page_padding + header.non_layout_height + header.gap_before_layout)));
     }
     let total_width = laid.width.max(content_width + 2.0 * page_padding);
-    let total_height = laid.height.max(actual_height + 2.0 * page_padding) + bands::footer_height(total);
+    let stamp = bands::stamp_text(total, run.env.rendered_at)?;
+    let total_height = laid.height.max(actual_height + 2.0 * page_padding) + bands::footer_height(total, book, total_width, &stamp)?;
     let mut children = vec![frame::defs(facts.stylesheet())];
     if background != "transparent" {
         children.push(Node::new(
@@ -453,7 +472,6 @@ pub(crate) fn board<F: EngineFacts>(
     }
     children.extend(layout);
     // `{layout}\n\n{timestamp}\n{footer}\n`: the row closes the root.
-    let stamp = bands::stamp_text(total, run.env.rendered_at)?;
     let row = bands::draw(total, book, Page { width: total_width, height: total_height }, &stamp)?;
     let newline = || Node::chars(Chars::new("\n", Escape::Attr));
     children.push(Node::chars(Chars::new("\n\n", Escape::Attr)));
@@ -554,24 +572,47 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 if (faces.title.is_some() || faces.subtitle.is_some()) && placed.nested {
                     return Err(Diagnostic::refused(refuse!("a table title or subtitle inside a nested board is not supported")));
                 }
-                let card = TableCard { table: bound_table, style: chart_style, faces: &faces };
                 let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
                 let pad = crate::slot::additive_padding(card_padding, &chart_style.padding);
-                let planned = table::plan(&card, self.book, (placed.width - pad.0 - pad.1).max(0.0), placed.shift)?;
-                if !planned.fits(&card, placed.height - px(pad.2) - px(pad.3)) {
+                let card = TableCard { table: bound_table, style: chart_style, faces: &faces, cell: Some(TableCell { id, padding: pad }) };
+                let planned = table::plan(&card, self.book, (placed.width - pad.0 - pad.1).max(0.0), Some(placed.height - px(pad.2) - px(pad.3)), placed.shift)?;
+                // The clip a scrolling table defines carries its chart's scope, which a later placement of the chart suffixes.
+                if planned.scrolls() && self.slots.placements_of(id) > 1 {
+                    return Err(Diagnostic::refused(refuse!("a table placed more than once that scrolls is not supported")));
+                }
+                if planned.empty_overflows(placed.height - px(pad.2) - px(pad.3)) {
                     return Err(Diagnostic::refused(refuse!("a table in a slot shorter than its rows is not supported")));
                 }
+                self.warnings.borrow_mut().extend(planned.warnings(&card));
                 let (extent, content) = card_svg(table::draw(&card, &planned)?)?;
                 let children = padded(extent, content, pad);
                 ("dbt-chart", crate::slot::table_title(slot.chart).filter(|title| !title.is_empty()).map_or_else(|| id.to_string(), str::to_string), extent.height + px(pad.2) + px(pad.3), children)
             }
             Some(Ok(Family::Pie(bound_pie))) => {
-                let (height, svg, inner, warnings) = pie_card(&slot.pie_site(), &crate::slot::Heights::of_patch(style)?, bound_pie, (placed.width, Some(placed.height)), placed.shift, self.book)?;
+                let heights = crate::slot::Heights::of_patch(style)?;
+                // `fix_slot_heights`: a wheel alone in a `cols` row taller than its own height is re-rendered at the
+                // row's, which `pie_card` draws capped at its natural height instead. A table pie sizes itself and an
+                // authored `height:` fills its cell.
+                let authored = matches!(slot.chart, ModelChart::Pie(c) | ModelChart::Donut(c) if c.radial.height.is_some());
+                if placed.stretch >= STRETCH_MIN_PX && !authored && !crate::slot::pie_height(&slot.site(), &heights, bound_pie, placed.width, self.book)?.1 {
+                    return Err(Diagnostic::refused(refuse!("a pie in a row taller than its own height is not supported")));
+                }
+                let (height, svg, inner, warnings) = pie_card(&slot.site(), &heights, bound_pie, (placed.width, Some(placed.height)), placed.shift, self.book)?;
                 self.warnings.borrow_mut().extend(warnings);
                 self.pie_heights.borrow_mut().insert(placed.item.clone(), height);
                 let selection = |class: &str, rect: (f64, f64, f64, f64)| Node::rect(Role::Chrome, rect, Attrs::new().set("class", class).set("fill", "transparent"));
                 let children = vec![selection("dbt-box-outer", (0.0, 0.0, px(placed.width), px(height))), selection("dbt-box-inner", inner), svg];
                 ("dbt-chart", bound_pie.title.clone().unwrap_or_else(|| id.to_string()), height, children)
+            }
+            Some(Ok(Family::Geoshape(_))) if placed.shift != TitleShift::default() => {
+                return Err(Diagnostic::refused(refuse!("a geoshape given a title shift in a `cols` row is not supported")));
+            }
+            Some(Ok(Family::Geoshape(geo))) => {
+                let (height, svg, inner, warnings) = geoshape_card(&slot.site(), &crate::slot::Heights::of_patch(style)?, geo, (placed.width, Some(placed.height)), self.book)?;
+                self.warnings.borrow_mut().extend(warnings);
+                let selection = |class: &str, rect: (f64, f64, f64, f64)| Node::rect(Role::Chrome, rect, Attrs::new().set("class", class).set("fill", "transparent"));
+                let children = vec![selection("dbt-box-outer", (0.0, 0.0, px(placed.width), px(height))), selection("dbt-box-inner", inner), svg];
+                ("dbt-chart", geo.title.clone().unwrap_or_else(|| id.to_string()), height, children)
             }
             Some(Ok(Family::SparkBar(bound_spark))) => {
                 let chart_style = &slot.placed.charts.spark_bar;
@@ -658,6 +699,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         let attrs = self.slots.styles.chart_variables.get(&placed.chart).into_iter().flatten().fold(attrs, |attrs, name| attrs.set(format!("data-var-{name}"), "true"));
         let canvas = match (body, drawn.and_then(|chart| chart.frame.as_ref())) {
             (Some(Ok(Family::Pie(pie))), _) => Some(pie.canvas.clone()),
+            (Some(Ok(Family::Geoshape(geo))), _) => Some(geo.canvas.clone()),
             // The ground label ink is judged on, which the chart's runtime reads off its wrapper.
             (Some(Ok(Family::Cartesian(_))), Some(frame)) => {
                 let (r, g, b, _) = frame.canvas;
@@ -673,6 +715,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         // `Mdsvg` escape) even as element text; never a `<title>`, which browsers paint as a hover tooltip.
         let subtitle = match body {
             Some(Ok(Family::Pie(pie))) => pie.subtitle.as_deref(),
+            Some(Ok(Family::Geoshape(geo))) => geo.subtitle.as_deref(),
             Some(Ok(Family::SparkBar(spark))) => spark.subtitle.as_deref(),
             _ => drawn.and_then(|chart| chart.subtitle.as_deref()),
         };
@@ -695,7 +738,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
             (_, ModelChart::Callout(_)) => (None, true),
             (_, ModelChart::Kpi(_)) => (Some(&charts.kpi.border), true),
             (_, ModelChart::Table(_)) => (Some(&charts.table.border), false),
-            (_, ModelChart::Geoshape(_) | ModelChart::PointMap(_)) => return Err(diag::err_internal("a map's card is not drawn by the engine")),
+            (_, ModelChart::PointMap(_)) => return Err(diag::err_internal("a point map's card is not drawn by the engine")),
             _ => (Some(&charts.border), false),
         };
         // A callout's shadow follows its own radius; every other card's the border it draws.

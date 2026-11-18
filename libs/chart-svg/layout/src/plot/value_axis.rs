@@ -338,12 +338,26 @@ impl<'a> ValueAxis<'a> {
             Ladder::Log(rungs) => Ok(inside(rungs)),
             Ladder::BySize { min_step } => {
                 let ValueLabels { format, locale, estimate_extent, .. } = self.labels;
-                format.unbaked_rungs(locale, (start, stop), default_tick_count(length), *min_step, estimate_extent.hi())
+                format.unbaked_rungs(
+                    locale,
+                    (start, stop),
+                    default_tick_count(length),
+                    *min_step,
+                    estimate_extent.hi(),
+                    matches!(self.labels.side, Side::Left | Side::Right | Side::RightAway),
+                )
             }
             Ladder::Counts => {
                 let ValueLabels { format, locale, estimate_extent, .. } = self.labels;
                 let count = default_tick_count(length).min(hi.floor() as usize).max(1);
-                format.unbaked_rungs(locale, (start, stop), count, None, estimate_extent.hi())
+                format.unbaked_rungs(
+                    locale,
+                    (start, stop),
+                    count,
+                    None,
+                    estimate_extent.hi(),
+                    matches!(self.labels.side, Side::Left | Side::Right | Side::RightAway),
+                )
             }
             Ladder::None => Err(diag::err_internal(
                 "a value axis with no data-chosen ladder (log, independent panels) is not laid out here",

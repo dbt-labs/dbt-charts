@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart whose own `visible:` reads a query renders instead of failing with "was not collected before render".
+time: 2026-11-17T16:34:16.927939-08:00

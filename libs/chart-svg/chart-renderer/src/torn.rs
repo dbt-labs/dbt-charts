@@ -1,6 +1,6 @@
-//! The torn baseline (`axis.grid.torn_baseline`): one law for the wave and for
-//! when an axis tears, shared by every family that draws it. Cubics are in
-//! (along, across) coordinates of the edge; a vertical edge transposes them
+//! Torn paper: one tear for the torn baseline (`axis.grid.torn_baseline`), torn
+//! outliers and off-the-chart bars, and the law for when an axis tears. Cubics are
+//! in (along, across) coordinates of the edge; a vertical edge transposes them
 //! when it paints.
 
 use scene::{Attrs, Node, PathCommand, PathData, Role};
@@ -35,7 +35,21 @@ pub fn ragged(along: (f64, f64), edge: f64, inward: f64, thickness: f64, seed: u
 
 /// `ragged`'s edge as straight cubics, for what slices and fills cubics.
 pub fn ragged_cubics(along: (f64, f64), edge: f64, inward: f64, thickness: f64, seed: u64) -> Vec<Cubic> {
-    ragged(along, edge, inward, thickness, seed)
+    straight(&ragged(along, edge, inward, thickness, seed))
+}
+
+/// A torn edge across `along` with bites shaped like `WIDE_PAPER`'s, scaled so the deepest is `depth`.
+pub fn ragged_to(along: (f64, f64), edge: f64, inward: f64, depth: f64, seed: u64) -> Vec<Cubic> {
+    let dips = ragged(along, 0.0, 1.0, WIDE_PAPER, seed);
+    let deepest = dips.iter().map(|p| p.1).fold(0.0, f64::max);
+    straight(&dips.into_iter().map(|(a, d)| (a, edge + inward * d * depth / deepest)).collect::<Vec<_>>())
+}
+
+/// A bar thickness at which every grain of `ragged` sits at its cap: the widest torn bar's paper.
+const WIDE_PAPER: f64 = 98.0;
+
+fn straight(points: &[(f64, f64)]) -> Vec<Cubic> {
+    points
         .windows(2)
         .map(|w| {
             let ((a0, c0), (a1, c1)) = (w[0], w[1]);
@@ -43,6 +57,9 @@ pub fn ragged_cubics(along: (f64, f64), edge: f64, inward: f64, thickness: f64, 
         })
         .collect()
 }
+
+/// The gap between a torn baseline's deepest bite and the lowest rung it sits below, in px.
+pub const RUNG_CLEARANCE: f64 = 4.0;
 
 /// How deep a ragged tear bites, as a multiple of its natural depth.
 const RAGGED_DEPTH: f64 = 1.8;
@@ -59,89 +76,6 @@ impl Noise {
         z ^= z >> 31;
         (z >> 11) as f64 / (1u64 << 53) as f64
     }
-}
-
-/// The torn edge from `x1` to `x2` as cubics: troughs on `edge`, crests at
-/// `amplitude` toward `inward` (-1 up, +1 down), so the wave never
-/// leaves the plot. `sharpness` blends each quarter-wave from a sine toward
-/// its straight chord. When `ticks` are evenly spaced, the period snaps to
-/// a subdivision or multiple of the spacing so a trough lands on every
-/// tick it spans, except a tick too close to either end for a whole
-/// period (under period/√2 from the previous stop), which carries no
-/// trough; otherwise the whole width holds `round(width / wavelength)`.
-pub fn torn_cubics(x1: f64, x2: f64, edge: f64, inward: f64, ticks: &[f64], tear: &TornBaseline) -> Vec<Cubic> {
-    // Cubic control ratios approximating `sin` on [0, π/2].
-    const STEEP_TO_FLAT: [(f64, f64); 2] = [(0.326_115, 0.512_261), (0.638_087, 1.0)];
-    let gaps: Vec<f64> = ticks.windows(2).map(|w| w[1] - w[0]).collect();
-    let (lo, hi) = gaps.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &g| (lo.min(g), hi.max(g)));
-    let regular = !gaps.is_empty() && lo > 0.0 && hi <= lo * 1.15;
-    let (stops, period) = if regular {
-        let mean = gaps.iter().sum::<f64>() / gaps.len() as f64;
-        // The period is `mean × r`, r ∈ {1/n} ∪ {n}: subdivide a column or
-        // span n of them, whichever lands nearest the wavelength in log
-        // space. Spanning n puts troughs on every n-th gridline; a stretch
-        // between two stops that isn't a whole multiple of the period (the
-        // ends, when the ticks don't divide evenly) gets the nearest whole
-        // number of periods, pinned at both stops.
-        let divides = (mean / tear.wavelength).ceil() as usize + 1;
-        let (span, divide) = (1..=gaps.len())
-            .map(|n| (n, 1))
-            .chain((1..=divides).map(|n| (1, n)))
-            .min_by(|&(s1, d1), &(s2, d2)| {
-                let off = |s: usize, d: usize| (mean * s as f64 / d as f64 / tear.wavelength).ln().abs();
-                off(s1, d1).total_cmp(&off(s2, d2))
-            })
-            .expect("at least one candidate");
-        let period = mean * span as f64 / divide as f64;
-        // A stretch shorter than period/√2 — the bound every other tooth
-        // keeps — would squeeze a tooth, so its stop is dropped: ticks
-        // left to right against the previous stop, then the last stop
-        // against `x2` (band-step ticks sit half a step inside the plot).
-        let min_stretch = period / std::f64::consts::SQRT_2;
-        let mut stops = vec![x1];
-        for t in ticks.iter().copied().step_by(span) {
-            if t - stops[stops.len() - 1] >= min_stretch {
-                stops.push(t);
-            }
-        }
-        while stops.len() > 1 && x2 - stops[stops.len() - 1] < min_stretch {
-            stops.pop();
-        }
-        stops.push(x2);
-        (stops, period)
-    } else {
-        (vec![x1, x2], tear.wavelength)
-    };
-    let s = tear.sharpness;
-    let mut cubics = Vec::new();
-    for seg in stops.windows(2) {
-        let n = ((seg[1] - seg[0]) / period).round().max(1.0) as usize;
-        let width = (seg[1] - seg[0]) / n as f64;
-        for i in 0..n {
-            // Heights above the edge at the period's five quarter points.
-            let h = [0.0, tear.amplitude / 2.0, tear.amplitude, tear.amplitude / 2.0, 0.0];
-            let x0 = seg[0] + width * i as f64;
-            let xs = [0.0, 0.25, 0.5, 0.75, 1.0].map(|f| x0 + width * f);
-            for k in 0..4 {
-                let (ax, bx) = (xs[k], xs[k + 1]);
-                let (ay, by) = (edge + inward * h[k], edge + inward * h[k + 1]);
-                // Odd quarters run steep→flat; even ones are their reverses.
-                let ctrl = |c: usize| {
-                    let (fx, fy) = if k % 2 == 1 {
-                        STEEP_TO_FLAT[c]
-                    } else {
-                        let (rx, ry) = STEEP_TO_FLAT[1 - c];
-                        (1.0 - rx, 1.0 - ry)
-                    };
-                    let chord = (c + 1) as f64 / 3.0;
-                    let (fx, fy) = (fx + s * (chord - fx), fy + s * (chord - fy));
-                    (ax + fx * (bx - ax), ay + fy * (by - ay))
-                };
-                cubics.push([(ax, ay), ctrl(0), ctrl(1), (bx, by)]);
-            }
-        }
-    }
-    cubics
 }
 
 pub fn torn_path(cubics: &[Cubic], vertical: bool) -> PathData {
@@ -176,6 +110,15 @@ pub fn torn_edge_value(lo: f64, hi: f64) -> Option<f64> {
     } else {
         None
     }
+}
+
+/// `visible` (a value axis's per-rung label mask, `None` showing every rung) with the torn
+/// edge's rung hidden: a tear is no floor, so its value goes unlabeled.
+pub fn unlabeled(visible: Option<Vec<bool>>, ticks: &[f64], edge: Option<f64>) -> Option<Vec<bool>> {
+    let Some(edge) = edge else {
+        return visible;
+    };
+    Some(ticks.iter().enumerate().map(|(i, &tv)| tv != edge && visible.as_ref().is_none_or(|v| v[i])).collect())
 }
 
 /// Which way the crests point from an edge at `edge` on a span of `extent`
@@ -241,8 +184,7 @@ pub fn torn_slice(cubics: &[Cubic], x1: f64, x2: f64, by: f64) -> Vec<Cubic> {
 }
 
 /// The tear of a value axis whose domain excludes zero, on the edge nearest
-/// zero. No gridline crosses a bar chart's tear, so the wave takes the value
-/// gridlines' own ink and snaps to nothing.
+/// zero.
 pub struct ValueTear<'a> {
     pub tear: &'a TornBaseline,
     pub edge: f64,
@@ -254,11 +196,11 @@ impl<'a> ValueTear<'a> {
         torn_edge_value(lo, hi).map(|edge| Self { tear, edge })
     }
 
-    /// The wave with crests pointing into a plot `across` px deep on the
-    /// value axis and `along` px wide the other way. `edge_px` is the edge's
-    /// position on the value axis; `vertical` is an edge that runs top to bottom.
+    /// The tear, biting into a plot `across` px deep on the value axis and
+    /// `along` px wide the other way. `edge_px` is the edge's position on the
+    /// value axis.
     pub fn cubics(&self, edge_px: f64, across: f64, along: f64) -> Vec<Cubic> {
-        torn_cubics(0.0, along, edge_px, torn_inward(edge_px, 0.0, across), &[], self.tear)
+        self.tear.cubics((0.0, along), edge_px, torn_inward(edge_px, 0.0, across), self.edge)
     }
 
     pub fn node(&self, cubics: &[Cubic], vertical: bool, ink: &str, width: f64) -> Node {

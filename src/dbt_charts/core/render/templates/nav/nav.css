@@ -36,3 +36,20 @@
 .dbt-page-loading .dbt-charts-svg-container{opacity:.55;transition:opacity .2s ease .15s;}
 @keyframes dbt-nav-progress{from{background-position:-70% 0;}to{background-position:170% 0;}}
 @media (prefers-reduced-motion:reduce){.dbt-page-loading .dbt-nav-strip::after{animation:none;background:var(--dbt-system-accent);}}
+:root{--dbt-sidebar-width:220px;}
+html.dbt-sidebar-collapsed{--dbt-sidebar-width:36px;}
+html.dbt-has-sidebar body{padding-left:var(--dbt-sidebar-width);}
+html.dbt-has-sidebar .dbt-nav{margin-left:calc(-1*var(--dbt-sidebar-width));}
+html.dbt-has-sidebar .dbt-nav-strip{padding-left:var(--dbt-nav-page-inset,var(--dbt-sidebar-width));padding-right:12px;}
+.dbt-sidebar{position:fixed;top:var(--dbt-view-chrome,31px);bottom:0;left:0;width:var(--dbt-sidebar-width);box-sizing:border-box;overflow-y:auto;overflow-x:hidden;border-right:1px solid var(--dbt-system-input-border);background:var(--dbt-system-menu-background);color:var(--dbt-system-text);font-family:Inter,system-ui,-apple-system,sans-serif;font-size:12px;line-height:1.3;padding:6px;z-index:1;}
+.dbt-sidebar-toggle{display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;margin-bottom:4px;border:0;border-radius:4px;background:transparent;color:var(--dbt-system-muted);cursor:pointer;}
+.dbt-sidebar-toggle:hover,.dbt-sidebar-toggle:focus-visible{background:color-mix(in srgb,var(--dbt-system-muted) 12%,transparent);outline:0;}
+.dbt-sidebar-toggle svg{width:14px;height:14px;fill:currentColor;}
+html.dbt-sidebar-collapsed .dbt-sidebar-list{display:none;}
+.dbt-sidebar-list{list-style:none;margin:0;padding:0;}
+.dbt-sidebar-link{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;color:var(--dbt-system-text);text-decoration:none;}
+.dbt-sidebar-icon{width:14px;height:14px;flex:0 0 auto;fill:var(--dbt-system-muted);}
+.dbt-sidebar-link[aria-current='page'] .dbt-sidebar-icon{fill:currentColor;}
+.dbt-sidebar-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dbt-sidebar-link:hover,.dbt-sidebar-link:focus-visible{background:color-mix(in srgb,var(--dbt-system-muted) 12%,transparent);outline:0;}
+.dbt-sidebar-link[aria-current='page']{background:color-mix(in srgb,var(--dbt-system-accent) 14%,transparent);color:var(--dbt-system-accent);font-weight:600;}

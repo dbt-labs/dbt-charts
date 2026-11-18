@@ -200,9 +200,16 @@ fn cut(
     }
 }
 
-/// The mask's id: `name`, a digest of the region and outlines it cuts, then the chart's `scope`,
-/// which every id a chart defines ends with. A board composed outside the
-/// engine renders every placement of a chart with the same ids, and `url(#id)` resolves to the
+/// `value` in whole hundredths, the precision print writes a coordinate at: a last-bit
+/// difference between platforms' libm (a pie wedge's arc bounds) never renames a mask.
+fn hundredths(value: f64) -> i64 {
+    // `as` saturates; a coordinate is finite and far inside i64.
+    (value * 100.0).round() as i64
+}
+
+/// The mask's id: `name`, a digest of the region and outlines it cuts at the precision print
+/// writes them, then the chart's `scope`, which every id a chart defines ends with. A board
+/// composed outside the engine renders every placement of a chart with the same ids, and `url(#id)` resolves to the
 /// first definition in the document: placements of different sizes must not share one mask, while
 /// like placements share a like one harmlessly.
 fn named_for(name: &str, scope: &str, region: (f64, f64, f64, f64), cuts: &[Cut]) -> String {
@@ -210,7 +217,7 @@ fn named_for(name: &str, scope: &str, region: (f64, f64, f64, f64), cuts: &[Cut]
     let mut digest = Sha256::new();
     let (x, y, w, h) = region;
     for value in [x, y, w, h] {
-        digest.update(value.to_bits().to_le_bytes());
+        digest.update(hundredths(value).to_le_bytes());
     }
     for cut in cuts {
         let node = cut.node();
@@ -221,7 +228,7 @@ fn named_for(name: &str, scope: &str, region: (f64, f64, f64, f64), cuts: &[Cut]
             Cut::Outline(_, width) => *width,
         };
         for value in corners.chain([width]) {
-            digest.update(value.to_bits().to_le_bytes());
+            digest.update(hundredths(value).to_le_bytes());
         }
     }
     let digest = digest.finalize();
@@ -358,6 +365,14 @@ mod tests {
         assert_eq!(at(40.0), at(40.0));
         let masked = knock_out(vec![bar(40.0)], "#ffffff", "ko0", "c", (0.0, 0.0, 100.0, 100.0));
         assert_eq!(masked.marks[1].attrs.get("mask"), Some(format!("url(#{})", mask_id(&masked)).as_str()));
+    }
+
+    /// Platforms' libm can differ in a coordinate's last bit (a pie wedge's arc bounds), which no
+    /// printed coordinate shows: the mask is named for what print writes, so every machine names it alike.
+    #[test]
+    fn a_mask_is_named_for_its_printed_geometry() {
+        let at = |h: f64| mask_id(&knock_out(vec![bar(h)], "#ffffff", "ko0", "c", (0.0, 0.0, 100.0, 100.0)));
+        assert_eq!(at(40.0), at(40.0_f64.next_up()));
     }
 
     /// The mask keeps paint order: each mark's shape restores it over the outlines painted before

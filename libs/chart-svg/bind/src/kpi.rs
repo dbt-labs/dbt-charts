@@ -59,6 +59,12 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, placed: &Placed, board: &Board, 
     let failure = |diagnostic: Diagnostic| {
         Ok(Err(Failure { chart: id.clone(), diagnostic: diagnostic.with_sink_param("source_path", json!(format!("charts.{id}"))) }))
     };
+    // With no row there is no column to spell a rule's key against; `bound_channels` checks the renamed keys.
+    if dataset.rows.is_empty() {
+        if let Some(error) = conditional::aggregate_operand(id, &chart.style.conditional) {
+            return failure(error);
+        }
+    }
     if let Err(mismatch) = dataset.schema.check_rows(&dataset.rows) {
         // The sink stamps the chart a data error belongs to (`stamp_chart_diagnostic`); the KPI
         // codes carry it in their own template.
@@ -77,7 +83,7 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, placed: &Placed, board: &Board, 
     if empty {
         let (painted, patch) = match dataset.rows.first() {
             Some(row) => match bound_channels(id, chart, kpi, &dataset.rows, query.name().as_str(), board.body.queries.get(query.name().as_str())) {
-                Ok(channels) => (gradient_fill(kpi, channels.background.as_deref(), row, "")?, card_patch(&channels.conditional, row)?),
+                Ok(channels) => (gradient_fill(kpi, channels.background.as_deref(), row, "")?, card_patch(&channels.conditional, row, &style.fonts)?),
                 Err(error) => return failure(error),
             },
             None => (Painted::default(), CardPatch::default()),
@@ -137,20 +143,23 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, placed: &Placed, board: &Board, 
     let (prefix, number, suffix) = match headline(cell, dataset.schema.get(column).map_err(Diagnostic::from)?, crate::rows::tag_at(&dataset.cell_text, 0, column))? {
         // `kpi_value_text`: any other cell prints as plain text, whatever the format says.
         Headline::Text(text) => {
-            // Production's `good` (`_good_rules`) reads a sign off a number and raises a bare `ValueError`
-            // on a cell no number reads as, which its renderer reports as `ERR-INTERNAL` on this chart. A
-            // null cell matches no rule and a numeric string coerces; neither is ported.
+            // Production's `good` (`_good_rules`) raises a bare `ValueError` on a cell `coerce_numeric_cell`
+            // reads no finite number from, which its renderer reports as `ERR-INTERNAL` on this chart. A
+            // numeric-text cell passes, and its sign rules match no text (chart-renderer
+            // `coerce_numeric_cell`), so it draws with no glyph or tone. A null here is a NaN or infinity
+            // the wire tagged (an untagged null is the empty card), named as Python's `repr` names it.
             if chart.good.is_some() {
-                let reads_as_number = match cell {
-                    Value::Null => true,
-                    Value::String(text) => crate::display_text::python_float(text)?.is_some(),
-                    _ => false,
+                let non_finite = crate::rows::tag_at(&dataset.cell_text, 0, column).filter(|tag| tag.non_finite.is_some());
+                let got = match (cell, non_finite) {
+                    (Value::String(text), _) if crate::display_text::python_float(text)?.is_some_and(f64::is_finite) => None,
+                    (Value::Null, Some(tag)) if *dataset.schema.get(column).map_err(Diagnostic::from)? == ColumnType::Decimal => Some(format!("Decimal('{}')", tag.text)),
+                    (Value::Null, Some(tag)) => Some(tag.text.clone()),
+                    _ => Some(diagnostic::py_repr(cell)),
                 };
-                if reads_as_number {
-                    return Err(Diagnostic::refused(refuse!("a KPI `good` on a null or numeric-text value is not supported")));
+                if let Some(got) = got {
+                    let error = diag::err_internal(format!("ValueError: KPI '{id}': `good` needs a numeric `{column}` column to read a sign from, got {got}."));
+                    return Ok(Err(Failure { chart: id.clone(), diagnostic: error.with_sink_param("chart_id", json!(id.as_str())) }));
                 }
-                let error = diag::err_internal(format!("ValueError: KPI '{id}': `good` needs a numeric `{column}` column to read a sign from, got {}.", diagnostic::py_repr(cell)));
-                return Ok(Err(Failure { chart: id.clone(), diagnostic: error.with_sink_param("chart_id", json!(id.as_str())) }));
             }
             (String::new(), text, String::new())
         }
@@ -186,7 +195,7 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, placed: &Placed, board: &Board, 
     };
     let title = filled_text(id, chart.label.as_ref().map(|label| label.as_str()), styles, run, &aliases)?;
     let painted = gradient_fill(kpi, channels.background.as_deref(), row, &value_spec)?;
-    let patch = card_patch(&channels.conditional, row)?;
+    let patch = card_patch(&channels.conditional, row, &style.fonts)?;
     let support = match &chart.support {
         Some(support) => match bind_support(id, support, &patch, style, row, dataset, (support_column, support_tier.as_ref(), formats, filled_text(id, support.label.as_ref().map(|label| label.as_str()), styles, run, &aliases)?.unwrap_or_default())) {
             Ok(support) => support,
@@ -197,7 +206,7 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, placed: &Placed, board: &Board, 
     // `good` draws the glyph and tone of the headline's sign: the glyph in the arrow face, the whole
     // run in the tone's color.
     let signed = match chart.good {
-        Some(good) => good_overrides(good, &kpi.value.glyph.glyphs, &style.tones, Some(cell))?,
+        Some(good) => good_overrides(good, &kpi.value.glyph.glyphs, &style.tones, cell.is_number().then_some(cell))?,
         None => Signed::default(),
     };
     let drawn_by_good = signed.glyph.is_some();
@@ -216,7 +225,7 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, placed: &Placed, board: &Board, 
         (None, None) => (None, LinkOpen::Page),
     };
     let label = title.as_ref().map(|text| cased(text, kpi.label.font.case)).transpose()?;
-    Ok(Ok(Family::Kpi(Box::new(Kpi { glyph, arrow: drawn_by_good, ink: patch.value_color.clone().or(signed.tone_color), value_weight: patch.value_weight.clone(), label_color: patch.label_color.clone(), label_weight: patch.label_weight.clone(), prefix, number, suffix, label, title, support, fill: painted.fill.or(card_fill(kpi, scope)?), link, link_open, hinge_mismatch: painted.hinge_mismatch }))))
+    Ok(Ok(Family::Kpi(Box::new(Kpi { glyph, arrow: drawn_by_good, ink: patch.value_color.clone().or(signed.tone_color), value_weight: patch.value_weight.clone(), label_color: patch.label_color.clone(), label_weight: patch.label_weight.clone(), support_weight: patch.support_weight.clone(), prefix, number, suffix, label, title, support, fill: patch.background.clone().or(painted.fill).or(card_fill(kpi, scope)?), link, link_open, hinge_mismatch: painted.hinge_mismatch }))))
 }
 
 /// `resolve_support_row` (`chart-renderer/src/families/kpi.rs`): the support value as one string
@@ -360,6 +369,9 @@ fn bound_channels(id: &ChartId, chart: &KpiChart, kpi: &KpiChartStyle, rows: &[s
         authored.insert(column.clone(), key);
         conditional.insert(column, rules.clone());
     }
+    if let Some(error) = conditional::aggregate_operand(id, &conditional) {
+        return Err(error);
+    }
     let formats = match query {
         Some(query) => declared_column_formats(name, query, &columns)?.into_iter().map(|(column, format)| (column.to_string(), format.clone())).collect(),
         None => IndexMap::new(),
@@ -484,13 +496,14 @@ fn empty_card(chart: &KpiChart, placed: &Placed, painted: Painted, patch: CardPa
         value_weight: patch.value_weight,
         label_color: patch.label_color,
         label_weight: patch.label_weight,
+        support_weight: patch.support_weight,
         prefix: String::new(),
         number: cased(EMPTY_VALUE, kpi.value.font.case)?,
         suffix: String::new(),
         label: title.as_ref().map(|text| cased(text, kpi.label.font.case)).transpose()?,
         title,
         support: Some(support),
-        fill: painted.fill.or(card_fill(kpi, scope)?),
+        fill: patch.background.clone().or(painted.fill).or(card_fill(kpi, scope)?),
         link: link.as_ref().map(|(href, _)| href.clone()),
         link_open: link.map_or(LinkOpen::Page, |(_, open)| open),
         hinge_mismatch: painted.hinge_mismatch,

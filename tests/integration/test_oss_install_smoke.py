@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 
 from .._extra_probes import EXTRA_PROBES, FIXTURE_DIR
+from .._install_retry import run_install
 from .._paths import DBT_CHARTS_DIR
 
 # Share `built_dbt_charts_wheel` with the other wheel-consuming files so
@@ -74,7 +75,9 @@ def _make_smoke_venv(wheel: Path, prefix: str, extras: str = "") -> Iterator[Pat
         )
         py = _venv_python(venv_root)
         install_target = f"{wheel}[{extras}]" if extras else str(wheel)
-        subprocess.run(
+        # Retries only on a network signature (see `_install_retry`): the clean
+        # install must still fail on a genuine resolution or build error.
+        run_install(
             [
                 "uv",
                 "pip",
@@ -83,8 +86,7 @@ def _make_smoke_venv(wheel: Path, prefix: str, extras: str = "") -> Iterator[Pat
                 str(py),
                 "--quiet",
                 install_target,
-            ],
-            check=True,
+            ]
         )
         yield py
 

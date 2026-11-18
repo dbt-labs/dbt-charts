@@ -484,7 +484,7 @@ pub fn bind_chart(
             let subtitle = table.shared.subtitle.as_ref().map(|text| text.as_str().to_string()).filter(|text| !text.is_empty());
             Ok(bound::Chart { title: None, subtitle, frame: None, family: bind_table(id, table, &placed, board, run)? })
         }
-        Chart::SparkBar(spark) => Ok(bound::Chart { title: None, subtitle: None, frame: None, family: families::spark_bar::bind(id, spark, &styles.at(at)?.charts.spark_bar, board, run)? }),
+        Chart::SparkBar(spark) => Ok(bound::Chart { title: None, subtitle: None, frame: None, family: families::spark_bar::bind(id, spark, &styles.at(at)?.charts.spark_bar, run)? }),
         Chart::Callout(callout) => {
             let placed = placement(board, styles, at, chart)?;
             Ok(bound::Chart { title: None, subtitle: None, frame: None, family: bind_callout(id, callout, &placed, styles, run)? })
@@ -497,8 +497,8 @@ pub fn bind_chart(
             let family = Err(Failure { chart: id.clone(), diagnostic: error.with_sink_param("chart_id", serde_json::json!(id.as_str())) });
             Ok(bound::Chart { title: None, subtitle: None, frame: None, family })
         }
-        // A log axis its chart cannot draw is production's compile error, shown as that chart's error card.
-        Err(error) if crate::plot::domain::is_log_error(&error) => {
+        // An axis scale its chart cannot draw is production's compile error, shown as that chart's error card.
+        Err(error) if crate::plot::domain::is_scale_error(&error) => {
             let family = Err(Failure { chart: id.clone(), diagnostic: error });
             Ok(bound::Chart { title: None, subtitle: None, frame: None, family })
         }

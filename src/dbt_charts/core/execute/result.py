@@ -34,7 +34,7 @@ from dbt_charts.core.execute.arrow_ingest import relabel
 from dbt_charts.core.execute.query_result import (
     QueryResult,
     RowFetchLimit,
-    apply_row_limit_truncation,
+    take,
 )
 
 if TYPE_CHECKING:
@@ -55,8 +55,8 @@ def read_bounded_stream(
     source: object,  # type-state: object_annotation — any Arrow stream exporter
     limit: RowFetchLimit,
 ) -> na.Array:
-    """Read the Arrow stream *source* exports until ``limit.fetch_limit`` rows
-    are in hand, releasing it before returning.
+    """Read the Arrow stream *source* exports until it holds
+    ``limit.fetch_limit`` rows, releasing it before returning.
 
     A result holding view arrays is read through an in-memory DuckDB, which
     hands it back as plain arrays.
@@ -81,7 +81,7 @@ def read_bounded_stream(
 def read_bounded_table(
     batches: Iterable[CArray], schema: CSchema, limit: RowFetchLimit
 ) -> na.Array:
-    """Read *batches* until ``limit.fetch_limit`` rows are in hand.
+    """Read *batches* until they hold ``limit.fetch_limit`` rows.
 
     Every driver bounds its fetch by reading the Arrow stream rather than by
     rewriting the SQL, so an author's own LIMIT, a SHOW and a DESCRIBE all
@@ -112,33 +112,28 @@ def rows_to_query_result(
 ) -> QueryResult:
     """The row-dict result of whatever a backend returned."""
     if isinstance(rows, TypedRows):
-        return typed_rows_to_query_result(rows, limit, resolved_relations)
+        return typed_rows_to_query_result(rows, resolved_relations)
     return arrow_to_query_result(rows, limit, resolved_relations)
 
 
 def typed_rows_to_query_result(
     typed: TypedRows,
-    limit: RowFetchLimit,
     resolved_relations: list[ResolvedRelation] | None = None,
 ) -> QueryResult:
     """Convert a warehouse client's typed rows into the engine's row-dict result.
 
-    The client already bounded the fetch to ``limit.fetch_limit`` rows; this
-    slices the ceiling's one-extra-row over-fetch back down and flags truncation
-    only when the ceiling, not the author's own ``Query.limit``, was the binding
-    value.
+    The client already cut its rows (:func:`take`) and names its cut.
 
     Raises:
         ExecutionError: ERR-RESULT-DUPLICATE-COLUMN when two columns share a name.
     """
     reject_duplicate_columns(typed.columns)
-    rows, truncated_reason = apply_row_limit_truncation(typed.rows, limit)
     return QueryResult(
-        data=[dict(zip(typed.columns, row, strict=False)) for row in rows],
+        data=[dict(zip(typed.columns, row, strict=False)) for row in typed.rows],
         columns=typed.columns,
         schema=dict(zip(typed.columns, typed.types, strict=True)),
         resolved_relations=resolved_relations,
-        truncated_reason=truncated_reason,
+        truncated_reason=typed.truncated_reason,
     )
 
 
@@ -155,11 +150,10 @@ def arrow_to_query_result(
     The result's schema is the Arrow schema, mapped by :func:`declared_arrow_type`.
 
     Args:
-        table: The driver's result, already bounded to ``limit.fetch_limit`` rows
-            (drivers stop reading batches once they have that many).
-        limit: The resolved row limit the driver fetched against. Truncation is
-            flagged only when the ``execution.max_rows`` ceiling, not the
-            author's own ``Query.limit``, was the binding value.
+        table: The driver's result, already bounded to ``limit.fetch_limit``
+            rows (drivers stop reading batches once they hold them).
+        limit: The resolved row limit the driver fetched against; the rows
+            are cut to it (:func:`take`).
         resolved_relations: dbt refs/sources resolved while preparing the SQL.
 
     Raises:
@@ -173,7 +167,7 @@ def arrow_to_query_result(
         if columns
         else [{} for _ in range(len(table))]
     )
-    rows, truncated_reason = apply_row_limit_truncation(data, limit)
+    rows, truncated_reason = take(data, names, limit)
     return QueryResult(
         data=rows,
         columns=names,

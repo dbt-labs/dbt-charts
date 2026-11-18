@@ -614,11 +614,12 @@ class AuthoredBoard(ConstrainedModel):
     )
 
     # Scoped definitions
-    variables: Annotated[dict[str, VariableOrRef] | None, Merge(Strategy.BY_KEY)] = (
-        Field(
-            default_factory=dict,
-            description="Named inputs that parameterize queries; each renders as a control unless it sets visible: false.",
-        )
+    # DEEP, not BY_KEY: a board that redeclares an inherited variable to change
+    # one key (`visible: false`) must keep its column, options and default.
+    # Replacing the whole entry drops them and the filter silently stops applying.
+    variables: Annotated[dict[str, VariableOrRef] | None, Merge(Strategy.DEEP)] = Field(
+        default_factory=dict,
+        description="Named inputs that parameterize queries; each renders as a control unless it sets visible: false.",
     )
     queries: Annotated[
         dict[str, QueryOrRef] | None, Merge(Strategy.BY_KEY), Content()

@@ -89,6 +89,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _numeric_y_values,
     _resolve_cartesian_ticks,
     _resolve_stacked_bar_ticks,
+    _shared_layer_y_values,
     _shared_y_values,
     _unit_cap,
 )
@@ -129,7 +130,7 @@ from dbt_charts.core.compile.resolve.chart._plan import (
 )
 from dbt_charts.core.compile.resolve.chart._tooltip import resolve_tooltip
 from dbt_charts.core.compile.resolve.chart._torn_outlier import (
-    refuse_annotations_past,
+    refuse_values_past,
     resolve_torn_break,
     torn_ticks,
 )
@@ -817,7 +818,7 @@ def _resolve_bar(
             chart_style_context, normalized, "bar", plan.axis_overrides, ay_merged
         )
     channels, wide_measure_series = resolve_wide_measure_channels(
-        normalized, channels, "bar", has_layers=bool(normalized.layers)
+        normalized, channels, "bar"
     )
     inks = _resolve_layer_inks(
         normalized,
@@ -1200,7 +1201,7 @@ def _resolve_bar(
     bar_domain_max: float | None = None
     bar_domain_min: float | None = None
     authored_y_domain = _ay_cont_zero.domain if _ay_cont_zero is not None else None
-    torn_break = (
+    torn = (
         resolve_torn_break(
             normalized,
             dataset,
@@ -1208,16 +1209,27 @@ def _resolve_bar(
             bar.torn_outlier,
             stack=resolved_stack,
             y_fields=y_fields,
+            layer_values=(
+                _shared_layer_y_values(data, y_field, normalized, datasets)
+                if y_field
+                else []
+            ),
         )
         if bar.torn_outlier.enabled
         else None
     )
+    torn_break = torn.break_value if torn is not None else None
     tick_values: tuple[float, ...]
-    if torn_break is not None:
-        refuse_annotations_past(normalized.id, torn_break, annotations.y_values)
-        tick_values = torn_ticks(ay_merged, torn_break)
+    if torn is not None:
+        refuse_values_past(
+            normalized.id, torn.break_value, annotations.y_values, "an annotation"
+        )
+        tick_values = torn_ticks(
+            ay_merged, torn.break_value, torn.domain_min, stacked=is_stacked
+        )
+        bar_domain_min = torn.domain_min
         if not is_stacked:
-            bar_domain_max = torn_break
+            bar_domain_max = torn.break_value
     elif resolved_stack == "normalize" or not y_fields:
         # normalize-stack domain is always [0,1]; no y_field means no ticks.
         tick_values = ()
@@ -1570,14 +1582,14 @@ def _resolve_histogram(
     ay_merged = plan.axes.y.style
     ay_merged = _bake_ay_position_left(ay_merged)
     # Histogram's x is always a bottom-orient bin axis — no left/right edge.
-    # y's as_literal() keeps the ladder-less sub-unit guard off a VL-computed
-    # row count; x is a real binned column and keeps the plan's flags.
+    # y is a VL-computed row count with no ladder to bake: like x it is labeled
+    # at one shared tier once the renderer draws its ticks.
     ay, style_tail = build_cartesian_axes(
         normalized.id,
         "histogram",
         chart_style_context,
         plan.axes.x,
-        replace(plan.axes.y.as_literal(), style=ay_merged),
+        replace(plan.axes.y, style=ay_merged),
         ax_edge=None,
         ticks=_CartesianTickResolution((), None, None),
         column_forming=True,

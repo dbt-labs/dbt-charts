@@ -11,6 +11,8 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
+from dbt_charts.core.constants.fetch import FETCH_CHUNK_ROWS
+from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_INTERRUPTED
 from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
 from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.query_result import resolve_effective_row_limit
@@ -150,10 +152,58 @@ class TestDuckDBBackendFetchmanyNotFetchall:
         finally:
             adapter.close()
 
-        # fetch_limit = ceiling + 1 = 4 (detects truncation without knowing
-        # the true total — mirrors the agent_api pattern).
         assert fetchmany_args == [4]
         assert not fetchall_called
+
+    def test_a_fetch_past_the_byte_budget_stops_reading(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ...._backend_runner import DuckDBRunner
+
+        monkeypatch.setenv("DCT_MAX_RESULT_BYTES_CEILING", "2000")
+        fetchmany_args: list[int] = []
+        original_fetchmany = duckdb.DuckDBPyConnection.fetchmany
+
+        def spy_fetchmany(self: duckdb.DuckDBPyConnection, n: int) -> object:
+            fetchmany_args.append(n)
+            return original_fetchmany(self, n)
+
+        monkeypatch.setattr(duckdb.DuckDBPyConnection, "fetchmany", spy_fetchmany)
+
+        adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
+        try:
+            result = adapter.execute(
+                _make_query("SELECT repeat('x', 90) AS s FROM range(100000)")
+            )
+        finally:
+            adapter.close()
+
+        assert result.truncated_reason == "max_result_bytes"
+        assert fetchmany_args == [FETCH_CHUNK_ROWS]
+
+    def test_a_fetch_that_fails_partway_is_classified_by_the_backend(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ...._backend_runner import DuckDBRunner
+
+        original_fetchmany = duckdb.DuckDBPyConnection.fetchmany
+        calls: list[int] = []
+
+        def failing_fetchmany(self: duckdb.DuckDBPyConnection, n: int) -> object:
+            calls.append(n)
+            if len(calls) == 2:
+                raise duckdb.InterruptException("cancelled mid-read")
+            return original_fetchmany(self, n)
+
+        monkeypatch.setattr(duckdb.DuckDBPyConnection, "fetchmany", failing_fetchmany)
+        adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
+        try:
+            failed = adapter.execute(_make_query("SELECT * FROM range(5000)"))
+        finally:
+            adapter.close()
+
+        assert failed.error is not None
+        assert failed.error.code is ERR_QUERY_INTERRUPTED
 
     def test_no_fetchall_when_author_limit_below_ceiling(
         self, monkeypatch: pytest.MonkeyPatch
@@ -188,8 +238,6 @@ class TestDuckDBBackendFetchmanyNotFetchall:
         finally:
             adapter.close()
 
-        # Author limit=5 is the binding value; fetch exactly that many (no +1
-        # for truncation detection — author's own limit is not a ceiling breach).
         assert fetchmany_args == [5]
         assert not fetchall_called
 

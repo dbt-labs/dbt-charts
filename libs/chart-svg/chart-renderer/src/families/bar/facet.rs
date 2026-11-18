@@ -326,7 +326,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
             .map(|(panel_i, panel)| {
                 let panel_key = serde_json::to_string(&panel.key).expect("a panel key re-serializes");
                 if horizontal {
-                    let layer_rows = horizontal_layer_rows(payload, &r, &layers, Some(&panel.rows));
+                    let layer_rows = horizontal_layer_rows(payload, &r, &layers, Some(&panel.rows))?;
                     let opts = HorizontalFacetOpts {
                         panel_key: &panel_key,
                         panel_ordinal: panel_i,

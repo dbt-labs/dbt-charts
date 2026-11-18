@@ -181,28 +181,43 @@ fn title_blocks(title: &str, italic: bool, case: &LetterCase) -> Result<(Documen
     Ok((blocks, heading))
 }
 
+/// A board's title or text as sizing reads it. One that reads query data is not resolved before the
+/// render (`text_needs_render_data`), so sizing reads its template's literal words instead
+/// (`template_literal_text`); a title that does asks for the readable line length whatever its words.
+#[derive(Clone, Copy)]
+pub enum Reading<'a> {
+    Words(&'a str),
+    Template(&'a str),
+}
+
 /// `WidthMeasurer.board_own_width` (`compile/sizing.py`) for the root's title and text: each needs
 /// its widest unbreakable word and asks for its one-line width up to the readable line length
 /// (`prose_measure`), inside the card padding on both sides. The title is measured in the title
 /// renderer (`title_min_content_width`, `title_max_content_width`) and the text in the body's
-/// (`prose_content_widths`), both over the blocks the paint pass draws.
-pub fn own_width(style: &Style, title: Option<&str>, kind: TitleKind, text: Option<&str>, book: &FontBook) -> Result<IntrinsicWidth, Diagnostic> {
+/// (`prose_content_widths`), both over the blocks the paint pass draws. A title that reads query data
+/// asks for the readable line length as both; a text that does keeps its literal words' floor.
+pub fn own_width(style: &Style, title: Option<Reading<'_>>, kind: TitleKind, text: Option<Reading<'_>>, book: &FontBook) -> Result<IntrinsicWidth, Diagnostic> {
     let body = compact_style(style, &Overrides::PROSE)?;
     let measure = readable_measure(char_ratio(book, &body)? * body.base_font_size, style.text.column.max_chars);
     let inset = 2.0 * style.frame.card_padding;
-    let ask = |renderer: &SVGRenderer, blocks: &Document| -> Result<IntrinsicWidth, Diagnostic> {
+    let ask = |renderer: &SVGRenderer, blocks: &Document, reads_data: bool| -> Result<IntrinsicWidth, Diagnostic> {
         let floor = renderer.min_content_width(blocks).map_err(mdsvg_error)?;
-        let one_line = renderer.max_content_width(blocks).map_err(mdsvg_error)?;
-        Ok(IntrinsicWidth { min: Some(floor), preferred: Some(one_line.min(measure)) }.inset(inset))
+        let one_line = if reads_data { measure } else { renderer.max_content_width(blocks).map_err(mdsvg_error)?.min(measure) };
+        Ok(IntrinsicWidth { min: Some(floor), preferred: Some(one_line) }.inset(inset))
     };
     let mut width = IntrinsicWidth::NONE;
-    if let Some(title) = title {
-        let (blocks, _, renderer) = title_setup(style, title, book, kind)?;
-        width = width.combine_max(ask(&renderer, &blocks)?);
+    match title {
+        Some(Reading::Words(title)) => {
+            let (blocks, _, renderer) = title_setup(style, title, book, kind)?;
+            width = width.combine_max(ask(&renderer, &blocks, false)?);
+        }
+        Some(Reading::Template(_)) => width = width.combine_max(IntrinsicWidth { min: Some(measure), preferred: Some(measure) }.inset(inset)),
+        None => {}
     }
-    if let Some(text) = text {
-        let text = text_setup(style, text, book)?;
-        width = width.combine_max(ask(&text.renderer, &text.blocks)?);
+    if let Some(Reading::Words(source) | Reading::Template(source)) = text {
+        let reads_data = matches!(text, Some(Reading::Template(_)));
+        let text = text_setup(style, source, book)?;
+        width = width.combine_max(ask(&text.renderer, &text.blocks, reads_data)?);
     }
     Ok(width)
 }
@@ -603,6 +618,24 @@ pub fn text(style: &Style, source: &str, book: &FontBook, slot: Slot) -> Result<
     let style_block = windows.style.ok_or_else(|| diag::err_internal("a flowed text paints a window"))?;
     let nodes = [mdsvg::indented_nodes(std::slice::from_ref(&style_block)), painted].concat();
     Ok(TextBlock { nodes, height: y })
+}
+
+/// `prose_first_baseline`: how far below a text block's top edge its first baseline sits, when the text
+/// opens with a heading; `None` when it opens with anything else. A heading that opens a text card is
+/// that card's title, which a `cols` row puts on the baseline its neighbors' titles share. Asked of the
+/// flow that draws it, at the measure it is drawn at, since the baseline depends on how the heading wraps.
+pub fn first_baseline(style: &Style, source: &str, book: &FontBook, slot: Slot) -> Result<Option<f64>, Diagnostic> {
+    let text = text_setup(style, source, book)?;
+    if !matches!(text.blocks.first(), Some(AnyBlock::Heading(_))) {
+        return Ok(None);
+    }
+    let flow = flow(&text, slot)?;
+    if flow.paints_whole() || flow.stretches[0].spanning {
+        return text.renderer.first_baseline(&text.blocks, flow.spanning_measure).map(Some).map_err(mdsvg_error);
+    }
+    let m = &flow.metrics[0];
+    let baseline = text.renderer.first_baseline(&text.blocks, flow.measure).map_err(mdsvg_error)?;
+    Ok(Some(baseline - (m.column_lift - m.leading_margin)))
 }
 
 /// What stacking a board's title and text above its layout adds: `BoardContentBox`.

@@ -173,7 +173,7 @@ def execute_board_sql(
         data=data[:limit],
         errors=[],
         row_count=min(len(data), limit),
-        truncated=len(data) > limit,
+        truncated=len(data) > limit or ADHOC_QUERY in ledger.truncations,
         ran_on="cache" if refs and all(r.hit for r in refs) else "warehouse",
         cache_refs=refs,
     )

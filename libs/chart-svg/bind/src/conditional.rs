@@ -1,16 +1,20 @@
 //! A KPI's `style.conditional` rules over one row, and the sign rules `good` stands for. A column's
 //! rules are one ordered list: every matching non-default rule contributes its outputs, the last
 //! match winning per output; a `default: true` rule fires only when no other rule in the column
-//! matched. This slice paints the support row only, so a rule that styles the card, the headline or
-//! the label, a font weight, or a color that is not a hex literal (color tokens resolve before the
-//! card paints and this stage does not) is refused by name.
+//! matched. A rule paints the card's background, the headline's and the label's font color and
+//! weight, and the support row's font color, weight and tone; a font that extends a named font takes
+//! that font's color and weight under its own. A rule color is a hex color, `transparent` or `none`,
+//! as production sanitizes it. A rule over an aggregate is the author's error (`aggregate_operand`),
+//! raised before any rule is read.
 
 use board_model::chart::conditional_formatting::{Between, Bound, Operand, Predicate, Threshold};
 use board_model::chart::kpi::Good;
-use board_model::facet::FontWeightValue;
+use board_model::facet::{Color, FontWeightValue};
+use board_model::ids::ChartId;
 use board_model::primitives::Tone;
+use board_model::style::font::NamedFont;
 use board_model::style::kpi::{KpiChartStyleConditional, KpiGlyphSet, KpiTonesStyle, SingleLineFontStyleConditional};
-use diagnostic::{refuse, Diagnostic};
+use diagnostic::{diag, refuse, Diagnostic};
 use indexmap::IndexMap;
 use serde_json::Value;
 
@@ -24,8 +28,12 @@ pub struct Signed {
 /// What the matched rules set on the card, the later match winning per output.
 #[derive(Debug, Default, PartialEq)]
 pub struct CardPatch {
+    /// `background`: the card's fill, over a gradient's and the card's own.
+    pub background: Option<String>,
     /// `support.font.color`.
     pub color: Option<String>,
+    /// `support.font.weight`: the support row's and its glyph's weight.
+    pub support_weight: Option<FontWeightValue>,
     /// `support.tone`.
     pub tone: Option<Tone>,
     /// `value.font.color`: it paints the whole headline run, over the tone `good` derives.
@@ -113,30 +121,40 @@ fn matches(rule: &KpiChartStyleConditional, column: &str, value: Option<&Value>)
     Err(Diagnostic::refused(refuse!("a KPI conditional rule with no predicate is not supported")))
 }
 
-fn aggregate_refused() -> Diagnostic {
-    Diagnostic::refused(refuse!("a KPI conditional rule with an aggregate function is not supported"))
+/// `_validate_kpi_conditional`: a KPI reads one row, so a rule comparing to an aggregate (`has_aggregate`
+/// over `eq`, `ne`, `lt`, `lte`, `gt`, `gte` and `between`) is the author's error, raised for the first
+/// column holding one whether or not its rule matches.
+pub fn aggregate_operand(id: &ChartId, conditional: &IndexMap<String, Vec<KpiChartStyleConditional>>) -> Option<Diagnostic> {
+    let aggregate = |p: &Predicate| {
+        [&p.eq, &p.ne].into_iter().flatten().any(|o| matches!(o, Operand::Extreme(_)))
+            || [&p.lt, &p.lte, &p.gt, &p.gte].into_iter().flatten().chain(p.between.iter().flat_map(|b| b.0.iter())).any(|b| matches!(b, Bound::Aggregate(_)))
+    };
+    conditional
+        .iter()
+        .find(|(_, rules)| rules.iter().any(|rule| aggregate(&rule.predicate)))
+        .map(|(column, _)| diag::err_kpi_conditional_aggregate(id.as_str(), column.as_str()))
 }
 
 fn literal(operand: &Operand) -> Result<&Value, Diagnostic> {
     match operand {
         Operand::Value(v) => Ok(v),
-        Operand::Extreme(_) => Err(aggregate_refused()),
+        Operand::Extreme(_) => Err(diag::err_internal("a KPI conditional aggregate operand reaches its match".to_string())),
     }
 }
 
 fn key(bound: &Bound) -> Result<f64, Diagnostic> {
     match bound {
         Bound::Threshold(t) => Ok(t.key()),
-        Bound::Aggregate(_) => Err(aggregate_refused()),
+        Bound::Aggregate(_) => Err(diag::err_internal("a KPI conditional aggregate bound reaches its match".to_string())),
     }
 }
 
-fn hex(color: &str) -> Result<String, Diagnostic> {
-    if color.starts_with('#') {
-        Ok(color.to_string())
-    } else {
-        Err(Diagnostic::refused(refuse!("a KPI conditional rule color that is not a hex literal is not supported")))
-    }
+/// A rule's color as chart-renderer `kpi.rs`'s `explicit_color` reads it (`sanitized_color`): a hex
+/// color as written, `transparent` or `none` as `transparent`. Production errors on any other text too.
+fn rule_color(color: &str) -> Result<String, Diagnostic> {
+    crate::table::sanitized_color(color)
+        .map(str::to_string)
+        .ok_or_else(|| Diagnostic::refused(refuse!("a KPI conditional rule color that is not a hex color, transparent or none is not supported")))
 }
 
 /// The board's color for `tone`.
@@ -149,44 +167,64 @@ pub fn tone_color(tones: &KpiTonesStyle, tone: Tone) -> &str {
     }
 }
 
-/// A rule paints the support row's font color and tone, and the value's and label's font color and weight,
-/// whether or not it matches.
-fn check_outputs(column: &str, rule: &KpiChartStyleConditional) -> Result<(), Diagnostic> {
-    let at = |what: &str| Diagnostic::refused(refuse!("a KPI `style.conditional.{column}` rule that sets {what} is not supported"));
-    if rule.background.is_some() {
-        return Err(at("`background`"));
+/// A rule font's color and weight: its own, over those of the named font it extends
+/// (`expand_named_fonts`; the registry's own chains are folded by the cascade). An unknown name is
+/// the registry's error, raised for every rule, matched or not, as compile raises it.
+fn rule_font(extends: Option<&String>, color: Option<&Color>, weight: Option<&FontWeightValue>, fonts: &IndexMap<String, NamedFont>, column: &str) -> Result<(Option<Color>, Option<FontWeightValue>), Diagnostic> {
+    let named = match extends {
+        None => None,
+        Some(name) => Some(fonts.get(name).ok_or_else(|| {
+            let known = fonts.keys().map(String::as_str).collect::<Vec<_>>().join(", ");
+            diag::err_font_unknown(format!("Unknown font '{name}' at style.conditional.{column}. Known fonts: {known}."))
+        })?),
+    };
+    Ok((color.or(named.and_then(|font| font.color.as_ref())).cloned(), weight.or(named.and_then(|font| font.weight.as_ref())).cloned()))
+}
+
+fn font_of(font: Option<&SingleLineFontStyleConditional>, fonts: &IndexMap<String, NamedFont>, column: &str, color: &mut Option<String>, weight: &mut Option<FontWeightValue>) -> Result<(), Diagnostic> {
+    let Some(font) = font else { return Ok(()) };
+    let (set_color, set_weight) = rule_font(font.extends.as_ref(), font.color.as_ref(), font.weight.as_ref(), fonts, column)?;
+    if let Some(set) = set_color {
+        *color = Some(rule_color(set.as_str())?);
     }
-    let fonts = [rule.value.as_ref().and_then(|value| value.font.as_ref()), rule.label.as_ref().and_then(|label| label.font.as_ref())];
-    if fonts.into_iter().flatten().any(|font| font.extends.is_some()) {
-        return Err(at("a value or label font that extends a named font"));
+    if let Some(set) = set_weight {
+        *weight = Some(set);
+    }
+    Ok(())
+}
+
+/// Every rule's named fonts resolve, matched or not, as compile raises an unknown name; nothing
+/// else of a rule that does not match is read.
+fn check_fonts(rule: &KpiChartStyleConditional, fonts: &IndexMap<String, NamedFont>, column: &str) -> Result<(), Diagnostic> {
+    let ruled = [rule.value.as_ref().and_then(|value| value.font.as_ref()), rule.label.as_ref().and_then(|label| label.font.as_ref())];
+    for font in ruled.into_iter().flatten() {
+        rule_font(font.extends.as_ref(), None, None, fonts, column)?;
     }
     if let Some(font) = rule.support.as_ref().and_then(|support| support.font.as_ref()) {
-        if font.extends.is_some() || font.weight.is_some() {
-            return Err(at("a support font other than `color`"));
-        }
+        rule_font(font.extends.as_ref(), None, None, fonts, column)?;
     }
     Ok(())
 }
 
-fn font_of(font: Option<&SingleLineFontStyleConditional>, color: &mut Option<String>, weight: &mut Option<FontWeightValue>) -> Result<(), Diagnostic> {
-    let Some(font) = font else { return Ok(()) };
-    if let Some(set) = &font.color {
-        *color = Some(hex(set.as_str())?);
+/// What `rule` sets on the card: its background, the value's and label's font color and weight, and
+/// the support row's font color, weight and tone.
+fn apply(rule: &KpiChartStyleConditional, fonts: &IndexMap<String, NamedFont>, column: &str, out: &mut CardPatch) -> Result<(), Diagnostic> {
+    if let Some(background) = &rule.background {
+        out.background = Some(rule_color(background.as_str())?);
     }
-    if let Some(set) = &font.weight {
-        *weight = Some(set.clone());
-    }
-    Ok(())
-}
-
-fn apply(rule: &KpiChartStyleConditional, out: &mut CardPatch) -> Result<(), Diagnostic> {
-    font_of(rule.value.as_ref().and_then(|value| value.font.as_ref()), &mut out.value_color, &mut out.value_weight)?;
-    font_of(rule.label.as_ref().and_then(|label| label.font.as_ref()), &mut out.label_color, &mut out.label_weight)?;
+    font_of(rule.value.as_ref().and_then(|value| value.font.as_ref()), fonts, column, &mut out.value_color, &mut out.value_weight)?;
+    font_of(rule.label.as_ref().and_then(|label| label.font.as_ref()), fonts, column, &mut out.label_color, &mut out.label_weight)?;
     let Some(support) = &rule.support else {
         return Ok(());
     };
-    if let Some(color) = support.font.as_ref().and_then(|font| font.color.as_ref()) {
-        out.color = Some(hex(color.as_str())?);
+    if let Some(font) = &support.font {
+        let (color, weight) = rule_font(font.extends.as_ref(), font.color.as_ref(), font.weight.as_ref(), fonts, column)?;
+        if let Some(color) = color {
+            out.color = Some(rule_color(color.as_str())?);
+        }
+        if let Some(weight) = weight {
+            out.support_weight = Some(weight);
+        }
     }
     if let Some(tone) = support.tone {
         out.tone = Some(tone);
@@ -195,7 +233,7 @@ fn apply(rule: &KpiChartStyleConditional, out: &mut CardPatch) -> Result<(), Dia
 }
 
 /// The support row's patch from every column's rules, each tested against its own cell of `row`.
-pub fn card_patch(conditional: &IndexMap<String, Vec<KpiChartStyleConditional>>, row: &serde_json::Map<String, Value>) -> Result<CardPatch, Diagnostic> {
+pub fn card_patch(conditional: &IndexMap<String, Vec<KpiChartStyleConditional>>, row: &serde_json::Map<String, Value>, fonts: &IndexMap<String, NamedFont>) -> Result<CardPatch, Diagnostic> {
     let mut out = CardPatch::default();
     for (column, rules) in conditional {
         let Some(cell) = row.get(column) else {
@@ -203,7 +241,7 @@ pub fn card_patch(conditional: &IndexMap<String, Vec<KpiChartStyleConditional>>,
         };
         let cell = Some(cell).filter(|cell| !cell.is_null());
         for rule in rules {
-            check_outputs(column, rule)?;
+            check_fonts(rule, fonts, column)?;
         }
         let (mut matched_any, mut default_rule) = (false, None);
         for rule in rules {
@@ -213,11 +251,11 @@ pub fn card_patch(conditional: &IndexMap<String, Vec<KpiChartStyleConditional>>,
             }
             if matches(rule, column, cell)? {
                 matched_any = true;
-                apply(rule, &mut out)?;
+                apply(rule, fonts, column, &mut out)?;
             }
         }
         if let (false, Some(rule)) = (matched_any, default_rule) {
-            apply(rule, &mut out)?;
+            apply(rule, fonts, column, &mut out)?;
         }
     }
     Ok(out)
@@ -285,5 +323,34 @@ mod tests {
         assert!(matches(&between, "d", Some(&json!("2026-01-31"))).unwrap());
         let err = matches(&between, "d", Some(&json!(42))).unwrap_err();
         assert!(err.starts_with("ERR-CONDITIONAL-NOT-A-DATE"), "{err}");
+    }
+
+    fn rules(rule: Value) -> IndexMap<String, Vec<KpiChartStyleConditional>> {
+        IndexMap::from([("g".to_string(), vec![board_model::fixtures::build(&rule).unwrap()])])
+    }
+
+    fn accent() -> IndexMap<String, NamedFont> {
+        IndexMap::from([("accent".to_string(), board_model::fixtures::build(&json!({"color": "#8a2be2", "weight": 700})).unwrap())])
+    }
+
+    /// A rule font that extends a named font takes that font's color and weight under its own, as
+    /// `expand_named_fonts` lays a slot's fields over its registry entry.
+    #[test]
+    fn a_rule_font_extends_its_named_font_under_its_own_fields() {
+        let rule = json!({"default": true, "value": {"font": {"extends": "accent"}}, "support": {"font": {"extends": "accent", "color": "#111111"}}});
+        let row = serde_json::Map::from_iter([("g".to_string(), json!(1))]);
+        let patch = card_patch(&rules(rule), &row, &accent()).unwrap();
+        assert_eq!(patch.value_color.as_deref(), Some("#8a2be2"));
+        assert_eq!(patch.value_weight, accent()["accent"].weight.clone());
+        assert_eq!(patch.color.as_deref(), Some("#111111"));
+        assert_eq!(patch.support_weight, accent()["accent"].weight.clone());
+    }
+
+    #[test]
+    fn a_rule_font_that_extends_an_unknown_font_is_the_font_registrys_error() {
+        let rule = json!({"default": true, "label": {"font": {"extends": "nope"}}});
+        let row = serde_json::Map::from_iter([("g".to_string(), json!(1))]);
+        let err = card_patch(&rules(rule), &row, &accent()).unwrap_err();
+        assert_eq!(err.code, "ERR-FONT-UNKNOWN");
     }
 }

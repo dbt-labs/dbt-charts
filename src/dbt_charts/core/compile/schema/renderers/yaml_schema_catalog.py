@@ -297,6 +297,16 @@ def structural_schema_bytes(schema: JsonObject) -> bytes:
     return canonical_schema_bytes(_strip_descriptions(schema))
 
 
+def dev_grammar_bytes(schema: JsonObject) -> bytes:
+    """Serialize the DEV grammar as ``dev.json`` holds it: the structural schema
+    with every value on its own line, so branches that change the grammar in
+    different places merge without a conflict."""
+    text = json.dumps(
+        _strip_descriptions(schema), indent=0, separators=(",", ":"), sort_keys=True
+    )
+    return (text + "\n").encode()
+
+
 PACKAGE_SCHEMA_DIR: Final[_SchemaResource] = (
     files("dbt_charts") / "data" / "schemas" / "yaml"
 )

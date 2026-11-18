@@ -1,0 +1,3 @@
+kind: Fixes
+body: A table column's filter menu shows each value's conditional glyph in its own color.
+time: 2026-11-17T11:47:46.328001-08:00

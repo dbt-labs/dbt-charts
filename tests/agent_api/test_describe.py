@@ -397,6 +397,68 @@ class TestDescribeByBoardTitle:
         result = describe_board(Path("Sales Dashboard"), project=project)
 
         assert result.errors[0].code == "ERR-FILE-NOT-FOUND"
+        assert result.errors[0].hint is None
+
+    def test_a_stored_title_with_trailing_whitespace_resolves(
+        self, tmp_path: Path
+    ) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = self._project(tmp_path, {"okrs.yml": "FY2027 OKRs ✅ "})
+
+        (result,) = describe_paths([Path("FY2027 OKRs ✅")], project=project)
+
+        assert result.success is True, result.errors
+        assert result.path == "charts/okrs.yml"
+
+    def test_a_unique_subfolder_stem_resolves(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = self._project(tmp_path, {})
+        nested = tmp_path / "charts" / "executive"
+        nested.mkdir()
+        (nested / "company_trends.yaml").write_text(_BOARD_YAML)
+
+        (result,) = describe_paths([Path("company_trends")], project=project)
+
+        assert result.success is True, result.errors
+        assert result.path == "charts/executive/company_trends.yaml"
+
+    def test_a_shared_stem_names_every_board(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = self._project(tmp_path, {})
+        for folder in ("a", "b"):
+            (tmp_path / "charts" / folder).mkdir()
+            (tmp_path / "charts" / folder / "trends.yml").write_text(_BOARD_YAML)
+
+        (result,) = describe_paths([Path("trends")], project=project)
+
+        assert result.success is False
+        assert "charts/a/trends.yml" in result.errors[0].message
+        assert "charts/b/trends.yml" in result.errors[0].message
+
+    def test_a_title_missing_its_decoration_hints_the_path(
+        self, tmp_path: Path
+    ) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = self._project(tmp_path, {"trends.yml": "Company Trends ✅"})
+
+        (result,) = describe_paths([Path("Company Trend")], project=project)
+
+        assert result.success is False
+        assert result.errors[0].hint is not None
+        assert "charts/trends.yml" in result.errors[0].hint
+
+    def test_a_miss_with_no_near_board_has_no_hint(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = self._project(tmp_path, {"sales.yml": "Sales Dashboard"})
+
+        (result,) = describe_paths([Path("zzzz qqqq")], project=project)
+
+        assert result.errors[0].hint is None
 
 
 class TestDescribePathsDispatchDriftOnNoSuffixMissingPath:

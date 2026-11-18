@@ -17,25 +17,17 @@ from pydantic import TypeAdapter
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.board_artifact import (
-    COMPILED_SCHEMA_ID,
     SCHEMA_ID,
     DanglingStyleRefError,
-    dump_compiled_board_artifact,
     dump_resolved_board_artifact,
     hoist_styles,
     inline_styles,
-    load_compiled_board_artifact,
     load_resolved_board_artifact,
 )
 from dbt_charts.core.compile.compiler import compile as compile_board, compile_file
 from dbt_charts.core.compile.models.board.resolved import (
     ChartResolveFailure,
     ResolvedBoard,
-)
-from dbt_charts.core.diagnostics import Diagnostic
-from dbt_charts.core.diagnostics.codes_compile import (
-    ERR_UNKNOWN_QUERY,
-    WARN_HTML_POLICY_CAPPED,
 )
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.board_resolve import (
@@ -414,68 +406,3 @@ def test_resolved_stops_survives_artifact_round_trip(tmp_path: Path) -> None:
         f"Expected ResolvedNamedPaletteScaleTargetConfig, got {type(color_scale)}"
     )
     assert color_scale.resolved_stops == tuple(resolve_palette("dbt-seq-blue"))
-
-
-# ============================================================================
-# Compiled board artifact (normalized Board — the compile()/compile_file()
-# output, not the resolved-at-render one above)
-# ============================================================================
-
-
-class TestCompiledEnvelope:
-    def test_round_trip_reconstructs_an_equal_board(self) -> None:
-        result = compile_board(_NESTED_YAML)
-        assert result.success, result.errors
-
-        artifact = dump_compiled_board_artifact(result)
-        assert set(artifact) == {"$id", "version", "styles", "board", "diagnostics"}
-        assert artifact["$id"] == COMPILED_SCHEMA_ID
-        assert isinstance(artifact["version"], str) and artifact["version"]
-        assert artifact["diagnostics"] == []
-
-        restored = load_compiled_board_artifact(artifact)
-        assert restored == result.board
-
-    def test_style_table_dedups_across_nested_boards(self) -> None:
-        result = compile_board(_NESTED_YAML)
-        assert result.success, result.errors
-
-        artifact = dump_compiled_board_artifact(result)
-        # The three unstyled nested boards share one resolved_style and one
-        # chart_style_context (background is non-inherited, so all three
-        # get the same transparent own-fill); the root's differ (its own
-        # theme canvas). Both kinds hoist into the same content-addressed
-        # table, so this is 4 entries total (2 boards x 2 style types),
-        # never N per nested board.
-        assert len(artifact["styles"]) == 4
-
-    def test_load_raises_on_dangling_style_ref(self) -> None:
-        result = compile_board(_NESTED_YAML)
-        assert result.success, result.errors
-        artifact = dump_compiled_board_artifact(result)
-        artifact["styles"] = {}
-        with pytest.raises(DanglingStyleRefError):
-            load_compiled_board_artifact(artifact)
-
-    def test_diagnostics_carry_errors_then_warnings_in_order(self) -> None:
-        result = compile_board(_NESTED_YAML)
-        assert result.success, result.errors
-        # Fabricated diagnostics — checking envelope ordering, not compiler
-        # behavior, so there's no need for a YAML fixture that naturally
-        # produces both an error and a warning.
-        result.errors = [Diagnostic(code=ERR_UNKNOWN_QUERY.code, message="boom")]
-        result.warnings = [
-            Diagnostic(code=WARN_HTML_POLICY_CAPPED.code, message="capped")
-        ]
-
-        artifact = dump_compiled_board_artifact(result)
-        assert [d["code"] for d in artifact["diagnostics"]] == [
-            ERR_UNKNOWN_QUERY.code,
-            WARN_HTML_POLICY_CAPPED.code,
-        ]
-
-    def test_raises_when_compile_failed(self) -> None:
-        result = compile_board("charts: {bad: {type: bar, query: missing}}")
-        assert not result.success
-        with pytest.raises(ValueError, match="failed compile"):
-            dump_compiled_board_artifact(result)

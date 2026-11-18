@@ -1,24 +1,34 @@
 """Run stage: misses in, one Outcome per query out, over fake executors."""
 
 import logging
+import sys
 import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
+from dbt_charts.core.compile import compile as compile_board
+from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.diagnostics.execution import QueryError
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
+from dbt_charts.core.execute.env import make_exec_env
 from dbt_charts.core.execute.lookup import Miss
+from dbt_charts.core.execute.query_result import resolve_effective_row_limit, take
 from dbt_charts.core.execute.run import (
     RENDER_POOL_THREAD_PREFIX,
     Failed,
     Outcome,
     Rows,
     run,
+    run_planned,
 )
 
 from ..._lookup import planned_query, sql_entry
 from ..._results import rows_result
+from ..._run import Run as BoardRun
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -137,3 +147,143 @@ def test_a_failed_store_write_keeps_the_rows_it_could_not_store(
     assert isinstance(outcomes["a"], Rows)
     assert isinstance(outcomes["b"], Rows)
     assert "cache write failed" in caplog.text
+
+
+def test_a_fresh_warehouse_result_is_measured_once(
+    local_project: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The producer's cut is the only one: nothing downstream re-measures it."""
+    measured: list[int] = []
+
+    def counting_take(*args: Any) -> Any:
+        measured.append(1)
+        return take(*args)
+
+    for module in list(sys.modules.values()):
+        if not module.__name__.startswith("dbt_charts."):
+            continue
+        for name, value in list(vars(module).items()):
+            if value is take:
+                monkeypatch.setattr(module, name, counting_take)
+    env = make_exec_env(
+        project=local_project(tmp_path),
+        project_sources=ProjectSourcesConfig(
+            sources={"db": {"type": "duckdb", "path": ":memory:"}}
+        ),
+        backends=BackendRegistry({"duckdb": DuckDBBackend()}),
+    )
+    board = compile_board(
+        """
+queries:
+  q:
+    sql: SELECT * FROM range(5)
+    source: db
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+    ).board
+    assert board is not None
+
+    rows = BoardRun(board, env=env, use_cache=False).execute_query("q")
+
+    assert len(rows) == 5
+    assert len(measured) == 1
+
+
+def test_a_fresh_values_result_is_cut_to_the_ceiling(
+    local_project: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A values query has no fetch to cut it, so its route does."""
+    monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "2")
+    board = compile_board(
+        """
+queries:
+  q:
+    columns: [n]
+    values: [[1], [2], [3]]
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+    ).board
+    assert board is not None
+    run = BoardRun(board, env=make_exec_env(project=local_project(tmp_path)))
+
+    rows = run.execute_query("q", use_cache=False)
+
+    assert rows == [{"n": 1}, {"n": 2}]
+    assert run.ledger.truncations["q"].reason == "max_rows"
+
+
+def test_a_fresh_schema_result_is_cut_to_the_ceiling(
+    local_project: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A schema query is answered from metadata, with no fetch to cut it."""
+    monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "1")
+    memory = {"type": "duckdb", "path": ":memory:"}
+    env = make_exec_env(
+        project=local_project(tmp_path),
+        project_sources=ProjectSourcesConfig(sources={"a": memory, "b": memory}),
+    )
+    board = compile_board(
+        """
+queries:
+  q:
+    type: schema
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+    ).board
+    assert board is not None
+    run = BoardRun(board, env=env)
+
+    rows = run.execute_query("q", use_cache=False)
+
+    assert len(rows) == 1
+    assert run.ledger.truncations["q"].reason == "max_rows"
+
+
+def test_a_planned_values_result_is_cut_to_the_ceiling_not_the_callers_row_limit(
+    local_project: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A shared cache holds each upstream whole, so a caller's sample limit
+    never cuts one."""
+    monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "2")
+    board = compile_board(
+        """
+queries:
+  q:
+    columns: [n]
+    values: [[1], [2], [3]]
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+    ).board
+    assert board is not None
+    ctx = BoardRun(board, env=make_exec_env(project=local_project(tmp_path))).ctx
+
+    result = run_planned(
+        ctx.env,
+        ctx.plan,
+        "q",
+        source_config=None,
+        row_limit=resolve_effective_row_limit(1),
+    )
+
+    assert result.data == [{"n": 1}, {"n": 2}]
+    assert result.truncated_reason == "max_rows"

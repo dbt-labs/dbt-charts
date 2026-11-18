@@ -319,7 +319,7 @@ def _resolve_area(
         has_layers=bool(normalized.layers),
     )
     channels, wide_measure_series = resolve_wide_measure_channels(
-        normalized, channels, "area", has_layers=bool(normalized.layers)
+        normalized, channels, "area"
     )
     inks = _resolve_layer_inks(
         normalized,

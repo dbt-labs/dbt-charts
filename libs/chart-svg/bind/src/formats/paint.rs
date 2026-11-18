@@ -130,8 +130,8 @@ impl ResolvedFormat {
     }
 
     /// The rungs Vega draws on an axis production does not bake: d3's ticks from `start` to
-    /// `stop` at Vega's count for `target` (capped by `min_step`), each printed by
-    /// [`Self::paint_unbaked_rung`].
+    /// `stop` at Vega's count for `target` (capped by `min_step`), each labeled by
+    /// [`Self::label_unbaked`].
     pub fn unbaked_rungs(
         &self,
         locale: &NumberLocale,
@@ -139,9 +139,29 @@ impl ResolvedFormat {
         target: usize,
         min_step: Option<f64>,
         extent_hi: f64,
+        column_forming: bool,
     ) -> Result<Vec<(f64, String)>, Diagnostic> {
         let count = d3rs::ticks::vega_tick_count(start, stop, target, min_step);
         let ticks = d3rs::ticks::d3_ticks(start, stop, count);
+        self.label_unbaked(locale, ticks, extent_hi, column_forming)
+    }
+
+    /// `ticks` labeled as Vega's axis labels a ladder production does not bake: each printed by
+    /// [`Self::paint_unbaked_rung`], except a plain house SI ladder, labeled at one shared tier.
+    pub fn label_unbaked(
+        &self,
+        locale: &NumberLocale,
+        ticks: Vec<f64>,
+        extent_hi: f64,
+        column_forming: bool,
+    ) -> Result<Vec<(f64, String)>, Diagnostic> {
+        if self.is_house_si() && self.prefix.is_empty() && self.suffix.is_empty() && !d3rs::format::parse_parts(&self.spec).map_err(Diagnostic::refused)?.symbol {
+            // A plain house SI ladder drawn at render time is labeled at one shared tier, as a
+            // baked one is (`rung_text`). An affixed or currency one keeps each rung's own
+            // magnitude: its anchored affix is not ported there.
+            let texts = crate::families::cartesian::rung_text(self, column_forming, &ticks, &ticks)?;
+            return Ok(ticks.into_iter().zip(texts).collect());
+        }
         let total = ticks.len();
         ticks
             .into_iter()

@@ -103,9 +103,8 @@ class SQLDialect(ABC):
 
     # True for every warehouse whose dbt-adapters cursor implements fetchmany.
     # Spark (PyhiveConnectionWrapper / PyodbcConnectionWrapper) raises
-    # AttributeError — those cursors only implement fetchall.  When False, the
-    # adapters fall back to a full fetchall + post-fetch slice via
-    # apply_row_limit_truncation instead of using the limit= kwarg.
+    # AttributeError — those cursors only implement fetchall. When False, the
+    # whole result is read, then cut by take().
     cursor_supports_driver_limit: bool = True
 
     # --- String literals ---

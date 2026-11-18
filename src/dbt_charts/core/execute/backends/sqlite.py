@@ -28,11 +28,13 @@ from dbt_charts.core.column_types import (
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR,
+    ERR_BINDER_UNKNOWN_RELATION,
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.dialects import SQLDialect, get_dialect
 from dbt_charts.core.execute.backends.dbt_adapter_factory import ConnectionSetupFailed
+from dbt_charts.core.execute.query_result import take
 from dbt_charts.core.execute.sqlite_utils import sqlite_ro_uri
 from dbt_charts.core.project import is_absolute_any_os
 
@@ -91,16 +93,24 @@ class SqliteBackend:
             ]
             rows = cursor.fetchmany(query.limit.fetch_limit)
         except sqlite3.OperationalError as exc:
-            raise QueryError.from_code(ERR_WAREHOUSE_RUNTIME, detail=str(exc)) from exc
+            code = (
+                ERR_BINDER_UNKNOWN_RELATION
+                if str(exc).startswith("no such table:")
+                else ERR_WAREHOUSE_RUNTIME
+            )
+            raise QueryError.from_code(code, detail=str(exc)) from exc
         finally:
             conn.close()
         reject_duplicate_columns(names)
         data = [dict(zip(names, row, strict=True)) for row in rows]
         schema = literal_schema(data, names, untyped=ColumnType(kind="string"))
-        cells = declared_literal_cells(data, schema)
-        return TypedRows(
-            names, [tuple(row.values()) for row in cells], list(schema.values())
+        # Types are read off the cells, so the cut waits for the declared rows.
+        cells, reason = take(
+            [tuple(row.values()) for row in declared_literal_cells(data, schema)],
+            names,
+            query.limit,
         )
+        return TypedRows(names, cells, list(schema.values()), reason)
 
     def interrupt(self) -> None:
         """Nothing to cancel: a query's connection lives only for that query."""

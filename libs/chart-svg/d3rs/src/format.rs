@@ -568,6 +568,21 @@ pub fn parse_parts(spec: &str) -> Result<SpecParts, String> {
     })
 }
 
+/// Reinsert a currency symbol into a digit-only d3 spec (production's
+/// `with_symbol`, numeral_scale.py). The symbol flag sits AFTER the sign in
+/// d3's spec grammar ([[fill]align][sign][symbol]…), so a signed spec keeps
+/// its sign char first — "+,.1~f" becomes "+$,.1~f", not the unparseable
+/// "$+,.1~f" — and d3's own sign-before-symbol placement then applies
+/// (format("$,.1~f")(-500) → "−$500", never "$−500").
+pub fn with_symbol(digit_spec: &str, symbol: &str) -> String {
+    match digit_spec.chars().next() {
+        Some(sign @ ('+' | '-' | '(' | ' ')) => {
+            format!("{sign}{symbol}{}", &digit_spec[sign.len_utf8()..])
+        }
+        _ => format!("{symbol}{digit_spec}"),
+    }
+}
+
 /// `spec` without its `$` currency flag (`numeral_scale.without_symbol`):
 /// the digits a bare zero tick paints.
 pub fn without_symbol(spec: &str) -> Result<String, String> {

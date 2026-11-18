@@ -384,9 +384,7 @@ style:
           width: 2
         torn_baseline:
           enabled: false
-          amplitude: 3.5           # px, edge to crest
-          wavelength: 30           # px per full wave
-          sharpness: 1             # 0 smooth sine .. 1 sharp zigzag
+          amplitude: 8             # px, deepest bite into the plot
       labels:
         font: label
         padding: 6
@@ -668,6 +666,7 @@ style:
           height: 24.0
         bar:
           default_max: 100.0
+          width: 80.0
           background: chrome[3]
           border:
             radius: 0.0

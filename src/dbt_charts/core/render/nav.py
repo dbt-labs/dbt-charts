@@ -14,10 +14,10 @@ build and render the nav; static ``dct render`` output never carries it.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.render.dir_context import lazy_dir_context
+from dbt_charts.core.render.dir_context import lazy_dir_context, list_dir_entries
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board
@@ -99,6 +99,90 @@ def nav_context(
     }
 
 
+_LEADING_STEMS = ("index", "overview")
+
+
+class SidebarRow(TypedDict):
+    kind: Literal["board", "folder"]
+    label: str
+    url: str
+    current: bool
+
+
+def _sidebar(
+    list_dir: ProjectDirectory,
+    list_url: str,
+    current_board: str | None,
+    current_folder: str | None,
+    query: str,
+) -> list[SidebarRow]:
+    """Rows for the sidebar of ``list_dir``: ``..`` (below the root), boards (index/overview first, then filename order), then
+    subfolders; the root adds each installed package's boards as a folder, as
+    its listing does. Empty under two rows, where the strip's file menu already covers
+    the folder."""
+    from dbt_charts.core.project import (
+        ProjectPath,
+        package_board_roots,
+        read_board_text,
+    )
+
+    entries = list_dir_entries(list_dir, list_url)
+    folders = [
+        (e.name, e.url)
+        for e in entries
+        if e.is_dir and not (list_url == "/" and e.name == "inspect")
+    ]
+    if list_url == "/":
+        hosted = {name for name, _ in folders}
+        folders += [
+            (r.namespace, f"/{r.namespace}/")
+            for r in sorted(
+                package_board_roots(list_dir.project), key=lambda r: r.namespace
+            )
+            if r.namespace not in hosted
+        ]
+    suffix = f"?{query}" if query else ""
+    boards = sorted(
+        ((e, e.handle) for e in entries if isinstance(e.handle, ProjectPath)),
+        key=lambda pair: pair[0].label not in _LEADING_STEMS,
+    )
+    parent = (
+        [
+            SidebarRow(
+                kind="folder",
+                label="..",
+                # The listed folder's own page lists its parent, one level back.
+                url=list_url + suffix,
+                current=False,
+            )
+        ]
+        if list_url != "/"
+        else []
+    )
+    rows = (
+        parent
+        + [
+            SidebarRow(
+                kind="board",
+                label=read_board_text(handle).label.title,
+                url=e.url + suffix,
+                current=e.label == current_board,
+            )
+            for e, handle in boards
+        ]
+        + [
+            SidebarRow(
+                kind="folder",
+                label=name,
+                url=url + suffix,
+                current=name == current_folder,
+            )
+            for name, url in folders
+        ]
+    )
+    return rows if len(rows) >= 2 else []
+
+
 def render_nav_html(
     nav_dir: ProjectDirectory,
     url_mount_dir: str,
@@ -107,6 +191,7 @@ def render_nav_html(
     content_left: str,
     show_download: bool,
     show_actions: bool,
+    sidebar_query: str | None,
 ) -> str:
     """Build the top-of-page nav as a plain-HTML fragment for the page body.
 
@@ -132,6 +217,11 @@ def render_nav_html(
             menu at all. They lean on ``dct serve``'s own routes and window
             sizing, so a host embedding the board in a frame turns them off.
 
+        sidebar_query: None when the host shows no sidebar; otherwise the query
+            string (possibly empty) its board links carry, so a sibling opens with
+            the same variables. The sidebar replaces the file menu once the folder
+            it lists holds two or more boards and subfolders.
+
     Returns "" when there's nothing to show or it fails — the nav is chrome and
     must never break the page it sits above.
     """
@@ -155,10 +245,34 @@ def render_nav_html(
 
         from dbt_charts.core.render.chrome_css import theme_to_css
 
+        # A board lists its own folder; a folder's listing lists the folder above
+        # it, with itself current. The root listing has nothing above it, so it
+        # lists itself.
+        this_url = str(dir_ctx["this_dir"]["url"])
+        if sidebar_query is None:
+            sidebar = []
+        elif current_url == "" and this_url == "/":
+            sidebar = _sidebar(nav_dir, this_url, None, None, sidebar_query)
+        elif current_url == "":
+            parent_url = str(dir_ctx["parent_dir"]["url"])
+            sidebar = _sidebar(
+                nav_dir.parent, parent_url, None, nav_dir.name, sidebar_query
+            )
+        else:
+            sidebar = _sidebar(nav_dir, this_url, current_label, None, sidebar_query)
+        # The sidebar names boards by title, so the path names the file.
+        if sidebar and current_url:
+            ctx["current_label"] = next(
+                s["name"]
+                for s in dir_ctx["siblings"]
+                if not s["is_dir"] and s["url"] == current_url
+            )
+
         rstyle = resolve_style(get_theme_style(board_theme))
         return render_template(
             "nav/nav-fragment.html",
             **ctx,
+            sidebar=sidebar,
             content_left=content_left,
             show_download=show_download,
             show_actions=show_actions,

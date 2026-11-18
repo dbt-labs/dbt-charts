@@ -18,12 +18,11 @@ use crate::tier::WidthTier;
 const OBJECT_TITLE_ANCHOR_LEVEL: i64 = 2;
 
 /// The size, weight and family stack an object title paints in at a card's outer `width`
-/// (typography.py:`chart_title_spec`): the heading ramp at the tier's level, the compact weight on a
-/// tiny card whose title weight is `auto`, the title slot's family on a medium or wide one and the
-/// chart font's below.
+/// (typography.py:`chart_title_spec`): an authored size as `int(size)`, else the heading ramp at the
+/// tier's level, the compact weight on a tiny card whose title weight is `auto`, the title slot's
+/// family on a medium or wide one and the chart font's below.
 pub fn chart_title_spec(style: &Style, width: f64) -> Result<(f64, FontWeightValue, String), Diagnostic> {
     let title = &style.charts.title;
-    let sizes = heading_ramp(style, "heading")?;
     let tier = WidthTier::of(width);
     let offset = match tier {
         WidthTier::Tiny => title.base.width_offsets.tiny,
@@ -31,8 +30,14 @@ pub fn chart_title_spec(style: &Style, width: f64) -> Result<(f64, FontWeightVal
         WidthTier::Medium => title.base.width_offsets.medium,
         WidthTier::Wide => title.base.width_offsets.wide,
     };
-    let level = (OBJECT_TITLE_ANCHOR_LEVEL + i64::from(offset)).clamp(1, sizes.len() as i64);
-    let size = sizes[(level - 1) as usize].trunc();
+    let size = match &title.font.size {
+        Engine::Value(size) => size.trunc(),
+        Engine::Rule(_) => {
+            let sizes = heading_ramp(style, "heading")?;
+            let level = (OBJECT_TITLE_ANCHOR_LEVEL + i64::from(offset)).clamp(1, sizes.len() as i64);
+            sizes[(level - 1) as usize].trunc()
+        }
+    };
     // An authored weight wins at every tier; an `auto` one is the compact weight on a tiny card, else
     // the board title's (`style.title.font`, which the chart slot inherits). An `auto` family is the board title's too.
     let weight = match (tier, &title.font.weight) {
@@ -48,12 +53,21 @@ pub fn chart_title_spec(style: &Style, width: f64) -> Result<(f64, FontWeightVal
     Ok((size, weight, family))
 }
 
-/// A title slot whose font size is authored is not modeled: the size comes from the heading ramp.
-pub(crate) fn refuse_authored_size(style: &Style) -> Result<(), Diagnostic> {
-    if matches!(style.charts.title.font.size, Engine::Value(_)) {
-        return Err(Diagnostic::refused(refuse!("a chart title with an authored font size is not supported")));
+/// `_one_line_title_width` (`compile/sizing.py`): the width a chart needs to draw its title uncut on
+/// one line, `chrome` included (the card padding on both sides and the family's own side padding); 0
+/// when the title's overflow does not cut it to one line. The title paints in `width`'s tier, and it
+/// is measured as production's pre-pass measures it, in the plain Inter face and in the painted
+/// weight, taking the wider, and rounded up to a whole pixel.
+pub fn one_line_title_width(style: &Style, title: &str, width: f64, chrome: f64, book: &FontBook) -> Result<f64, Diagnostic> {
+    let slot = &style.charts.title;
+    if !matches!(slot.base.overflow, OverflowMode::Truncate | OverflowMode::Clip) {
+        return Ok(0.0);
     }
-    Ok(())
+    let (size, weight, family) = chart_title_spec(style, width)?;
+    let cased = display_text::case::apply_case(title, slot.font.case.as_str()).map_err(diag::err_internal)?;
+    let plain = book.raw_advance(&cased, &Font { family: "Inter Variable", size, weight: 400.0, italic: false }).map_err(diag::err_internal)?;
+    let painted = book.weighted_advance(&cased, &painted_font(&family, size, &weight, slot.font.style.as_str() == "italic")?).map_err(diag::err_internal)?;
+    Ok(plain.max(painted).ceil() + chrome)
 }
 
 /// The gap between an object title's block and its body when `title.position.offset` is unset
@@ -171,7 +185,6 @@ pub fn chart_title(chart_id: &str, text: &str, subtitle: Option<&str>, style: &S
         return Ok(None);
     }
     let slot = &style.charts.title;
-    refuse_authored_size(style)?;
     let (size, weight, family) = chart_title_spec(style, width)?;
     let cased = display_text::case::apply_case(text, slot.font.case.as_str()).map_err(diag::err_internal)?;
     let title_font = painted_font(&family, size, &weight, slot.font.style.as_str() == "italic")?;

@@ -124,6 +124,24 @@ pub fn dropped_fields() -> Vec<&'static str> {
         .collect()
 }
 
+/// A layer's `font.family` also sets the family of every named font of `theme` that has one and
+/// that `own` gives none, `numeral` included; `code` stays monospace
+/// (`_fonts_following_board_family`).
+pub fn board_family_reaches_fonts(own: &mut StylePatch, theme: &StylePatch) {
+    let Some(family) = own.font.family.clone() else {
+        return;
+    };
+    for (name, font) in &theme.fonts {
+        if name == "code" || !matches!(font.family, Tri::Value(_)) {
+            continue;
+        }
+        let mine = own.fonts.entry(name.clone()).or_default();
+        if matches!(mine.family, Tri::Unset) {
+            mine.family = Tri::Value(family.clone());
+        }
+    }
+}
+
 /// A layer's `charts.pie` reaches its donuts and its `charts.bar` its funnels, and the layer's own
 /// `charts.donut` or `charts.funnel` wins over it, so a board's pie beats the theme's donut default
 /// and a board's bar the theme's funnel recipe (`_family_reaches_recipe`).

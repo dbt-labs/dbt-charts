@@ -248,7 +248,7 @@ def test_runtime_paths_do_not_import_pyarrow(tmp_path: Path) -> None:
             "UTC",
         )[0] == [{{"n": 3}}]
 
-        limit = RowFetchLimit(fetch_limit=10, effective_limit=9, ceiling_binding=False)
+        limit = RowFetchLimit(limit=9, ceiling_binding=False, max_bytes=10_000_000)
         values = [Decimal("4")]
         column = encode(values, infer_type(values))
         result = arrow_to_query_result(na.Array(table([("n", column)], 1)), limit)

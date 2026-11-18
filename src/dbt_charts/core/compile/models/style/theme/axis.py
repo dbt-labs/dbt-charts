@@ -129,12 +129,12 @@ class AxisGridThresholdStyle(BaseModel):
 
 
 class AxisGridTornBaselineStyle(BaseModel):
-    """Torn-baseline wave: the plot edge nearest an off-screen zero.
+    """Torn baseline: the plot edge nearest an off-screen zero.
 
-    When a value axis excludes zero, the plot edge nearest zero is drawn as a
-    wave in the gridline ink so it cannot be read as a floor at zero. Line
-    charts draw it on the y-axis and ranged bars on their value axis; other
-    chart types ignore it.
+    When a value axis excludes zero, the plot edge nearest zero is torn like
+    paper, in the gridline ink, so it cannot be read as a floor at zero. Line
+    charts tear the y-axis and ranged bars their value axis; other chart types
+    ignore it.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -146,18 +146,7 @@ class AxisGridTornBaselineStyle(BaseModel):
     amplitude: float | None = Field(
         default=None,
         gt=0,
-        description="Wave height in pixels, edge to crest; None inherits.",
-    )
-    wavelength: float | None = Field(
-        default=None,
-        ge=1,
-        description="Length of one full wave in pixels; None inherits.",
-    )
-    sharpness: float | None = Field(
-        default=None,
-        ge=0,
-        le=1,
-        description="0 draws a smooth sine, 1 a sharp zigzag; None inherits.",
+        description="Deepest bite of the tear into the plot, in pixels; None inherits.",
     )
 
 
@@ -214,7 +203,7 @@ class BaseAxisGridStyle(BaseModel):
         AxisGridTornBaselineStyle | None, SkipInheritSlots(cascade=True)
     ] = Field(
         default=None,
-        description="Torn-baseline wave style; None inherits from parent axis.",
+        description="Torn-baseline style; None inherits from parent axis.",
     )
 
 

@@ -2139,7 +2139,9 @@
     /*{# circle too big to sit above its plot may reach down over it, never #}*/
     /*{# below the bars' base. A bar too long for any spiral runs straight #}*/
     /*{# off the top of the board, which cuts it as its card did: a shorter #}*/
-    /*{# spiral would state a smaller value. #}*/
+    /*{# spiral would state a smaller value. A chart never mixes metaphors: #}*/
+    /*{# if any bar has no spiral, every bar in the chart draws straight #}*/
+    /*{# from its base at true length, and none curls. #}*/
     /*{# The paths exist from mount, hidden, so hover only sets attributes. #}*/
     /*{# Geometry is read at hover time, in the board root's own units: only #}*/
     /*{# the page knows where the card sits on the board, and at what scale. #}*/
@@ -2344,6 +2346,7 @@
                 : (i < bars.length / 2 ? -1 : 1);
         });
         const placed = [];
+        let offBoard = false;
         /*{# Straight bars first, since they cannot move; then spirals, largest first. #}*/
         const straight = function (bar) { return bar.length <= bar.base - ceiling; };
         bars.slice().sort(function (a, b) {
@@ -2369,13 +2372,17 @@
             }
             const spiral = fit(ceiling, bar.plotTop) || fit(ceiling, bar.base);
             if (!spiral) {
-                bar.points = [[bar.cx, bar.base], [bar.cx, bar.base - bar.length]];
-                placed.push({ lane: lane(bar, view.y) });
+                offBoard = true;
                 return;
             }
             placed.push(spiral);
             bar.points = spiral.points;
         });
+        if (offBoard) {
+            bars.forEach(function (bar) {
+                bar.points = [[bar.cx, bar.base], [bar.cx, bar.base - bar.length]];
+            });
+        }
         return bars;
     }
 

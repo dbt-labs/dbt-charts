@@ -259,3 +259,50 @@ def test_a_page_variable_reaches_only_the_fences_that_read_it(
     assert result.errors == []
     assert len(result.fences) == 2
     assert {e.code for e in unknown.errors} == {"ERR-UNKNOWN-VARIABLE-OVERRIDE"}
+
+
+TEXT_ROW_PAGE = """\
+```charts
+queries:
+  sales:
+    columns: [month, revenue]
+    values:
+      - [Jan, 100]
+  latest:
+    columns: [month]
+    values:
+      - [Jan]
+  flags:
+    columns: [show]
+    values:
+      - [true]
+charts:
+  by_month:
+    type: bar
+    query: sales
+    x: month
+    y: revenue
+rows:
+  - text: "Data through {{ queries.latest.one.month }}."
+  - visible:
+      query: flags
+      column: show
+    rows:
+      - by_month
+```
+"""
+
+
+def test_a_fence_draws_the_queries_its_text_and_probes_read(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    _page(tmp_path, TEXT_ROW_PAGE)
+    project = local_project(tmp_path)
+
+    with ProjectSession.from_project(project) as session:
+        result = render_chart_fences(
+            session, project.path("docs/post.md").read_board(named=True), False
+        )
+
+    assert result.errors == []
+    assert "Data through Jan." in result.fences[0].svg

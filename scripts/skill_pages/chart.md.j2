@@ -43,7 +43,7 @@ Jinja helpers in query SQL:
 
 {{ keys('chart_common') }}
 
-Name the SQL column as the axis should read (`AS weight_lbs` titles "Weight (lb)"); set `x_label`, `y_label` or `field_labels` only when the title must say more.
+Name the SQL column as the axis should read (`AS weight_lbs` titles "Weight (lb)"); set `x_label`, `y_label` or `field_labels` only to say more. Titles use the axis unit.
 
 Name no channel on a chart whose query no other chart uses: the columns bind in order, dimensions first, measure last: {{ positional() }}. A query other charts share stays top-level and its charts name `x`, `y` or `color`; never split a shared query so a chart can skip them.
 

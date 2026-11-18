@@ -50,6 +50,7 @@ def plan_of(
         "week_start": 1,
         "fiscal_year_start_month": 1,
         "prefetch": [],
+        "reads": list(queries),
         "chart_queries": chart_queries or {},
         "variable_queries": {},
         "queries": queries,

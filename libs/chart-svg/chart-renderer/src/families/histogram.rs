@@ -352,6 +352,32 @@ mod tests {
         assert!(err.contains("histogram"), "{err}");
     }
 
+    /// The x labels of a histogram drawn `width` wide over 0..3,200, in axis order.
+    fn x_labels_at(width: f64) -> Vec<String> {
+        let rows: Vec<serde_json::Value> = (0..=64).map(|i| serde_json::json!({"amount": f64::from(i) * 50.0})).collect();
+        let resolved = minimal_valid_json(None, None, None);
+        let json = serde_json::json!({
+            "resolved": resolved, "rows": rows, "width": width, "height": 300.0,
+            "background": null, "fonts_dir": null, "padding": null
+        });
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let fonts = FontBook::load_dir(&format!("{manifest}/../../../src/dbt_charts/core/render/fonts")).unwrap();
+        let svg = render(&serde_json::from_value(json).unwrap(), &fonts).expect("renders");
+        let axis = svg.split("aria-label=\"X-axis").nth(1).expect("an x axis");
+        let axis = axis.split("aria-label=\"Y-axis").next().unwrap();
+        axis.split("</text>").filter_map(|t| t.rsplit('>').next()).filter(|t| !t.is_empty() && t.chars().next().is_some_and(|c| c.is_ascii_digit())).map(str::to_string).collect()
+    }
+
+    /// A narrow histogram thins its bin-edge labels as every other continuous axis does, so
+    /// neighbors never run together; a wide one keeps them all.
+    #[test]
+    fn a_narrow_histogram_thins_its_x_labels() {
+        let wide = x_labels_at(1200.0);
+        let narrow = x_labels_at(180.0);
+        assert!(narrow.len() < wide.len(), "narrow {narrow:?} vs wide {wide:?}");
+        assert_eq!(narrow.first(), wide.first(), "{narrow:?}");
+    }
+
     #[test]
     fn an_empty_bin_paints_no_rect() {
         // The exact ladder-rung shape: 59 values spanning 167..1014 bin at
@@ -1178,14 +1204,13 @@ mod tests {
         (payload, bound)
     }
 
-    /// `bind` reads no font: the bins, the stacked series with their tooltip text and the tick
-    /// labels are there before any size is known.
+    /// `bind` reads no font: the bins and the stacked series with their tooltip text are there
+    /// before any size is known.
     #[test]
     fn bind_derives_the_bins_the_stacks_and_the_tick_labels() {
         let (_, bound) = bound(|_| {});
         assert_eq!(bound.bins.len(), 10);
         assert_eq!(bound.x_ticks.len(), 11);
-        assert_eq!(bound.x_labels.first().map(String::as_str), Some("0"));
         assert_eq!(bound.bins.iter().map(|bin| bin.count).sum::<usize>(), 7);
         let first = &bound.bins[0];
         let [segment] = first.segments.as_slice() else { panic!("one series in the first bin") };

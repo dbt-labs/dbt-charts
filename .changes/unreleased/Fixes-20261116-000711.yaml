@@ -1,0 +1,3 @@
+kind: Fixes
+body: The AI agent no longer repeats its opening plan before every round of tool calls.
+time: 2026-11-16T00:07:11.315233-08:00

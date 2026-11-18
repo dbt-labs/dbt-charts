@@ -1,7 +1,11 @@
 """Tests for render/svg_utils.py helpers."""
 
 from dbt_charts.core.compile.models.primitives import BorderStyle
-from dbt_charts.core.render.svg_utils import border_dash_attrs, translate_group
+from dbt_charts.core.render.svg_utils import (
+    border_dash_attrs,
+    round_clipped,
+    translate_group,
+)
 
 
 def test_border_dash_attrs_empty_when_solid():
@@ -48,3 +52,15 @@ def test_translate_group_wraps_a_noop_translate_when_extra_attrs_given():
     assert translate_group(0, 0, "<rect/>", extra_attrs=' class="foo"') == (
         '<g transform="translate(0, 0)" class="foo"><rect/></g>'
     )
+
+
+def test_a_growing_card_clip_takes_an_id_of_its_own_per_placement() -> None:
+    shared = round_clipped("<g/>", 100, 50, 4)
+    first = round_clipped("<g/>", 100, 50, 4, "t")
+    second = round_clipped("<g/>", 100, 50, 4, "t#2")
+
+    assert "data-dbt-flow-bg" not in shared
+    assert 'id="dbt-card-clip-100-50-4-t"' in first
+    assert 'id="dbt-card-clip-100-50-4-t-2"' in second
+    assert "url(#dbt-card-clip-100-50-4-t-2)" in second
+    assert 'data-dbt-flow-bg=""' in second

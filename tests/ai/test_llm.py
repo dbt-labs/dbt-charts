@@ -700,6 +700,7 @@ def test_reasoning_items_precede_the_function_calls_they_preceded() -> None:
     assert [i.get("id") or i.get("call_id") or i.get("role") for i in items] == [
         "user",
         "rs_a",
+        "assistant",
         "c1",
         "c1",
         "rs_b",
@@ -709,8 +710,7 @@ def test_reasoning_items_precede_the_function_calls_they_preceded() -> None:
         "c3",
     ]
     assert items[1] == _REASONING_A
-    # The preamble text is still never echoed back.
-    assert all(i.get("role") != "assistant" for i in items)
+    assert items[2] == {"role": "assistant", "content": "let me look"}
 
 
 def test_history_without_reasoning_items_is_unchanged() -> None:

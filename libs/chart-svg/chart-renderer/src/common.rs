@@ -940,6 +940,11 @@ pub struct TickLabelConfig {
     /// signature exactly.
     #[serde(default)]
     pub scientific_format: Option<String>,
+    /// Whether this ladder-less axis's ticks stack into a column (a vertical value axis): the
+    /// ladder drawn at render time is labeled at one shared tier, anchored on the top tick when
+    /// they do, repeated on every tick when they do not. Set with `si_format`.
+    #[serde(default)]
+    pub column_forming: Option<bool>,
 }
 
 /// The ruler and `tick_label` a ladder is labeled with.
@@ -957,9 +962,14 @@ impl AxisStyle {
     /// themselves, and that stays as written.
     pub fn labeling(&self, ticks: &[f64], fonts: &FontBook) -> Result<Labeling, String> {
         let baked = Labeling { ruler: self.ruler.clone(), tick_label: self.tick_label.clone() };
-        let Some(format) = self.labels.format.as_ref().filter(|_| self.refit && ticks.len() >= 2 && (self.ruler.is_some() || self.tick_label.is_some())) else {
+        // A ladder-less axis (its ticks are drawn at render time) is labeled as a baked one: one
+        // shared tier for the whole ladder.
+        let ladderless = self.tick_label.as_ref().filter(|tl| tl.si_format.is_some()).and_then(|tl| tl.column_forming);
+        let refitted = self.refit && (self.ruler.is_some() || self.tick_label.is_some());
+        let Some(format) = self.labels.format.as_ref().filter(|_| ticks.len() >= 2 && (refitted || ladderless.is_some())) else {
             return Ok(baked);
         };
+        let column_forming = ladderless.unwrap_or(self.column_forming);
         let parts = d3rs::format::parse_parts(&format.spec).map_err(|e| format!("{}: {e}", format.spec))?;
         let case = self.labels.font.case.as_deref().unwrap_or("none");
         let edge = self.position.as_deref().filter(|position| matches!(*position, "left" | "right"));
@@ -972,27 +982,42 @@ impl AxisStyle {
             notation: format.notation.as_deref(),
             repeat: format.repeat.as_deref(),
             label_expr_authored: self.labels.expr.is_some(),
-            column_forming: self.column_forming,
+            column_forming,
             start_anchored: d3rs::numeral_scale::render_align(self.labels.align.as_deref(), edge, fallback) == Some("left"),
             tabular: self.labels.font.tabular_figures,
         };
         let family = self.labels.font.family.as_deref().unwrap_or_default();
         let drawn: Vec<f64> =
             ticks.iter().copied().filter(|&tick| self.domain_min.is_none_or(|lo| tick >= lo) && self.domain_max.is_none_or(|hi| tick <= hi)).collect();
-        let ruler = match &self.ruler {
-            Some(_) => d3rs::numeral_scale::decide_ruler(&inputs, ticks).map_err(|e| match e {
+        let ruler = if self.ruler.is_some() || ladderless.is_some() {
+            d3rs::numeral_scale::decide_ruler(&inputs, ticks).map_err(|e| match e {
                 d3rs::numeral_scale::LabelError::ColumnNeedsTabularFont => "a column-forming axis needs a tabular label font".to_string(),
                 d3rs::numeral_scale::LabelError::Other(message) => message,
-            })?,
-            None => None,
+            })?
+        } else {
+            None
         };
-        if let (Some(choice), Some(baked_ruler)) = (&ruler, &self.ruler) {
+        if let Some(choice) = &ruler {
             // The same magnitude and end keep the ruler resolve baked; another takes its word and width.
             let anchor_at_start = d3rs::numeral_scale::ruler_anchor_at_start(&drawn, self.domain_max.is_some());
-            if choice.exponent == baked_ruler.exponent && anchor_at_start == baked_ruler.anchor_at_start {
-                return Ok(baked);
-            }
-            let mut rescaled = baked_ruler.clone();
+            let mut rescaled = match &self.ruler {
+                Some(baked_ruler) => {
+                    if choice.exponent == baked_ruler.exponent && anchor_at_start == baked_ruler.anchor_at_start {
+                        return Ok(baked);
+                    }
+                    baked_ruler.clone()
+                }
+                None => RulerConfig {
+                    exponent: choice.exponent,
+                    mode: String::new(),
+                    digit_spec: choice.digit_spec.clone(),
+                    anchor_at_start,
+                    reservation: String::new(),
+                    prefix: if choice.currency { "$".to_string() } else { String::new() },
+                    prefix_repeats: choice.prefix_repeats,
+                    register: String::new(),
+                },
+            };
             rescaled.anchor_at_start = anchor_at_start;
             rescaled.exponent = choice.exponent;
             rescaled.mode = choice.mode.as_str().to_string();
@@ -1005,6 +1030,10 @@ impl AxisStyle {
                 )?;
             }
             return Ok(Labeling { ruler: Some(rescaled), tick_label: None });
+        }
+        if ladderless.is_some() && d3rs::numeral_scale::shared_scale_for_ladder(ticks).is_some() {
+            // A compacting ladder the ruler declined (a start-anchored column) stays as resolve baked it.
+            return Ok(baked);
         }
         let Some(choice) = d3rs::numeral_scale::decide_tick_label(&inputs, ticks, &drawn)? else {
             // A ruler that no longer applies to a literal format leaves its ticks to the format as written.
@@ -1020,6 +1049,7 @@ impl AxisStyle {
                 decimal_pad_table: pad_table,
                 si_format: None,
                 scientific_format: None,
+                column_forming: None,
             }),
         })
     }
@@ -1361,21 +1391,6 @@ pub fn split_si_suffix(s: &str) -> (&str, &str) {
 /// notation); zero stays bare — matching production's repeat-mode labelExpr.
 /// mode "anchor" (default): the anchor tick gets the word, the others the
 /// invisible reservation padding, so the column width is constant.
-/// Reinsert a currency symbol into a digit-only d3 spec (production's
-/// `with_symbol`, numeral_scale.py). The symbol flag sits AFTER the sign in
-/// d3's spec grammar ([[fill]align][sign][symbol]…), so a signed spec keeps
-/// its sign char first — "+,.1~f" becomes "+$,.1~f", not the unparseable
-/// "$+,.1~f" — and d3's own sign-before-symbol placement then applies
-/// (format("$,.1~f")(-500) → "−$500", never "$−500").
-fn spec_with_symbol(digit_spec: &str, symbol: &str) -> String {
-    match digit_spec.chars().next() {
-        Some(sign @ ('+' | '-' | '(' | ' ')) => {
-            format!("{sign}{symbol}{}", &digit_spec[sign.len_utf8()..])
-        }
-        _ => format!("{symbol}{digit_spec}"),
-    }
-}
-
 /// The exact per-tick choice production's `inject_axis_numeral_expr`
 /// composes into a ladder-less axis's `labelExpr` (`vl_field_maps.py`),
 /// ported here so both the drawn label (`format_y_label`) and its gutter
@@ -1589,7 +1604,7 @@ pub fn format_y_label(
             let anchor_spec = if tl.prefix.is_empty() {
                 tl.format.clone()
             } else {
-                spec_with_symbol(&tl.format, &tl.prefix)
+                d3rs::format::with_symbol(&tl.format, &tl.prefix)
             };
             let anchored = tl.anchor_at_start.is_some();
             let on_anchor = value != 0.0
@@ -1668,7 +1683,7 @@ pub fn format_y_label(
     let numeral = if carries_prefix && (!lead.is_empty() || !authored_prefix.is_empty()) {
         // The anchored prefix leads the sign (`painted_sign_placement`).
         let spec = if !ruler.prefix.is_empty() && !composed {
-            spec_with_symbol(&ruler.digit_spec, &ruler.prefix)
+            d3rs::format::with_symbol(&ruler.digit_spec, &ruler.prefix)
         } else {
             ruler.digit_spec.clone()
         };
@@ -1685,7 +1700,7 @@ pub fn format_y_label(
         };
         slot.paint(scaled).map_err(|e| format!("ruler anchor spec {:?}: {e}", slot.spec))?
     } else if carries_prefix && !ruler.prefix.is_empty() && !composed {
-        let spec = spec_with_symbol(&ruler.digit_spec, &ruler.prefix);
+        let spec = d3rs::format::with_symbol(&ruler.digit_spec, &ruler.prefix);
         ::bind::formats::locale::d3_format(&spec, scaled)
             .map_err(|e| format!("ruler anchor spec {spec:?}: {e}"))?
     } else {
@@ -2449,18 +2464,28 @@ pub struct AxisGrid {
 }
 
 /// RJ Andrews' "tear up your baseline": when a value domain excludes zero,
-/// the edge nearest the off-screen zero is drawn as a wave so it cannot be
-/// read as a floor at zero. Line charts draw it on the y-axis and ranged
-/// bars on their value axis; every other family ignores it.
+/// the edge nearest the off-screen zero is torn like paper so it cannot be
+/// read as a floor at zero. Line charts tear the y-axis and ranged bars their
+/// value axis; every other family ignores it.
 #[derive(Deserialize, Clone)]
 pub struct TornBaseline {
     pub enabled: bool,
-    /// Crest height above the edge, in px.
+    /// The deepest bite into the plot, in px.
     pub amplitude: f64,
-    /// One full wave, in px.
-    pub wavelength: f64,
-    /// 0 is a sine, 1 a zigzag; between blends the two.
-    pub sharpness: f64,
+}
+
+impl TornBaseline {
+    /// The tear along `along` resting on `edge` and biting `inward`, seeded by
+    /// the torn edge's value so a chart tears the same way every time.
+    pub fn cubics(&self, along: (f64, f64), edge: f64, inward: f64, value: f64) -> Vec<crate::torn::Cubic> {
+        crate::torn::ragged_to(along, edge, inward, self.amplitude, value.to_bits())
+    }
+
+    /// How far past the domain's end the torn edge sits: the bite plus its clearance, so the
+    /// end draws as a rung of its own above the paper.
+    pub fn pad(&self) -> f64 {
+        self.amplitude + crate::torn::RUNG_CLEARANCE
+    }
 }
 
 impl AxisGrid {
@@ -4693,6 +4718,7 @@ mod format_y_label_tests {
             decimal_pad_table: vec![],
             si_format: None,
             scientific_format: None,
+            column_forming: None,
         };
         let slot = |json: &str| serde_json::from_str::<FormatSlot>(json).unwrap();
         let usd = slot(r#"{"spec": ",.0f", "prefix": "US$"}"#);
@@ -4740,6 +4766,7 @@ mod format_y_label_tests {
             decimal_pad_table: vec![],
             si_format: None,
             scientific_format: None,
+            column_forming: None,
         }
     }
 
@@ -4822,6 +4849,7 @@ mod format_y_label_tests {
             decimal_pad_table: vec![],
             si_format: Some(".3~s".to_string()),
             scientific_format: Some(".3~e".to_string()),
+            column_forming: None,
         }
     }
 
@@ -4881,6 +4909,7 @@ mod format_y_label_tests {
             decimal_pad_table: vec![],
             si_format: None,
             scientific_format: None,
+            column_forming: None,
         }
     }
 
@@ -4998,6 +5027,7 @@ mod format_y_label_tests {
             decimal_pad_table: Vec::new(),
             si_format: Some("$.3~s".to_string()),
             scientific_format: Some("$.3~e".to_string()),
+            column_forming: None,
         };
         let slot = affixed_slot("", " x");
         let label = |v: f64| format_y_label(v, None, Some(&tl), Some(&slot), 1, 4).unwrap();
@@ -5017,6 +5047,7 @@ mod format_y_label_tests {
             decimal_pad_table: ["P0", "P1", "P2", "P3"].map(String::from).to_vec(),
             si_format: None,
             scientific_format: None,
+            column_forming: None,
         };
         let slot = affixed_slot("", " x");
         assert_eq!(format_y_label(2.5, None, Some(&tl), Some(&slot), 1, 4).unwrap(), "2.5 xP1");
@@ -6055,6 +6086,62 @@ mod y_edges_tests {
         assert_eq!((centered.baseline(100.0, 100.0), centered.baseline(0.0, 100.0), centered.baseline(50.0, 100.0)), ("bottom", "top", "middle"));
         let above_gridline = YEdges { base: "bottom", ..centered };
         assert_eq!((above_gridline.baseline(100.0, 100.0), above_gridline.baseline(0.0, 100.0)), ("bottom", "bottom"));
+    }
+}
+
+#[cfg(test)]
+mod ladderless_labeling_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn labels(column_forming: bool, ticks: &[f64]) -> Vec<String> {
+        let fixture: Value = serde_json::from_str(include_str!("../../fixtures/line_single.json")).expect("fixture parses");
+        let mut axis: AxisStyle = Deserialize::deserialize(&fixture["resolved"]["style"]["axis_y"]).expect("axis_y");
+        axis.ruler = None;
+        axis.tick_values = Vec::new();
+        axis.domain_min = None;
+        axis.domain_max = None;
+        axis.labels.format = Some(FormatSlot { raw: Some("number".to_string()), ..FormatSlot::from(",.2~s") });
+        axis.tick_label = Some(
+            serde_json::from_value(json!({
+                "format": ",.0f", "si_format": ",.2~s", "scientific_format": ",.2~e", "column_forming": column_forming
+            }))
+            .unwrap(),
+        );
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../src/dbt_charts/core/render/fonts");
+        let fonts = measure::FontBook::load_dir(dir).expect("test fonts load");
+        let labeling = axis.labeling(ticks, &fonts).unwrap();
+        ticks
+            .iter()
+            .enumerate()
+            .map(|(i, &tv)| {
+                format_y_label(tv, labeling.ruler.as_ref(), labeling.tick_label.as_ref(), axis.labels.format.as_ref(), i, ticks.len()).unwrap()
+            })
+            .collect()
+    }
+
+    fn bare(labels: Vec<String>) -> Vec<String> {
+        labels.into_iter().map(|label| label.trim_end_matches(|c: char| c.is_whitespace() || "\u{2004}\u{2005}\u{200a}\u{200b}\u{2006}\u{2007}".contains(c)).to_string()).collect()
+    }
+
+    const MILLIONS: [f64; 4] = [0.0, 500_000.0, 1_000_000.0, 1_500_000.0];
+    const THOUSANDS: [f64; 5] = [0.0, 500.0, 1000.0, 1500.0, 2000.0];
+
+    #[test]
+    fn a_vertical_ladder_drawn_at_render_anchors_its_unit_on_the_top_tick() {
+        assert_eq!(bare(labels(true, &MILLIONS)), ["0", "0.5", "1", "1.5M"]);
+    }
+
+    #[test]
+    fn a_horizontal_ladder_drawn_at_render_repeats_its_unit_on_every_tick() {
+        assert_eq!(labels(false, &MILLIONS), ["0", "0.5m", "1m", "1.5m"]);
+    }
+
+    #[test]
+    fn a_ladder_that_does_not_compact_prints_plain_digits_at_either_orientation() {
+        let plain = ["0", "500", "1,000", "1,500", "2,000"];
+        assert_eq!(labels(true, &THOUSANDS), plain);
+        assert_eq!(labels(false, &THOUSANDS), plain);
     }
 }
 

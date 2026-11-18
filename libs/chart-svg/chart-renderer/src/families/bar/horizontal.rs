@@ -41,23 +41,21 @@ use super::torn_outlier::{Caps, Seg, Torn};
 use super::tooltip::{bar_datum_aria, stack_group_total, tooltip_order_domain};
 use super::vertical::refuse_numeric_x_on_bands;
 
-/// Each layer's own rows (`validate_layers` already confirmed a cross-query
-/// dataset exists); a facet panel's layer on the base query draws that panel's slice.
+/// Each layer's own rows; a facet panel's layer on the base query draws that panel's slice.
 pub(super) fn horizontal_layer_rows<'a>(
     payload: &'a Payload,
     r: &BarResolved,
     layers: &'a [OverlayLayer],
     panel_rows: Option<&'a [serde_json::Map<String, Value>]>,
-) -> Vec<(&'a OverlayLayer, &'a [serde_json::Map<String, Value>])> {
+) -> Result<Vec<(&'a OverlayLayer, &'a [serde_json::Map<String, Value>])>, String> {
     layers
         .iter()
         .map(|l| {
             let rows = match panel_rows {
                 Some(panel_rows) => panel_layer_rows(panel_rows, true, false, payload, l.query_name(), r.query_name.as_deref(), "bar"),
                 None => resolve_layer_rows(payload, l.query_name(), r.query_name.as_deref(), "bar"),
-            }
-            .expect("validate_layers already confirmed this dataset exists");
-            (l, rows)
+            }?;
+            Ok((l, rows))
         })
         .collect()
 }
@@ -77,7 +75,7 @@ pub(super) fn render_horizontal(
 ) -> Result<Drawn, Diagnostic> {
     // The chart's OWN effective background — see `BarResolved::background`.
     let bg = r.background.clone();
-    let layers = horizontal_layer_rows(payload, r, layers, None);
+    let layers = horizontal_layer_rows(payload, r, layers, None)?;
     render_horizontal_panel(
         payload.chart_id()?,
         payload.authored_height,
@@ -378,7 +376,9 @@ pub(super) fn render_horizontal_panel(
             .iter()
             .map(|v| {
                 let domain = if is_stacked { &palette_domain } else { &color_domain };
-                Ok((v.clone(), crate::common::series_color(v, domain, &r.series_palette, category_scale, &r.patterns)?.swatch("none", 0.0).fill))
+                // A folded series is keyed by its display label, as the legend paints it.
+                let label = if r.wide_measures.is_empty() { v.clone() } else { ::bind::wide::wide_series_display(v, &wide_labels) };
+                Ok((label, crate::common::series_color(v, domain, &r.series_palette, category_scale, &r.patterns)?.swatch("none", 0.0).fill))
             })
             .collect::<Result<_, String>>()?
     };
@@ -492,7 +492,8 @@ pub(super) fn render_horizontal_panel(
     }
     // A scatter layer shares the bar's one value scale, which then nices both
     // ends (`nice_shared_scale`), as does a line layer.
-    if !layers.is_empty() && date_axis.is_none() {
+    // A torn plot ends exactly at its break; a nice would round the domain past it.
+    if !layers.is_empty() && date_axis.is_none() && torn.is_none() {
         let (niced_min, niced_max, niced_ticks) = nice_shared_scale(ax_y, linear_domain_min, linear_domain_max);
         if let Some(ticks) = niced_ticks {
             tick_values = ticks;
@@ -1605,12 +1606,18 @@ pub(super) fn render_horizontal_panel(
         }
     }
 
+    // Only a numeric ranged bar's value scale can exclude zero by design.
+    let tear = crate::torn::ValueTear::of(
+        ax_y.grid.torn_baseline.as_ref().filter(|_| ranged.as_ref().is_some_and(|rb| !rb.is_date())),
+        linear_domain_min,
+        linear_domain_max,
+    );
     let corner_r = r.style.mark.border.radius.unwrap_or(0.0);
     let value_axis = HorizontalValueAxis {
         ticks: tick_values.clone(),
         labels: val_tick_labels.iter().filter(|_| !val_labels_hidden).cloned().collect(),
         shown: val_tick_labels.iter().filter(|_| !val_labels_hidden).map(|l| ax_y.labels.clip(l, fonts)).collect::<Result<_, _>>()?,
-        visible: val_visible.take(),
+        visible: crate::torn::unlabeled(val_visible.take(), &tick_values, tear.as_ref().map(|t| t.edge)),
         domain: (linear_domain_min, linear_domain_max),
         flush_threshold: flush_thr,
         pad: val_pad,
@@ -1715,12 +1722,6 @@ pub(super) fn render_horizontal_panel(
     // Gridlines: vertical lines at value ticks. The grid axis group carries
     // Vega's +0.5 crispness translate in both coordinates.
     let grid = &ax_y.grid;
-    // Only a numeric ranged bar's value scale can exclude zero by design.
-    let tear = crate::torn::ValueTear::of(
-        grid.torn_baseline.as_ref().filter(|_| ranged.as_ref().is_some_and(|rb| !rb.is_date())),
-        linear_domain_min,
-        linear_domain_max,
-    );
     if grid.visible.unwrap_or(false) {
         let gc = crate::common::required_ink(grid.color.as_deref(), "bar", "grid.color")?;
         let gw = grid.width.unwrap_or(1.0);
@@ -1749,8 +1750,9 @@ pub(super) fn render_horizontal_panel(
         plot.push(::layout::contract::grid_group(lines));
     }
     if let Some(t) = &tear {
-        let gc = crate::common::required_ink(grid.color.as_deref(), "bar", "grid.color")?;
-        plot.push(t.node(&t.cubics(linear.scale(t.edge), plot_w, plot_h), true, gc, grid.width.unwrap_or(1.0)));
+        // The category gridlines' ink, a rung quieter than the value rung it replaces.
+        let gc = crate::common::required_ink(ax_x.grid.color.as_deref(), "bar", "axis_x.grid.color")?;
+        plot.push(t.node(&t.cubics(linear.scale(t.edge), plot_w, plot_h), true, gc, ax_x.grid.width.unwrap_or(1.0)));
     }
 
     // Category gridlines end at the break; the torn bars and their caps tear along one wave.

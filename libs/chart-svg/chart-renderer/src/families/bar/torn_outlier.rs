@@ -200,9 +200,10 @@ impl Torn {
         if self.horizontal { 1.0 } else { -1.0 }
     }
 
-    /// The value domain is exactly `[0, break]`, never niced past it.
+    /// The value domain ends exactly at the break, never niced past it; its low end is zero
+    /// or, when a bar hangs below zero, the resolved floor.
     pub(super) fn pin_domain(&self, lo: &mut f64, hi: &mut f64, ticks: &mut Vec<f64>) {
-        (*lo, *hi) = (0.0, self.break_value);
+        (*lo, *hi) = (lo.min(0.0), self.break_value);
         ticks.retain(|&tick| tick <= self.break_value * (1.0 + 1e-9));
     }
 

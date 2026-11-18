@@ -287,3 +287,39 @@ def test_non_strict_variables_tolerate_a_browser_query_string(
         tmp_path, local_project, variables=variables, strict_variables=False
     )
     assert result.status == "ok", result.board_error
+
+
+def test_a_kpi_conditional_rule_with_an_aggregate_operand_is_a_named_user_error(
+    tmp_path: Path, local_project: LocalProject
+) -> None:
+    project = local_project(tmp_path)
+    board = InMemoryBoard(
+        """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {revenue: 10}
+charts:
+  c:
+    query: q
+    type: kpi
+    value: revenue
+    style:
+      conditional:
+        revenue:
+          - gt:
+              fn: max
+            background: "#eeeeff"
+rows:
+  - c
+""",
+        path=project.path("charts/b.yml"),
+    )
+    with ProjectSession.from_project(project) as session:
+        result = session.render_board(board=board, format="json")
+
+    codes = _codes(result)
+    assert "ERR-KPI-CONDITIONAL-AGGREGATE" in codes, result
+    assert "ERR-INTERNAL" not in codes

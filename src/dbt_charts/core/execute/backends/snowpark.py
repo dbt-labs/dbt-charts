@@ -27,6 +27,7 @@ from dbt_charts.core.compile.models.source import SnowflakeSourceConfig
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.dialects import SQLDialect
 from dbt_charts.core.dialects.identifier import result_column_name
+from dbt_charts.core.execute.query_result import take
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 if TYPE_CHECKING:
@@ -198,8 +199,7 @@ class SnowparkBackend:
                 f"{query.time_zone} (ALTER SESSION SET TIMEZONE), or change "
                 "regional.time_zone to match."
             )
-        # Streamed and cut off at the fetch limit, so the SQL text is never
-        # rewritten (DataFrame.limit() would wrap it in a subquery).
+        # Not DataFrame.limit(): it would wrap the SQL in a subquery.
         frame = self._session.sql(query.inline("snowflake"))
         columns = [
             result_column_name(_raw_name(name), "snowflake") for name in frame.columns
@@ -209,22 +209,27 @@ class SnowparkBackend:
             for name, field in zip(columns, frame.schema.fields, strict=True)
         ]
         decoders = [_DECODERS.get(kind.kind) for kind in types]
-        raw_rows = islice(frame.to_local_iterator(), query.limit.fetch_limit)
         try:
-            rows = [
-                tuple(
-                    cell if decode is None or cell is None else decode(cell)
-                    for cell, decode in zip(row, decoders, strict=True)
-                )
-                for row in raw_rows
-            ]
+            rows, reason = take(
+                (
+                    tuple(
+                        cell if decode is None or cell is None else decode(cell)
+                        for cell, decode in zip(row, decoders, strict=True)
+                    )
+                    for row in islice(
+                        frame.to_local_iterator(), query.limit.fetch_limit
+                    )
+                ),
+                columns,
+                query.limit,
+            )
         except ValueError as exc:
             # A cell the session returned does not match its declared type: a
             # client-side defect, not the warehouse rejecting the statement.
             raise DbtChartsError(
                 f"Could not decode a Snowpark result cell: {exc}"
             ) from exc
-        return TypedRows(columns, rows, types)
+        return TypedRows(columns, rows, types, reason)
 
     def interrupt(self) -> None:
         pass

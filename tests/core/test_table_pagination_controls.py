@@ -1192,9 +1192,8 @@ class TestPaginatorRowRangeLabel:
 
 
 class TestPooledPagerFollowsItsPage:
-    """A pooled table's card holds the tallest page a sort could build, so it
-    never resizes between pages; the pager sits under the open page's rows,
-    so a short page leaves its spare height below the pager, not above it.
+    """A pooled table's card fits the page it opens on, the pager under its
+    rows; a taller page the browser opens scrolls inside that body.
     """
 
     @pytest.fixture(autouse=True)
@@ -1203,7 +1202,7 @@ class TestPooledPagerFollowsItsPage:
         with interactive_controls(True):
             yield
 
-    def test_pager_sits_under_each_page_in_a_card_of_one_height(
+    def test_pager_sits_under_each_page_in_a_card_that_fits_it(
         self, make_chart
     ) -> None:
         from dbt_charts.core.compile.models.style.authored import (
@@ -1272,8 +1271,11 @@ class TestPooledPagerFollowsItsPage:
         assert _prev_text_y(svg_page1) - _rows_end(svg_page1) == _prev_text_y(
             svg_page2
         ) - _rows_end(svg_page2)
-        assert _table_height(svg_page1) == _table_height(svg_page2), (
-            "table height must stay constant across pages"
+        assert _table_height(svg_page1) < _table_height(svg_page2), (
+            "each render's card fits its open page"
+        )
+        assert "data-dbt-page-overflow" in svg_page1, (
+            "page 1's body scrolls the taller page 2"
         )
 
 

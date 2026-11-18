@@ -268,3 +268,54 @@ def test_a_title_word_wider_than_the_measure_widens_the_board(local_project) -> 
         None,
         root=True,
     )
+
+
+def _footer_texts(svg: str) -> tuple[dict[str, str], list[dict[str, str]]]:
+    def attrs(tag: str) -> dict[str, str]:
+        return dict(re.findall(r'([\w-]+)="([^"]*)"', tag))
+
+    stamp = re.search(r'<text data-role="render-timestamp"[^>]*>', svg)
+    assert stamp is not None, "no timestamp"
+    credit = re.findall(r'<text[^>]*data-dct-role="footer-text"[^>]*>', svg)
+    assert credit, "no footer credit"
+    return attrs(stamp.group(0)), [attrs(t) for t in credit]
+
+
+def test_a_footer_too_wide_for_an_authored_width_wraps_right_aligned(
+    local_project,
+) -> None:
+    """An authored width still wins over the footer row's floor, so a row that
+    cannot fit wraps instead: the credit takes the last line and the timestamp
+    the line above it, both right-aligned."""
+    narrow = _svg("width: 240\ntheme: paper\n" + _QUERY + _TABLE + _ROWS, local_project)
+    wide = _svg("width: 900\ntheme: paper\n" + _QUERY + _TABLE + _ROWS, local_project)
+
+    stamp, credit = _footer_texts(narrow)
+    right = max(float(c["x"]) for c in credit)
+    assert stamp["text-anchor"] == "end"
+    assert abs(float(stamp["x"]) - right) < 1
+    credit_y = float(credit[0]["y"])
+    assert float(stamp["y"]) < credit_y - float(stamp["font-size"])
+
+    wide_stamp, wide_credit = _footer_texts(wide)
+    assert wide_stamp["y"] == wide_credit[0]["y"], "a row that fits stays one line"
+    line_step = credit_y - float(stamp["y"])
+    narrow_h = float(re.search(r'<svg[^>]* height="([\d.]+)"', narrow).group(1))
+    table_only = _svg(
+        "width: 240\ntheme: paper\nstyle:\n  timestamp:\n    visible: false\n"
+        + _QUERY
+        + _TABLE
+        + _ROWS,
+        local_project,
+    )
+    single_h = float(re.search(r'<svg[^>]* height="([\d.]+)"', table_only).group(1))
+    assert abs(narrow_h - single_h - line_step) < 0.01
+
+
+def test_an_unauthored_board_at_its_footer_floor_keeps_the_footer_on_one_line(
+    local_project,
+) -> None:
+    """The floor is sized from the widest sample timestamp, so a board hugged to
+    it never wraps the footer row."""
+    stamp, credit = _footer_texts(_svg(_QUERY + _TABLE + _ROWS, local_project))
+    assert stamp["y"] == credit[0]["y"]

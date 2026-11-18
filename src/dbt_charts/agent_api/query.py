@@ -635,7 +635,7 @@ def execute_query(
     `source:` would. Use {{ variable_name }} syntax for parameterized values.
     """
     limit = min(limit, MAX_QUERY_LIMIT)
-    fetch_limit = limit + 1
+    sample_rows = limit + 1
 
     # Structural validation runs regardless of execution outcome: a query that
     # executes cleanly can still double-count (re-aggregation) or build a cartesian
@@ -649,7 +649,7 @@ def execute_query(
         query = SqlQuery(
             sql=sql,
             source=source,
-            limit=fetch_limit,
+            limit=sample_rows,
             lenient_variables=lenient_variables,
         )
         board = None
@@ -684,7 +684,7 @@ def execute_query(
 
         data = normalize_data_for_json(result.data)
         columns = list(data[0].keys()) if data else []
-        truncated = len(data) > limit
+        truncated = len(data) > limit or result.truncated_reason is not None
         data = data[:limit]
 
         return ExecuteQueryResult(
@@ -769,20 +769,29 @@ def _run_over_memory_cache(
     cache is left open for it to close.
     """
     from dbt_charts.agent_api.cache import open_cache
+    from dbt_charts.core.execute.lookup import Ledger
     from dbt_charts.core.execute.plan import make_context
     from dbt_charts.core.execute.plan_reader import plan_variables
     from dbt_charts.core.execute.query_results import execute
 
     result_cache = open_cache(None) if cache is None else cache
+    ledger = Ledger()
     try:
         # The sample limit bounds *name* alone: a shared cache holds each upstream whole.
         ctx = make_context(board, planned, env, result_cache=result_cache)
         variables = plan_variables(planned.plan)
-        held = execute(ctx, [name], variables).execute_query_result(name, variables)
+        held = execute(ctx, [name], variables, ledger=ledger).execute_query_result(
+            name, variables
+        )
     finally:
         if cache is None:
             result_cache.close()
-    return QueryResult(data=held.rows[:limit], schema=held.schema)
+    truncation = ledger.truncations.get(name)
+    return QueryResult(
+        data=held.rows[:limit],
+        schema=held.schema,
+        truncated_reason=None if truncation is None else truncation.reason,
+    )
 
 
 def query_board(
@@ -906,7 +915,7 @@ def query_board(
         )
 
     data = normalize_data_for_json(exec_result.data)
-    truncated = len(data) > limit
+    truncated = len(data) > limit or exec_result.truncated_reason is not None
     data = data[:limit]
 
     return QueryBoardResult(

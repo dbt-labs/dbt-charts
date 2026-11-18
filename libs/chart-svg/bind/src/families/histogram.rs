@@ -82,8 +82,8 @@ pub fn bind(id: &ChartId, chart: &BarChart, board: &Board, run: &RunResult, plac
     let title = plain_text(chart.cartesian.shared.title.as_ref())?;
     let subtitle = plain_text(chart.cartesian.shared.subtitle.as_ref())?;
     let p = Prelude::counting(&chart.cartesian, ChannelType::Quantitative, placed)?;
-    cartesian::refuse_scale(p.x_scale, "histogram", "x", false)?;
-    cartesian::refuse_scale(p.y_scale, "histogram", "y", false)?;
+    cartesian::refuse_scale(placed.public_id, p.x_scale, "histogram", "x", false)?;
+    cartesian::refuse_scale(placed.public_id, p.y_scale, "histogram", "y", false)?;
     let x_field = p.x_field;
     let x_format = axis_format(&p.x_ladder, p.formats)?;
     let dataset = cartesian::dataset(id, &chart.cartesian, board, run, &[x_field])?;
@@ -115,14 +115,14 @@ pub fn bind(id: &ChartId, chart: &BarChart, board: &Board, run: &RunResult, plac
     let tallest = bins.iter().map(|bin| bin.members.len()).max().ok_or_else(|| diag::err_internal("d3 bins a column with a number into at least one bin"))?.max(unbinned);
 
     let edges: Vec<f64> = bins.iter().map(|bin| bin.x0).chain([stop]).collect();
-    // Each edge prints as an unbaked rung does: production's x labels come from the axis slot's format alone.
-    let locale = active_number_locale();
+    // Production bakes no tick labels into a histogram's x axis: the edges are labeled from the axis slot's
+    // format alone, every edge at one shared tier.
     let extent_hi = numbers.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let rungs = edges
-        .iter()
-        .enumerate()
-        .map(|(index, value)| Ok(Rung { value: *value, text: x_format.paint_unbaked_rung(&locale, *value, Some((index, edges.len())), extent_hi)? }))
-        .collect::<Result<Vec<_>, Diagnostic>>()?;
+    let rungs = x_format
+        .label_unbaked(&active_number_locale(), edges, extent_hi, false)?
+        .into_iter()
+        .map(|(value, text)| Rung { value, text })
+        .collect::<Vec<_>>();
     let x_extent = Extent::new(start, stop).map_err(internal("x extent"))?;
     let x_domain = ValueDomain {
         scale: ValueScale::Linear,
@@ -194,8 +194,9 @@ pub fn bind(id: &ChartId, chart: &BarChart, board: &Board, run: &RunResult, plac
     let baselines = Baselines { zero: false, unity: false, x_threshold: false };
     let plot = bound::Plane::new(bound::PlaneParts {
         orient: Orient::Vertical,
-        x: Scale { kind: ScaleKind::Linear(ValueAxis { domain: x_domain, format: x_format }), title: x_shown },
-        y: vec![Scale { kind: ScaleKind::Linear(ValueAxis { domain: y_domain, format: y_format }), title: y_shown }],
+        x: Scale { kind: ScaleKind::Linear(cartesian::value_axis(x_domain, x_format, false, false)?), title: x_shown },
+        // A count axis bakes no ladder, so no tick label is composed into it.
+        y: vec![Scale { kind: ScaleKind::Linear(ValueAxis { domain: y_domain, format: y_format, composed: false }), title: y_shown }],
         panels: Panels::Single,
         series: vec![series],
         layers: vec![MarkLayer { mark: Mark::Bins, y_scale: 0, panels: vec![datums] }],

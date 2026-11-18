@@ -37,8 +37,8 @@ every token surface after it:
 from __future__ import annotations
 
 import enum
-from datetime import datetime
-from typing import Literal
+from datetime import date, datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -394,6 +394,77 @@ class BoardList(ContractModel):
     )
 
 
+#: Response header of the eval export: how many boards with pairs to export
+#: were left out because the caller may not view them.
+EVAL_SKIPPED_BOARDS_HEADER = "X-Dct-Skipped-Boards"
+
+
+class EvalRecord(ContractModel):
+    """One line of a project's eval set: a question and the SQL that answers it.
+
+    The export is JSON Lines, one of these per line, in field order. The
+    answer key of an eval: it is never written into the project the agent
+    under test reads.
+    """
+
+    question: str = Field(description="The question, as the reviewer left it.")
+    sql: str = Field(
+        description=(
+            "The SQL template as authored on the board, Jinja included; "
+            "`variables` holds what it binds by default."
+        )
+    )
+    dialect: str | None = Field(
+        description=(
+            "SQL dialect of `source`. Null when the source's type names none "
+            "(a file source, or a dbt profile whose dialect lives in the profile)."
+        )
+    )
+    source: str | None = Field(
+        description=(
+            "The source the query runs on after inheritance: its own, the "
+            "board's, or the folder's. Null when it names none."
+        )
+    )
+    variables: dict[str, Any] = Field(  # type-state: explicit_any — authored defaults
+        description="The board's variables at their defaults, typed as a render binds them."
+    )
+    board_path: str = Field(description="The board file, relative to the project.")
+    query_name: str = Field(
+        description="The key under `queries:`, or `charts/<chart_id>` for inline SQL."
+    )
+    question_origin: str = Field(
+        description=(
+            "Who wrote the question: `authored` by the reviewer, `generated` "
+            "and left as is, or `edited` (generated, then rewritten)."
+        )
+    )
+    approved_by: str | None = Field(
+        description=(
+            "Email of the approver. Null when the pair is unapproved, and when "
+            "the approver's account has since been deleted."
+        )
+    )
+    approved_at: date | None = Field(
+        description=(
+            "Day (UTC) the SQL was approved at `sql_digest`. Null exactly when "
+            "the query is unreviewed or changed since its approval; such pairs "
+            "appear only when unapproved pairs were asked for."
+        )
+    )
+    sql_digest: str = Field(
+        description=(
+            "Digest of `sql` with comments and whitespace runs normalized: the "
+            "value an approval is pinned to. A different digest for the same "
+            "board and query later means this pair has gone stale."
+        )
+    )
+
+    def jsonl(self) -> str:
+        """This record as its line of the export, newline included."""
+        return self.model_dump_json() + "\n"
+
+
 class ProjectSummary(ContractModel):
     """One connected project."""
 
@@ -617,6 +688,9 @@ class ProjectSettings(ContractModel):
     )
     allow_self_merge: bool = Field(
         description="Whether, in branch mode, authors may merge their own changes."
+    )
+    require_linked_author: bool = Field(
+        description="Whether a pull request opens only for a member with a linked GitHub account."
     )
     banner_enabled: bool = Field(description="Whether the banner shows.")
     banner_text: str = Field(description="The banner's text.")

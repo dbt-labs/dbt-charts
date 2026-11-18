@@ -119,15 +119,6 @@ class BarChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
             "not a list.",
             when=(IsList("y"),),
         ),
-        # A histogram bins x and counts, never reading y, so the multi-series
-        # rules below are bar-only.
-        Forbids(
-            ("layers",),
-            "Bar chart: layers are not supported with multi-metric "
-            "(y: [...]) charts. Use a long-form query with one y field.",
-            when=(ValueIn("type", ("bar", "funnel")), IsList("y")),
-            nonempty=("layers",),
-        ),
     )
 
     type: Annotated[

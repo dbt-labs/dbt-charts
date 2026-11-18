@@ -146,7 +146,11 @@ def test_the_ceiling_overfetch_is_sliced_and_flagged(adapter: ExecEnv) -> None:
         sql="SELECT a FROM t",
         params=(),
         setup_sql=(),
-        limit=RowFetchLimit(fetch_limit=11, effective_limit=10, ceiling_binding=True),
+        limit=RowFetchLimit(
+            limit=10,
+            ceiling_binding=True,
+            max_bytes=10_000_000,
+        ),
         time_zone=UTC,
     )
     with _opened(_Connection(table)):

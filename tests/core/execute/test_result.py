@@ -20,20 +20,23 @@ import nanoarrow as na
 import pyarrow as pa
 import pytest
 
-from dbt_charts.core.column_types import ColumnType
+from dbt_charts.core.column_types import ColumnType, TypedRows
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_NUMERIC_OVERFLOW
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.query_result import RowFetchLimit
 from dbt_charts.core.execute.result import (
     arrow_to_query_result,
     read_bounded_stream,
+    typed_rows_to_query_result,
 )
 
 
 def _unbounded(rows: int) -> RowFetchLimit:
     """A limit no result in these tests can reach."""
     return RowFetchLimit(
-        fetch_limit=rows + 1, effective_limit=rows, ceiling_binding=False
+        limit=rows,
+        ceiling_binding=False,
+        max_bytes=10_000_000,
     )
 
 
@@ -165,10 +168,39 @@ class TestOtherTypes:
         assert result.data == [{"MRR": 1}]
 
 
+class TestFetchReason:
+    def test_the_fetchs_own_reason_is_kept(self) -> None:
+        """A client that stopped mid-result names its own cut."""
+        typed = TypedRows(
+            ["a"],
+            [(0,), (1,)],
+            [ColumnType(kind="integer")],
+            truncated_reason="max_rows",
+        )
+        result = typed_rows_to_query_result(typed)
+        assert len(result.data) == 2
+        assert result.truncated_reason == "max_rows"
+
+
+class TestByteBudget:
+    # Each row serializes to 99 bytes as ``{"s": "xx…"}``: a 250-byte budget keeps two.
+    _BUDGET = RowFetchLimit(limit=10, ceiling_binding=True, max_bytes=250)
+
+    def test_arrow_rows_are_cut_at_the_byte_budget(self) -> None:
+        table = pa.table({"s": pa.array(["x" * 90] * 5, pa.string())})
+        result = arrow_to_query_result(na.Array(table), self._BUDGET)
+        assert result.data == [{"s": "x" * 90}] * 2
+        assert result.truncated_reason == "max_result_bytes"
+
+
 class TestTruncation:
     def test_ceiling_binding_over_fetch_is_flagged(self) -> None:
         table = pa.table({"a": pa.array(range(11), pa.int64())})
-        limit = RowFetchLimit(fetch_limit=11, effective_limit=10, ceiling_binding=True)
+        limit = RowFetchLimit(
+            limit=10,
+            ceiling_binding=True,
+            max_bytes=10_000_000,
+        )
         result = arrow_to_query_result(na.Array(table), limit)
         assert len(result.data) == 10
         assert result.truncated_reason == "max_rows"
@@ -177,14 +209,22 @@ class TestTruncation:
         """When the author's own Query.limit bound the fetch there is nothing to
         report: the result is exactly what they asked for."""
         table = pa.table({"a": pa.array(range(11), pa.int64())})
-        limit = RowFetchLimit(fetch_limit=10, effective_limit=10, ceiling_binding=False)
+        limit = RowFetchLimit(
+            limit=10,
+            ceiling_binding=False,
+            max_bytes=10_000_000,
+        )
         result = arrow_to_query_result(na.Array(table), limit)
         assert len(result.data) == 10
         assert result.truncated_reason is None
 
     def test_result_within_the_ceiling_is_not_flagged(self) -> None:
         table = pa.table({"a": pa.array(range(3), pa.int64())})
-        limit = RowFetchLimit(fetch_limit=11, effective_limit=10, ceiling_binding=True)
+        limit = RowFetchLimit(
+            limit=10,
+            ceiling_binding=True,
+            max_bytes=10_000_000,
+        )
         result = arrow_to_query_result(na.Array(table), limit)
         assert len(result.data) == 3
         assert result.truncated_reason is None

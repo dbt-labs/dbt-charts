@@ -72,7 +72,7 @@ def test_setup_sql_is_rendered_with_variables() -> None:
 def test_limit_rides_along() -> None:
     resolved = _compose(SqlQuery(sql="SELECT 1", limit=5), _refs())
 
-    assert resolved.limit.effective_limit == 5
+    assert resolved.limit.limit == 5
 
 
 def test_relations_include_the_querys_own_refs_when_composing_board_queries() -> None:

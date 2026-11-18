@@ -538,8 +538,25 @@ def test_bulk_schema_for_config_raises_on_max_rows_truncation(
     monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "1")
     source_config = _duckdb_with_two_schemas(tmp_path)
 
-    with pytest.raises(RuntimeError, match="truncated"):
+    with pytest.raises(RuntimeError, match="truncated") as excinfo:
         bulk_schema_for_config(source_config)
+    assert "Raise execution.max_rows in dbt_charts.yml" in str(excinfo.value)
+    assert "DCT_" not in str(excinfo.value)
+
+
+def test_bulk_schema_for_config_reports_a_byte_cut_by_the_rows_it_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DCT_MAX_RESULT_BYTES_CEILING", "1")
+
+    with pytest.raises(RuntimeError, match="truncated") as excinfo:
+        bulk_schema_for_config(_duckdb_with_two_schemas(tmp_path))
+    message = str(excinfo.value)
+    assert "truncated to 0 rows by the execution.max_result_bytes limit" in message
+    assert (
+        "Raise execution.max_result_bytes in dbt_charts.yml so every column fits"
+        in (message)
+    )
 
 
 # --- test_connection: the cleanup crash must not replace the real cause ------
@@ -1557,7 +1574,7 @@ def test_bulk_tables_for_config_raises_on_max_rows_truncation(
 ) -> None:
     monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "1")
 
-    with pytest.raises(RuntimeError, match="truncated.*table count"):
+    with pytest.raises(RuntimeError, match="truncated.*so every table fits"):
         bulk_tables_for_config(
             _duckdb_with_two_schemas(tmp_path), ["sales", "marketing"]
         )

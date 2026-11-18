@@ -67,6 +67,8 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import ERR_KPI_CONDITIONAL_AGGREGATE
 from dbt_charts.core.text.predefined_formats import PREDEFINED_TEXT_NAMES
 from dbt_charts.core.utils import coerce_numeric_cell
 
@@ -93,7 +95,7 @@ def _resolve_kpi(
         build_chart_style_context(chart_style_context, normalized).kpi
     )
     available = set(data[0]) if data else set()
-    _validate_kpi_conditional(kpi, available)
+    _validate_kpi_conditional(normalized.id, kpi, available)
     channels = (
         {"background": kpi_background_channel(kpi.background, available)}
         if isinstance(kpi.background, KpiBackgroundGradient)
@@ -225,8 +227,10 @@ def _resolve_kpi(
     )
 
 
-def _validate_kpi_conditional(kpi: KpiChartStyle, available: set[str]) -> None:
-    """Raise ValueError for a rule the card cannot paint.
+def _validate_kpi_conditional(
+    chart_id: str, kpi: KpiChartStyle, available: set[str]
+) -> None:
+    """Raise for a rule the card cannot paint.
 
     A rule column must be a query column. ``auto`` is the support ink's own
     default, not a color a rule can name.
@@ -240,9 +244,8 @@ def _validate_kpi_conditional(kpi: KpiChartStyle, available: set[str]) -> None:
                 f"query result. Available: {sorted(available)}"
             )
         if any(has_aggregate(rule) for rule in rules):
-            raise ValueError(
-                f"style.conditional.{column}: a KPI reads one row, so a rule "
-                "cannot take an aggregate function; name a literal"
+            raise ChartDataError.from_code(
+                ERR_KPI_CONDITIONAL_AGGREGATE, chart_id=chart_id, column=column
             )
         for rule in rules:
             support_font = rule.support.font if rule.support is not None else None

@@ -5,7 +5,7 @@
 //!
 //! `plan(&CompiledBoard, given, builtins, now_epoch, all_queries, active_tab_only, strict,
 //! only_charts) -> Result<String, Diagnostic>` returns the wire JSON `{version, board_id, time_zone, today,
-//! week_start, fiscal_year_start_month, prefetch, chart_queries, variable_queries, queries, variables: {query, render}, sources:
+//! week_start, fiscal_year_start_month, prefetch, reads, chart_queries, variable_queries, queries, variables: {query, render}, sources:
 //! {project, inline}}` that execute reads instead of the board.
 //!
 //! The clock is the board's own: `regional.time_zone` (UTC when the board has no `regional`)
@@ -26,6 +26,11 @@
 //! only hidden tabs read whose resolved cache policy has `prefetch` on, in the order met; it is
 //! empty when `active_tab_only` is false. `all_queries` and `active_tab_only` do not combine (one
 //! asks for more than the board reads, the other for less) and the call is an internal error (a caller bug).
+//!
+//! `reads` lists the planned queries something reads directly (those `all_queries` adds
+//! included), in the order met: what a run executes. A query only another query embeds is in
+//! `queries`, for its reader's SQL, and not in `reads`: run alone, an embedded base query fetches
+//! every row its reader would aggregate away.
 //!
 //! The engine names queries by what it hoists them to (an inline query is keyed by position, a
 //! named one by its name), not by the synthetic names Python gives them, so the plan says which
@@ -57,8 +62,10 @@
 //! another file declares is planned like any other (names are board-global). A variable a nested
 //! board declares is planned when a named chart depends on it, and the chart widens through the
 //! variables of its own board alone, as `focus_on_chart` does: a variable of another board is
-//! planned by name and what it reads is not followed. (`focus_on_item` keeps a nested board's
-//! variables wholesale, so for a markdown fence the plan omits the variables no chart reads.)
+//! planned by name and what it reads is not followed. A nested board every one of whose charts is
+//! named is drawn whole, as `focus_on_item` draws a markdown fence, so the queries its titles and
+//! text rows read are planned too (a `focus_on_chart` of such a board's only chart plans them
+//! though it draws only the chart).
 //! `only_charts` does not combine with `all_queries` and may not be empty (callers' bugs,
 //! `ERR-INTERNAL` naming what to pass).
 //!
@@ -132,6 +139,7 @@ pub struct Plan<'a> {
     pub week_start: u32,
     pub fiscal_year_start_month: u32,
     pub prefetch: Vec<String>,
+    pub reads: Vec<String>,
     pub chart_queries: IndexMap<String, ChartQueries>,
     pub variable_queries: IndexMap<String, VariableQueries>,
     pub queries: IndexMap<String, PlannedQuery<'a>>,
@@ -302,6 +310,7 @@ pub fn plan_on(
             .map(|(key, _)| key.clone());
         names.extend(sql);
     }
+    let reads: Vec<String> = names.iter().cloned().collect();
     let queries = queries(compiled, board, names)?;
     let prefetch = if scoped {
         hidden_prefetch(compiled, board, all, &queries)?
@@ -359,6 +368,7 @@ pub fn plan_on(
         week_start: clock.week_start,
         fiscal_year_start_month: clock.fiscal_start_month,
         prefetch,
+        reads,
         chart_queries,
         variable_queries,
         queries,
@@ -701,8 +711,44 @@ impl Walk<'_> {
             self.text(text.as_str(), Kind::Markdown);
         }
         self.needed_variables(body, &ItemId::root(), &needed)?;
+        for placement in items(body, &ItemId::root()) {
+            if let LayoutItem::Board(nested) = placement.item {
+                let mut placed = Vec::new();
+                placed_charts(&nested.body, &placement.id, &mut placed);
+                if !placed.is_empty() && placed.iter().all(|id| keys.contains(id)) {
+                    self.visible(nested.visible.as_ref());
+                    self.display_text(&nested.body, &placement.id)?;
+                }
+            }
+        }
         for key in keys {
             self.chart(key)?;
+        }
+        Ok(())
+    }
+
+    /// The queries the titles, text and `visible` probes of `body` and of every board nested in it
+    /// read: a nested board whose every chart is named is drawn whole (Python's `focus_on_item`),
+    /// text rows included.
+    fn display_text(&mut self, body: &BoardBody, at: &ItemId) -> Result<(), Diagnostic> {
+        for text in [
+            body.title.as_ref().map(|t| t.as_str()),
+            body.text.as_ref().map(|t| t.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.text(text, Kind::Markdown);
+        }
+        self.tabs(&body.layout, at)?;
+        for placement in items(body, at) {
+            match placement.item {
+                LayoutItem::Chart { visible, .. } => self.visible(visible.as_ref()),
+                LayoutItem::Board(nested) => {
+                    self.visible(nested.visible.as_ref());
+                    self.display_text(&nested.body, &placement.id)?;
+                }
+            }
         }
         Ok(())
     }
@@ -764,6 +810,16 @@ impl Walk<'_> {
         }
         self.live = outer;
         Ok(())
+    }
+}
+
+/// The charts `body` places, nested boards included, by key.
+fn placed_charts<'a>(body: &'a BoardBody, at: &ItemId, out: &mut Vec<&'a str>) {
+    for placement in items(body, at) {
+        match placement.item {
+            LayoutItem::Chart { id, .. } => out.push(id.as_str()),
+            LayoutItem::Board(nested) => placed_charts(&nested.body, &placement.id, out),
+        }
     }
 }
 

@@ -20,7 +20,7 @@ use board_model::facet::FontWeightValue;
 use board_model::style::axis::TextAlign;
 use board_model::style::board::EmojiMode;
 use board_model::style::style::Style;
-use d3rs::format::{format_float, parse_parts};
+use d3rs::format::format_float;
 use diagnostic::{diag, refuse, Diagnostic};
 use measure::shaped::{Font, FontBook};
 use model_core::Engine;
@@ -28,7 +28,8 @@ use scene::{Attrs, Extent, Node, Role, Shape, Transform};
 
 use crate::contract::{axis_description, axis_frame, axis_title_attrs, grid_group, linear_value_text, span_description};
 use crate::geom::{Insets, Rect, Size};
-use crate::plot::rules;
+use crate::plot::rules::{floor_span, Rules};
+use crate::plot::tear::snap;
 use crate::plot::band_axis::{BandAxis, BandGeometry, BandLabels, BandPlan, Overlap};
 use crate::plot::label::{vega_baseline, vega_row, Align, Baseline};
 use crate::plot::legend::Legends;
@@ -169,8 +170,6 @@ pub struct PlotPlan {
     pub plot: Rect,
     x: XPlanned,
     y: Planned,
-    /// Whether the y label on the plot's bottom edge rises off its gridline.
-    rises_bottom_label: bool,
     /// The side legend and its origin in the plot's coordinates.
     legend: Option<(Legends, (f64, f64))>,
 }
@@ -203,24 +202,19 @@ fn discrete_description(count: usize, values: &[String]) -> String {
     format!("{count} value{}: {listed}", if count == 1 { "" } else { "s" })
 }
 
-/// Vega's description of a value axis. A number format with an affix, a notation or a symbol is
-/// refused: production captions those through the axis `format` it leaves unset
-/// (`axis_caption.rs::slot_format`), which this does not model.
+/// Vega's description of a value axis: its ends in the axis's own `format`, or in Vega's default
+/// where production leaves the axis `format` unset (`ValueAxis::vega_format`).
 fn caption(channel: &str, title: Option<&str>, scale: &Scale, locale: &NumberLocale) -> Result<String, Diagnostic> {
     if let ScaleKind::Band(domain) | ScaleKind::Point { domain, .. } = &scale.kind {
         return Ok(axis_description(channel, title, "discrete", &discrete_description(domain.keys().len(), domain.text())));
     }
     let axis = linear(scale, channel)?;
-    let format_spec = &axis.format;
-    let parts = parse_parts(&format_spec.spec).map_err(diag::err_internal)?;
-    if !format_spec.prefix.is_empty() || !format_spec.suffix.is_empty() || format_spec.notation.is_some() || parts.symbol {
-        return Err(Diagnostic::refused("an axis description for a number format with an affix, a notation or a symbol is not supported"));
-    }
+    let format_spec = axis.vega_format().map_err(diag::err_internal)?;
     let (start, stop) = direction(&axis.domain);
     // A log axis's ends print as d3's `format` of the spec; every other scale's as the linear law's.
     let text = |value: f64| match axis.domain.scale {
-        ValueScale::Log { .. } => format_float(&locale.locale, Some(&format_spec.spec), value),
-        _ => linear_value_text(&locale.locale, Some(&format_spec.spec), (start, stop), value),
+        ValueScale::Log { .. } => format_float(&locale.locale, format_spec, value),
+        _ => linear_value_text(&locale.locale, format_spec, (start, stop), value),
     }
     .map_err(diag::err_internal);
     Ok(axis_description(channel, title, axis.domain.scale.name(), &span_description(&text(start)?, &text(stop)?)))
@@ -535,13 +529,10 @@ fn lay_out(chart: &bound::Chart, heading: Option<&Heading>, cell: Size, pinned: 
     if plot.panels() != &Panels::Single {
         return Err(Diagnostic::refused("a plot of facet panels is not supported"));
     }
-    let baselines = plot.baselines();
-    // The zero rule is verified against production under bars alone.
-    let bars = plot.layers().iter().all(|layer| layer.mark == Mark::Bars);
-    let points = plot.layers().iter().all(|layer| matches!(layer.mark, Mark::Points { .. }));
-    if baselines.unity || baselines.x_threshold || (baselines.zero && !bars) {
-        return Err(Diagnostic::refused("a plot with zero, unity or threshold rules is not supported"));
+    if plot.baselines().unity {
+        return Err(Diagnostic::refused("a plot with a unity rule is not supported"));
     }
+    let points = plot.layers().iter().all(|layer| matches!(layer.mark, Mark::Points { .. }));
     if plot.support().is_some() || plot.naming().rail.is_some() || plot.naming().asks_top_strip {
         return Err(Diagnostic::refused("a plot with an endpoint rail, a top legend strip or a support strip is not supported"));
     }
@@ -557,11 +548,11 @@ fn lay_out(chart: &bound::Chart, heading: Option<&Heading>, cell: Size, pinned: 
     if y_parts.offset != 0.0 {
         return Err(Diagnostic::refused("a y axis with a `ticks.offset` is not supported"));
     }
-    // Production rises a y label whose tick is on the plot's bottom edge off its gridline when the
-    // x axis hangs below (`YEdges::baseline`); the draw does so under bars and on a log axis, whose
-    // domain always ends on a tick, where twins pin it, and every other plot refuses it, whether or
-    // not the x labels draw (which only over-refuses).
-    let rises = bars || (on_log_scale(y_scale) && x_parts.edge == Edge::Bottom);
+    // Production rises a y label whose tick is on the plot's bottom edge off its gridline (`YEdges::baseline`)
+    // in every family but a histogram, which paints its y labels at the axis's own baseline alone
+    // (`histogram/layout.rs`: `value_label_baseline`): one verdict of the chart's structure, which a
+    // histogram's label on that edge refuses.
+    let rises = !plot.layers().iter().any(|layer| layer.mark == Mark::Bins);
     let y_axis = match &y_scale.kind {
         ScaleKind::Point { .. } => {
             let side = match y_parts.edge {
@@ -599,17 +590,11 @@ fn lay_out(chart: &bound::Chart, heading: Option<&Heading>, cell: Size, pinned: 
         block.as_ref().map(|(title, _)| &title.band),
         Insets::ZERO,
     );
-    let rule_overhang = match (&styles.y[0].threshold, baselines.zero) {
-        (Some(line), true) => line.width,
-        _ => 0.0,
-    };
     let plot_box = match pinned {
         Some(plot_box) => plot_box,
         None => negotiate(area, |size| {
-            let axes = reach(plot, &x_axis, x_parts.offset, &y_axis, legend.as_ref(), size)?;
-            // The zero rule's full stroke width overhangs every edge (`bar/vertical.rs`'s
-            // rule bounds).
-            Ok(Insets { top: axes.top.max(rule_overhang), right: axes.right.max(rule_overhang), bottom: axes.bottom.max(rule_overhang), left: axes.left.max(rule_overhang) })
+            let (axes, rules) = (reach(plot, &x_axis, x_parts.offset, &y_axis, legend.as_ref(), size)?, Rules::of(plot, size)?.ink(size));
+            Ok(Insets { top: axes.top.max(rules.top), right: axes.right.max(rules.right), bottom: axes.bottom.max(rules.bottom), left: axes.left.max(rules.left) })
         })?
         .plot,
     };
@@ -644,13 +629,13 @@ fn lay_out(chart: &bound::Chart, heading: Option<&Heading>, cell: Size, pinned: 
     };
     let y = planned(place_y(plot, &y_axis, at)?, &y_parts, y_scale, &styles.y[0], "Y", 0.0)?;
     if !rises && y.placement.rungs.iter().any(|rung| rung.visible && (rung.y - at.height).abs() <= 0.5) {
-        return Err(Diagnostic::refused("a y axis label on the plot's bottom edge is not supported"));
+        return Err(Diagnostic::refused("a histogram's y axis label on the plot's bottom edge is not supported"));
     }
     let legend = legend.map(|legend| {
         let origin = legend.origin(at, y.placement.gutter);
         (legend, origin)
     });
-    Ok(PlotPlan { size: cell, background: marks_background(frame)?, heading: block, plot: plot_box, x, y, legend, rises_bottom_label: rises })
+    Ok(PlotPlan { size: cell, background: marks_background(frame)?, heading: block, plot: plot_box, x, y, legend })
 }
 
 /// What the chart's marks root paints behind everything (`frame.card`, the card fill):
@@ -702,7 +687,7 @@ fn grid(line: &Line, vertical: bool, extent: f64, positions: impl Iterator<Item 
     let lines = positions
         .map(|position| {
             let attrs = Attrs::new().set("stroke", line.color.as_str()).num("stroke-width", line.width).num("opacity", line.opacity);
-            let at = position.round() + CRISP;
+            let at = snap(position);
             if vertical {
                 Node::line(Role::Grid, (at, CRISP), (at, extent + CRISP), attrs)
             } else {
@@ -713,14 +698,13 @@ fn grid(line: &Line, vertical: bool, extent: f64, positions: impl Iterator<Item 
     Ok(grid_group(lines))
 }
 
-/// A time axis' labels, a text per row (the year under a month stands a row below). `height` is the
-/// plot's, which the labels hang below.
-fn time_axis_group(planned: &PlannedTime, height: f64) -> Result<Node, Diagnostic> {
+/// A time axis' tick marks and labels, a text per row (the year under a month stands a row below).
+/// `height` is the plot's, which the marks and labels hang below.
+fn time_axis_group(planned: &PlannedTime, height: f64, rules: &Rules) -> Result<Node, Diagnostic> {
     let size = planned.labels.size;
     let mut items = Vec::new();
     if let Some(stubs) = &planned.stubs {
-        let end = stub_end(height, planned.offset, stubs);
-        items.extend(planned.ticks.iter().map(|x| tick_stub(stubs, *x, height, end)));
+        items.extend(tick_stubs(planned.ticks.iter().copied(), stubs, rules, height, stub_end(height, planned.offset, stubs)));
     }
     for label in &planned.placement.labels {
         if !label.visible {
@@ -738,34 +722,34 @@ fn time_axis_group(planned: &PlannedTime, height: f64) -> Result<Node, Diagnosti
     Ok(axis_frame("x-axis", &planned.caption, (CRISP, CRISP), items))
 }
 
+/// The x axis's tick marks: a stub at each of `stops` (an x position before its snap) from the plot's
+/// bottom edge to `end`, in the themed stroke, or in the stroke of a zero rule standing on that edge
+/// (`x_tick_marks`, `common.rs`); the stub at a vertical rule's value is that rule continued.
+fn tick_stubs(stops: impl Iterator<Item = f64>, ticks: &Ticks, rules: &Rules, plot_height: f64, end: f64) -> Vec<Node> {
+    let floor = rules.floor_color(plot_height).unwrap_or(ticks.line.color.as_str());
+    stops
+        .map(|stop| {
+            let snapped = snap(stop);
+            let (at, color, width) = rules.tick_look(snapped).unwrap_or((snapped, floor, ticks.line.width));
+            Node::line(Role::Axis, (at, plot_height), (at, end), Attrs::new().set("stroke", color).num("stroke-width", width))
+        })
+        .collect()
+}
+
 /// Where an x tick stub ends: its length below the axis group, which hangs `offset` under the plot's
 /// bottom edge `height` (`ticks.offset`). The one law of both x axes' stubs.
 fn stub_end(height: f64, offset: f64, ticks: &Ticks) -> f64 {
     height + offset + ticks.length + CRISP
 }
 
-/// An x tick stub at `x` from the plot's bottom edge `from` to `to`.
-fn tick_stub(ticks: &Ticks, x: f64, from: f64, to: f64) -> Node {
-    let attrs = Attrs::new().set("stroke", ticks.line.color.as_str()).num("stroke-width", ticks.line.width);
-    let at = x.round() + CRISP;
-    Node::line(Role::Axis, (at, from), (at, to), attrs)
-}
-
-/// The x axis's tick marks: one stub at each rung from the plot's bottom edge to the tick's length below
-/// the axis group's own offset, which sits `padding` above the labels' anchor (`x_tick_marks`): the
-/// tick hangs into the label gap.
-fn tick_marks(planned: &Planned, ticks: &Ticks, plot_height: f64) -> Vec<Node> {
-    let end = stub_end(plot_height, planned.offset, ticks);
-    planned.placement.rungs.iter().map(|rung| tick_stub(ticks, rung.x, plot_height, end)).collect()
-}
-
-/// `plot_height` is the plot's height; `rises_bottom_label` is a y axis under an x axis whose labels
-/// draw: production rises a y label whose tick sits on the plot's bottom edge off its gridline
-/// (`YEdges::baseline`, a verdict of the chart's structure alone).
-fn axis_group(planned: &Planned, key: &str, authored: &str, plot_height: f64, rises_bottom_label: bool) -> Result<Node, Diagnostic> {
+/// `plot_height` is the plot's height; `is_y` is the y axis, whose label on the plot's bottom edge
+/// rises off its gridline because the x axis hangs below with its labels drawn (`YEdges::baseline`,
+/// `common.rs`: a verdict of the chart's structure alone; a plot with the x axis on top or its labels
+/// hidden is refused, so the verdict holds for every plot laid out here).
+fn axis_group(planned: &Planned, key: &str, authored: &str, plot_height: f64, is_y: bool, rules: &Rules) -> Result<Node, Diagnostic> {
     let mut items = Vec::new();
     if let Some(ticks) = &planned.ticks {
-        items.extend(tick_marks(planned, ticks, plot_height));
+        items.extend(tick_stubs(planned.placement.rungs.iter().map(|rung| rung.x), ticks, rules, plot_height, stub_end(plot_height, planned.offset, ticks)));
     }
     for rung in &planned.placement.rungs {
         // A blank label (a minor log tick d3's `tickFormat` blanks) draws no text.
@@ -775,7 +759,7 @@ fn axis_group(planned: &Planned, key: &str, authored: &str, plot_height: f64, ri
         if !rung.visible {
             return Err(Diagnostic::refused("a value axis label hidden by the overlap rule is not supported"));
         }
-        let baseline = if rises_bottom_label && (rung.y - plot_height).abs() <= 0.5 { Baseline::Bottom } else { rung.baseline };
+        let baseline = if is_y && rung.baseline == Baseline::Middle && (rung.y - plot_height).abs() <= 0.5 { Baseline::Bottom } else { rung.baseline };
         let size = planned.labels.font().size;
         let attrs = planned.labels.attrs(Some(anchor(rung.align)));
         // A turned label is anchored at the origin: moved to its anchor, turned, then dropped by its baseline's shift.
@@ -827,14 +811,26 @@ pub fn draw(
     if let Some(line) = &plan.y.grid {
         inner.push(grid(line, false, at.width, rung_positions(&plan.y, false).into_iter())?);
     }
+    let rules = Rules::of(plot, at)?;
+    let (stops, grid_width, tick_width) = match &plan.x {
+        XPlanned::Value(planned) => (rung_positions(planned, true), planned.grid.as_ref(), planned.ticks.as_ref()),
+        XPlanned::Time(planned) => (planned.ticks.clone(), planned.grid.as_ref(), planned.stubs.as_ref()),
+    };
+    let floor = floor_span(at.width, grid_width.map(|line| line.width), tick_width.map(|ticks| ticks.line.width), stops.iter().map(|stop| snap(*stop)));
     let Painted { mut marks, y_axis_at } = paint(plot, at)?;
-    if plot.baselines().zero {
-        marks.push(rules::zero_rule(plot, at)?);
-    }
-    let y_axis = axis_group(&plan.y, "y-axis", "y_label", at.height, plan.rises_bottom_label)?;
+    let drawn = rules.nodes(at, floor);
+    let y_axis_at = if rules.under() {
+        let before = drawn.len();
+        marks.splice(0..0, drawn);
+        y_axis_at.map(|index| index + before)
+    } else {
+        marks.extend(drawn);
+        y_axis_at
+    };
+    let y_axis = axis_group(&plan.y, "y-axis", "y_label", at.height, true, &rules)?;
     let x_axis = match &plan.x {
-        XPlanned::Value(planned) => axis_group(planned, "x-axis", "x_label", at.height, false)?,
-        XPlanned::Time(planned) => time_axis_group(planned, at.height)?,
+        XPlanned::Value(planned) => axis_group(planned, "x-axis", "x_label", at.height, false, &rules)?,
+        XPlanned::Time(planned) => time_axis_group(planned, at.height, &rules)?,
     };
     match y_axis_at {
         Some(index) if index <= marks.len() => {

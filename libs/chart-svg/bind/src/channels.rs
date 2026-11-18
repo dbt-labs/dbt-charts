@@ -11,7 +11,6 @@
 
 use std::collections::HashSet;
 
-use board_model::chart::layer::CartesianLayer;
 use board_model::chart::{CartesianChartFields, Chart, ColorColumn, Columns};
 use board_model::facet::Channel as ColumnName;
 use board_model::primitives::ScaleTargetConfig;
@@ -74,15 +73,10 @@ struct Authored<'a> {
     color: Option<&'a str>,
     /// A wide `y: [...]` on a family that folds it.
     wide_measures: Option<Vec<&'a str>>,
-    has_layers: bool,
 }
 
 fn authored(chart: &Chart) -> Authored<'_> {
-    fn cartesian<'a>(
-        fields: &'a CartesianChartFields,
-        layers: &'a [CartesianLayer],
-        folds: bool,
-    ) -> Authored<'a> {
+    fn cartesian(fields: &CartesianChartFields, folds: bool) -> Authored<'_> {
         Authored {
             color: fields.color.as_ref().map(ColorColumn::as_str),
             wide_measures: match &fields.y {
@@ -91,22 +85,20 @@ fn authored(chart: &Chart) -> Authored<'_> {
                 }
                 _ => None,
             },
-            has_layers: !layers.is_empty(),
         }
     }
     fn colored(color: &Option<ColorColumn>) -> Authored<'_> {
         Authored {
             color: color.as_ref().map(ColorColumn::as_str),
             wide_measures: None,
-            has_layers: false,
         }
     }
     match chart {
-        Chart::Bar(c) | Chart::Funnel(c) => cartesian(&c.cartesian, &c.layers, true),
-        Chart::Histogram(c) => cartesian(&c.cartesian, &c.layers, false),
-        Chart::Line(c) => cartesian(&c.cartesian, &c.layers, true),
-        Chart::Area(c) => cartesian(&c.cartesian, &c.layers, true),
-        Chart::Scatter(c) => cartesian(&c.cartesian, &c.layers, true),
+        Chart::Bar(c) | Chart::Funnel(c) => cartesian(&c.cartesian, true),
+        Chart::Histogram(c) => cartesian(&c.cartesian, false),
+        Chart::Line(c) => cartesian(&c.cartesian, true),
+        Chart::Area(c) => cartesian(&c.cartesian, true),
+        Chart::Scatter(c) => cartesian(&c.cartesian, true),
         Chart::Heatmap(c) => colored(&c.cartesian.color),
         Chart::Pie(c) | Chart::Donut(c) => colored(&c.radial.color),
         Chart::Geoshape(c) | Chart::Map(c) => colored(&c.geo.color),
@@ -114,7 +106,6 @@ fn authored(chart: &Chart) -> Authored<'_> {
         Chart::Kpi(_) | Chart::SparkBar(_) | Chart::Table(_) | Chart::Callout(_) | Chart::Custom(_) => Authored {
             color: None,
             wide_measures: None,
-            has_layers: false,
         },
     }
 }
@@ -186,11 +177,6 @@ pub fn bind_channels(
         if gradient.is_some() {
             return Err(Diagnostic::refused(
                 "wide y: [...] combined with a gradient color is not bound (ERR_MULTI_Y_COLOR_CONFLICT)",
-            ));
-        }
-        if authored.has_layers {
-            return Err(Diagnostic::refused(
-                "wide y: [...] combined with chart.layers is not bound (ERR_MULTI_Y_LAYERS_CONFLICT)",
             ));
         }
         if authored.color.is_some() {

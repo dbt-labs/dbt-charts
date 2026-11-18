@@ -85,10 +85,6 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_SIGN_PLACEMENT_TABLE_UNSUPPORTED,
 )
 from dbt_charts.core.font_measure import compose_decimal_units
-from dbt_charts.core.fonts import (
-    DBT_SANS_TABULAR_FONT_FAMILY,
-    SOURCE_SERIF_4_FONT_FAMILY,
-)
 from dbt_charts.core.text.format_d3 import d3_format, is_d3_si_spec
 from dbt_charts.core.text.numeral_scale import (
     UNCOMPACTED_COLUMN_SPEC,
@@ -597,8 +593,8 @@ def _bake_scale_stops(
     authors a named-string scale palette; `canvas_tone` is the table's own
     canvas tone, which picks a palette's `-dark` twin on a dark canvas.
 
-    ``font_family`` is the numeric cell font (dbt Sans Tabular, or Source Serif
-    for Source Serif table themes) -- not the body font. ``rows`` is used to
+    ``font_family`` is the board's numeral family, the face the engine paints
+    table digits in -- not the table's text font. ``rows`` is used to
     gate the pad-table bake: a uniform-depth column gets ``()`` even when the
     spec is trim-enabled, matching the axis-side gate.
 
@@ -931,13 +927,6 @@ def _resolve_table(
         or "",  # type-state: silent_fallback — an unset theme ink gives the carve no color to keep
     )
 
-    # Numeric table cells paint with dbt Sans Tabular on all non-serif themes;
-    # Source Serif themes use the serif face for their numeric cells instead.
-    numeric_cell_font = (
-        SOURCE_SERIF_4_FONT_FAMILY
-        if table.font.family and "Source Serif" in table.font.family
-        else DBT_SANS_TABULAR_FONT_FAMILY
-    )
     authored_columns = (
         primary.columns if primary is not None and primary.columns else {}
     )
@@ -967,7 +956,7 @@ def _resolve_table(
         effective_table_ink,
         chart_local_style_context.canvas_tone,
         formats=chart_local_style_context.formats,
-        font_family=numeric_cell_font,
+        font_family=chart_local_style_context.cascaded.numeral_family(),
         rows=data,
         allow_shared_scale=allow_shared_scale,
         own_formats={name: cfg.format for name, cfg in authored_columns.items()},

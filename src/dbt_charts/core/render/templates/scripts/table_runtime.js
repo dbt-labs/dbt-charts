@@ -18,20 +18,23 @@
         });
     }
 
+    /*{# An anchor affix ($, %) and a conditional glyph are left out: which row #}*/
+    /*{# shows the affix, and which glyph paints, must not change a value's text. #}*/
+    function _unmarkedText(el) {
+        return Array.prototype.map.call(el.childNodes, function(node) {
+            var isMark = node.nodeType === 1
+                && (node.classList.contains('dbt-table-affix') || node.hasAttribute('data-dbt-glyph'));
+            return isMark ? '' : node.textContent;
+        }).join('');
+    }
+
     /*{# A wrapped cell is several tspans; joined bare they would run words together. #}*/
-    /*{# An anchor affix ($, %) is left out: which row shows it must #}*/
-    /*{# not change a value's text. #}*/
     function _cellText(el) {
         var lines = Array.prototype.filter.call(el.children, function(child) {
             return child.hasAttribute('y');
         });
-        if (lines.length > 1) {
-            return lines.map(function(line) { return line.textContent; }).join(' ');
-        }
-        return Array.prototype.map.call(el.childNodes, function(node) {
-            var isAffix = node.nodeType === 1 && node.classList.contains('dbt-table-affix');
-            return isAffix ? '' : node.textContent;
-        }).join('');
+        if (lines.length > 1) return lines.map(_unmarkedText).join(' ');
+        return _unmarkedText(el);
     }
 
     /*{# The engine always publishes these; a missing one is a contract break, #}*/
@@ -72,6 +75,9 @@
             stripe: el.querySelector('[data-dbt-stripe]'),
             rule: el.querySelector('[data-dbt-row-rule]'),
             number: el.querySelector('[data-dbt-row-number]'),
+            lists: Array.prototype.slice.call(el.querySelectorAll('[data-dbt-list]')),
+            toggles: Array.prototype.slice.call(el.querySelectorAll('[data-dbt-list-toggle]')),
+            open: false,
             affixes: Array.prototype.map.call(el.querySelectorAll('.dbt-table-affix'), function(affix) {
                 return {
                     el: affix,
@@ -80,15 +86,116 @@
                 };
             }),
         };
+        row.shutHeight = row.height;
+        row.openHeight = el.hasAttribute('data-dbt-h-open') ? _numberHook(el, 'data-dbt-h-open') : row.height;
+        row.stripeHeight = row.stripe ? _numberHook(row.stripe, 'height') : null;
         el.querySelectorAll('[data-col]').forEach(function(cell) {
             if (cell.hasAttribute('data-dbt-row-number')) return;
+            var glyph = cell.querySelector('[data-dbt-glyph]');
             row.cells[cell.getAttribute('data-col')] = {
                 text: _cellText(cell),
+                glyph: glyph ? { text: glyph.textContent.trim(), fill: glyph.getAttribute('fill') } : null,
                 key: cell.hasAttribute('data-dbt-sort') ? cell.getAttribute('data-dbt-sort') : null,
                 day: cell.getAttribute('data-dbt-day'),
             };
         });
         return row;
+    }
+
+    /*{# A live table's list rows arrive shut, their lists hidden and the row at the #}*/
+    /*{# height the engine measured without them. Open, the lists show and the row #}*/
+    /*{# takes the open height the engine published; its stripe and bottom rule follow. #}*/
+    function _setOpen(row, open) {
+        row.open = open;
+        row.height = open ? row.openHeight : row.shutHeight;
+        /*{# A scrolling table's range reads each row's height off this hook. #}*/
+        row.el.setAttribute('data-dbt-h', String(row.height));
+        var extra = row.height - row.shutHeight;
+        row.lists.forEach(function(el) { _setHidden(el, !open); });
+        row.toggles.forEach(function(el) {
+            _setHidden(el, (el.getAttribute('data-dbt-list-toggle') === 'open') !== open);
+        });
+        if (row.stripe) row.stripe.setAttribute('height', String(row.stripeHeight + extra));
+        if (row.rule) {
+            if (extra) row.rule.setAttribute('transform', 'translate(0 ' + extra + ')');
+            else row.rule.removeAttribute('transform');
+        }
+    }
+
+    function _growAttr(el, name, dy) {
+        el.setAttribute(name, String(Number(el.getAttribute(name)) + dy));
+    }
+
+    /*{# Lays one layout's items out again after one of them grew by dy, and returns #}*/
+    /*{# how much the layout itself grew. Each item publishes the top and height the #}*/
+    /*{# composer placed it at; an item moves down by the furthest any item that ends #}*/
+    /*{# above it moved or grew. That one rule is a rows stack, a cols row (every item #}*/
+    /*{# starts at the top), a grid's row tracks, and a tabs panel. #}*/
+    function _reflowItems(container, grownItem, dy) {
+        var items = _children(container, 'data-dbt-flow-h').map(function(el) {
+            if (el.__flow === undefined) {
+                var m = /translate\(\s*([-\d.e]+)[ ,]+([-\d.e]+)\s*\)/.exec(el.getAttribute('transform') || '');
+                el.__flow = {
+                    x: m ? Number(m[1]) : 0,
+                    y: _numberHook(el, 'data-dbt-flow-y'),
+                    h: _numberHook(el, 'data-dbt-flow-h'),
+                    grown: 0,
+                };
+            }
+            return el;
+        });
+        grownItem.__flow.grown += dy;
+        items.sort(function(a, b) { return a.__flow.y - b.__flow.y; });
+        var bottom = 0;
+        var moved = 0;
+        items.forEach(function(el, i) {
+            var f = el.__flow;
+            var shift = 0;
+            items.slice(0, i).forEach(function(above) {
+                var a = above.__flow;
+                if (a.y + a.h <= f.y + 0.5) shift = Math.max(shift, a.shift + a.grown);
+            });
+            f.shift = shift;
+            if (shift) el.setAttribute('transform', 'translate(' + f.x + ', ' + (f.y + shift) + ')');
+            else el.setAttribute('transform', 'translate(' + f.x + ', ' + f.y + ')');
+            bottom = Math.max(bottom, f.y + f.h);
+            moved = Math.max(moved, f.y + f.h + shift + f.grown);
+        });
+        var before = container.__flowGrown || 0;
+        container.__flowGrown = Math.max(moved - bottom, 0);
+        return container.__flowGrown - before;
+    }
+
+    /*{# The composer places every board item at a fixed offset. When a table grows by #}*/
+    /*{# dy, the board makes room, walking out from the table: each growing box (the #}*/
+    /*{# table's card, a nested board, the root) stretches its own rects and moves its #}*/
+    /*{# own followers, an <svg> box also grows its viewport, and each layout the #}*/
+    /*{# walk passes lays its items out again. Only live renders carry these hooks. #}*/
+    function _reflowBoard(table, dy) {
+        var node = table;
+        while (dy && node) {
+            if (node.hasAttribute('data-dbt-flow-box')) {
+                var box = node;
+                box.querySelectorAll('[data-dbt-flow-bg]').forEach(function(rect) {
+                    if (rect.closest('[data-dbt-flow-box]') === box) _growAttr(rect, 'height', dy);
+                });
+                box.querySelectorAll('[data-dbt-flow-follow]').forEach(function(el) {
+                    if (el.closest('[data-dbt-flow-box]') !== box) return;
+                    el.__followDy = (el.__followDy || 0) + dy;
+                    el.setAttribute('transform', 'translate(0, ' + el.__followDy + ')');
+                });
+                if (box.localName === 'svg') {
+                    _growAttr(box, 'height', dy);
+                    var vb = box.getAttribute('viewBox').split(/[\s,]+/).map(Number);
+                    vb[3] += dy;
+                    box.setAttribute('viewBox', vb.join(' '));
+                    if (!box.ownerSVGElement) return;
+                }
+            }
+            var parent = node.parentElement;
+            if (node.hasAttribute('data-dbt-flow-h')) dy = _reflowItems(parent, node, dy);
+            node = parent;
+        }
     }
 
     /*{# A key that is not a number (N/A, an empty string) in a number column is a null. #}*/
@@ -227,9 +334,11 @@
     /*{# The engine draws the pager, x scrollbar and frozen edge to end under the #}*/
     /*{# open page's rows (`data-dbt-rows-end`); they move with that bottom, so a #}*/
     /*{# short page keeps its pager close. A stored render without the hook stays put. #}*/
+    /*{# A page taller than the body (`data-dbt-rows-end-max`) scrolls inside it, #}*/
+    /*{# so they stop at the body's bottom. #}*/
     function _followRows(state, rowsEnd) {
         if (state.rowsEnd === null) return;
-        var shift = rowsEnd - state.rowsEnd;
+        var shift = Math.min(rowsEnd, state.rowsEndMax) - state.rowsEnd;
         _children(state.table, 'data-dbt-pager').concat(state.follow).forEach(function(el) {
             if (shift) el.setAttribute('transform', 'translate(0 ' + shift + ')');
             else el.removeAttribute('transform');
@@ -237,6 +346,15 @@
         state.spans.forEach(function(span) {
             span.el.setAttribute('height', String(span.height + shift));
         });
+        /*{# The board grows by what open rows need past the room the canvas has under #}*/
+        /*{# the table; a short page still keeps the table's drawn height. A stored #}*/
+        /*{# render without the slack hook never grows its board. #}*/
+        if (state.slack === null) return;
+        var grown = Math.max(shift - state.slack, 0);
+        if (grown !== state.grown) {
+            _reflowBoard(state.table, grown - state.grown);
+            state.grown = grown;
+        }
     }
 
     /*{# The engine draws each anchored affix on every row, tagged with a bitmask of the #}*/
@@ -289,7 +407,7 @@
         });
     }
 
-    /*{# A mark is a tspan appended to the header text: it inherits the header's #}*/
+    /*{# A mark is a tspan appended to the header's label: it inherits the label's #}*/
     /*{# ink and needs no geometry. The filter dot is set smaller so it reads as a #}*/
     /*{# badge, not a second glyph as loud as the label. #}*/
     function _setMark(header, kind, text) {
@@ -302,7 +420,7 @@
             mark = document.createElementNS(SVG_NS, 'tspan');
             mark.setAttribute('data-dbt-mark', kind);
             if (kind === 'filter') mark.setAttribute('font-size', '0.6em');
-            header.appendChild(mark);
+            header.querySelector('text').appendChild(mark);
         }
         mark.textContent = text;
     }
@@ -333,7 +451,7 @@
             seen[row.cells[col].text] = true;
             firstRows.push(row);
         });
-        return _sorted(state, firstRows, col, 1).map(function(row) { return row.cells[col].text; });
+        return _sorted(state, firstRows, col, 1).map(function(row) { return row.cells[col]; });
     }
 
     function _menuItem(label, action, selected) {
@@ -347,7 +465,8 @@
         return item;
     }
 
-    function _buildChecklist(state, col, values) {
+    function _buildChecklist(state, col, cells) {
+        var values = cells.map(function(cell) { return cell.text; });
         var wrap = document.createElement('div');
         wrap.className = 'dbt-table-menu-filter';
         var search = document.createElement('input');
@@ -357,7 +476,8 @@
         search.setAttribute('aria-label', _word(state.table, 'search_values'));
         var list = document.createElement('div');
         list.className = 'dbt-table-menu-values';
-        var checks = values.map(function(value) {
+        var checks = cells.map(function(cell) {
+            var value = cell.text;
             var row = document.createElement('label');
             row.className = 'dbt-select-option dbt-table-menu-value';
             var box = document.createElement('input');
@@ -365,7 +485,16 @@
             box.checked = !state.filters[col] || state.filters[col].has(value);
             box.setAttribute('data-value', value);
             row.appendChild(box);
-            row.appendChild(document.createTextNode(' ' + value));
+            row.appendChild(document.createTextNode(' '));
+            if (cell.glyph) {
+                var glyph = document.createElement('span');
+                glyph.className = 'dbt-table-menu-glyph';
+                glyph.style.color = cell.glyph.fill;
+                glyph.textContent = cell.glyph.text;
+                row.appendChild(glyph);
+                row.appendChild(document.createTextNode(' '));
+            }
+            row.appendChild(document.createTextNode(value));
             list.appendChild(row);
             return box;
         });
@@ -501,12 +630,12 @@
         el.appendChild(_menuItem(_word(state.table, 'clear_sort'), 'clear', false));
         var days = type === 'date' ? _days(state, col) : [];
         if (days.length > 0) el.appendChild(_section(state, 'range', true, _buildCalendar(state, col, days)));
-        var values = _distinctValues(state, col);
-        if (values.length > 0 && values.length <= MAX_CHECKLIST_VALUES) {
+        var cells = _distinctValues(state, col);
+        if (cells.length > 0 && cells.length <= MAX_CHECKLIST_VALUES) {
             /*{# On a date column the calendar leads and the checklist waits #}*/
             /*{# folded, unless it is what filters. #}*/
             var open = type !== 'date' || col in state.filters;
-            el.appendChild(_section(state, 'values', open, _buildChecklist(state, col, values)));
+            el.appendChild(_section(state, 'values', open, _buildChecklist(state, col, cells)));
         }
         el.addEventListener('click', function(event) {
             var item = event.target.closest('[data-action]');
@@ -543,6 +672,7 @@
             rowsY: _numberHook(table, 'data-dbt-rows-y'),
             gap: _numberHook(table, 'data-dbt-summary-gap'),
             rowsEnd: table.hasAttribute('data-dbt-rows-end') ? _numberHook(table, 'data-dbt-rows-end') : null,
+            rowsEndMax: table.hasAttribute('data-dbt-rows-end-max') ? _numberHook(table, 'data-dbt-rows-end-max') : Infinity,
             follow: Array.prototype.slice.call(table.querySelectorAll('[data-dbt-rows-follow]')),
             spans: Array.prototype.map.call(table.querySelectorAll('[data-dbt-rows-span]'), function(el) {
                 return { el: el, height: _numberHook(el, 'height') };
@@ -556,6 +686,8 @@
             filters: {},
             ranges: {},
             page: _numberHook(table, 'data-dbt-page'),
+            grown: 0,
+            slack: table.hasAttribute('data-dbt-rows-slack') ? _numberHook(table, 'data-dbt-rows-slack') : null,
         };
         _states.set(table, state);
         state.rows.forEach(function(row) {
@@ -590,6 +722,18 @@
         /*{# Compact-only pagers open unlabeled: size them to the open page now. #}*/
         if (!state.perPagePagers && _children(table, 'data-dbt-pager').length) _layout(state);
         table.addEventListener('click', function(event) {
+            /*{# A frozen pane draws copies of the rows, so a chevron finds its row by #}*/
+            /*{# index, never by element. #}*/
+            var toggle = event.target.closest('[data-dbt-list-toggle]');
+            if (toggle && toggle.closest('[data-dbt-table]') === table) {
+                event.preventDefault();
+                var index = toggle.closest('[data-dbt-row]').getAttribute('data-dbt-row');
+                var row = state.rows.find(function(r) { return r.el.getAttribute('data-dbt-row') === index; });
+                if (!row) throw new Error('table runtime: no pooled row ' + index + ' for a list toggle');
+                _setOpen(row, !row.open);
+                _layout(state);
+                return;
+            }
             var header = event.target.closest('[data-dbt-sortable]');
             if (header) {
                 _toggleMenu(state, header);

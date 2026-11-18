@@ -19,7 +19,7 @@ from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.backends.base import LIVENESS_SQL, BackendRegistry
 from dbt_charts.core.execute.backends.dbt_core import DbtBackend
 from dbt_charts.core.execute.env import make_exec_env
-from dbt_charts.core.execute.query_result import QueryResult
+from dbt_charts.core.execute.query_result import QueryResult, RowFetchLimit
 
 from ..._backend_runner import DuckDBRunner
 from ..._lookup import sql_entry
@@ -37,6 +37,9 @@ _POSTGRES_SOURCE: dict[str, Any] = {
     "user": "u",
     "password": "p",
 }
+
+
+_LIMIT = RowFetchLimit(limit=10, ceiling_binding=False, max_bytes=10_000_000)
 
 
 def _query(sql: str) -> SqlQuery:
@@ -109,7 +112,7 @@ class TestDbtBackendInterrupt:
 
             def _caller() -> Exception | None:
                 try:
-                    pool.execute(_USER_SQL, None, time_zone="UTC")
+                    pool.execute(_USER_SQL, None, time_zone="UTC", limit=_LIMIT)
                 except QueryError as exc:
                     return exc
                 return None
@@ -127,7 +130,7 @@ class TestDbtBackendInterrupt:
             assert build.call_count == 1
 
             with pytest.raises(QueryError) as refused:
-                pool.execute(_USER_SQL, None, time_zone="UTC")
+                pool.execute(_USER_SQL, None, time_zone="UTC", limit=_LIMIT)
             assert refused.value.code is ERR_QUERY_INTERRUPTED
             with pytest.raises(QueryError) as refused_new:
                 sa._get_source_pool({**_POSTGRES_SOURCE, "host": "other"})

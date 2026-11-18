@@ -44,26 +44,9 @@ use std::str::Chars;
 use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
 
-use crate::pygments_lexers::{ASCII_IGNORECASE, PY_DIGIT, PY_WORD};
-
-fn in_ranges(ranges: &[(char, char)], c: char) -> bool {
-    ranges
-        .binary_search_by(|&(lo, hi)| {
-            if c < lo {
-                std::cmp::Ordering::Greater
-            } else if c > hi {
-                std::cmp::Ordering::Less
-            } else {
-                std::cmp::Ordering::Equal
-            }
-        })
-        .is_ok()
-}
-
-/// Python's `\w` for one character.
-pub fn is_py_word(c: char) -> bool {
-    in_ranges(PY_WORD, c)
-}
+use crate::pygments_lexers::{ASCII_IGNORECASE, PY_DIGIT};
+use d3rs::py_str::is_py_word;
+use d3rs::py_word::PY_WORD;
 
 fn class_body(ranges: &[(char, char)]) -> String {
     ranges

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Table spark bar columns are wide enough to compare rows, and a nonzero value always draws a visible bar.
+time: 2026-11-16T15:32:54.584966-08:00

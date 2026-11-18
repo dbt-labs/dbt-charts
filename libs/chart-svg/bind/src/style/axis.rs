@@ -546,6 +546,20 @@ impl<'a> AxisLadder<'a> {
         self.rungs.walk(|layer| layer.format_field(&select))
     }
 
+    /// The format the chart's own `axis_y` sets, alone: `auto` is the default, not a choice, and no
+    /// other rung of the cascade speaks (`_measure_tooltip_format` reads `primary.axis_y`).
+    pub fn own_axis_y_format(tiers: &Tiers<'a>) -> Option<AuthoredFormat> {
+        let only = Self {
+            axis: AxisName::Y,
+            channel: ChannelType::Quantitative,
+            rungs: Ladder::new(vec![Layer::patch(AxisRung::Y(tiers.own.axis_y?)).owned()]),
+        };
+        match only.rungs.walk(Layer::format)? {
+            FormatSpec::Name(name) if name.as_str() == "auto" => None,
+            _ => only.labels_format(),
+        }
+    }
+
     /// The tick label format: the first rung that sets one. A name or bare spec is one
     /// value; a block is walked field by field. `auto` is decided here from the channel
     /// type: the bounded SI `number` on a quantitative axis, no format on any other, whose

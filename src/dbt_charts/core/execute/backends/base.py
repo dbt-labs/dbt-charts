@@ -61,6 +61,10 @@ class Backend(Protocol):
         """Run ``query.setup_sql`` then ``query.sql`` in one session, fetching at
         most ``query.limit.fetch_limit`` rows.
 
+        ``TypedRows`` come back already cut to ``query.limit`` (``take``) and
+        name their cut; nothing downstream measures them again. Arrow comes
+        back bounded only by rows and is cut on conversion.
+
         A backend that cannot bind ``query.params`` inlines them here. Failures
         raise; the caller classifies them.
         """

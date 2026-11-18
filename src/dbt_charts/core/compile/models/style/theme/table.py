@@ -295,6 +295,9 @@ class SparkBarCellStyle(BaseModel):
     default_max: float = Field(
         description="Default maximum value for bar scale when no explicit max is authored."
     )
+    width: float = Field(
+        description="Default bar width in pixels; a bar column with no spark.width is sized for it."
+    )
     border: CornerStyle = Field(description="Corner rounding for spark bar cells.")
     # InheritSlot: table.spark.bar.font fills from charts.font (not table.font).
     font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(

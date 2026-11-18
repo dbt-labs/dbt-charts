@@ -295,9 +295,18 @@ def test_block_font_family_and_size_apply_to_text(
         + "\n          ".join(_BLOCK_FONT.splitlines())
         + "\n",
     )
-    assert block != plain
-    assert "Source Code Pro" in block
-    assert block == via_text
+
+    def family_of(svg: str, role: str) -> str:
+        [family] = re.findall(
+            rf"\.md-[0-9a-f]+-{role} \{{ font-family: ([^}}]*)\}}", svg
+        )
+        return family
+
+    assert "Source Code Pro" not in family_of(plain, "text")
+    assert "Source Code Pro" in family_of(block, "text")
+    assert "Source Code Pro" in family_of(via_text, "text")
+    assert "Source Code Pro" in family_of(block, "heading")
+    assert "Source Code Pro" not in family_of(via_text, "heading")
 
 
 def test_block_text_font_wins_over_block_font(svg_of: Callable[..., str]) -> None:

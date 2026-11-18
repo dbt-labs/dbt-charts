@@ -5,16 +5,19 @@
 
 use board_model::board::Board;
 use board_model::chart::query::ChartQuery;
+use board_model::chart::ChartLink;
 use board_model::chart::TableChart;
 use board_model::ids::ChartId;
 use board_model::facet::{ColorOrColumn, FontWeightValue};
+use board_model::primitives::LinkSpec;
 use board_model::style::table::{CellAlign, ColumnFontStyle, SymbolMode, PixelWidth, TableChartStyle, TableColumnConfig, TableColumnDefaultsConfig};
 use column_types::{is_date_like, ColumnType, Dataset};
-use diagnostic::{codes, diag, refuse, Diagnostic};
+use diagnostic::{codes, diag, py_str, refuse, Diagnostic};
 use serde_json::{json, Value};
 
 use crate::derived::Placed;
-use crate::bound::{DecimalPad, Empty, Failure, Family, NumberCell, Table, TableCell, TableColumn};
+use crate::bound::{CellLink, Href, DecimalPad, Empty, Failure, Family, NumberCell, RowLink, Table, TableCell, TableColumn, TableLinks};
+use crate::links;
 use crate::formats::locale::{active_number_locale, NumberLocale};
 use crate::formats::{column_format, ColumnScale, inferred_number_format, AuthoredFormat, Formats, Kind, Repeat, ResolvedFormat, Tiers};
 use crate::kpi::{authored_format, declared_column_formats};
@@ -54,7 +57,7 @@ pub fn bind_table(id: &ChartId, chart: &TableChart, placed: &Placed, board: &Boa
         if !style.columns.is_empty() {
             return Err(Diagnostic::refused(refuse!("a table with `style.columns` over a query that returned no rows is not supported")));
         }
-        return Ok(Ok(Family::Table(Table { columns: Vec::new(), empty: Some(Empty { filters: run.empty_filters_line(placed.public_id) }) })));
+        return Ok(Ok(Family::Table(Table { columns: Vec::new(), empty: Some(Empty { filters: run.empty_filters_line(placed.public_id) }), links: None })));
     };
     let case = style.header.font.case.as_str();
     // `style.columns` styles the query's columns and hides none but those it marks `visible: false`.
@@ -75,6 +78,8 @@ pub fn bind_table(id: &ChartId, chart: &TableChart, placed: &Placed, board: &Boa
     };
     refuse_style_inputs(authored.values(), &style.column_defaults, first)?;
     let mut columns = Vec::with_capacity(first.len());
+    // Each drawn column's source name, whether it paints swatches, and its own `link:`, in `columns`' order.
+    let mut drawn: Vec<(&str, bool, Option<&LinkSpec>)> = Vec::with_capacity(first.len());
     // The numeric columns, baked together once every column is read: a column's magnitude and precision
     // depend on its siblings' (`number_columns`). A hidden one is baked beside them and drawn nowhere.
     let mut pending: Vec<PendingNumbers<'_>> = Vec::new();
@@ -178,6 +183,13 @@ pub fn bind_table(id: &ChartId, chart: &TableChart, placed: &Placed, board: &Boa
         let max_width = boxed.max_width.map(|width| pixel_width(width, "`max_width`")).transpose()?;
         let background = boxed.background.map(|color| cell_color(color, "`background`")).transpose()?.flatten();
         let (ink, weight) = boxed.font.map(font_paint).transpose()?.unwrap_or_default();
+        let own_link = config.and_then(|c| c.link.as_ref()).filter(|spec| !is_blank(spec));
+        // `automatic_link.resolve_filter_cell_link`: a cell in a column named for a board variable links to
+        // `?column=value` unless the column authors its own `link:`.
+        if own_link.is_none() && run.variables.contains_key(name.as_str()) {
+            return Err(Diagnostic::refused(refuse!("a table column named for a board variable is not supported")));
+        }
+        drawn.push((name.as_str(), swatch, own_link));
         columns.push(TableColumn { header, cells, align, width, swatch, max_width, background, ink, weight });
     }
     if columns.is_empty() {
@@ -201,14 +213,21 @@ pub fn bind_table(id: &ChartId, chart: &TableChart, placed: &Placed, board: &Boa
             }
         }
     }
-    Ok(Ok(Family::Table(Table { columns, empty: None })))
+    let links = match bind_links(chart, placed.public_id, &drawn, rows, first, board, run) {
+        Err(error) if error.code == codes::ERR_TABLE_LINK_FILTER_UNKNOWN.id || error.code == codes::ERR_LINK_SCHEME_UNSAFE_AT_RENDER.id => {
+            let diagnostic = error.with_sink_param("source_path", json!(format!("charts.{id}"))).with_sink_param("chart_id", json!(id.as_str()));
+            return Ok(Err(Failure { chart: id.clone(), diagnostic }));
+        }
+        links => links?,
+    };
+    Ok(Ok(Family::Table(Table { columns, empty: None, links })))
 }
 
 /// Every chart field, style and board fact that changes what the table says and is not modeled.
 fn refuse_unmodeled(chart: &TableChart, style: &TableChartStyle, board: &Board) -> Result<(), Diagnostic> {
-    let (base, defaults) = (&chart.shared.base, &style.column_defaults);
+    let defaults = &style.column_defaults;
     let unmodeled = [
-        (base.link.is_some(), "a `link`"),
+        (board.links.as_ref().is_some_and(|links| links.auto), "automatic links (`links.auto`)"),
         (chart.rows.is_some() || chart.columns.is_some() || chart.values.is_some(), "a pivot (`rows`, `columns` or `values`)"),
         (chart.row_role.is_some(), "a `row_role`"),
         (chart.spanners.is_some(), "`spanners`"),
@@ -220,6 +239,102 @@ fn refuse_unmodeled(chart: &TableChart, style: &TableChartStyle, board: &Board) 
     match unmodeled.iter().find(|(set, _)| *set) {
         Some((_, what)) => Err(Diagnostic::refused(refuse!("a table with {what} is not supported"))),
         None => Ok(()),
+    }
+}
+
+/// A table's links as production draws them (`chart-renderer/src/families/table/layout.rs`, `paint_data_rows`): the
+/// chart's `link:` (else the host's automatic one) expanded per row, and each non-swatch column's own `link:` per cell, a column's `link:` naming
+/// no template when it is empty. Each target is resolved in the host's link context and its scheme checked.
+fn bind_links(chart: &TableChart, public_id: &str, drawn: &[(&str, bool, Option<&LinkSpec>)], rows: &[serde_json::Map<String, Value>], first: &serde_json::Map<String, Value>, board: &Board, run: &RunResult) -> Result<Option<TableLinks>, Diagnostic> {
+    let href = |template: &str, row: &serde_json::Map<String, Value>| -> Result<Option<Href>, Diagnostic> {
+        expand_link(template, row, first)?.map(|expanded| links::resolve(&expanded, run)).transpose()
+    };
+    let authored_link = match chart.shared.base.link.as_ref() {
+        Some(ChartLink::On(spec)) if is_blank(spec) => None,
+        link => link,
+    };
+    let rows_link = links::chart_link(authored_link, links::automatic(run, public_id), board)?;
+    let row_links = rows_link
+        .map(|(template, open)| {
+            // `row_link_label_col`: the first drawn column that is no swatch, else the first.
+            let label_column = drawn.iter().find(|(_, swatch, _)| !swatch).or(drawn.first()).map(|(name, ..)| *name);
+            rows.iter()
+                .map(|row| {
+                    Ok(href(template, row)?.map(|href| {
+                        let label = label_column.and_then(|name| row.get(name)).map(py_str).filter(|text| !text.is_empty()).unwrap_or_else(|| href.as_str().to_string());
+                        RowLink { link: CellLink { href, open }, label }
+                    }))
+                })
+                .collect::<Result<Vec<_>, Diagnostic>>()
+        })
+        .transpose()?;
+    let mut cells = Vec::with_capacity(drawn.len());
+    for &(_, swatch, own) in drawn {
+        let column = match own.map(|spec| links::spec_link(spec, board)).transpose()?.filter(|_| !swatch) {
+            Some((template, open)) => rows.iter().map(|row| Ok(href(template, row)?.map(|href| CellLink { href, open }))).collect::<Result<Vec<_>, Diagnostic>>()?,
+            _ => vec![None; rows.len()],
+        };
+        cells.push(column);
+    }
+    let authored = rows_link.is_some() || drawn.iter().any(|(_, swatch, own)| !swatch && own.is_some());
+    Ok(authored.then_some(TableLinks { rows: row_links, cells }))
+}
+
+/// An authored empty `link:` is no link (`de_nonempty_string` on the chart's, `if link_raw:` on a column's).
+fn is_blank(spec: &LinkSpec) -> bool {
+    match spec {
+        LinkSpec::Url(url) => url.as_str().is_empty(),
+        LinkSpec::Block(block) => block.url.as_deref() == Some(""),
+    }
+}
+
+/// `resolve_cell_link` (`chart-renderer/src/families/table/bind.rs`): a `link:` that names a query column verbatim is
+/// that row's value, none when it is null or empty. Otherwise each `{{ column }}` or `{{ column | urlencode }}`
+/// is replaced by the row's value (`urlencode` is `quote_plus`), a template-free string is the href as written, a
+/// null placeholder drops the whole row's link, and an empty result is no link. A `{{ }}` that holds no
+/// `\w+` or `\w+ | \w+` stays literal text; another filter is `ERR-TABLE-LINK-FILTER-UNKNOWN`, and only for a
+/// non-null value, as production reads the cell before the filter.
+fn expand_link(template: &str, row: &serde_json::Map<String, Value>, columns: &serde_json::Map<String, Value>) -> Result<Option<String>, Diagnostic> {
+    if columns.contains_key(template) {
+        return Ok(row.get(template).filter(|value| !value.is_null()).map(py_str).filter(|text| !text.is_empty()));
+    }
+    let (mut out, mut has_template, mut has_none, mut at) = (String::new(), false, false, 0);
+    while at < template.len() {
+        if let Some((inner_len, column, filter)) = template[at..].strip_prefix("{{").and_then(|rest| Some((rest.find("}}")?, rest))).and_then(|(close, rest)| placeholder(&rest[..close]).map(|(column, filter)| (close, column, filter))) {
+            has_template = true;
+            match row.get(column) {
+                None | Some(Value::Null) => has_none = true,
+                Some(value) => match filter {
+                    None => out.push_str(&py_str(value)),
+                    Some("urlencode") => out.push_str(&links::quote_plus(&py_str(value))),
+                    Some(other) => return Err(diag::err_table_link_filter_unknown(other)),
+                },
+            }
+            at += 2 + inner_len + 2;
+            continue;
+        }
+        let ch = template[at..].chars().next().expect("at < template.len()");
+        out.push(ch);
+        at += ch.len_utf8();
+    }
+    Ok(match (has_template, has_none) {
+        (false, _) => Some(template.to_string()),
+        (true, true) => None,
+        (true, false) => Some(out).filter(|text| !text.is_empty()),
+    })
+}
+
+/// `parse_template_inner`: the `(column, filter)` of `\s*(\w+)(?:\s*\|\s*(\w+))?\s*`, `\w` being Python's
+/// `re` word class (`is_py_word`); none when the span does not match whole.
+fn placeholder(inner: &str) -> Option<(&str, Option<&str>)> {
+    let word = |text: &str| !text.is_empty() && text.chars().all(d3rs::py_str::is_py_word);
+    let trimmed = inner.trim_matches(d3rs::py_str::is_py_space);
+    match trimmed.split_once('|') {
+        Some((column, filter)) => {
+            let (column, filter) = (column.trim_matches(d3rs::py_str::is_py_space), filter.trim_matches(d3rs::py_str::is_py_space));
+            (word(column) && word(filter)).then_some((column, Some(filter)))
+        }
+        None => word(trimmed).then_some((trimmed, None)),
     }
 }
 
@@ -718,7 +833,6 @@ fn refuse_unmodeled_column(config: &TableColumnConfig) -> Result<(), Diagnostic>
         (config.spark.is_some(), "`spark`"),
         (config.header_overflow.is_some(), "`header_overflow`"),
         (config.header_link.is_some(), "`header_link`"),
-        (config.link.is_some(), "`link`"),
         (config.scale.is_some(), "`scale`"),
         (config.glyph.is_some(), "`glyph`"),
         (config.glyph_color.is_some(), "`glyph_color`"),
@@ -752,6 +866,59 @@ mod tests {
 
     fn swatch(text: &str) -> Result<String, Diagnostic> {
         swatch_cell(Some(&json!(text)))
+    }
+
+    fn row(value: Value) -> serde_json::Map<String, Value> {
+        value.as_object().unwrap().clone()
+    }
+
+    fn expanded(template: &str, data: Value) -> Result<Option<String>, Diagnostic> {
+        let data = row(data);
+        expand_link(template, &data, &data)
+    }
+
+    #[test]
+    fn a_link_naming_a_column_is_that_rows_value_and_none_when_null_or_empty() {
+        assert_eq!(expanded("url", json!({"url": "https://a.io"})).unwrap().as_deref(), Some("https://a.io"));
+        assert_eq!(expanded("url", json!({"url": null})).unwrap(), None);
+        assert_eq!(expanded("url", json!({"url": ""})).unwrap(), None);
+    }
+
+    #[test]
+    fn a_placeholder_takes_the_rows_value_and_urlencode_quotes_it() {
+        let data = json!({"name": "A b&c", "n": 3});
+        assert_eq!(expanded("/p/{{ name }}/{{n}}", data.clone()).unwrap().as_deref(), Some("/p/A b&c/3"));
+        assert_eq!(expanded("/p?q={{ name | urlencode }}", data).unwrap().as_deref(), Some("/p?q=A+b%26c"));
+    }
+
+    #[test]
+    fn a_null_placeholder_drops_the_whole_link_even_beside_an_unknown_filter() {
+        let data = json!({"name": "A", "slug": null});
+        assert_eq!(expanded("/p/{{ name }}/{{ slug }}", data.clone()).unwrap(), None);
+        assert_eq!(expanded("/p/{{ slug | upper }}", data).unwrap(), None);
+    }
+
+    #[test]
+    fn an_unknown_filter_on_a_value_is_production_s_error() {
+        let error = expanded("/p/{{ name | upper }}", json!({"name": "A"})).unwrap_err();
+        assert_eq!(error.code, codes::ERR_TABLE_LINK_FILTER_UNKNOWN.id);
+        assert_eq!(error.params["filter_name"], "upper");
+    }
+
+    #[test]
+    fn braces_that_hold_no_placeholder_stay_text_and_an_empty_expansion_is_no_link() {
+        let data = json!({"a": ""});
+        assert_eq!(expanded("/p/{{ a b }}", data.clone()).unwrap().as_deref(), Some("/p/{{ a b }}"));
+        assert_eq!(expanded("/p", data.clone()).unwrap().as_deref(), Some("/p"));
+        assert_eq!(expanded("{{ a }}", data).unwrap(), None);
+    }
+
+    #[test]
+    fn a_placeholder_is_python_s_word_class_so_a_devanagari_name_stays_text() {
+        // `\w` takes `isalnum()` characters, and the vowel signs of this word are not (they are marks).
+        let data = json!({"हिंदी": "x"});
+        assert_eq!(expanded("/p/{{ हिंदी }}", data).unwrap().as_deref(), Some("/p/{{ हिंदी }}"));
+        assert_eq!(placeholder("a_1"), Some(("a_1", None)));
     }
 
     #[test]

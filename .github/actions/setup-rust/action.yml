@@ -74,7 +74,7 @@ runs:
           ~/.cargo/git
           ${{ env.SETUP_RUST_TARGET }}
           !${{ env.SETUP_RUST_TARGET }}/**/incremental
-        key: cargo-${{ runner.os }}-${{ inputs.cache-name }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
+        key: cargo-${{ runner.os }}-${{ inputs.cache-name }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/**', 'dbt-charts/src/dbt_charts/core/defaults/themes/**', 'dbt-charts/src/dbt_charts/data/schemas/yaml/**', '.cargo/config.toml') }}
         restore-keys: cargo-${{ runner.os }}-${{ inputs.cache-name }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-
 
     - name: Cache cargo registry and target
@@ -88,7 +88,7 @@ runs:
           ~/.cargo/git
           ${{ env.SETUP_RUST_TARGET }}
           !${{ env.SETUP_RUST_TARGET }}/**/incremental
-        key: cargo-${{ runner.os }}-${{ inputs.cache-name }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
+        key: cargo-${{ runner.os }}-${{ inputs.cache-name }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/**', 'dbt-charts/src/dbt_charts/core/defaults/themes/**', 'dbt-charts/src/dbt_charts/data/schemas/yaml/**', '.cargo/config.toml') }}
         restore-keys: cargo-${{ runner.os }}-${{ inputs.cache-name }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-
 
     # Cargo decides freshness of local crates by mtime, and checkout stamps
@@ -97,5 +97,5 @@ runs:
     # byte-identical to the cached build.
     - name: Backdate extension sources to reuse the cached build
       if: steps.cargo-cache.outputs.cache-hit == 'true' || steps.cargo-restore.outputs.cache-hit == 'true'
-      run: git ls-files -z libs/chart-svg dbt-charts/src/dbt_charts/core/defaults/palettes/tone | xargs -0 touch -t 197001010000
+      run: git ls-files -z libs/chart-svg dbt-charts/src/dbt_charts/core/defaults/palettes dbt-charts/src/dbt_charts/core/defaults/themes dbt-charts/src/dbt_charts/data/schemas/yaml .cargo/config.toml | xargs -0 touch -t 197001010000
       shell: bash

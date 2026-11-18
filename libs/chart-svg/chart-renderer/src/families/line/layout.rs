@@ -1213,8 +1213,25 @@ pub(super) fn fit(
     };
     // A value's fraction down the plot from the top, which the fit's ink passes read before
     // the final plot height exists.
-    let y_from_top = y_axis([1.0, 0.0]);
-    let y_frac = |v: f64| crate::common::zero_floor_position(&y_from_top, v);
+    // Area fills from its floor like a bar, so only a line chart tears. Under a domain the
+    // engine chose, the torn edge sits `pad` px past the domain's end nearest zero, so that end
+    // draws as a rung of its own and the paper bites below it. An authored domain fills the plot
+    // as written, so its rungs line up with an untorn neighbor's, and tears on its own floor.
+    let (y_lo, y_hi) = (y_min.min(y_max), y_min.max(y_max));
+    let tear = ax_y.grid.torn_baseline.as_ref().filter(|t| t.enabled && !draw_areas);
+    let torn_edge = tear.and_then(|_| crate::torn::torn_edge_value(y_lo, y_hi));
+    let padded_tear = tear.filter(|_| ax_y.authored_continuous_domain().is_none());
+    let torn_floor_side = padded_tear.zip(torn_edge).map(|(t, edge)| {
+        (t.pad(), crate::common::zero_floor_position(&y_axis([1.0, 0.0]), edge) > 0.5)
+    });
+    let y_range = |ph: f64| match torn_floor_side {
+        Some((pad, true)) => [ph - pad, 0.0],
+        Some((pad, false)) => [ph, pad],
+        None => [ph, 0.0],
+    };
+    // A value's y in a plot `ph` px tall, which the fit's ink passes read before the final plot
+    // height exists.
+    let y_px = |ph: f64, v: f64| crate::common::zero_floor_position(&y_axis(y_range(ph)), v);
     let log_scale_ticks = || log_scale.ticks(10);
     let end_ticks = |ticks: Vec<f64>| match ax_y.authored_continuous_domain().and(authored_domain) {
         Some((a, b)) if !is_log => crate::families::cartesian::with_authored_end_ticks(ticks, a, b),
@@ -2626,7 +2643,7 @@ pub(super) fn fit(
     });
     let bare_ticks = |domain: (f64, f64), pw: f64| -> Result<Vec<BareTick>, String> {
         if let Some(lin) = &quant_x {
-            let (fracs, labels, _, scale) = lin.at(pw)?;
+            let (fracs, labels, _, scale) = lin.at(pw, |ticks| ax_x.labeling(ticks, fonts))?;
             return Ok(fracs
                 .into_iter()
                 .zip(labels)
@@ -3099,10 +3116,11 @@ pub(super) fn fit(
                 AxisMap::Point { domain: x_domain.clone(), positions, days: annotation_ordinals.clone(), range: (0.0, pw) }
             }
         };
+        let [y_bottom, y_top] = y_range(ph);
         let y = if is_log {
-            AxisMap::Log { domain: (y_min, y_max), range: (ph, 0.0) }
+            AxisMap::Log { domain: (y_min, y_max), range: (y_bottom, y_top) }
         } else {
-            AxisMap::Linear { domain: (y_min, y_max), range: (ph, 0.0) }
+            AxisMap::Linear { domain: (y_min, y_max), range: (y_bottom, y_top) }
         };
         let layer_y = crate::families::layers::layer_y_maps(&y, &layer_axes, overlays.len(), ph);
         AnnotationCtx {
@@ -3179,17 +3197,16 @@ pub(super) fn fit(
         } else {
             (own_min, own_max)
         };
-        let (frac_hi, frac_lo) = {
-            let f_max = y_frac(own_hi).clamp(0.0, 1.0);
-            let f_min = y_frac(own_lo).clamp(0.0, 1.0);
-            (f_max.min(f_min), f_max.max(f_min))
+        let mark_span = |ph: f64| {
+            let (a, b) = (y_px(ph, own_hi).clamp(0.0, ph), y_px(ph, own_lo).clamp(0.0, ph));
+            (a.min(b), a.max(b))
         };
         // A layer's marks sit on its own scale once any layer pins a side, else the base's.
         let layer_y_at = |layer: usize, v: f64, ph: f64| -> f64 {
             if !layer_axes.is_empty() {
                 layer_axes[layer].scale(ph).scale(v)
             } else {
-                ph * y_frac(v)
+                y_px(ph, v)
             }
         };
         let mut fit_tlabels: Option<Vec<TemporalLabel>> = None;
@@ -3351,10 +3368,10 @@ pub(super) fn fit(
                     // top); parity hides every other label under min_gap and
                     // only the visible ones' ink counts. `tick_ys` is the one
                     // source for each tick's row — the ghost loop below reads
-                    // it too, rather than recomputing `y_frac` a second time.
+                    // it too, rather than recomputing `y_px` a second time.
                     let tick_ys: Vec<f64> = tick_values
                         .iter()
-                        .map(|&tv| ph * y_frac(tv))
+                        .map(|&tv| y_px(ph, tv))
                         .collect();
                     let widest_label = y_label_ws.iter().map(|w| w.min(y_limit)).fold(0.0_f64, f64::max);
                     let (label_anchor_x, label_align) = if y_start_outer {
@@ -3755,7 +3772,7 @@ pub(super) fn fit(
                     };
                     if !rows.is_empty() {
                         b.union(
-                            &vega_fit::Bounds::new(datum_x0, ph * frac_hi, datum_x1, ph * frac_lo)
+                            &vega_fit::Bounds::new(datum_x0, mark_span(ph).0, datum_x1, mark_span(ph).1)
                                 .expand(line_stroke_w.max(point_reach).max(shared_layer_reach)),
                         );
                     }
@@ -3794,7 +3811,7 @@ pub(super) fn fit(
                             for (cat, start, end) in crate::families::layers::row_order_stack(layer_rows.iter(), l.x.as_deref().unwrap_or(x_field), &l.y, &crate::families::layers::never_nan) {
                                 let Some(i) = x_domain.iter().position(|d| *d == cat) else { continue };
                                 let cx = if use_band_positions { band_center(i) } else { pos_at(i, false) };
-                                b.union(&vega_fit::Bounds::new(cx, ph * y_frac(end), cx, ph * y_frac(start)));
+                                b.union(&vega_fit::Bounds::new(cx, y_px(ph, end), cx, y_px(ph, start)));
                             }
                         }
                     }
@@ -3818,7 +3835,7 @@ pub(super) fn fit(
                             if !fires {
                                 continue;
                             }
-                            let ry = ph * y_frac(datum);
+                            let ry = y_px(ph, datum);
                             b.union(&vega_fit::Bounds::new(0.0, ry, pw, ry).expand(rw));
                         }
                     }
@@ -3830,7 +3847,7 @@ pub(super) fn fit(
                     // `fit_x_at` (which is `band_center_x` under the same
                     // flag) — not `pos_at`'s point-scale formula.
                     for (i, _, at, _, w, _, _) in &value_label_marks {
-                        let y = ph * y_frac(*at);
+                        let y = y_px(ph, *at);
                         let spot = label_spot(*i);
                         let label_x = match spot.edge {
                             Some(frac) => band_edge(&x_band_geometry(pw), *i, frac),
@@ -4600,7 +4617,7 @@ pub(super) fn fit(
                 .zip(ws.iter())
                 .zip(label_lines.iter())
                 .map(|((&tv, &lw), &lines)| {
-                    let y = ph * y_frac(tv);
+                    let y = y_px(ph, tv);
                     vega_fit::text_ink_rows(-(y_label_pad + y_tick_eff), y, lw.min(y_limit), y_font_sz, "right", y_label_baseline, lines)
                 })
                 .collect();
@@ -4617,7 +4634,7 @@ pub(super) fn fit(
             let label_half = vega_fit::baseline_rise(y_font_sz, y_label_baseline);
             let mut ink = 0.0_f64;
             if let Some((&top_tick, _)) = ticks.iter().zip(mask).rev().find(|(_, &v)| v) {
-                let dist = y_frac(top_tick) * ph;
+                let dist = y_px(ph, top_tick);
                 ink = ink.max(label_half - dist);
             }
             // The rail pane is a concat sibling whose label text hangs half
@@ -4628,7 +4645,7 @@ pub(super) fn fit(
             if rail_strip_rows.is_none() || rail_bottom_strip {
                 let rail_half = vega_fit::middle_rise(sl.font_size);
                 for (_, v) in diagnostic::collect(|| rail_cascade(ph).expect("every anchor has a plan, checked where the plans are built")).0.0 {
-                    ink = ink.max(rail_half - y_frac(v) * ph);
+                    ink = ink.max(rail_half - y_px(ph, v));
                 }
             }
             if let Some(b) = rail_label_ink(svg_w, ph) {
@@ -4671,7 +4688,7 @@ pub(super) fn fit(
             } else {
                 data_min
             };
-            let mark_dist = y_frac(top_datum) * ph;
+            let mark_dist = y_px(ph, top_datum);
             ink = ink.max(mark_reach - mark_dist);
             ink.max(0.0)
         };
@@ -5072,6 +5089,7 @@ pub(super) fn fit(
         facet_axis_right_overhang,
         top_axis_overhang: facet_top_axis_overhang,
     } = plot;
+    let y_visible = if torn_floor_side.is_some() { y_visible } else { crate::torn::unlabeled(y_visible, &tick_values, torn_edge) };
 
     // Does any emitted label carry a non-empty context row?
     let label_rows = match (&temporal_labels, &bare_axis) {
@@ -5169,7 +5187,7 @@ pub(super) fn fit(
     // bucket's band or point.
     let temporal_label_x_at = |i: usize| if x_ordinal_calendar { fit_x_at(label_slots[i]) } else { label_x_at(i) };
     // y range: plot_h = domain_min (bottom), 0 = domain_max (top) — inverted.
-    let y_scale = y_axis([plot_h, 0.0]);
+    let y_scale = y_axis(y_range(plot_h));
     let y_at = |v: f64| crate::common::zero_floor_position(&y_scale, v);
 
     // Each series' points in x-domain order, split into d3-shape's DEFINED
@@ -5609,17 +5627,16 @@ pub(super) fn fit(
 
     // Y gridlines (horizontal at each tick)
     let yg = &ax_y.grid;
-    let (y_lo, y_hi) = (y_min.min(y_max), y_min.max(y_max));
-    // Area fills from its floor like a bar, so only a line chart tears.
-    let tear = yg.torn_baseline.as_ref().filter(|t| t.enabled && !draw_areas);
-    let torn_y = tear
-        .and_then(|_| crate::torn::torn_edge_value(y_lo, y_hi))
-        .map(|edge| rule_at(y_at(edge)));
+    let torn_y = torn_edge.map(|edge| {
+        rule_at(match torn_floor_side {
+            Some((_, bottom)) => if bottom { plot_h } else { 0.0 },
+            None => y_at(edge),
+        })
+    });
     // The tear's cubics, which the x gridlines below run down onto.
-    let torn = tear.zip(torn_y).map(|(t, ty)| {
+    let torn = tear.zip(torn_edge.zip(torn_y)).map(|(t, (edge, ty))| {
         let inward = crate::torn::torn_inward(ty, ad, plot_h);
-        let tick_rules: Vec<f64> = axis_tick_xs.iter().map(|&x| x_rule_at(x)).collect();
-        (inward, crate::torn::torn_cubics(ad, plot_w + ad, ty, inward, &tick_rules, t))
+        (inward, t.cubics((ad, plot_w + ad), ty, inward, edge))
     });
     // X gridlines (vertical at each axis tick position). Under a tear each
     // ends on the wave at its own x instead of poking through it.
@@ -7086,6 +7103,8 @@ pub(super) fn fit(
         x_font_size,
         x_tick_len,
         x_tick_eff,
+        // A tick continues the floor, and a torn edge on the axis's side has none.
+        torn_floor: torn.as_ref().is_some_and(|(inward, _)| (*inward < 0.0) == (x_edge == crate::common::XEdge::Bottom)),
         x_label_pad,
         x_axis_drop,
         floor_rule,

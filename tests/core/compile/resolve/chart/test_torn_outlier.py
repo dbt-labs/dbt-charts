@@ -86,25 +86,27 @@ def test_two_outliers_are_both_torn() -> None:
 
 def test_ratio_below_threshold_does_not_tear() -> None:
     top = TORN_OUTLIER_MIN_RATIO * 0.9 * 10
-    assert pick_torn_break([top, 10, 9, 8], None, None) is None
-    assert pick_torn_break([TORN_OUTLIER_MIN_RATIO * 10, 10, 9, 8], None, None) == 10
+    assert pick_torn_break([top, 10, 9, 8], None, None, None) is None
+    assert (
+        pick_torn_break([TORN_OUTLIER_MIN_RATIO * 10, 10, 9, 8], None, None, None) == 10
+    )
 
 
 def test_fewer_than_four_bars_never_tear() -> None:
-    assert pick_torn_break([100, 1, 1], None, None) is None
+    assert pick_torn_break([100, 1, 1], None, None, None) is None
 
 
 def test_largest_ratio_among_the_first_third_wins() -> None:
     values = [900, 100, 10, 9, 8, 7, 6, 5]  # n=8 -> k in 1..2; r1=9, r2=10
-    assert pick_torn_break(values, None, None) == 10
+    assert pick_torn_break(values, None, None, None) == 10
 
 
 def test_two_of_six_bars_tear() -> None:
-    assert pick_torn_break([400, 300, 20, 18, 16, 14], None, None) == 20
+    assert pick_torn_break([400, 300, 20, 18, 16, 14], None, None, None) == 20
 
 
 def test_a_break_headroom_lifts_past_the_outlier_tears_nothing() -> None:
-    assert pick_torn_break([30, 10, 9, 8], 2.5, None) is None
+    assert pick_torn_break([30, 10, 9, 8], 2.5, None, None) is None
 
 
 def test_an_annotation_under_the_break_draws() -> None:
@@ -124,7 +126,7 @@ def test_an_authored_tick_ladder_stops_at_the_break() -> None:
 
 
 def test_headroom_expands_the_break() -> None:
-    assert pick_torn_break([100, 10, 9, 8], 0.1, None) == pytest.approx(11.0)
+    assert pick_torn_break([100, 10, 9, 8], 0.1, None, None) == pytest.approx(11.0)
 
 
 def test_authored_at_replaces_the_auto_rule() -> None:
@@ -199,15 +201,31 @@ def test_a_torn_chart_raises_no_warning() -> None:
         ({"style": {"stack": "normalize"}, "color": "s"}, "normalize"),
         ({"y_start": "lo"}, "y_start"),
         (
-            {"layers": [{"type": "line", "y": "v"}]},
-            "layers",
+            {"layers": [{"type": "bar", "y": "v"}]},
+            "bar layer on the shared axis_y scale",
+        ),
+        (
+            {"style": {"axis_y": {"scale": {"continuous": {"domain": [10, 200]}}}}},
+            "domain above zero",
+        ),
+        (
+            {
+                "style": {
+                    "torn_outlier": {"enabled": True, "at": 12},
+                    "axis_y": {"scale": {"continuous": {"domain": [0, 200]}}},
+                }
+            },
+            "both `torn_outlier.at` and an authored axis_y domain",
+        ),
+        (
+            {
+                "layers": [{"type": "line", "y": "t"}],
+                "style": {"torn_outlier": {"enabled": True, "at": 12}},
+            },
+            "layer value at 50, past the break at 12",
         ),
         ({"multiples": {"rows": "s", "scale": "independent"}}, "multiples"),
         ({"multiples": {"rows": "s"}}, "multiples"),
-        (
-            {"style": {"axis_y": {"scale": {"continuous": {"domain": [0, 200]}}}}},
-            "domain",
-        ),
         (
             {"style": {"axis_y": {"scale": {"continuous": {"zero": False}}}}},
             "zero",
@@ -217,7 +235,7 @@ def test_a_torn_chart_raises_no_warning() -> None:
 )
 def test_unsupported_shapes_raise(chart: dict[str, Any], needle: str) -> None:
     rows = [
-        {"cat": f"c{i}", "s": "x", "lo": 0, "v": v}
+        {"cat": f"c{i}", "s": "x", "lo": 0, "t": 50, "v": v}
         for i, v in enumerate([145, 10, 9, 8])
     ]
     with pytest.raises(CompilationError, match=needle) as err:
@@ -225,9 +243,122 @@ def test_unsupported_shapes_raise(chart: dict[str, Any], needle: str) -> None:
     assert err.value.code is ERR_TORN_OUTLIER_UNSUPPORTED
 
 
-def test_negative_bar_names_its_category() -> None:
-    with pytest.raises(CompilationError, match="'c2'"):
-        _resolved([145, 10, -9, 8, 6])
+def _with_target(values: list[float], target: float) -> list[dict[str, Any]]:
+    return [{"cat": f"c{i}", "v": v, "t": target} for i, v in enumerate(values)]
+
+
+def test_a_layer_under_the_break_leaves_it_alone() -> None:
+    plain = _resolved([145, 10, 9, 8, 6]).torn_break
+    layered = _resolved(
+        _with_target([145, 10, 9, 8, 6], 5),
+        chart={"layers": [{"type": "line", "y": "t"}]},
+    )
+    assert layered.torn_break == plain
+
+
+def test_a_layer_value_lifts_the_auto_break() -> None:
+    plain = _resolved([145, 10, 9, 8, 6]).torn_break
+    layered = _resolved(
+        _with_target([145, 10, 9, 8, 6], 40),
+        chart={"layers": [{"type": "line", "y": "t"}]},
+    )
+    assert plain is not None and layered.torn_break is not None
+    assert layered.torn_break >= 40 > plain
+
+
+def test_a_layer_value_past_every_cut_bar_leaves_nothing_to_tear() -> None:
+    layered = _resolved(
+        _with_target([145, 10, 9, 8, 6], 200),
+        chart={"layers": [{"type": "line", "y": "t"}]},
+    )
+    assert layered.torn_break is None
+
+
+def test_an_own_scale_layer_is_ignored_by_the_break() -> None:
+    plain = _resolved([145, 10, 9, 8, 6]).torn_break
+    layered = _resolved(
+        _with_target([145, 10, 9, 8, 6], 40),
+        chart={"layers": [{"type": "line", "y": "t", "axis_y": {"position": "right"}}]},
+    )
+    assert layered.torn_break == plain
+
+
+def test_an_authored_domain_max_is_the_break() -> None:
+    resolved = _resolved(
+        [145, 10, 9, 8, 6],
+        chart={"style": {"axis_y": {"scale": {"continuous": {"domain": [-5, 40]}}}}},
+    )
+    assert resolved.torn_break == 40
+    assert resolved.style.axis_y.domain_min == -5
+    assert (
+        resolved.style.axis_y.tick_values[0] >= -5
+        and resolved.style.axis_y.tick_values[-1] <= 40
+    )
+
+
+def test_an_authored_domain_no_bar_passes_is_a_plain_chart() -> None:
+    resolved = _resolved(
+        [30, 10, 9, 8, 6],
+        chart={"style": {"axis_y": {"scale": {"continuous": {"domain": [0, 40]}}}}},
+    )
+    assert resolved.torn_break is None
+
+
+def test_negative_bars_do_not_raise_and_the_break_ignores_them() -> None:
+    plain = _resolved([145, 10, 9, 8, 6]).torn_break
+    resolved = _resolved([145, 10, -9, 8, 6])
+    assert resolved.torn_break == plain
+
+
+def test_negative_bars_bake_the_domain_min_and_ticks_start_there() -> None:
+    resolved = _resolved([145, 10, -40, 8, 6])
+    assert resolved.torn_break is not None
+    low = resolved.style.axis_y.domain_min
+    assert low is not None and low <= -40
+    assert resolved.style.axis_y.tick_values[0] >= low
+    assert min(resolved.style.axis_y.tick_values) < 0
+
+
+def test_stacked_negatives_split_from_the_positive_pile_and_bake_the_floor() -> None:
+    # Netted, c's pile would be 1 and the break would sit at the next bar down.
+    piles = {"a": (200, 0), "b": (10, 0), "c": (15, -14), "d": (9, 0), "e": (8, 0)}
+    rows = [
+        {"cat": cat, "s": s, "v": v}
+        for cat, parts in {**piles, "f": (7, 0)}.items()
+        for s, v in zip("xy", parts, strict=True)
+    ]
+    resolved = _resolved(rows, chart={"color": "s", "style": {"stack": "zero"}})
+    assert resolved.torn_break is not None and resolved.torn_break >= 15
+    assert resolved.style.axis_y.domain_min is not None
+    assert resolved.style.axis_y.domain_min <= -14
+    # A zero-anchored stack floors at the ladder's first rung, which must not sit above the pile.
+    assert resolved.style.axis_y.tick_values[0] <= -14
+
+
+def test_a_layer_value_below_zero_bakes_the_domain_min() -> None:
+    resolved = _resolved(
+        _with_target([145, 10, 9, 8, 6], -30),
+        chart={"layers": [{"type": "line", "y": "t"}]},
+    )
+    assert resolved.torn_break is not None
+    assert resolved.style.axis_y.domain_min is not None
+    assert resolved.style.axis_y.domain_min <= -30
+
+
+def test_stacked_negatives_do_not_count_toward_the_pile() -> None:
+    rows = [
+        {"cat": cat, "s": s, "v": v}
+        for cat, parts in {
+            "a": (100, 72),
+            "b": (3, 2),
+            "c": (3, -2),
+            "d": (3, 2),
+            "e": (3, 2),
+        }.items()
+        for s, v in zip("xy", parts, strict=True)
+    ]
+    resolved = _resolved(rows, chart={"color": "s", "style": {"stack": "zero"}})
+    assert resolved.torn_break is not None and resolved.torn_break < 20
 
 
 def test_histogram_refuses_the_key() -> None:

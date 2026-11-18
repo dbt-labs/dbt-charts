@@ -202,7 +202,7 @@ class TestDbtBackendReceivesBoundValues:
             self: DbtBackend, source: ResolvedSourceConfig, query: ResolvedQuery
         ) -> TypedRows:
             seen["sql"] = query.inline(source.type)
-            return TypedRows([], [], [])
+            return TypedRows([], [], [], None)
 
         monkeypatch.setattr(DbtBackend, "execute", _fake)
         return seen

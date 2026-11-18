@@ -21,8 +21,8 @@ use model_derive::Model;
     constraint(not_null(y_start,
         message = "y_start names no column; remove it for bars that start at zero."
     )),
-    constraint(forbids(layers, when(is_in(type, "histogram")), nonempty(layers),
-        message = "chart.layers is not supported for chart type 'histogram'. Supported chart types: area, bar, line, scatter."
+    constraint(forbids(layers, when(is_in(type, "histogram", "funnel")), nonempty(layers),
+        message = "chart.layers is not supported for chart type {type!r}. Supported chart types: area, bar, line, scatter."
     )),
     constraint(forbids(pattern, "style.pattern", when(is_in(type, "histogram")),
         message = "pattern is not supported on type: histogram: its bars are bins of rows, so a column has no single value to pattern by."
@@ -56,9 +56,6 @@ use model_derive::Model;
     )),
     constraint(forbids(y_start, when(list(y)),
         message = "y_start sets one start per bar, so y must name a single column, not a list."
-    )),
-    constraint(forbids(layers, when(is_in(type, "bar", "funnel"), list(y)), nonempty(layers),
-        message = "Bar chart: layers are not supported with multi-metric (y: [...]) charts. Use a long-form query with one y field."
     ))
 )]
 #[allow(clippy::duplicated_attributes)]

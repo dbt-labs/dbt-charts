@@ -15,10 +15,11 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence, Sized
 from datetime import UTC, datetime
 from functools import cache, partial
-from typing import Any, NamedTuple
+from itertools import chain, islice
+from typing import Any, NamedTuple, TypeVar
 from zoneinfo import ZoneInfo
 
 import nanoarrow as na
@@ -30,9 +31,12 @@ from dbt_charts.core.column_types import (
     column_type_error,
     map_to_json,
 )
+from dbt_charts.core.constants.fetch import FETCH_CHUNK_ROWS
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_NO_TYPE_READER
 from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.dialects import SQLDialect
 from dbt_charts.core.execute.duckdb_types import duckdb_column_type, typed_rows
+from dbt_charts.core.execute.query_result import RowFetchLimit, take
 from dbt_charts.core.execute.result import arrow_columns
 
 Cell = Any  # type-state: explicit_any — warehouse cell values and type codes
@@ -88,40 +92,69 @@ class _Family(NamedTuple):
     session_zone: bool = False
 
 
+_ChunkT = TypeVar("_ChunkT", bound=Sized)
+
+
+def fetch_chunks(
+    fetch: Callable[[int], _ChunkT], limit: RowFetchLimit
+) -> Iterator[_ChunkT]:
+    """The chunks *fetch* (a cursor's ``fetchmany``) returns, read no further
+    than ``limit.fetch_limit`` rows.
+
+    The first chunk is always yielded, empty or not: a columnar driver reads
+    the result's schema off it. Reading ends at the first empty chunk.
+    """
+    remaining = limit.fetch_limit
+    while True:
+        chunk = fetch(min(FETCH_CHUNK_ROWS, remaining))
+        yield chunk
+        remaining -= len(chunk)
+        if not len(chunk) or not remaining:
+            return
+
+
 def fetch_typed(
     adapter: Driver,
-    dialect: str,
+    dialect: SQLDialect,
     sql: str,
-    limit: int | None,
     time_zone: str,
+    row_limit: RowFetchLimit,
 ) -> TypedRows:
-    """Run *sql* and return its rows with the declared type of every column.
+    """Run *sql* and return its rows with the declared type of every column,
+    cut to *row_limit* (:func:`take`).
 
-    ``limit`` bounds the driver's own fetch; None reads everything (Spark
-    cursors have no ``fetchmany``). ``time_zone`` is the session zone the query
-    runs in, for the drivers that report an instant as the session's wall clock
-    or take the zone per query.
+    Decoding stops at the row or byte cap; a buffering client has already
+    downloaded the whole result.
 
     Raises:
         ExecutionError: ERR-RESULT-COLUMN-TYPE for a type the warehouse reports
             that has no mapping, or a dialect with no type reader.
     """
-    if dialect in _CLIENTS:
-        return _CLIENTS[dialect](adapter.connections, sql, limit, time_zone)
-    if dialect not in _FAMILIES:
-        raise _no_reader(f"the {dialect} dbt adapter has no reader for column types")
-    family = _FAMILIES[dialect]
+    if dialect.name in _CLIENTS:
+        return _CLIENTS[dialect.name](adapter.connections, sql, time_zone, row_limit)
+    if dialect.name not in _FAMILIES:
+        raise _no_reader(
+            f"the {dialect.name} dbt adapter has no reader for column types"
+        )
+    family = _FAMILIES[dialect.name]
     connections = adapter.connections
     zone = ZoneInfo(time_zone)
+    streams = dialect.cursor_supports_driver_limit
     if family.retry is not None:
         return family.retry(
-            connections, lambda: _read(family, connections, sql, limit, zone)
+            connections,
+            lambda: _read(family, connections, sql, zone, row_limit, streams),
         )
-    return _read(family, connections, sql, limit, zone)
+    return _read(family, connections, sql, zone, row_limit, streams)
 
 
 def _read(
-    family: _Family, connections: Driver, sql: str, limit: int | None, zone: ZoneInfo
+    family: _Family,
+    connections: Driver,
+    sql: str,
+    zone: ZoneInfo,
+    row_limit: RowFetchLimit,
+    streams: bool,
 ) -> TypedRows:
     if family.comment_here:
         sql = connections._add_query_comment(sql)  # noqa: SLF001 — dbt's own hook
@@ -134,7 +167,7 @@ def _read(
             pass
         description = cursor.description
         if description is None:
-            return TypedRows([], [], [])
+            return TypedRows([], [], [], None)
         declared = family.declare(connections, description) if family.declare else {}
         resolve = (
             partial(family.resolve, zone=zone)
@@ -155,26 +188,49 @@ def _read(
                 _slot("datetime_tz") if type_name.startswith("datetimeoffset") else slot
                 for slot, type_name in zip(slots, described, strict=True)
             ]
-        raw = cursor.fetchmany(limit) if limit else cursor.fetchall()
+        decoders = [decode for _, decode in slots]
+        fetch = cursor.fetchmany if streams else _fetchmany_over(cursor.fetchall())
+        chunks = fetch_chunks(fetch, row_limit)
+        columns = [column[0] for column in description]
+        rows, reason = take(
+            chain.from_iterable(
+                _decoded(family, description, decoders, chunk) for chunk in chunks
+            ),
+            columns,
+            row_limit,
+        )
         while family.skip_empty_sets and cursor.nextset():
             pass
     finally:
         if family.close_cursor:
             cursor.close()
-    decoders = [decode for _, decode in slots]
+    return TypedRows(columns, rows, [kind for kind, _ in slots], reason)
+
+
+def _fetchmany_over(
+    rows: list[Sequence[Cell]],
+) -> Callable[[int], list[Sequence[Cell]]]:
+    """``fetchmany`` over a finished row list."""
+    remaining = iter(rows)
+    return lambda size: list(islice(remaining, size))
+
+
+def _decoded(
+    family: _Family,
+    description: Sequence[Description],
+    decoders: list[Decoder | None],
+    chunk: Sequence[Sequence[Cell]],
+) -> list[tuple[Cell, ...]]:
     rows = [
         tuple(
             value if decode is None or value is None else decode(value)
             for value, decode in zip(row, decoders, strict=True)
         )
-        for row in raw
+        for row in chunk
     ]
-    columns = [column[0] for column in description]
-    types = [kind for kind, _ in slots]
-    if family.convert:
-        converted = family.convert(description, rows)
-        rows = [tuple(row.values()) for row in converted]
-    return TypedRows(columns, rows, types)
+    if family.convert is None:
+        return rows
+    return [tuple(row.values()) for row in family.convert(description, rows)]
 
 
 def _by_code(family: str, table: Callable[[], dict[Cell, _Slot]]) -> _Resolve:
@@ -717,7 +773,7 @@ def _clickhouse_decoder(column: str, declared: Driver) -> Decoder | None:
 
 
 def _fetch_clickhouse(
-    connections: Driver, sql: str, limit: int | None, time_zone: str
+    connections: Driver, sql: str, time_zone: str, row_limit: RowFetchLimit
 ) -> TypedRows:
     client = connections.get_thread_connection().handle
     result = client.query(
@@ -742,28 +798,34 @@ def _fetch_clickhouse(
         _clickhouse_decoder(name, declared)
         for name, declared in zip(result.column_names, result.column_types, strict=True)
     ]
-    rows = [
-        tuple(
-            cell if decode is None or cell is None else decode(cell)
-            for cell, decode in zip(row, decoders, strict=True)
-        )
-        for row in result.result_set
-    ]
-    return TypedRows(list(result.column_names), rows, types)
+    names = list(result.column_names)
+    rows, reason = take(
+        (
+            tuple(
+                cell if decode is None or cell is None else decode(cell)
+                for cell, decode in zip(row, decoders, strict=True)
+            )
+            for row in islice(result.result_set, row_limit.fetch_limit)
+        ),
+        names,
+        row_limit,
+    )
+    return TypedRows(names, rows, types, reason)
 
 
 def _fetch_bigquery(
-    connections: Driver, sql: str, limit: int | None, time_zone: str
+    connections: Driver, sql: str, time_zone: str, row_limit: RowFetchLimit
 ) -> TypedRows:
-    _, iterator = connections.raw_execute_with_comment(sql, limit=limit)
+    _, iterator = connections.raw_execute_with_comment(sql, limit=row_limit.fetch_limit)
     fields = list(iterator.schema)
+    names = [field.name for field in fields]
     types = [_bigquery_type(field.name, field) for field in fields]
-    rows = [tuple(row.values()) for row in iterator]
-    return TypedRows([field.name for field in fields], rows, types)
+    rows, reason = take((tuple(row.values()) for row in iterator), names, row_limit)
+    return TypedRows(names, rows, types, reason)
 
 
 def _fetch_databricks(
-    connections: Driver, sql: str, limit: int | None, time_zone: str
+    connections: Driver, sql: str, time_zone: str, row_limit: RowFetchLimit
 ) -> TypedRows:
     """databricks-sql's ``cursor.description`` cannot tell TIMESTAMP from
     TIMESTAMP_NTZ or type a nested column, so the result is read as Arrow and
@@ -776,14 +838,25 @@ def _fetch_databricks(
     # cursor it wraps does.
     raw = cursor._cursor  # noqa: SLF001 — see above
     try:
-        table = raw.fetchmany_arrow(limit) if limit else raw.fetchall_arrow()
+        chunks = fetch_chunks(raw.fetchmany_arrow, row_limit)
+        names, types, columns = arrow_columns(na.Array(next(chunks)))
+        # Only the first chunk carries the schema; a later empty one is the
+        # end of the result, whatever schema the driver gives it.
+        later = (arrow_columns(na.Array(chunk))[2] for chunk in chunks if len(chunk))
+        rows, reason = take(
+            chain(
+                zip(*columns, strict=True),
+                chain.from_iterable(zip(*more, strict=True) for more in later),
+            ),
+            names,
+            row_limit,
+        )
     finally:
         cursor.close()
-    names, types, columns = arrow_columns(na.Array(table))
-    return TypedRows(names, list(zip(*columns, strict=True)), list(types.values()))
+    return TypedRows(names, rows, list(types.values()), reason)
 
 
-_CLIENTS: dict[str, Callable[[Driver, str, int | None, str], TypedRows]] = {
+_CLIENTS: dict[str, Callable[[Driver, str, str, RowFetchLimit], TypedRows]] = {
     "databricks": _fetch_databricks,
     "bigquery": _fetch_bigquery,
     "clickhouse": _fetch_clickhouse,

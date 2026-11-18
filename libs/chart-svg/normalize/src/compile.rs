@@ -47,7 +47,7 @@ use board_model::cascade;
 use board_model::chart::ChartAuthored;
 use board_model::ids::{ChartId, ItemId, QueryId};
 use board_model::names::ThemeName;
-use board_model::nested::family_reaches_recipe;
+use board_model::nested::{board_family_reaches_fonts, family_reaches_recipe};
 use board_model::sql_analysis::SqlAnalysis;
 use board_model::style::style::Style;
 use diagnostic::{diag, Diagnostic};
@@ -859,9 +859,9 @@ pub struct CompiledBoard {
 }
 
 impl CompiledBoard {
-    /// The total [`Board`]: the folded patch with every constant fill run and the root's resolved
-    /// style in place of its authored layers. An `Err` names each leaf the passes before it left
-    /// unset, by authored path.
+    /// The total [`Board`]: the folded patch with every constant fill run, the root's resolved
+    /// style in place of its authored layers, and each chart's `visible:` on its placements. An
+    /// `Err` names each leaf the passes before it left unset, by authored path.
     pub fn board(&self) -> Result<Board, model_core::Unset> {
         let mut patch = self.structure.patch.clone();
         patch.body.style = Tri::Value(Box::new((*self.style.inherited).clone()));
@@ -873,7 +873,9 @@ impl CompiledBoard {
                 chart.adopt_style(&scope.inherited);
             }
         }
-        Board::try_from(patch)
+        let mut board = Board::try_from(patch)?;
+        board_model::board::layout::place_visible(&mut board.body.layout, &board.body.charts);
+        Ok(board)
     }
 }
 
@@ -1189,6 +1191,7 @@ fn root_style(structure: &Structure, default_theme: &str) -> Result<Resolved<Sty
         context.palettes.extend(own.palettes.clone());
         context.roles.extend(own.roles.clone());
         board_model::palette::adopt_board_palette(&mut context, &own);
+        board_family_reaches_fonts(&mut own, &folded);
         folded.merge(own);
     }
     Resolved::base_in(&cascade::TABLES, folded, &context)

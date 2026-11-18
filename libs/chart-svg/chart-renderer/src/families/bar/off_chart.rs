@@ -47,6 +47,7 @@ impl OffChart {
                 if site.value > max {
                     site.at = max;
                     site.blank = true;
+                    site.off_chart = true;
                     *width = 0.0;
                 }
             }

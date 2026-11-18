@@ -727,13 +727,25 @@ ERR_BAR_LOG_SCALE_NOT_SUPPORTED = REGISTRY.register(
     )
 )
 
+ERR_SCALE_TYPE_SCATTER_ONLY = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SCALE-TYPE-SCATTER-ONLY",
+        domain="compile",
+        title="pow, sqrt and symlog scales bend only a scatter",
+        message_template="Chart {chart_id!r} ({chart_type}): {axis}.scale.continuous.type: {scale_type} is not supported: only a scatter bends its axes on a pow, sqrt or symlog scale, and a {chart_type} would draw {axis} linear under a description naming the type. Use a scatter, or remove the scale type (a line or area y axis also takes `log`; a bar or histogram takes only linear). See charts/axis-scales in the docs.",
+        doc="Fired when `axis_x` or `axis_y` sets `scale.continuous.type` to `pow`, `sqrt` or `symlog` on a line, area, bar or histogram chart. Only a scatter bends its axes on those scales; the other families draw their axis linear whichever of them is set, so the axis would be labeled with a scale it does not use. Use a scatter, or remove the scale type. A line or area y axis also takes `log`; a bar or histogram takes only linear (a bar on `log` is `ERR-BAR-LOG-SCALE-NOT-SUPPORTED`). See the axis scales page in the docs, charts/axis-scales.",
+        summary="Fired when a line, area, bar or histogram sets a pow, sqrt or symlog axis scale, which only a scatter draws.",
+        docs_topic="charts",
+    )
+)
+
 ERR_TORN_OUTLIER_UNSUPPORTED = REGISTRY.register(
     ErrorCode(
         code="ERR-TORN-OUTLIER-UNSUPPORTED",
         domain="compile",
         title="Torn outlier bars are not supported here",
         message_template="Chart {chart_id!r}: style.torn_outlier.enabled is not supported {reason}. Set style.torn_outlier.enabled: false, or change the chart.",
-        doc="Fired when `style.torn_outlier.enabled` is on for a chart the tear cannot draw truthfully: a normalized, ranged (`y_start`), layered, small-multiples or histogram chart; one with an authored `axis_y` domain or `zero: false`; one with a negative bar; or one with an annotation past the break. A torn bar's cap is positioned by its end value above a zero-based break, so these shapes have no honest tear.",
+        doc="Fired when `style.torn_outlier.enabled` is on for a chart the tear cannot draw truthfully: a normalized, ranged (`y_start`), small-multiples or histogram chart; one with a bar layer on the shared `axis_y` scale; one with an authored `axis_y` domain above zero or `zero: false`; one that sets both `torn_outlier.at` and an authored `axis_y` domain; or one with an annotation or layer value past the break. A torn bar's cap is positioned by its end value above a zero-based break, so these shapes have no honest tear.",
         summary="Fired when torn outlier bars are enabled on a chart shape that cannot be torn.",
         docs_topic="charts",
     )
@@ -1767,17 +1779,6 @@ ERR_MULTI_Y_COLOR_CONFLICT = REGISTRY.register(
     )
 )
 
-ERR_MULTI_Y_LAYERS_CONFLICT = REGISTRY.register(
-    ErrorCode(
-        code="ERR-MULTI-Y-LAYERS-CONFLICT",
-        domain="compile",
-        title="Multi-y chart cannot also have layers:",
-        message_template="Chart {chart_id!r} ({chart_type}): y: [...] folds measures into a color series automatically -- overlay layers: are not supported with multi-y charts. Keep a single y field and overlay the other measures as layers: entries instead.",
-        doc="Fired when a bar, area, line, or scatter chart authors both y: [a, b] and layers: at the same time.",
-        docs_topic="charts",
-    )
-)
-
 ERR_WIDE_MEASURE_NAME_CONTAINS_SEPARATOR = REGISTRY.register(
     ErrorCode(
         code="ERR-WIDE-MEASURE-NAME-CONTAINS-SEPARATOR",
@@ -2164,6 +2165,19 @@ ERR_QUERY_NAME_RESERVED_WORD = REGISTRY.register(
         fix_template="Rename the query to a name that is not a SQL reserved word.",
         doc="Fired when a query that another query composes through a `queries.NAME` reference is named like a SQL reserved word, because the composed query becomes a table alias.",
         summary="Fired when a query that another query composes is named like a SQL reserved word.",
+        docs_topic="queries",
+    )
+)
+
+ERR_QUERY_EMBED_UNKNOWN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-QUERY-EMBED-UNKNOWN",
+        domain="compile",
+        title="A query embeds a query the board does not define",
+        message_template="Query '{query}' embeds {{{{ queries.{ref} }}}}, but no query named '{ref}' is defined. Available queries: {available}. Define '{ref}' under `queries:` or fix the name.",
+        fix_template="Define the embedded query under `queries:`, or fix the name in the `queries.<name>` reference.",
+        doc="Fired when a query's SQL embeds `{{ queries.NAME }}` and the board and its imports define no query NAME, such as after deleting a query another one still embeds. Python accepts such a board and fails only when it plans the query.",
+        summary="Fired when a query's SQL embeds a query that is not defined.",
         docs_topic="queries",
     )
 )

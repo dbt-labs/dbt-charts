@@ -31,6 +31,8 @@ pub use facts::EngineFacts;
 pub use plan::{plan, plan_on};
 pub use styles::chart_styles;
 
+use std::collections::BTreeMap;
+
 use bind::board::ChartStyles;
 use bind::run::RunResult;
 use board_model::board::Board;
@@ -72,13 +74,14 @@ pub fn render_board(board: &Board, styles: &ChartStyles, run: &RunResult, book: 
 }
 
 fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, book: &FontBook, facts: &mut impl EngineFacts) -> Result<Rendered, Diagnostic> {
+    let reads_data = texts::reading_data(board);
     let filled = texts::filled(board, styles, run, &*facts)?;
     let board = &filled;
     let mut bound = bind::bind(board, styles, run)?;
     // A chart the slots cannot place, or whose family's plan or draw refuses, is that chart's refusal,
     // as one the bind cannot read is: the rest of the board is laid out and drawn without it.
     let (laid, boxes, mut nodes, drawn) = loop {
-        match lay_out_and_draw(board, styles, &bound, run, book, &*facts) {
+        match lay_out_and_draw(board, styles, &bound, &reads_data, run, book, &*facts) {
             Ok(done) => break done,
             Err(refusal) => refuse_chart(board, styles, &mut bound, refusal)?,
         }
@@ -104,8 +107,8 @@ fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, book: &Fo
 
 type Drawn = (layout::board::assemble::Laid, Vec<(ItemId, ChartId, Rect)>, Vec<scene::Node>, Vec<Diagnostic>);
 
-fn lay_out_and_draw(board: &Board, styles: &ChartStyles, bound: &bind::bound::Board, run: &RunResult, book: &FontBook, facts: &impl EngineFacts) -> Result<Drawn, Diagnostic> {
-    let slots = slot::plan(board, styles, bound, facts)?;
+fn lay_out_and_draw(board: &Board, styles: &ChartStyles, bound: &bind::bound::Board, reads_data: &BTreeMap<ItemId, texts::ReadsData>, run: &RunResult, book: &FontBook, facts: &impl EngineFacts) -> Result<Drawn, Diagnostic> {
+    let slots = slot::plan(board, styles, bound, reads_data, facts)?;
     let laid = layout::board::assemble::lay_out(board, bound.drawn(), &mut slots.facts(facts, book))?;
     // A wrapped title the row's band moves after sizing (quirk class Q2g's law) refuses its chart,
     // whose error card keeps the board drawn. The band is the one this layout measured, so the

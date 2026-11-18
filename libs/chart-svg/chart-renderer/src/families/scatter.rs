@@ -35,7 +35,7 @@ use serde_json::Value;
 
 use ::bind::rows::color_domain_of;
 use crate::common::MeasuredAs;
-use crate::common::{format_y_label, symbol_radius, AxisStyle, Font, FormatSlot, RulerConfig, StyleChannel, TickLabelConfig, TitleStyle};
+use crate::common::{format_y_label, symbol_radius, AxisStyle, Font, FormatSlot, Labeling, StyleChannel, TitleStyle};
 use ::bind::rows::{row_num, row_str, ChartSort};
 use crate::families::axis_caption::{vega_axis_format, AxisCaption, CaptionScale, NumericScale};
 use crate::families::layers::{
@@ -114,9 +114,6 @@ pub(crate) struct LinearX {
     min_step: Option<f64>,
     /// The authored label format; unset, d3's default tick format.
     format: Option<FormatSlot>,
-    /// The baked ruler / tick-label ladder `inject_axis_numeral_expr` paints the format through.
-    ruler: Option<RulerConfig>,
-    tick_label: Option<TickLabelConfig>,
     /// The authored `labels.expr`, spoken over each tick's digits.
     expr: Option<String>,
     case: Option<String>,
@@ -150,19 +147,27 @@ impl LinearX {
     }
 
     /// Ticks, labels and rules at plot width `pw`.
-    pub(crate) fn at(&self, pw: f64) -> Result<(Vec<f64>, Vec<String>, [Option<f64>; 2], (f64, f64)), String> {
+    ///
+    /// `labeling` decides how the drawn ladder is labeled (the axis's baked ruler and tick label, or a
+    /// shared tier for a ladder drawn at render time).
+    pub(crate) fn at(
+        &self,
+        pw: f64,
+        labeling: impl FnOnce(&[f64]) -> Result<Labeling, String>,
+    ) -> Result<(Vec<f64>, Vec<String>, [Option<f64>; 2], (f64, f64)), String> {
         let domain = self.domain_at(pw);
         if domain.0.is_nan() || domain.1.is_nan() {
             return Ok((Vec::new(), Vec::new(), self.rule_datums.map(|_| None), domain));
         }
         let count = d3rs::ticks::vega_tick_count(domain.0, domain.1, self.tick_count, self.min_step);
         let values = d3rs::ticks::d3_ticks(domain.0, domain.1, count);
+        let labeling = labeling(&values)?;
         let labels: Vec<String> = match &self.format {
             Some(slot) => values
                 .iter()
                 .enumerate()
                 .map(|(i, &tv)| {
-                    format_y_label(tv, self.ruler.as_ref(), self.tick_label.as_ref(), Some(slot), i, values.len())
+                    format_y_label(tv, labeling.ruler.as_ref(), labeling.tick_label.as_ref(), Some(slot), i, values.len())
                         .map_err(|e| format!("scatter x label format: {e}"))
                 })
                 .collect::<Result<_, _>>()?,
@@ -688,7 +693,7 @@ impl LogAxis {
 /// strategy and every other continuous one parity. Only the mantissa
 /// survivors (non-empty labels) are candidates — a blanked tick never blocks
 /// its neighbors. `ink(i)` is label `i`'s bounds at the current plot size.
-fn visible_tick_labels(
+pub(crate) fn visible_tick_labels(
     labels: &[String],
     separation: f64,
     greedy: bool,
@@ -991,7 +996,8 @@ fn linear_x_scale(r: &ScatterResolved, x_min: f64, x_max: f64, rules: (bool, boo
 impl LinearX {
     /// The scale `ax_x` draws over the data extent `[x_min, x_max]`, with the threshold rules `rules` fires and
     /// the family's default for joining the domain to zero. `edge_pad` is scatter's law: the pixels a
-    /// data-fit domain's non-zero ends keep off the data.
+    /// data-fit domain's non-zero ends keep off the data. `None` is a family that insets its pixel range
+    /// instead (line), so the domain takes no padding, authored or not.
     pub(crate) fn over(ax_x: &AxisStyle, x_min: f64, x_max: f64, rules: (bool, bool), zero: bool, edge_pad: Option<f64>) -> Self {
         let authored = ax_x.coerced_continuous_domain();
         let nice = ax_x.scale.get("nice").and_then(Value::as_bool);
@@ -1005,17 +1011,16 @@ impl LinearX {
             nice,
             fit: edge_pad.is_some() && authored.is_none() && !zero,
             // A niced domain rounds out past the data already; an authored pair is verbatim.
-            pad: match ax_x.scale.get("padding").and_then(Value::as_f64) {
-                Some(pad) if pad != 0.0 => pad,
-                _ if !nice && authored.is_none() => edge_pad.unwrap_or(0.0),
+            pad: match (edge_pad, ax_x.scale.get("padding").and_then(Value::as_f64)) {
+                (None, _) => 0.0,
+                (Some(_), Some(pad)) if pad != 0.0 => pad,
+                (Some(edge_pad), _) if !nice && authored.is_none() => edge_pad,
                 _ => 0.0,
             },
             transform: ax_x.transform(),
             tick_count: ax_x.ticks.count.unwrap_or(6.0) as usize,
             min_step: ax_x.ticks.step,
             format: ax_x.labels.format.clone(),
-            ruler: ax_x.ruler.clone(),
-            tick_label: ax_x.tick_label.clone(),
             expr: ax_x.labels.expr.clone(),
             case: ax_x.labels.font.case.clone(),
             rule_datums: [(0.0, rules.0), (1.0, rules.1)].map(|(datum, fires)| fires.then_some(datum)),
@@ -1315,8 +1320,6 @@ impl PlainXAxis {
                 tick_count: 0,
                 min_step: None,
                 format: None,
-                ruler: None,
-                tick_label: None,
                 expr: None,
                 case: None,
                 rule_datums: [None, None],
@@ -1436,10 +1439,10 @@ impl PlainXAxis {
         })
     }
 
-    pub(crate) fn ticks_at(&self, pw: f64) -> Result<(Vec<f64>, Vec<String>, [Option<f64>; 2]), String> {
+    pub(crate) fn ticks_at(&self, pw: f64, ax_x: &AxisStyle, fonts: &FontBook) -> Result<(Vec<f64>, Vec<String>, [Option<f64>; 2]), String> {
         let (mut ticks, labels, mut rules) = match &self.scale {
             PlainXScale::Point { shown, fracs, .. } => (fracs.clone(), shown.clone(), [None, None]),
-            PlainXScale::Linear(lin) => lin.at(pw).map(|(ticks, labels, rules, _)| (ticks, labels, rules))?,
+            PlainXScale::Linear(lin) => lin.at(pw, |ticks| ax_x.labeling(ticks, fonts)).map(|(ticks, labels, rules, _)| (ticks, labels, rules))?,
             PlainXScale::Log { ax, extent } => {
                 let (ladder, labels) = log_x_axis(ax, extent.0, extent.1, pw)?;
                 (ladder.ticks.iter().map(|&tv| ladder.frac_from_left(tv)).collect(), labels, [None, None])
@@ -1539,7 +1542,7 @@ impl PlainXAxis {
         if ax_x.labels.visible == Some(false) {
             return Ok(sized);
         }
-        let (ticks, labels, _) = self.ticks_at(pw)?;
+        let (ticks, labels, _) = self.ticks_at(pw, ax_x, fonts)?;
         let (size, family) = (ax_x.labels.font.size_or(11.0), ax_x.labels.font.family_or("sans-serif"));
         let limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
         let mut below = 0.0_f64;
@@ -1576,7 +1579,7 @@ impl PlainXAxis {
         (plot_bottom, floor_y): (f64, f64),
         fonts: &FontBook,
     ) -> Result<Vec<Node>, String> {
-        let (ticks, labels, _) = self.ticks_at(plot_w)?;
+        let (ticks, labels, _) = self.ticks_at(plot_w, ax_x, fonts)?;
         let caption = AxisCaption::new(&self.title, &ax_x.title, self.caption_scale(ax_x, plot_w)?).bare_if_undrawn(ax_x);
         let x_rules = crate::common::thresholds(&self.x_rules);
         plain_x_axis(
@@ -4527,17 +4530,15 @@ mod tests {
             tick_count: 5,
             min_step: None,
             format: None,
-            ruler: None,
-            tick_label: None,
             expr: None,
             case: None,
             rule_datums: [None, None],
         };
-        let (ticks, labels, _, domain) = lin.at(120.0).unwrap();
+        let (ticks, labels, _, domain) = lin.at(120.0, |_| Ok(crate::common::Labeling::default())).unwrap();
         assert_eq!(domain, (-1.0, 11.0), "10 of 120 px each side widens by 120 / 100");
         assert_eq!(lin.frac(domain, 0.0), 1.0 / 12.0);
         assert_eq!(labels.first().map(String::as_str), Some("0"), "d3's default tick format: {labels:?} {ticks:?}");
-        let (_, _, _, wider) = lin.at(220.0).unwrap();
+        let (_, _, _, wider) = lin.at(220.0, |_| Ok(crate::common::Labeling::default())).unwrap();
         assert!(wider.0 > domain.0, "a wider plot needs less padding: {wider:?}");
     }
 
@@ -4545,11 +4546,11 @@ mod tests {
     /// fixed point at the precision the tick step implies.
     #[test]
     fn an_x_without_a_label_format_reads_d3s_default_tick_format() {
-        let lin = LinearX { raw: (0.0, 3000.0), zero: false, nice: true, fit: false, pad: 0.0, transform: d3rs::scale::Transform::Identity, tick_count: 3, min_step: None, format: None, ruler: None, tick_label: None, expr: None, case: None, rule_datums: [None, None] };
-        let (_, labels, _, _) = lin.at(400.0).unwrap();
+        let lin = LinearX { raw: (0.0, 3000.0), zero: false, nice: true, fit: false, pad: 0.0, transform: d3rs::scale::Transform::Identity, tick_count: 3, min_step: None, format: None, expr: None, case: None, rule_datums: [None, None] };
+        let (_, labels, _, _) = lin.at(400.0, |_| Ok(crate::common::Labeling::default())).unwrap();
         assert_eq!(labels, ["0", "1,000", "2,000", "3,000"]);
-        let lin = LinearX { raw: (0.0, 1.0), zero: false, nice: true, fit: false, pad: 0.0, transform: d3rs::scale::Transform::Identity, tick_count: 2, min_step: None, format: None, ruler: None, tick_label: None, expr: None, case: None, rule_datums: [None, None] };
-        let (_, labels, _, _) = lin.at(400.0).unwrap();
+        let lin = LinearX { raw: (0.0, 1.0), zero: false, nice: true, fit: false, pad: 0.0, transform: d3rs::scale::Transform::Identity, tick_count: 2, min_step: None, format: None, expr: None, case: None, rule_datums: [None, None] };
+        let (_, labels, _, _) = lin.at(400.0, |_| Ok(crate::common::Labeling::default())).unwrap();
         assert_eq!(labels, ["0.0", "0.5", "1.0"]);
     }
 
@@ -6320,14 +6321,12 @@ mod tests {
             tick_count: 6,
             min_step,
             format: None,
-            ruler: None,
-            tick_label: None,
             expr: None,
             case: None,
             rule_datums: [None, None],
         };
-        assert_eq!(lin(None).at(400.0).unwrap().0.len(), 6);
-        let (ticks, labels, _, _) = lin(Some(20.0)).at(400.0).unwrap();
+        assert_eq!(lin(None).at(400.0, |_| Ok(crate::common::Labeling::default())).unwrap().0.len(), 6);
+        let (ticks, labels, _, _) = lin(Some(20.0)).at(400.0, |_| Ok(crate::common::Labeling::default())).unwrap();
         assert_eq!(ticks.len(), 3);
         assert_eq!(labels, ["0", "20", "40"]);
     }

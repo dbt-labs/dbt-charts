@@ -1072,6 +1072,8 @@ pub(crate) struct LineXAxis {
     x_font_size: f64,
     x_tick_len: f64,
     x_tick_eff: f64,
+    /// The axis hangs from a torn edge: no tick continues it.
+    torn_floor: bool,
     x_label_pad: f64,
     x_axis_drop: f64,
     /// The stroke of the baseline rule on the plot edge this axis hangs from, which its ticks continue.
@@ -1168,7 +1170,7 @@ impl LineXAxis {
         // A second label row hangs below the first on either edge (Vega's multi-line text grows downward).
         let rows_at = |anchor: f64, adv: f64| (anchor, anchor + adv);
         let mut items: Vec<Node> = Vec::new();
-        if self.x_tick_eff > 0.0 {
+        if self.x_tick_eff > 0.0 && !self.torn_floor {
             let end_y = plot_bottom + self.x_axis_drop + sign * self.x_tick_len;
             let xs = self.tick_xs.iter().map(|&x| plot_left + x_rule_at(x));
             items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y))?);
@@ -9409,6 +9411,27 @@ mod tests {
         }
     }
 
+    /// A value anchor on a connected line lands where the linear scale puts that value, as on a
+    /// scatter: on the vertex at its x, and between two vertices in proportion.
+    #[test]
+    fn a_connected_line_anchor_lands_on_the_linear_scale() {
+        let rows: Vec<(Value, f64, f64)> = LOOP.iter().map(|&(w, d, s)| (serde_json::json!(w), d, s)).collect();
+        let rule_x = |x: f64| {
+            let mut payload_json = connected_payload(&rows, Some("week"));
+            payload_json["resolved"]["annotations"] = Value::Array(vec![annotation(0, value(serde_json::json!(x)), Value::Null)]);
+            let svg = render_connected(payload_json).expect("renders");
+            let marks = &svg[svg.find("class=\"annotations-marks\"").unwrap()..];
+            let rule: f64 = marks.split("<line x1=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+            (rule, path_xs(&main_line_d(&svg)))
+        };
+        // Week order 1, 2, 3, 4 visits days 1, 5, 3, 4.
+        let (at_five, xs) = rule_x(5.0);
+        assert!((at_five - xs[1]).abs() < 0.5, "rule at {at_five}, day 5 at {}: {xs:?}", xs[1]);
+        let (at_two, xs) = rule_x(2.0);
+        let expected = (xs[0] + xs[2]) / 2.0;
+        assert!((at_two - expected).abs() < 0.5, "rule at {at_two}, expected {expected}: {xs:?}");
+    }
+
     #[test]
     fn connect_refuses_a_null_x_naming_the_row() {
         let mut payload_json = connected_payload(&[(serde_json::json!(1), 1.0, 10.0), (serde_json::json!(2), 2.0, 20.0)], Some("week"));
@@ -16404,6 +16427,16 @@ mod tests {
         assert_insets(x_end_insets(json), 20.0);
     }
 
+    /// On a numeric x the authored padding insets the end points once: it does not also widen
+    /// the domain.
+    #[test]
+    fn an_authored_x_scale_padding_insets_a_numeric_x_once() {
+        let mut json = numeric_x(pointed(make_line_payload(false, false), 60.0));
+        json["resolved"]["style"]["axis_x"]["is_quantitative"] = serde_json::json!(true);
+        json["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({"padding": 30.0, "nice": false, "zero": false});
+        assert_insets(x_end_insets(json), 30.0);
+    }
+
     // ── Small multiples: rows-only line facet ────────────────────────────
 
     mod facet {
@@ -17758,18 +17791,21 @@ mod tests {
         fn torn_payload(mutate: impl FnOnce(&mut serde_json::Value)) -> Payload {
             fit_payload(|j| {
                 j["resolved"]["style"]["axis_y"]["grid"]["visible"] = json!(true);
-                j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"] =
-                    json!({"enabled": true, "amplitude": 4.0, "wavelength": 14.0, "sharpness": 0.0});
+                j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"] = json!({"enabled": true, "amplitude": 4.0});
                 mutate(j);
                 week_categories(j);
             })
         }
 
-        /// A category axis keeps its first and last tick on the plot edges, where the tear's rhythm
-        /// is pinned; a date axis insets them by the x edge pad, which the tear's end stretch drops.
         fn week_categories(j: &mut serde_json::Value) {
             for (i, row) in j["rows"].as_array_mut().unwrap().iter_mut().enumerate() {
                 row["week"] = json!(format!("w{i:02}"));
+            }
+        }
+
+        fn negative(j: &mut serde_json::Value) {
+            for (row, v) in j["rows"].as_array_mut().unwrap().iter_mut().zip([-100.0, -150.0, -130.0]) {
+                row["signups"] = json!(v);
             }
         }
 
@@ -17777,11 +17813,6 @@ mod tests {
             let i = svg.find("class=\"torn-baseline\"")?;
             let start = svg[..i].rfind("<path").unwrap();
             Some(svg[start..].split("/>").next().unwrap().to_string())
-        }
-
-        /// The wave's resting y: the `M` point sits on the edge.
-        fn tear_edge(tag: &str) -> f64 {
-            path_numbers(tag)[1]
         }
 
         /// Every number in the tear's `d`: the `M` point, then six per `C`.
@@ -17794,40 +17825,63 @@ mod tests {
             path_numbers(tag).iter().skip(1).step_by(2).copied().collect()
         }
 
+        /// Every `(x, y)` the tear passes through at a cubic boundary.
+        fn tear_vertices(tag: &str) -> Vec<(f64, f64)> {
+            let n = path_numbers(tag);
+            std::iter::once((n[0], n[1])).chain(n[2..].chunks(6).map(|s| (s[4], s[5]))).collect()
+        }
+
+        /// The edge a bottom tear rests on: its lowest point, the bites rising from it.
+        fn bottom_edge(tag: &str) -> f64 {
+            tear_ys(tag).into_iter().fold(f64::MIN, f64::max)
+        }
+
+        /// How deep the tear bites from its edge.
+        fn bite(tag: &str) -> f64 {
+            let ys = tear_ys(tag);
+            ys.iter().fold(f64::MIN, |m, &y| m.max(y)) - ys.iter().fold(f64::MAX, |m, &y| m.min(y))
+        }
+
         /// The y of every full-width horizontal gridline.
         fn gridline_ys(svg: &str) -> Vec<f64> {
             plot_lines(svg).into_iter().filter(|l| l.1 == l.3 && l.2 - l.0 > 100.0).map(|l| l.1).collect()
         }
 
         #[test]
-        fn positive_data_tears_the_bottom_edge_instead_of_its_gridline() {
+        fn positive_data_tears_the_bottom_edge_below_its_lowest_rung() {
             let plain = render(&fit_payload(|j| {
                 j["resolved"]["style"]["axis_y"]["grid"]["visible"] = json!(true);
                 week_categories(j);
             }), &test_fonts()).expect("renders");
-            let bottom = gridline_ys(&plain).into_iter().fold(f64::MIN, f64::max);
+            let floor = gridline_ys(&plain).into_iter().fold(f64::MIN, f64::max);
             let svg = render(&torn_payload(|_| {}), &test_fonts()).expect("renders");
             let tag = tear(&svg).unwrap_or_else(|| panic!("no tear: {svg}"));
-            assert_eq!(tear_edge(&tag), bottom, "{tag}");
-            assert!(!gridline_ys(&svg).contains(&bottom), "the straight bottom gridline is replaced: {svg}");
-            assert_eq!(gridline_ys(&svg).len(), gridline_ys(&plain).len() - 1, "{svg}");
+            assert_eq!(bottom_edge(&tag), floor, "the tear rests on the plot floor: {tag}");
+            assert_eq!(gridline_ys(&svg).len(), gridline_ys(&plain).len(), "every rung keeps its gridline: {svg}");
+            let lowest = gridline_ys(&svg).into_iter().fold(f64::MIN, f64::max);
+            let crest = tear_ys(&tag).into_iter().fold(f64::MAX, f64::min);
+            assert!((crest - lowest - crate::torn::RUNG_CLEARANCE).abs() < 0.02, "rung {lowest}, deepest bite {crest}: {svg}");
         }
 
         #[test]
-        fn negative_data_tears_the_top_edge() {
-            let svg = render(
-                &torn_payload(|j| {
-                    for (row, v) in j["rows"].as_array_mut().unwrap().iter_mut().zip([-100.0, -150.0, -130.0]) {
-                        row["signups"] = json!(v);
-                    }
-                }),
-                &test_fonts(),
-            )
-            .expect("renders");
+        fn negative_data_tears_the_top_edge_above_its_highest_rung() {
+            let svg = render(&torn_payload(negative), &test_fonts()).expect("renders");
             let tag = tear(&svg).unwrap_or_else(|| panic!("no tear: {svg}"));
+            let deepest = tear_ys(&tag).into_iter().fold(f64::MIN, f64::max);
             let ys = gridline_ys(&svg);
-            assert!(ys.iter().all(|&y| y > tear_edge(&tag)), "tear above every straight gridline: {svg}");
-            assert_eq!(ys.len(), 5, "the top gridline (−100) is replaced by the tear: {svg}");
+            assert!(ys.iter().all(|&y| y >= deepest + crate::torn::RUNG_CLEARANCE - 0.02), "tear above every gridline: {svg}");
+            assert_eq!(ys.len(), 6, "the top rung (−100) keeps its gridline: {svg}");
+        }
+
+        #[test]
+        fn an_authored_domain_keeps_an_untorn_neighbors_rungs() {
+            let off = |j: &mut serde_json::Value| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["enabled"] = json!(false);
+            let plain = render(&torn_payload(|j| { pinned(j); off(j); }), &test_fonts()).expect("renders");
+            let torn = render(&torn_payload(pinned), &test_fonts()).expect("renders");
+            let floor = gridline_ys(&plain).into_iter().fold(f64::MIN, f64::max);
+            let rungs: Vec<f64> = gridline_ys(&plain).into_iter().filter(|&y| y != floor).collect();
+            assert_eq!(gridline_ys(&torn), rungs, "every rung but the floor stays put: {torn}");
+            assert_eq!(bottom_edge(&tear(&torn).unwrap()), floor, "the tear replaces the authored floor: {torn}");
         }
 
         #[test]
@@ -17840,7 +17894,8 @@ mod tests {
             )
             .expect("renders");
             let tag = tear(&svg).unwrap_or_else(|| panic!("no tear: {svg}"));
-            assert!(gridline_ys(&svg).iter().all(|&y| y > tear_edge(&tag)), "50 sits at the top: {svg}");
+            let top = tear_ys(&tag).into_iter().fold(f64::MAX, f64::min);
+            assert!(gridline_ys(&svg).iter().all(|&y| y > top), "50 sits at the top: {svg}");
         }
 
         #[test]
@@ -17888,52 +17943,43 @@ mod tests {
         }
 
         #[test]
-        fn the_wave_stays_inside_the_plot_at_the_bottom_edge() {
-            let svg = render(&torn_payload(|_| {}), &test_fonts()).expect("renders");
-            let tag = tear(&svg).unwrap();
-            let edge = tear_edge(&tag);
-            let ys = tear_ys(&tag);
-            assert!(ys.iter().all(|&y| y <= edge + 1e-9 && y >= edge - 4.0 - 1e-9), "{tag}");
-            assert_eq!(*ys.last().unwrap(), edge, "ends on the edge: {tag}");
+        fn the_tear_bites_into_the_plot_from_either_edge() {
+            for (name, edit) in [("bottom", (|_: &mut serde_json::Value| {}) as fn(&mut serde_json::Value)), ("top", negative)] {
+                let svg = render(&torn_payload(edit), &test_fonts()).expect("renders");
+                let ys = tear_ys(&tear(&svg).unwrap());
+                let (lo, hi) = (ys.iter().fold(f64::MAX, |m, &y| m.min(y)), ys.iter().fold(f64::MIN, |m, &y| m.max(y)));
+                let rungs = gridline_ys(&svg);
+                assert!(rungs.iter().all(|&y| if name == "bottom" { y < lo } else { y > hi }), "{name}: {lo}..{hi} vs {rungs:?}");
+            }
         }
 
         #[test]
-        fn the_wave_stays_inside_the_plot_at_the_top_edge() {
-            let svg = render(
-                &torn_payload(|j| {
-                    for (row, v) in j["rows"].as_array_mut().unwrap().iter_mut().zip([-100.0, -150.0, -130.0]) {
-                        row["signups"] = json!(v);
-                    }
-                }),
-                &test_fonts(),
-            )
-            .expect("renders");
-            let tag = tear(&svg).unwrap();
-            let edge = tear_edge(&tag);
-            assert!(tear_ys(&tag).iter().all(|&y| y >= edge - 1e-9 && y <= edge + 4.0 + 1e-9), "{tag}");
+        fn amplitude_is_the_deepest_bite() {
+            for amplitude in [2.0, 4.0, 9.0] {
+                let svg = render(
+                    &torn_payload(|j| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["amplitude"] = json!(amplitude)),
+                    &test_fonts(),
+                )
+                .expect("renders");
+                let tag = tear(&svg).unwrap();
+                assert!((bite(&tag) - amplitude).abs() < 0.011, "amplitude {amplitude}: bite {}", bite(&tag));
+            }
         }
 
         #[test]
-        fn amplitude_sets_the_crest_height() {
-            let svg = render(
-                &torn_payload(|j| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["amplitude"] = json!(7.0)),
-                &test_fonts(),
-            )
-            .expect("renders");
-            let tag = tear(&svg).unwrap();
-            let edge = tear_edge(&tag);
-            let crest = tear_ys(&tag).iter().fold(edge, |m, &y| m.min(y));
-            assert!((edge - crest - 7.0).abs() < 0.01, "crest {crest} vs edge {edge}: {tag}");
-        }
-
-        #[test]
-        fn sharpness_one_is_a_zigzag() {
-            let svg = render(
-                &torn_payload(|j| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["sharpness"] = json!(1.0)),
-                &test_fonts(),
-            )
-            .expect("renders");
-            let n = path_numbers(&tear(&svg).unwrap());
+        fn the_tear_is_torn_paper_not_a_regular_wave() {
+            let tag = tear(&render(&torn_payload(|_| {}), &test_fonts()).expect("renders")).unwrap();
+            let vertices = tear_vertices(&tag);
+            assert!(vertices.len() > 50, "fine fibers across the plot: {tag}");
+            let steps: Vec<f64> = vertices.windows(2).map(|w| w[1].0 - w[0].0).collect();
+            let (lo, hi) = steps.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &s| (lo.min(s), hi.max(s)));
+            assert!(hi > lo * 1.5, "uneven steps: {lo}..{hi}");
+            let mut depths: Vec<i64> = vertices.iter().map(|v| (v.1 * 100.0).round() as i64).collect();
+            depths.sort_unstable();
+            depths.dedup();
+            assert!(depths.len() > vertices.len() / 2, "no repeating crest height: {depths:?}");
+            // Straight segments: each cubic's controls lie on its chord.
+            let n = path_numbers(&tag);
             let mut a = (n[0], n[1]);
             for seg in n[2..].chunks(6) {
                 let b = (seg[4], seg[5]);
@@ -17946,12 +17992,108 @@ mod tests {
         }
 
         #[test]
-        fn sharpness_zero_is_not_a_zigzag() {
-            let svg = render(&torn_payload(|_| {}), &test_fonts()).expect("renders");
-            let n = path_numbers(&tear(&svg).unwrap());
-            let (a, seg) = ((n[0], n[1]), &n[2..8]);
-            let cross = (seg[4] - a.0) * (seg[1] - a.1) - (seg[5] - a.1) * (seg[0] - a.0);
-            assert!(cross.abs() > 0.5, "a sine quarter bows off its chord");
+        fn the_paper_keeps_a_wide_bars_grain_at_any_bite() {
+            for amplitude in [4.0, 12.0] {
+                let svg = render(
+                    &torn_payload(|j| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["amplitude"] = json!(amplitude)),
+                    &test_fonts(),
+                )
+                .expect("renders");
+                let v = tear_vertices(&tear(&svg).unwrap());
+                let mean = (v[v.len() - 1].0 - v[0].0) / (v.len() - 1) as f64;
+                assert!((3.0..4.0).contains(&mean), "amplitude {amplitude}: fibers {mean} px apart");
+            }
+        }
+
+        fn pinned(j: &mut serde_json::Value) {
+            j["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"domain": [40.0, 200.0]}});
+        }
+
+        fn texts(svg: &str) -> Vec<String> {
+            svg.split("<text").skip(1).filter_map(|t| Some(t[t.find('>')? + 1..t.find("</text>")?].to_string())).collect()
+        }
+
+        /// Short vertical rules: the x axis's tick marks.
+        fn x_ticks(svg: &str) -> usize {
+            let num = |l: &str, k: &str| -> Option<f64> {
+                let s = l.find(&format!(" {k}=\""))? + k.len() + 3;
+                l[s..s + l[s..].find('"')?].parse().ok()
+            };
+            svg.split("<line").skip(1)
+                .filter(|l| matches!((num(l, "x1"), num(l, "x2"), num(l, "y1"), num(l, "y2")), (Some(a), Some(b), Some(c), Some(d)) if a == b && (d - c).abs() <= 8.0))
+                .count()
+        }
+
+        #[test]
+        fn an_engine_domain_keeps_every_label() {
+            let off = |j: &mut serde_json::Value| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["enabled"] = json!(false);
+            let plain = render(&torn_payload(off), &test_fonts()).expect("renders");
+            let torn = render(&torn_payload(|_| {}), &test_fonts()).expect("renders");
+            assert_eq!(texts(&torn), texts(&plain), "the lowest rung keeps its label above the tear");
+        }
+
+        #[test]
+        fn an_authored_floor_carries_no_value_label() {
+            let off = |j: &mut serde_json::Value| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["enabled"] = json!(false);
+            let plain = render(&torn_payload(|j| { pinned(j); off(j); }), &test_fonts()).expect("renders");
+            let torn = render(&torn_payload(pinned), &test_fonts()).expect("renders");
+            assert!(texts(&plain).iter().any(|t| t == "40"), "{plain}");
+            assert!(!texts(&torn).iter().any(|t| t == "40"), "the tear is no floor at 40: {torn}");
+            assert!(texts(&torn).iter().any(|t| t == "100"), "the other rungs keep theirs: {torn}");
+        }
+
+        #[test]
+        fn no_x_tick_hangs_from_a_torn_edge() {
+            let off = |j: &mut serde_json::Value| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["enabled"] = json!(false);
+            let plain = render(&torn_payload(|j| { pinned(j); off(j); }), &test_fonts()).expect("renders");
+            let torn = render(&torn_payload(pinned), &test_fonts()).expect("renders");
+            assert!(x_ticks(&plain) >= 2, "{plain}");
+            assert_eq!(x_ticks(&torn), 0, "a tick continues the floor, and a tear has none: {torn}");
+            let x_label_ys = |svg: &str| -> Vec<String> {
+                svg.split("<text").skip(1).filter(|t| t.contains(">w0")).map(|t| t[t.find(" y=\"").unwrap()..].split('"').nth(1).unwrap().to_string()).collect()
+            };
+            assert_eq!(x_label_ys(&plain), x_label_ys(&torn), "the labels keep their seat");
+        }
+
+        #[test]
+        fn a_top_edge_tear_keeps_the_bottom_x_ticks() {
+            let svg = render(&torn_payload(negative), &test_fonts()).expect("renders");
+            assert!(x_ticks(&svg) >= 2, "{svg}");
+        }
+
+        #[test]
+        fn a_reference_line_lands_on_its_value_above_a_padded_tear() {
+            let svg = render(
+                &torn_payload(|j| {
+                    for (row, v) in j["rows"].as_array_mut().unwrap().iter_mut().zip([100.0, 150.0, 130.0]) {
+                        row["signups"] = json!(v);
+                    }
+                    j["resolved"]["annotations"] = json!([annotation(0, serde_json::Value::Null, value(json!(100.0)))]);
+                }),
+                &test_fonts(),
+            )
+            .expect("renders");
+            let line = svg.split("<path d=\"M").skip(1).find(|p| !p.contains('C')).unwrap();
+            let point_y: f64 = line.split('L').next().unwrap().split(',').nth(1).unwrap().parse().unwrap();
+            let marks = &svg[svg.find("class=\"annotations-marks\"").unwrap()..];
+            let rule_y: f64 = marks.split(" y1=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+            assert!((rule_y - point_y).abs() < 0.5, "rule at {rule_y}, the 100 point at {point_y}: {svg}");
+        }
+
+        #[test]
+        fn the_same_chart_tears_the_same_way_every_time() {
+            let once = tear(&render(&torn_payload(|_| {}), &test_fonts()).unwrap()).unwrap();
+            let again = tear(&render(&torn_payload(|_| {}), &test_fonts()).unwrap()).unwrap();
+            assert_eq!(once, again);
+            let other = tear(
+                &render(
+                    &torn_payload(|j| j["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"domain": [60.0, 200.0]}})),
+                    &test_fonts(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_ne!(tear_ys(&once), tear_ys(&other), "another torn edge tears another way");
         }
 
         fn torn_grid_payload(mutate: impl FnOnce(&mut serde_json::Value)) -> Payload {
@@ -17961,205 +18103,23 @@ mod tests {
             })
         }
 
-        fn tear_key(j: &mut serde_json::Value, key: &str, value: f64) {
-            j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"][key] = json!(value);
-        }
-
-        /// x of every vertical gridline in the plot group.
-        fn x_gridline_xs(svg: &str) -> Vec<f64> {
-            plot_lines(svg).into_iter().filter(|l| l.0 == l.2 && l.3 - l.1 > 100.0).map(|l| l.0).collect()
-        }
-
-        /// The x of every point where the tear rests on its edge.
-        fn tear_trough_xs(tag: &str) -> Vec<f64> {
-            let n = path_numbers(tag);
-            let edge = n[1];
-            std::iter::once((n[0], n[1]))
-                .chain(n[2..].chunks(6).map(|s| (s[4], s[5])))
-                .filter(|p| (p.1 - edge).abs() < 1e-6)
-                .map(|p| p.0)
-                .collect()
-        }
-
-        #[test]
-        fn troughs_land_on_the_x_gridlines() {
-            let svg = render(&torn_grid_payload(|j| tear_key(j, "wavelength", 30.0)), &test_fonts()).expect("renders");
-            let xs = x_gridline_xs(&svg);
-            let troughs = tear_trough_xs(&tear(&svg).unwrap());
-            assert!(xs.len() >= 2, "{svg}");
-            for x in xs {
-                assert!(troughs.iter().any(|t| (t - x).abs() < 0.01), "no trough on gridline {x}: {troughs:?}");
-            }
-        }
-
-        /// A tear drawn at `wavelength` over `rows` daily points.
-        fn rhythm_svg(rows: usize, wavelength: f64) -> String {
-            render(
-                &torn_grid_payload(|j| {
-                    tear_key(j, "wavelength", wavelength);
-                    let daily: Vec<_> = (0..rows)
-                        .map(|i| json!({"week": format!("2026-01-{:02}", 1 + i), "signups": 100.0 + 5.0 * i as f64}))
-                        .collect();
-                    j["rows"] = json!(daily);
-                }),
-                &test_fonts(),
-            )
-            .expect("renders")
-        }
-
-        /// Gridline xs, trough xs and the tear tag of `rhythm_svg`.
-        fn rhythm(rows: usize, wavelength: f64) -> (Vec<f64>, Vec<f64>, String) {
-            let svg = rhythm_svg(rows, wavelength);
-            let tag = tear(&svg).unwrap();
-            (x_gridline_xs(&svg), tear_trough_xs(&tag), tag)
-        }
-
-        /// The period, in px, of `gap` times a span or 1/subdivision that lands
-        /// closest to `wavelength` in log space.
-        fn nearest_period(gap: f64, wavelength: f64) -> f64 {
-            let mut options: Vec<f64> = (1..=64).flat_map(|n| [gap / n as f64, gap * n as f64]).collect();
-            options.sort_by(|a, b| (a / wavelength).ln().abs().total_cmp(&(b / wavelength).ln().abs()));
-            options[0]
-        }
-
-        #[test]
-        fn one_period_per_column_when_the_wavelength_matches_the_gap() {
-            let (xs, troughs, _) = rhythm(3, 267.0);
-            let gap = xs[1] - xs[0];
-            assert!(troughs.iter().filter(|&&t| t >= xs[0] - 0.01 && t <= xs[1] + 0.01).count() == 2, "{troughs:?} {xs:?} {gap}");
-        }
-
-        #[test]
-        fn a_column_is_subdivided_when_that_lands_nearer_the_wavelength() {
-            // gap/wavelength ≈ 1.45: two teeth per column (0.73×) beat one (1.45×) in log space.
-            let (xs, troughs, _) = rhythm(3, 184.0);
-            let inside = troughs.iter().filter(|&&t| t >= xs[0] - 0.01 && t <= xs[1] + 0.01).count();
-            assert_eq!(inside, 3, "{troughs:?} vs {xs:?}");
-        }
-
-        #[test]
-        fn narrow_columns_span_several_gridlines_instead_of_cramming_teeth() {
-            let wavelength = 240.0;
-            let (xs, troughs, tag) = rhythm(10, wavelength);
-            let gap = (xs[xs.len() - 1] - xs[0]) / (xs.len() - 1) as f64;
-            let period = nearest_period(gap, wavelength);
-            assert!(gap < wavelength / 2.0, "the column must be narrow for this to mean anything: {gap}");
-            assert!((troughs[1] - troughs[0] - period).abs() < 1.0, "period {period} from gap {gap}: {troughs:?}");
-            assert!((period / wavelength).ln().abs() < 2f64.sqrt().ln() + 1e-9, "{period} vs {wavelength}");
-            let x2 = tear_vertices(&tag).last().unwrap().0;
-            for t in &troughs {
-                assert!(xs.iter().any(|x| (x - t).abs() < 0.01) || (t - x2).abs() < 0.01, "trough {t} off the grid: {xs:?}");
-            }
-            let edge = tear_edge(&tag);
-            assert_eq!(*tear_ys(&tag).last().unwrap(), edge, "the leftover span still rests on the edge: {tag}");
-        }
-
-        /// Every `(x, y)` the tear passes through at a cubic boundary.
-        fn tear_vertices(tag: &str) -> Vec<(f64, f64)> {
-            let n = path_numbers(tag);
-            std::iter::once((n[0], n[1])).chain(n[2..].chunks(6).map(|s| (s[4], s[5]))).collect()
-        }
-
-        fn assert_gridlines_end_on_the_tear(svg: &str) {
-            let tag = tear(svg).unwrap();
-            let vertices = tear_vertices(&tag);
-            let verticals: Vec<_> = plot_lines(svg).into_iter().filter(|l| l.0 == l.2 && l.3 - l.1 > 100.0).collect();
-            assert!(!verticals.is_empty(), "{svg}");
-            for l in verticals {
-                let v = vertices.iter().find(|v| (v.0 - l.0).abs() < 0.01).unwrap_or_else(|| panic!("no tear vertex at {l:?}"));
-                assert!((l.3 - v.1).abs() < 0.01, "gridline {l:?} should end on the tear at y {}", v.1);
-            }
-        }
-
-        #[test]
-        fn a_gridline_mid_tooth_ends_on_the_wave_where_it_crosses_it() {
-            // 10 daily points at wavelength 240 span 4 columns: the tear's stops
-            // are every 4th gridline, and the trailing stretch is uneven, so most
-            // gridlines fall inside a tooth rather than on a trough.
-            let svg = rhythm_svg(10, 240.0);
-            let tag = tear(&svg).unwrap();
-            let n = path_numbers(&tag);
-            let edge = tear_edge(&tag);
-            let vertices = tear_vertices(&tag);
-            let cubics: Vec<[(f64, f64); 4]> = n[2..]
-                .chunks(6)
-                .scan((n[0], n[1]), |from, c| {
-                    let cubic = [*from, (c[0], c[1]), (c[2], c[3]), (c[4], c[5])];
-                    *from = (c[4], c[5]);
-                    Some(cubic)
-                })
-                .collect();
-            // The wave's y at `x`, by dense sampling of the cubic that spans it.
-            let wave_y = |x: f64| {
-                let c = cubics.iter().find(|c| c[0].0 <= x && x <= c[3].0).unwrap();
-                (0..=100_000)
-                    .map(|i| {
-                        let (t, u) = (i as f64 / 100_000.0, 1.0 - i as f64 / 100_000.0);
-                        let at = |f: fn(&(f64, f64)) -> f64| {
-                            u * u * u * f(&c[0]) + 3.0 * u * u * t * f(&c[1]) + 3.0 * u * t * t * f(&c[2]) + t * t * t * f(&c[3])
-                        };
-                        (at(|p| p.0), at(|p| p.1))
-                    })
-                    .min_by(|a, b| (a.0 - x).abs().total_cmp(&(b.0 - x).abs()))
-                    .unwrap()
-                    .1
-            };
-            let verticals: Vec<_> = plot_lines(&svg).into_iter().filter(|l| l.0 == l.2 && l.3 - l.1 > 100.0).collect();
-            let mid_tooth: Vec<_> = verticals.iter().filter(|l| !vertices.iter().any(|v| (v.0 - l.0).abs() < 0.01)).collect();
-            assert!(mid_tooth.len() >= 3, "stops every 4th gridline leave several gridlines off a trough: {verticals:?}");
-            let flank = mid_tooth.iter().filter(|l| l.3 > edge - 4.0 + 0.1).count();
-            assert!(flank >= 2, "gridlines on a flank stop short of the crest: {mid_tooth:?}");
-            for l in mid_tooth {
-                assert!(l.3 >= edge - 4.0 - 0.01 && l.3 < edge, "{l:?} must lie on the tooth, edge {edge}");
-                assert!((l.3 - wave_y(l.0)).abs() < 0.02, "{l:?} should end at the wave's y {}", wave_y(l.0));
-            }
-        }
-
-        /// The x of every cubic start that rests on `edge`.
-        fn trough_xs(cubics: &[crate::torn::Cubic], edge: f64) -> Vec<f64> {
-            cubics.iter().filter(|c| (c[0].1 - edge).abs() < 1e-9).map(|c| c[0].0).chain(cubics.last().map(|c| c[3].0)).collect()
-        }
-
-        #[test]
-        fn no_tooth_is_squeezed_beside_a_plot_end_whatever_the_fractional_width() {
-            // Regular 100 px columns at wavelength 100: a tick `lead` px from an
-            // end leaves a stretch that is a fraction of a period, so it either
-            // carries a tooth of at least period/√2 or no stop at all.
-            let tear = crate::common::TornBaseline { enabled: true, amplitude: 4.0, wavelength: 100.0, sharpness: 1.0 };
-            for lead in [5.0, 30.0, 51.0, 56.0, 60.0, 69.0, 71.0, 120.0] {
-                let ticks = [lead, lead + 100.0, lead + 200.0];
-                let x2 = ticks[2] + lead;
-                let widths: Vec<f64> = trough_xs(&crate::torn::torn_cubics(0.0, x2, 0.0, -1.0, &ticks, &tear), 0.0)
-                    .windows(2)
-                    .map(|w| w[1] - w[0])
-                    .collect();
-                assert!(widths.iter().all(|&w| w > 70.0), "lead {lead}: {widths:?}");
-            }
-        }
-
-        #[test]
-        fn band_step_edges_do_not_squeeze_a_whole_tooth_into_half_a_column() {
-            // Band-step ticks sit half a step inside the plot, so the first and
-            // last stretches are half an interior period wide.
-            let mut j = make_band_step_line_payload(None);
-            j["resolved"]["style"]["axis_x"]["grid"] =
-                json!({"visible": true, "threshold": null, "width": 1.0, "color": "#EDEFF2", "opacity": 1.0});
-            j["resolved"]["style"]["axis_y"]["grid"] = json!({
-                "visible": true, "threshold": null, "width": 1.0, "color": "#D0D3D9", "opacity": 1.0,
-                "torn_baseline": {"enabled": true, "amplitude": 4.0, "wavelength": 170.0, "sharpness": 1.0}
-            });
-            j["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"domain": [50.0, 200.0]}});
-            let svg = render(&serde_json::from_value(j).unwrap(), &test_fonts()).expect("renders");
-            let troughs = tear_trough_xs(&tear(&svg).unwrap());
-            let widths: Vec<f64> = troughs.windows(2).map(|w| w[1] - w[0]).collect();
-            // A tooth never drops below period/√2: ~126 px of this fixture's ~179 px column.
-            assert!(widths.iter().all(|&w| w > 125.0), "no squeezed tooth: {troughs:?}");
+        /// The tear's y at `x`: each cubic is a straight segment.
+        fn tear_y_at(tag: &str, x: f64) -> f64 {
+            let v = tear_vertices(tag);
+            let w = v.windows(2).find(|w| w[0].0 <= x && x <= w[1].0).unwrap_or_else(|| panic!("{x} off the tear"));
+            let t = if w[1].0 == w[0].0 { 0.0 } else { (x - w[0].0) / (w[1].0 - w[0].0) };
+            w[0].1 + t * (w[1].1 - w[0].1)
         }
 
         #[test]
         fn x_gridlines_end_on_the_tear_at_their_own_x() {
-            let svg = render(&torn_grid_payload(|j| tear_key(j, "wavelength", 30.0)), &test_fonts()).expect("renders");
-            assert_gridlines_end_on_the_tear(&svg);
+            let svg = render(&torn_grid_payload(|_| {}), &test_fonts()).expect("renders");
+            let tag = tear(&svg).unwrap();
+            let verticals: Vec<_> = plot_lines(&svg).into_iter().filter(|l| l.0 == l.2 && l.3 - l.1 > 100.0).collect();
+            assert!(verticals.len() >= 2, "{svg}");
+            for l in verticals {
+                assert!((l.3 - tear_y_at(&tag, l.0)).abs() < 0.02, "gridline {l:?} should end on the tear at y {}", tear_y_at(&tag, l.0));
+            }
         }
 
         #[test]
@@ -18172,12 +18132,10 @@ mod tests {
             )
             .expect("renders");
             let tag = tear(&svg).unwrap();
-            let vertices = tear_vertices(&tag);
             let verticals: Vec<_> = plot_lines(&svg).into_iter().filter(|l| l.0 == l.2 && l.3 - l.1 > 100.0).collect();
             assert!(!verticals.is_empty(), "{svg}");
             for l in verticals {
-                let v = vertices.iter().find(|v| (v.0 - l.0).abs() < 0.01).unwrap();
-                assert!((l.1 - v.1).abs() < 0.01, "gridline {l:?} should start on the tear at y {}", v.1);
+                assert!((l.1 - tear_y_at(&tag, l.0)).abs() < 0.02, "gridline {l:?} should start on the tear at y {}", tear_y_at(&tag, l.0));
             }
         }
 

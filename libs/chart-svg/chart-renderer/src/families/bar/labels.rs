@@ -78,7 +78,7 @@ pub(super) struct LabelPoint {
     /// The bar this label names recedes, so the label does with it.
     pub(super) recede: Option<crate::selected::Recede>,
     /// The label's ink box, plot-relative: what the text node carries as its measured box.
-    /// `None` in a genuine-zero layer that labels nothing at this size.
+    /// `None` in a genuine-zero layer that labels nothing at this size, and on an off-the-chart bar.
     pub(super) ink: Option<vega_fit::Bounds>,
     /// A conditional rule's font color and weight for this label.
     pub(super) font_color: Option<String>,
@@ -288,6 +288,9 @@ pub(super) struct LabelSite {
     pub(super) key: (String, String),
     /// The datum's link, which wraps its label like its bar.
     pub(super) href: Option<String>,
+    /// The bar runs off the chart: its mark stays, empty, but bounds nothing, since the bar adds
+    /// no ink past the plot.
+    pub(super) off_chart: bool,
 }
 
 /// `label_points`'s row walk: `place(row, category, value)` returns the row's
@@ -362,6 +365,7 @@ pub(super) fn plain_sites<'a>(
             blank,
             key: (cat.to_string(), String::new()),
             href: None,
+            off_chart: false,
         }))
     })
 }
@@ -415,6 +419,7 @@ pub(super) fn segment_sites(
             blank,
             key,
             href: None,
+            off_chart: false,
         }))
     })
 }
@@ -448,7 +453,7 @@ pub(super) fn total_sites(
             .copied()
             .ok_or_else(|| format!("bar: internal error — no stacked total for category {cat:?}"))?;
         let (text, blank) = spec.text(Some(row), total, None)?;
-        Ok(Some(LabelSite { cat: cat.to_string(), at: total, slot: span.slot, value: total, raw: total, span: None, segment: None, tip: total, text, blank, key, href: None }))
+        Ok(Some(LabelSite { cat: cat.to_string(), at: total, slot: span.slot, value: total, raw: total, span: None, segment: None, tip: total, text, blank, key, href: None, off_chart: false }))
     })
 }
 
@@ -906,7 +911,7 @@ impl LabelLayer {
         let silent = self.silent(geom, hide);
         for (site, &width) in self.sites.iter().zip(&self.widths) {
             let Some(place) = self.place(site, width, geom, hide) else { continue };
-            let ink = (!silent).then(|| self.ink_of(site, width, &place));
+            let ink = (!silent && !site.off_chart).then(|| self.ink_of(site, width, &place));
             let LabelPlace { center, extent, blank, side } = place;
             let decor = decors.get(&site.key);
             let (aria, series_fill) = match decor {
@@ -934,8 +939,8 @@ impl LabelLayer {
     }
 
     /// A blanked mark keeps a zero-width box one line tall (`autosize: fit` bounds it), except
-    /// in a genuine-zero layer that labels nothing at this size, whose marks are all blank and
-    /// move nothing.
+    /// an off-the-chart bar's, and except in a genuine-zero layer that labels nothing at this
+    /// size, whose marks are all blank and move nothing.
     fn placements<'a>(
         &'a self,
         geom: &'a LabelGeometry,
@@ -943,7 +948,7 @@ impl LabelLayer {
     ) -> impl Iterator<Item = (&'a LabelSite, vega_fit::Bounds, Option<LabelSide>)> + 'a {
         let silent = self.silent(geom, hide);
         self.sites.iter().zip(&self.widths).filter_map(move |(site, &width)| {
-            if silent {
+            if silent || site.off_chart {
                 return None;
             }
             let place = self.place(site, width, geom, hide)?;

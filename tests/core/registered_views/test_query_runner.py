@@ -289,10 +289,16 @@ class TestRunRegistryQueriesValidationErrors:
             run_registry_queries(view, {}, registry)
         assert "Source not found" in str(exc_info.value)
 
-    def test_truncated_result_raises_registry_query_error(self, routes: Mock) -> None:
+    @pytest.mark.parametrize(
+        ("reason", "other"),
+        [("max_rows", "max_result_bytes"), ("max_result_bytes", "max_rows")],
+    )
+    def test_truncated_result_raises_registry_query_error(
+        self, routes: Mock, reason: str, other: str
+    ) -> None:
         """A ceiling-truncated result would feed the board-generation template
         incomplete data — RegistryQueryError must raise instead of silently
-        proceeding with a partial result."""
+        proceeding with a partial result, naming the limit that cut it."""
         view = _make_view(
             queries={
                 "columns": {
@@ -306,12 +312,15 @@ class TestRunRegistryQueriesValidationErrors:
         registry = scripted_env(ScriptedBackend())
         routes.return_value = QueryResult(
             data=[{"a": 1}],
-            truncated_reason="max_rows",
+            truncated_reason=reason,
             schema=literal_schema([{"a": 1}]),
         )
 
-        with pytest.raises(RegistryQueryError, match="truncated"):
+        with pytest.raises(RegistryQueryError, match="truncated") as excinfo:
             run_registry_queries(view, {}, registry)
+        assert f"Raise execution.{reason} in dbt_charts.yml" in str(excinfo.value)
+        assert other not in str(excinfo.value)
+        assert "DCT_" not in str(excinfo.value)
 
     def test_schema_query_jinja_in_field_raises_before_execution(self) -> None:
         """{{ path.X }} must be materialized before SchemaQuery validation rejects Jinja."""

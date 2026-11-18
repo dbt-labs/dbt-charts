@@ -108,9 +108,7 @@ class DatabricksDialect(SQLDialect):
 class SparkDialect(DatabricksDialect):
     """Spark dialect — same SQL grammar as Databricks, but the PySpark cursors
     (PyhiveConnectionWrapper, PyodbcConnectionWrapper, SparkConnectionWrapper)
-    implement fetchall but not fetchmany.  cursor_supports_driver_limit = False
-    causes the adapters to fall back to fetchall + post-fetch slice instead of
-    using the limit= kwarg.
+    implement fetchall but not fetchmany.
     """
 
     name = "spark"

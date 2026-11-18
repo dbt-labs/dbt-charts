@@ -37,6 +37,7 @@ normalize = { path = "../normalize", features = ["fixtures"] }
 project = { path = "../project" }
 board-model = { path = "../board-model", features = ["fixtures"] }
 diagnostic = { path = "../diagnostic", features = ["test-support"] }
+dbt-yaml = "=0.10.8"
 equivalence = { path = "../equivalence" }
 regex = "1"
 jiff = { version = "0.2", default-features = false, features = ["std"] }

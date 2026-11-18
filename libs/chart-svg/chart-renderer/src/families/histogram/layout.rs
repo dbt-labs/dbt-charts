@@ -7,7 +7,7 @@ use scene::{Attrs, Node, PathData, Role};
 
 use super::bind::{Bound, LegendPaint};
 use super::Resolved;
-use crate::common::{format_y_label, XEdge};
+use crate::common::{format_y_label, Labeling, XEdge};
 use diagnostic::Diagnostic;
 use crate::families::axis_caption::value_axis_caption;
 use crate::families::cartesian::{vl_default_tick_count};
@@ -87,7 +87,20 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         |label: &str| fonts.measure_shaped(label, ax_y.labels.font.family_or("sans-serif"), ax_y.labels.font.size_or(11.0));
     let (bin_start, bin_stop) = bound.x_extent;
     let (max_count, y_domain_max) = (bound.max_count, bound.y_domain_max);
-    let (x_ticks_domain, x_tick_labels) = (&bound.x_ticks, &bound.x_labels);
+    let x_ticks_domain = &bound.x_ticks;
+    let x_tick_labels: &Vec<String> = &{
+        let slot = ax_x.labels.format.as_ref();
+        let labeling = if x_ticks_domain.is_empty() { Labeling::default() } else { ax_x.labeling(x_ticks_domain, fonts)? };
+        x_ticks_domain
+            .iter()
+            .enumerate()
+            .map(|(i, &tv)| {
+                let label = format_y_label(tv, labeling.ruler.as_ref(), labeling.tick_label.as_ref(), slot, i, x_ticks_domain.len())
+                    .map_err(|e| format!("histogram x label format: {e}"))?;
+                ax_x.labels.apply_expr("x", tv, label, i, x_ticks_domain.len())
+            })
+            .collect::<Result<Vec<String>, String>>()?
+    };
     let mut diagnostics = Vec::new();
 
     // The chart's OWN effective background — see `Resolved::background`.
@@ -101,6 +114,18 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     )?;
 
     let y_fmt = ax_y.labels.format.as_ref();
+    // The count ladder is drawn at render time; its labels share one tier.
+    let y_label_texts = |ticks: &[f64]| -> Result<Vec<String>, String> {
+        let labeling = ax_y.labeling(ticks, fonts)?;
+        ticks
+            .iter()
+            .enumerate()
+            .map(|(i, &tv)| {
+                let label = format_y_label(tv, labeling.ruler.as_ref(), labeling.tick_label.as_ref(), y_fmt, i, ticks.len())?;
+                ax_y.labels.apply_expr("y", tv, label, i, ticks.len())
+            })
+            .collect()
+    };
     let unbaked_y_ticks = |plot_h: f64| -> Vec<f64> {
         // `_emit_histogram`'s `tickCount` expression, `max(1, min(ceil(height /
         // 40), domain('y')[1]))`: never more ticks than the
@@ -255,6 +280,16 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let band_width = r.style.mark.band_width;
 
     let x_flush = crate::families::bar::axes::flush_threshold(ax_x.labels.flush.as_ref())?;
+    // Vega's `labelOverlap` thins the bin-edge labels by parity on a plot `pw` wide, as on every
+    // other linear axis; the row's height plays no part, so any y serves.
+    let x_visible = |pw: f64| -> Vec<bool> {
+        let x_scale = Continuous::linear([bin_start, bin_stop], [0.0, pw]);
+        crate::families::scatter::visible_tick_labels(x_tick_labels, ax_x.labels.min_gap.unwrap_or(0.0), false, |i| {
+            let pos = x_scale.scale(x_ticks_domain[i]);
+            let align = crate::families::line::flush_align(pos, pw, x_flush);
+            vega_fit::text_ink_rows(pos, 0.0, x_label_ws[i].min(x_limit), x_font_size, align, x_edge.baseline(), crate::text::line_count(&x_tick_labels[i]))
+        })
+    };
     let mut fit_err: Option<String> = None;
     let m = frame.fit(&title, |pw, ph, b| {
         if fit_err.is_some() {
@@ -262,11 +297,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         }
         let ink = |b: &mut vega_fit::Bounds| -> Result<(), String> {
             let y_ticks = unbaked_y_ticks(ph);
-            let y_labels: Vec<String> = y_ticks
-                .iter()
-                .enumerate()
-                .map(|(i, &tv)| ax_y.labels.apply_expr("y", tv, format_y_label(tv, None, None, y_fmt, i, y_ticks.len())?, i, y_ticks.len()))
-                .collect::<Result<_, _>>()?;
+            let y_labels = y_label_texts(&y_ticks)?;
             let y_label_ws = measure.shaped_widths(&y_labels, y_family, y_font_size)?;
             let y_gutter = y_ink_gutter(&y_label_ws, &y_ticks, ph);
             let ghost_ws = ghost.as_ref().map_or(Ok(Vec::new()), |g| g.widths(&y_ticks, &y_labels, &y_label_ws, measure_ghost))?;
@@ -308,7 +339,8 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             }
             let row_y = x_edge.at(ph, x_axis_offset + x_label_pad);
             let pass_x_scale = Continuous::linear([bin_start, bin_stop], [0.0, pw]);
-            for ((&tv, &lw), lbl) in x_ticks_domain.iter().zip(x_label_ws.iter()).zip(x_tick_labels) {
+            let shown = x_visible(pw);
+            for (((&tv, &lw), lbl), _) in x_ticks_domain.iter().zip(x_label_ws.iter()).zip(x_tick_labels).zip(&shown).filter(|(_, &v)| v) {
                 let pos = pass_x_scale.scale(tv);
                 let align = crate::families::line::flush_align(pos, pw, x_flush);
                 b.union(&vega_fit::text_ink_rows(pos, row_y, lw.min(x_limit), x_font_size, align, x_edge.baseline(), crate::text::line_count(lbl)));
@@ -384,11 +416,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         }
     }
     let y_ticks = unbaked_y_ticks(plot_h);
-    let y_labels: Vec<String> = y_ticks
-        .iter()
-        .enumerate()
-        .map(|(i, &tv)| ax_y.labels.apply_expr("y", tv, format_y_label(tv, None, None, y_fmt, i, y_ticks.len())?, i, y_ticks.len()))
-        .collect::<Result<_, _>>()?;
+    let y_labels = y_label_texts(&y_ticks)?;
     let y_label_ws = measure.shaped_widths(&y_labels, y_family, y_font_size)?;
     let y_gutter = y_ink_gutter(&y_label_ws, &y_ticks, plot_h);
     let y_pos = |count: f64| plot_h * (1.0 - count / y_domain_max);
@@ -516,11 +544,9 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let x_label_weight = ax_x.labels.font.weight_str();
     let x_label_y =
         x_group_y + x_edge.sign() * x_label_pad + measure::baseline_shift(x_edge.baseline(), x_font_size);
-    for (&tv, lbl) in x_ticks_domain.iter().zip(x_tick_labels.iter()) {
+    for ((&tv, lbl), _) in x_ticks_domain.iter().zip(x_tick_labels.iter()).zip(x_visible(plot_w)).filter(|(_, v)| *v) {
         let pos = x_scale.scale(tv);
-        // labelOverlap: allow — every tick always draws; the
-        // edges still flush-anchor (VL's default labelFlush on a
-        // continuous scale).
+        // The edges flush-anchor (VL's default labelFlush on a continuous scale).
         let face = LabelFace {
             anchor: crate::families::line::flush_anchor_px(pos, plot_w, x_flush),
             family: x_family,

@@ -48,6 +48,7 @@ from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.render.board_variables import held_legend_view
 from dbt_charts.core.render.chart.spec_builders import additive_padding
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
+from dbt_charts.core.render.controls import ships_page_runtime
 from dbt_charts.core.render.errors import RenderError
 
 if TYPE_CHECKING:
@@ -65,6 +66,7 @@ from dbt_charts.core.render.svg_utils import (
     escape_attr,
     extract_svg_dimensions,
     extract_svg_inner_content,
+    flow_bg_attr,
     padded_authoring_content,
     px,
     round_clipped,
@@ -193,7 +195,8 @@ def render_layout_item(
                 f'<rect x="0" y="0" width="{escape_attr(width)}" height="{escape_attr(actual_height)}" '
                 f'fill="none" stroke="{escape_attr(resolved_style.border.color)}" stroke-width="{escape_attr(details_config.border.width)}"'
                 f"{border_dash_attrs(details_config.border)} "
-                f'rx="{escape_attr(details_config.border.radius)}"/>'
+                f'rx="{escape_attr(details_config.border.radius)}"'
+                f"{flow_bg_attr(ships_page_runtime())}/>"
             )
             rendered = (
                 f"{section_border}"
@@ -201,6 +204,10 @@ def render_layout_item(
                 f'<g transform="translate(0, {px(summary_height + details_config.content_y_offset)})">'
                 f"{content_svg}</g>"
             )
+            # On a live page the section grows, border and all, with a table
+            # inside it that opens rows.
+            if ships_page_runtime():
+                rendered = f'<g data-dbt-flow-box="">{rendered}</g>'
         else:
             rendered = summary_svg
             actual_height = summary_height
@@ -709,6 +716,7 @@ def _render_chart_item_inner(
         inset=inset,
         card_border=card_border,
         card_shadow=_card_shadow(chart, card_border, resolved_style),
+        placement=placement,
     )
 
 
@@ -785,6 +793,7 @@ def _wrap_rendered_chart_svg(
     *,
     card_border: BorderStyle | None,
     card_shadow: CardShadow | None,
+    placement: str | None = None,
 ) -> tuple[str, float]:
     dims = extract_svg_dimensions(chart_svg)
     # Internal SVG-family renderers embed directly in the chart wrapper <g>;
@@ -793,6 +802,14 @@ def _wrap_rendered_chart_svg(
     # engine-drawn error placard on top of any chart.type (including Vega).
     # Vega/Vega-Lite output otherwise remains as a standalone nested <svg>.
     chart_type = identity.chart_type
+    # A live table placed on a board opens list rows in place, and its card grows
+    # with them; the placement keys the card's own clip.
+    grows = (
+        chart_type == "table"
+        and not is_error_fallback
+        and placement is not None
+        and ships_page_runtime()
+    )
     is_internal_svg = chart_type not in PAINTS_MARKS or is_error_fallback
     if is_internal_svg:
         chart_content = extract_svg_inner_content(chart_svg)
@@ -819,7 +836,7 @@ def _wrap_rendered_chart_svg(
         # come from `dims`.
         inner_width = outer_width - inset["left"] - inset["right"]
         boundary = padded_authoring_content(
-            chart_content, inner_width, dims.height, inset
+            chart_content, inner_width, dims.height, inset, None, grows
         )
         actual_height = dims.height + px(inset["top"]) + px(inset["bottom"])
     else:
@@ -829,7 +846,10 @@ def _wrap_rendered_chart_svg(
         # whichever chart abuts it. Only the caller can answer it: a Vega
         # family bakes the padding into its spec and renders at the outer size,
         # while a hand-drawn card paints full-bleed at 0,0.
-        boundary = selection_boxes(outer_width, dims.height, ink_inset) + chart_content
+        boundary = (
+            selection_boxes(outer_width, dims.height, ink_inset, None, grows)
+            + chart_content
+        )
         actual_height = dims.height
 
     radius = (
@@ -840,12 +860,20 @@ def _wrap_rendered_chart_svg(
         else 0.0
     )
     if radius > 0:
-        boundary = round_clipped(boundary, outer_width, actual_height, radius)
+        boundary = round_clipped(
+            boundary,
+            outer_width,
+            actual_height,
+            radius,
+            placement if grows else None,
+        )
     if card_shadow is not None:
-        boundary = shadow_rect(outer_width, actual_height, card_shadow) + boundary
+        boundary = (
+            shadow_rect(outer_width, actual_height, card_shadow, grows) + boundary
+        )
     if card_border is not None:
         boundary += border_rect(
-            outer_width, actual_height, card_border, "dbt-card-border"
+            outer_width, actual_height, card_border, "dbt-card-border", grows
         )
 
     var_deps = identity.variable_dependencies
@@ -879,6 +907,7 @@ def _wrap_rendered_chart_svg(
         # `group`, not `img`: img makes descendants presentational and would
         # hide every per-mark aria-label; a role-less <g>'s name is ignored.
         'role="group"',
+        *(['data-dbt-flow-box=""'] if grows else []),
         f'aria-roledescription="{escape_attr(board_word("aria.chart"))}"',
         f'aria-label="{escape_attr(chart_title)}"',
     ]

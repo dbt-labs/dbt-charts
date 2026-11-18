@@ -383,8 +383,8 @@ pub fn render_chart_in_cell(board: &Board, styles: &ChartStyles, run: &RunResult
         let (at, chart_id) = bind::board::placed_as(board, styles, run, placement)?;
         // The board's color plan the family binds with.
         let scales = match board.body.charts.get(chart_id.as_str()) {
-            // A KPI, a callout and a spark_bar paint no category color.
-            Some(board_model::chart::Chart::Kpi(_) | board_model::chart::Chart::Callout(_) | board_model::chart::Chart::SparkBar(_)) => Vec::new(),
+            // A KPI, a callout and a spark_bar paint no category color, nor does a base map, which fills every region alike.
+            Some(board_model::chart::Chart::Kpi(_) | board_model::chart::Chart::Callout(_) | board_model::chart::Chart::SparkBar(_) | board_model::chart::Chart::Geoshape(_) | board_model::chart::Chart::Map(_)) => Vec::new(),
             // A pie takes its slices' colors from the board-wide category plan, as the board's own bind does.
             Some(board_model::chart::Chart::Pie(_) | board_model::chart::Chart::Donut(_)) => bind::plan_colors(board, |query| run.datasets.get(query))?,
             _ => return Err(Diagnostic::refused(diagnostic::refuse!("drawing this chart family in a host's cell is not supported"))),
@@ -444,9 +444,21 @@ pub fn render_chart_in_cell(board: &Board, styles: &ChartStyles, run: &RunResult
             Ok(bind::bound::Family::Pie(pie)) => {
                 let body = crate::slot::body_placing(board, &at)?;
                 let chart = board.body.charts.get(chart_id.as_str()).ok_or_else(|| diag::err_internal(format!("the chart {chart_id} is not on the board")))?;
-                let site = crate::slot::PieSite { body, chart, placed: styles.at(&at)?, id: chart_id.as_str() };
+                let site = crate::slot::ChartSite { body, chart, placed: styles.at(&at)?, id: chart_id.as_str() };
                 let heights = crate::slot::Heights::of_total(crate::slot::total_style(body)?);
                 let (height, svg, _, diagnostics) = crate::compose::pie_card(&site, &heights, pie, (cell.width, cell.height), cell.title_shift, book)?;
+                Ok(InCell { svg: print::print(std::slice::from_ref(&svg)), height, diagnostics })
+            }
+            Ok(bind::bound::Family::Geoshape(_)) if cell.title_shift != TitleShift::default() => {
+                Err(Diagnostic::refused(diagnostic::refuse!("a geoshape given a title shift in a host's cell is not supported")))
+            }
+            // A map draws at the cell's width and the cell's height, or its aspect ratio's.
+            Ok(bind::bound::Family::Geoshape(geo)) => {
+                let body = crate::slot::body_placing(board, &at)?;
+                let chart = board.body.charts.get(chart_id.as_str()).ok_or_else(|| diag::err_internal(format!("the chart {chart_id} is not on the board")))?;
+                let site = crate::slot::ChartSite { body, chart, placed: styles.at(&at)?, id: chart_id.as_str() };
+                let heights = crate::slot::Heights::of_total(crate::slot::total_style(body)?);
+                let (height, svg, _, diagnostics) = crate::compose::geoshape_card(&site, &heights, geo, (cell.width, cell.height), book)?;
                 Ok(InCell { svg: print::print(std::slice::from_ref(&svg)), height, diagnostics })
             }
             Ok(_) => Err(diag::err_internal(format!("the chart {chart_id} bound as another family"))),

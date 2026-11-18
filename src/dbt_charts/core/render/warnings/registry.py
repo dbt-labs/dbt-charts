@@ -93,6 +93,7 @@ import dbt_charts.core.render.warnings.table_page_squeezed as table_page_squeeze
 import dbt_charts.core.render.warnings.table_scroll_rows_capped as table_scroll_rows_capped
 import dbt_charts.core.render.warnings.table_text_truncated as table_text_truncated
 import dbt_charts.core.render.warnings.temporal_single_point as temporal_single_point
+import dbt_charts.core.render.warnings.title_unit_mismatch as title_unit_mismatch
 import dbt_charts.core.render.warnings.too_many_color_categories as too_many_color_categories
 import dbt_charts.core.render.warnings.too_many_x_categories as too_many_x_categories
 import dbt_charts.core.render.warnings.torn_outlier_no_outlier as torn_outlier_no_outlier
@@ -114,6 +115,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     annotation_note_moved,
     axis_label_collision,
     axis_title_truncated,
+    title_unit_mismatch,
     bar_band_width_too_narrow,
     bar_grouped_series_coincide,
     callout_text_truncated,

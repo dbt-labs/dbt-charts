@@ -14,17 +14,15 @@ Entry Points:
     - lookup(planned, ...) -> Lookup
     - lookup_and_record(ctx, ledger, planned, ...) -> Lookup
     - lookup_names(ctx, ledger, names, variables, ...) -> Lookup
-    - limit_rows(result, query_name, seed_reason) -> (ResultRows, TruncationInfo | None)
 """
 
-import json
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from dbt_charts.core.compile import config
+from dbt_charts.core.column_types import TruncatedReason
 from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
@@ -43,7 +41,6 @@ from dbt_charts.core.execute.cache_backend import (
     CacheRows,
     QueryResultCache,
     ResultRows,
-    TruncatedReason,
     TruncationInfo,
 )
 from dbt_charts.core.execute.duckdb_cache import relevant_to
@@ -56,7 +53,12 @@ from dbt_charts.core.execute.plan import (
     source_version,
 )
 from dbt_charts.core.execute.query_plan import PlannedQuery
-from dbt_charts.core.execute.query_result import ResolvedRelation
+from dbt_charts.core.execute.query_result import (
+    ResolvedRelation,
+    primary_truncation_reason,
+    resolve_effective_row_limit,
+    take,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -133,61 +135,6 @@ def query_data_ages(ledger: Ledger) -> list[tuple[str, datetime, CachePolicy]]:
     return [(name, at, policy) for name, at, policy, _ in ledger.ages]
 
 
-def limit_rows(
-    result: ResultRows,
-    query_name: str,
-    seed_reason: TruncatedReason | None = None,
-) -> tuple[ResultRows, TruncationInfo | None]:
-    """The one chokepoint rows pass through before the memo or the store sees
-    them: the "never cache an oversized result" guarantee lives here.
-
-    ``seed_reason`` carries a truncation signal already detected upstream:
-    - ``"max_rows"``: adapter-return or cache-ref fetch already detected row
-      truncation (``QueryResult.truncated_reason`` or the post-fetchmany slice).
-    - ``"max_result_bytes"``: warm-cache path propagates a byte-truncation
-      signal from a prior write so the warning still fires on a cache hit
-      where the data is already under the current byte ceiling.
-    - ``None``: no upstream signal; both row- and byte-checks run from scratch.
-    The row-count check is defense-in-depth for adapter paths (fetch already
-    bounded); it is the primary check on the warm-cache path, where a lowered
-    ceiling could otherwise serve more rows than the new limit allows.
-
-    Byte size is checked by accumulating each row's serialized size
-    incrementally and cutting the moment the running total crosses
-    max_result_bytes — never by serializing the whole result to measure it,
-    which would defeat the point on an oversized result.
-
-    Returns the kept rows and, when anything was cut or seeded, the truncation.
-    """
-    reason: TruncatedReason | None = seed_reason
-    rows = result.rows
-    max_rows = config.resolve_max_rows()
-    if len(rows) > max_rows:
-        rows = rows[:max_rows]
-        if reason is None:
-            reason = "max_rows"
-
-    max_bytes = config.resolve_max_result_bytes()
-    kept: CacheRows = []
-    running_bytes = 0
-    for row in rows:
-        row_bytes = len(json.dumps(row, default=str))
-        if running_bytes + row_bytes > max_bytes:
-            reason = "max_result_bytes"
-            break
-        kept.append(row)
-        running_bytes += row_bytes
-
-    truncation = (
-        None
-        if reason is None
-        else TruncationInfo(
-            query_name=query_name, kept_row_count=len(kept), reason=reason
-        )
-    )
-    return ResultRows(kept, result.schema), truncation
-
-
 def memo_key(entry: PlannedQuery, cache_key: CacheKey) -> MemoKey:
     """Scope a content cache key to the asking query's resolved cache policy.
 
@@ -233,7 +180,6 @@ class Tail:
     # None when the prior rows are empty: there is nothing to resume from.
     watermark: Any | None  # type-state: explicit_any — MAX watermark; dialect-typed
     written_at: datetime
-    truncation: TruncationInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -351,7 +297,7 @@ def lookup(
     the persistent store, gated on ``PlannedQuery.use_store`` and the query's own policy.
     The store read passes the reader's ttl, because the key excludes the policy;
     both halves of the policy are enforced here, the only place the store is
-    read. A stored hit passes through ``limit_rows`` so a ceiling lowered since
+    read. A stored hit is cut again (:func:`take`) so a ceiling lowered since
     the write still applies.
 
     ``force_refresh`` reads nothing: every query is a plain miss.
@@ -403,11 +349,13 @@ def lookup(
         if outcome is None:
             misses.append(Miss(query_plan))
             continue
-        # A ceiling lowered since the write must not serve the old, larger set;
-        # the write's own truncation signal rides along as the seed.
-        enforced, truncation = limit_rows(
-            ResultRows(outcome.rows, outcome.schema), name, outcome.truncated_reason
+        # A ceiling lowered since the write must not serve the old, larger set,
+        # and a cut made at write time is still reported.
+        kept, cut = take(
+            outcome.rows, list(outcome.schema), resolve_effective_row_limit(None)
         )
+        enforced = ResultRows(kept, outcome.schema)
+        reason = primary_truncation_reason(cut, outcome.truncated_reason)
         if (
             entry["type"] == "sql"
             # isinstance, not truthiness: the cache-key fold uses the same gate.
@@ -415,6 +363,12 @@ def lookup(
             and resume_incremental
             and query_plan.tailable
         ):
+            if reason is not None:
+                # The tail SQL is unordered, so a cut can keep a high key and
+                # skip lower ones; resuming from the highest kept key would
+                # never fetch them. Read the whole result instead.
+                misses.append(Miss(query_plan))
+                continue
             try:
                 watermark = _compute_watermark(
                     enforced.rows, entry["incremental"], name
@@ -422,9 +376,12 @@ def lookup(
             except QueryError as exc:
                 failures[name] = Failure(exc)
                 continue
-            tail = Tail(enforced.rows, watermark, outcome.written_at, truncation)
+            tail = Tail(enforced.rows, watermark, outcome.written_at)
             misses.append(Miss(query_plan, tail))
             continue
+        truncation = (
+            None if reason is None else TruncationInfo(name, len(enforced.rows), reason)
+        )
         hits[name] = CachedRows(enforced, outcome.written_at, truncation)
     return Lookup(hits, tuple(misses), failures)
 
@@ -475,8 +432,6 @@ def lookup_and_record(
     for miss in found.misses:
         if miss.tail is not None:
             _record_store_hit(ctx, ledger, by_name[miss.name], miss.tail.written_at)
-            if miss.tail.truncation is not None:
-                ledger.truncations[miss.name] = miss.tail.truncation
     for name, failure in found.failures.items():
         if failure.failed_at is not None:
             ledger.replayed_failure_ats.append(failure.failed_at)

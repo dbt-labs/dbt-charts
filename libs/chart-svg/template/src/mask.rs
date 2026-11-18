@@ -14,6 +14,29 @@ pub fn mask_fenced_code(text: &str) -> String {
     out
 }
 
+/// `markdown_fence.py::resolve_outside_fences`: `resolve` reads `text` with each closed fenced
+/// block replaced by a token, and its output has the blocks put back.
+pub fn resolve_outside_fences<E>(
+    text: &str,
+    resolve: impl FnOnce(&str) -> Result<String, E>,
+) -> Result<String, E> {
+    let token = |i: usize| format!("__DCT_MARKDOWN_FENCE_{i}__");
+    let blocks = fenced_blocks(text);
+    let mut masked = String::with_capacity(text.len());
+    let mut at = 0;
+    for (i, block) in blocks.iter().enumerate() {
+        masked.push_str(&text[at..block.start]);
+        masked.push_str(&token(i));
+        at = block.end;
+    }
+    masked.push_str(&text[at..]);
+    let mut out = resolve(&masked)?;
+    for (i, block) in blocks.iter().enumerate() {
+        out = out.replace(&token(i), &text[block.clone()]);
+    }
+    Ok(out)
+}
+
 /// The byte range of every closed fenced block, from its opening line through its
 /// closing line and that line's newline. An unclosed fence is no block.
 pub fn fenced_blocks(text: &str) -> Vec<std::ops::Range<usize>> {

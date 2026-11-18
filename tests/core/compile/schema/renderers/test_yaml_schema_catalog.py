@@ -22,6 +22,7 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     PACKAGE_SCHEMA_DIR,
     canonical_schema_bytes,
     compute_current_schema,
+    dev_grammar_bytes,
     load_yaml_schema_catalog,
     load_yaml_schema_catalog_from,
     next_minor,
@@ -1205,7 +1206,17 @@ def test_the_dev_grammar_the_migrate_crate_embeds_is_the_live_one() -> None:
     `just gen-dev-grammar`."""
     committed = PACKAGE_SCHEMA_DIR.joinpath("dev.json").read_bytes()
 
-    assert committed == structural_schema_bytes(compute_current_schema())
+    assert committed == dev_grammar_bytes(compute_current_schema())
+
+
+def test_the_dev_grammar_puts_each_value_on_its_own_line() -> None:
+    """Branches that change the grammar in different places merge without a
+    conflict only if their edits land on different lines."""
+    schema = {"b": {"type": "string", "description": "dropped"}, "a": [1, 2]}
+
+    assert dev_grammar_bytes(schema) == (
+        b'{\n"a":[\n1,\n2\n],\n"b":{\n"type":"string"\n}\n}\n'
+    )
 
 
 def test_freeze_refuses_a_dev_module_lib_rs_does_not_register(tmp_path: Path) -> None:

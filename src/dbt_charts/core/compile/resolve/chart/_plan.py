@@ -16,6 +16,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any, Literal, TypedDict
 
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.authored import MultiplesConfig
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
@@ -60,6 +61,7 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
 )
 from dbt_charts.core.compile.resolve.style.chart_context import CartesianFamilyChart
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
+from dbt_charts.core.diagnostics.codes_compile import ERR_SCALE_TYPE_SCATTER_ONLY
 
 __all__ = [
     "CartesianPlan",
@@ -190,6 +192,7 @@ def plan_cartesian(
         y=y,
         temporal_band_axes=temporal_band_axes,
     )
+    _reject_bent_scale_off_scatter(normalized.id, normalized.type, baked)
     if baked.y.style.color is not None:
         baked = replace(
             baked,
@@ -209,6 +212,33 @@ def plan_cartesian(
     return CartesianPlan(
         primary=primary, channels=channels, axes=baked, axis_overrides=axis_overrides
     )
+
+
+_BENT_SCALE_TYPES = frozenset({"pow", "sqrt", "symlog"})
+
+
+def _reject_bent_scale_off_scatter(
+    chart_id: str, chart_type: str, baked: BakedCartesianAxes
+) -> None:
+    """Raise when a family that draws every axis linear authors a bent scale.
+
+    Only a scatter bends its axes. A line, area, bar or histogram would draw
+    linear marks under an axis description naming the type, whichever axis
+    carries it and whatever its x resolved to (numeric, time or category).
+    ``chart_type`` names the family in the message, so a funnel reads as one.
+    """
+    if chart_type in ("scatter", "heatmap"):
+        return
+    for axis, style in (("axis_x", baked.x.style), ("axis_y", baked.y.style)):
+        continuous = style.scale.continuous if style.scale is not None else None
+        if continuous is not None and continuous.type in _BENT_SCALE_TYPES:
+            raise CompilationError.from_code(
+                ERR_SCALE_TYPE_SCATTER_ONLY,
+                chart_id=chart_id,
+                chart_type=chart_type,
+                axis=axis,
+                scale_type=continuous.type,
+            )
 
 
 def _series_axis_ink(
@@ -360,6 +390,7 @@ def build_cartesian_axes(
         edge=ax_edge,
         format=x.format,
         is_quantitative=ax_is_quantitative,
+        column_forming=False,
         chart_id=chart_id,
         y_gridline_caps_bottom=_y_gridline_caps_bottom(
             y.style, ticks, zero_anchor, endpoint_rail_may_discard_domain

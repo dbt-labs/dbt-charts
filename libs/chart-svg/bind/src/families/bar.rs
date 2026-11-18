@@ -245,7 +245,6 @@ pub fn bars(
     if p.y_scale.is_log() {
         domain::refuse_log(placed.public_id, LogUse::Bar, None)?;
     }
-    cartesian::refuse_scale(p.y_scale, "bar", "y", false)?;
     let (x_field, y_field) = (p.x_field, p.y_field);
     if p.x_ladder.labels_format().is_some() {
         return Err(unsupported(refuse!("a bar band axis with a label format is not supported")));
@@ -260,6 +259,7 @@ pub fn bars(
     let fields: Vec<&str> = [x_field, y_field].into_iter().chain(color_field).chain(layer_fields.iter().copied()).collect();
     let dataset = cartesian::dataset(id, &chart.cartesian, board, run, &fields)?;
     if dataset.rows.is_empty() {
+        cartesian::refuse_scale(placed.public_id, p.y_scale, "bar", "y", false)?;
         return Ok(None);
     }
     let x_type = field_channel(&dataset.schema, &dataset.rows, x_field, Role::Dimension)?;
@@ -270,6 +270,7 @@ pub fn bars(
             _ => error,
         });
     }
+    cartesian::refuse_scale(placed.public_id, p.y_scale, "bar", "y", false)?;
     for field in &layer_fields {
         if !dataset.schema.get(field).map_err(Diagnostic::refused)?.is_number() {
             return Err(unsupported(format!("bar: y column {field:?} is not numeric")));

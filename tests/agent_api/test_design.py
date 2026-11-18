@@ -165,10 +165,8 @@ _PARSE_FIXTURES = {
         "rows:\n"
         "  - charts.k\n"
     ),
-    # The other half of the multi-metric layers rule bar and area declare. The
-    # suppression runs the other way (hide the second series source once `y`
-    # holds a list), so this exercises a chart that authors one *first*, the
-    # shape the `list` widget turns into a refusal.
+    # A color column composes with a list `y`: the `list` widget must not
+    # turn this chart into a refusal.
     "bar-with-color": (
         "rows:\n"
         "  - title: Bar\n"
@@ -915,6 +913,9 @@ _RENDER_FIXTURES = {
         "    y: revenue\n"
         "    color: region\n"
     ),
+    # The layers plot `customers`, which the sweep's list `y` never names: a
+    # layer labeled like a folded series is refused (`ERR-LAYER-LABEL-COLLISION`)
+    # by design, as over any color-split base.
     "line-with-layers": (
         "rows:\n"
         "  - title: Line\n"
@@ -924,7 +925,7 @@ _RENDER_FIXTURES = {
         "    y: revenue\n"
         "    layers:\n"
         "      - type: line\n"
-        "        y: cost\n"
+        "        y: customers\n"
     ),
     "scatter": (
         "rows:\n"
@@ -943,7 +944,7 @@ _RENDER_FIXTURES = {
         "    y: revenue\n"
         "    layers:\n"
         "      - type: scatter\n"
-        "        y: cost\n"
+        "        y: customers\n"
     ),
     "bar-with-color": (
         "rows:\n"
@@ -1342,12 +1343,8 @@ def _render_failures(board: str) -> list[str]:
 def test_no_list_control_can_commit_a_board_that_stops_rendering(label: str) -> None:
     """The parse gate's blind half: a rule the compiler enforces at resolve.
 
-    The multi-metric layers rule is a parse-time constraint on bar and area
-    only. Line and scatter enforce the identical rule from
-    `resolve_wide_measure_channels` (`resolve/chart/_wide_fields.py`), reached
-    from `resolve/chart/line.py` and `resolve/chart/scatter.py` respectively —
-    both past the save endpoint's re-parse. So the panel offered a multi-value
-    control on those two families, the save succeeded, and the board stopped
+    A rule enforced at resolve or render sits past the save endpoint's
+    re-parse, so a panel edit that breaks it saves and the board stops
     rendering, with no way back from the panel that broke it.
 
     Bounded to the `list` widget on purpose: it is the edit that made these rules
@@ -1601,11 +1598,9 @@ def test_the_multi_metric_rules_follow_the_families_that_enforce_them() -> None:
 def test_a_heatmap_spends_its_color_channel_on_the_measure_and_takes_no_list() -> None:
     """The wide fold has nowhere to go on a heatmap, and nothing says so.
 
-    Bar and area declare the multi-metric layers rule every wide family
-    obeys — folding measures onto one mark family spends the mark fill —
-    and a heatmap's color *is* its measure, so there is nothing left to fold
-    onto. It is the one cartesian family that neither declares that rule nor
-    refuses from its own resolver: `y: [region, revenue]` renders, with no
+    A wide fold spends the color channel on the measures, and a heatmap's
+    color *is* its measure, so there is nothing left to fold onto. Heatmap
+    refuses neither at parse nor from its own resolver: `y: [region, revenue]` renders, with no
     diagnostic anywhere, as a chart whose y band stacks two columns' values
     against each other and whose cell color has stopped encoding magnitude.
     """

@@ -19,6 +19,7 @@ import zlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path  # noqa: TID251 — DuckDB cache file (DCT_CACHE_PATH)
 
+from dbt_charts.core.column_types import TruncatedReason
 from dbt_charts.core.execute._duckdb_cache_base import _DuckDBResultCacheBase
 from dbt_charts.core.execute.cache_backend import (
     CacheEntry,
@@ -26,7 +27,6 @@ from dbt_charts.core.execute.cache_backend import (
     CacheOutcome,
     CacheVariables,
     ResultRows,
-    TruncatedReason,
 )
 from dbt_charts.core.execute.cache_keys import stored_query_hash
 from dbt_charts.core.execute.result_codec import decode_result, encode_result

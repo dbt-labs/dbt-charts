@@ -128,13 +128,8 @@ class TestMultiYBarValidation:
         with pytest.raises(CompilationError):
             resolve(chart, data, chart_style_context=ctx)
 
-    def test_multi_y_bar_with_layers_raises(self, make_chart):
-        """y: [a, b] + layers: raises CompilationError at resolve time.
-
-        Currently this silently ignores the layers.
-        """
-        from dbt_charts.core.compile.errors import CompilationError
-
+    def test_multi_y_bar_with_layers_resolves(self, make_chart):
+        """y: [a, b] + layers: the layer overlays the folded series."""
         chart = make_chart(
             "bar",
             x="month",
@@ -143,8 +138,8 @@ class TestMultiYBarValidation:
         )
         data = [{"month": "Jan", "rev": 100, "cost": 40, "extra": 10}]
         ctx = resolve_chart_style_context(get_theme_style("stark"))
-        with pytest.raises(CompilationError):
-            resolve(chart, data, chart_style_context=ctx)
+        resolved = resolve(chart, data, chart_style_context=ctx)
+        assert len(resolved.layers) == 1
 
 
 def _multi_measure_scatter_data() -> list[dict[str, Any]]:
@@ -211,11 +206,8 @@ class TestMultiYScatter:
             resolve(chart, data, chart_style_context=ctx)
         assert exc.value.code == ERR_MULTI_Y_COLOR_CONFLICT
 
-    def test_multi_y_scatter_with_layers_raises(self, make_chart):
-        """y: [a, b] + layers: raises via the shared resolver conflict check."""
-        from dbt_charts.core.compile.errors import CompilationError
-        from dbt_charts.core.diagnostics import ERR_MULTI_Y_LAYERS_CONFLICT
-
+    def test_multi_y_scatter_with_layers_resolves(self, make_chart):
+        """y: [a, b] + layers: the layer overlays the folded series."""
         chart = make_chart(
             "scatter",
             x="month",
@@ -224,9 +216,8 @@ class TestMultiYScatter:
         )
         data = [{"month": "Jan", "rev": 100, "cost": 40, "extra": 10}]
         ctx = resolve_chart_style_context(get_theme_style("stark"))
-        with pytest.raises(CompilationError) as exc:
-            resolve(chart, data, chart_style_context=ctx)
-        assert exc.value.code == ERR_MULTI_Y_LAYERS_CONFLICT
+        resolved = resolve(chart, data, chart_style_context=ctx)
+        assert len(resolved.layers) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -251,10 +242,8 @@ class TestMultiYLineLegend:
         with pytest.raises(CompilationError):
             resolve(chart, data, chart_style_context=ctx)
 
-    def test_multi_y_line_with_layers_raises(self, make_chart):
-        """y: [a, b] + layers: raises for line (currently silently dropped)."""
-        from dbt_charts.core.compile.errors import CompilationError
-
+    def test_multi_y_line_with_layers_resolves(self, make_chart):
+        """y: [a, b] + layers: the layer overlays the folded series."""
         chart = make_chart(
             "line",
             x="date",
@@ -263,32 +252,8 @@ class TestMultiYLineLegend:
         )
         data = [{"date": "2024-01-01", "rev": 100, "cost": 40, "extra": 10}]
         ctx = resolve_chart_style_context(get_theme_style("stark"))
-        with pytest.raises(CompilationError):
-            resolve(chart, data, chart_style_context=ctx)
-
-
-class TestLayeredLineListYBehaviorChange:
-    def test_layered_line_list_y_with_layers_raises(self, make_chart):
-        """Layered line with y: list + layers: raises CompilationError.
-
-        Replaces old behavior where the combination silently rendered without
-        the layers. After normalization, the conflict is rejected early.
-        """
-        from dbt_charts.core.compile.errors import CompilationError
-
-        chart = make_chart(
-            "line",
-            x="month",
-            y=["rev", "cost2"],
-            layers=[{"y": "cost", "type": "bar"}],
-        )
-        data = [
-            {"month": "Jan", "rev": 100, "cost2": 40, "cost": 40},
-            {"month": "Feb", "rev": 200, "cost2": 90, "cost": 90},
-        ]
-        ctx = resolve_chart_style_context(get_theme_style("stark"))
-        with pytest.raises(CompilationError):
-            resolve(chart, data, chart_style_context=ctx)
+        resolved = resolve(chart, data, chart_style_context=ctx)
+        assert len(resolved.layers) == 1
 
 
 class TestHistogramListY:

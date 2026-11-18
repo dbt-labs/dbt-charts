@@ -640,3 +640,28 @@ class TestFileSourceDispatch:
         assert unbounded.error is None, unbounded.error
         assert len(unbounded.data) == 3
         assert unbounded.truncated_reason == "max_rows"
+
+    def test_max_result_bytes_cuts_the_file_source_result(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import json
+
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+        project = self._csv_project(
+            tmp_path, local_project, [("North", i) for i in range(10)]
+        )
+        registry = self._registry_with_materializer(project)
+        query = SqlQuery(sql="SELECT * FROM orders", source="marts")
+        whole = run_query(registry, query)
+        assert whole.error is None, whole.error
+        two_rows = sum(len(json.dumps(row, default=str)) for row in whole.data[:2])
+
+        monkeypatch.setenv("DCT_MAX_RESULT_BYTES_CEILING", str(two_rows))
+        cut = run_query(registry, query)
+
+        assert cut.data == whole.data[:2]
+        assert cut.truncated_reason == "max_result_bytes"

@@ -147,6 +147,18 @@ ERR_KPI_TEMPORAL_FORMAT_INVALID = REGISTRY.register(
     )
 )
 
+ERR_KPI_CONDITIONAL_AGGREGATE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-KPI-CONDITIONAL-AGGREGATE",
+        domain="render",
+        title="KPI conditional rule takes an aggregate function",
+        message_template="KPI chart {chart_id!r}: style.conditional.{column} compares to an aggregate function, but a KPI reads one row, so there is nothing to aggregate. Compare to a literal value.",
+        doc="Fired when a KPI's style.conditional rule compares its column to an aggregate function (an `fn` operand such as `max`). A KPI reads one row, so a rule names a literal value; aggregate operands belong to table and mark conditionals.",
+        summary="Fired when a KPI conditional rule compares to an aggregate function.",
+        docs_topic="charts",
+    )
+)
+
 ERR_BAR_DUPLICATE_ROWS = REGISTRY.register(
     ErrorCode(
         code="ERR-BAR-DUPLICATE-ROWS",
@@ -1361,6 +1373,19 @@ WARN_VALUE_LABELS_NO_MARKERS = REGISTRY.register(
     )
 )
 
+WARN_TITLE_UNIT_MISMATCH = REGISTRY.register(
+    WarningCode(
+        code="WARN-TITLE-UNIT-MISMATCH",
+        domain="render",
+        title="A title or subtitle that names a unit the compacted value axis does not carry",
+        message_template="Chart {chart_id!r}: the value axis is in {axis_unit!r}, but the title or subtitle states {stated!r}.",
+        fix_template="Change the unit in the title or subtitle to the axis unit (`Pipeline by quarter, $K`), or drop it.",
+        doc="Fires when a chart's value axis is compacted (K, M, B, T) and the title or subtitle names a different unit (`$M` over a `$K` axis). A unit is compact (`$K`, `€B`, `K`, `%`) or spelled out (`$ thousands`, `millions of dollars`). A title or subtitle that names no unit never fires it, nor does a chart with no title, or an axis of plain numbers or a symbol alone (`$166,300`, `40%`). A scatter fires it once per unit when its two axes differ. The renderer never edits the title or subtitle.",
+        summary="Fired when the title or subtitle names a unit other than the compacted value axis's.",
+        docs_topic="charts",
+    )
+)
+
 WARN_AXIS_TITLE_TRUNCATED = REGISTRY.register(
     WarningCode(
         code="WARN-AXIS-TITLE-TRUNCATED",
@@ -1745,6 +1770,18 @@ ERR_TABLE_SPARK_COLUMN_TYPE = REGISTRY.register(
         message_template="table spark {spark_type!r} on column {column!r} needs an array of numbers, but the query declares the column as {declared}. Aggregate the values into an array in the query, for example ARRAY_AGG(value ORDER BY month).",
         doc="Fired when a table draws a `columns`, `line` or `area` spark from a column that the source declares as something other than an array of numbers, for example text. The renderer never parses an array out of text, so the query has to return a real array. A column whose cells are all empty, or a spark that is not drawn (a transposed table), is not checked.",
         summary="Fired when a drawn spark column is not declared as an array of numbers.",
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_LIST_COLUMN_TYPE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-LIST-COLUMN-TYPE",
+        domain="render",
+        title="a list column does not hold a list of single values",
+        message_template="table list column {column!r} needs a list of single values in each cell, but {found}. Return the values as an array in the query, for example ARRAY_AGG(owner).",
+        doc="Fired when a table column marked `list: true` is declared as something other than an array, or a cell holds text, a number, a nested array or an object instead of an array of single values. The renderer never splits text into a list, so the query has to return a real array. An empty cell draws nothing and is not an error.",
+        summary="Fired when a list column's cells are not arrays of single values.",
         docs_topic="charts",
     )
 )

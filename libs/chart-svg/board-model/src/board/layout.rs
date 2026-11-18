@@ -12,6 +12,7 @@ use crate::facet::{DisplayText, Markdown};
 use crate::ids::{ChartId, ItemId};
 use crate::string_enum;
 use crate::style::style::Style;
+use indexmap::IndexMap;
 use model_core::{
     build_payload, Build, Cx, FromNode, Leaf, Merge, Node, Spell, TypeExpr, Unset, Walk,
 };
@@ -309,5 +310,27 @@ fn walk<'a>(layout: &'a Layout, at: ItemId, pane: &mut Vec<usize>, out: &mut Vec
                 pane.pop();
             }
         }
+    }
+}
+
+/// Gives every chart placement in `layout`, nested boards and tab panes included, the `visible:`
+/// its chart authored. `charts` is the root's map, which holds every chart of the board.
+pub fn place_visible(layout: &mut Layout, charts: &IndexMap<String, Chart>) {
+    let place = |item: &mut LayoutItem| match item {
+        LayoutItem::Chart { id, visible } => {
+            *visible = charts
+                .get(id.as_str())
+                .and_then(Chart::base)
+                .and_then(|base| base.visible.clone());
+        }
+        LayoutItem::Board(b) => place_visible(&mut b.body.layout, charts),
+    };
+    match layout {
+        Layout::Rows(items) | Layout::Cols(items) => items.iter_mut().for_each(place),
+        Layout::Grid(g) => g.items.iter_mut().for_each(|cell| place(&mut cell.item)),
+        Layout::Tabs(t) => t
+            .items
+            .iter_mut()
+            .for_each(|tab| place_visible(&mut tab.layout, charts)),
     }
 }

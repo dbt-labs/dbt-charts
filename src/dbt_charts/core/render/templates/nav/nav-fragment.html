@@ -1,4 +1,4 @@
 <style>{{ theme_css }}</style>
 <style>{% include "nav/nav.css" %}</style>
-<div class="dbt-nav"{% if content_left %} data-dbt-content-left="{{ content_left }}"{% endif %}>{% include "nav/nav.html" %}</div>
+<div class="dbt-nav"{% if content_left %} data-dbt-content-left="{{ content_left }}"{% endif %}>{% include "nav/nav.html" %}{% if sidebar %}{% include "nav/sidebar.html" %}{% endif %}</div>
 <script>{% include "nav/nav.js" %}</script>

@@ -67,7 +67,14 @@ pub enum Mark {
 }
 
 /// Prints a ladder's rungs together: the ruler law reads the whole ladder.
-pub type RungText<'a> = &'a dyn Fn(&[f64]) -> Vec<String>;
+/// Prints a ladder's rungs together, given the ladder and the rungs of it Vega draws (inside the
+/// baked domain's ends: its top rung is often dropped), which pick the end a symbol anchors on.
+pub type RungText<'a> = &'a dyn Fn(&[f64], &[f64]) -> Vec<String>;
+
+/// The rungs of `ticks` inside the baked domain's `(min, max)` ends.
+fn drawn((min, max): (Option<f64>, Option<f64>), ticks: &[f64]) -> Vec<f64> {
+    ticks.iter().copied().filter(|tick| min.is_none_or(|lo| *tick >= lo) && max.is_none_or(|hi| *tick <= hi)).collect()
+}
 
 /// The domain of `values`, every number drawn against the axis. `None` when there is
 /// nothing to draw. `Ladder::None` when independent panels each own their scale.
@@ -98,6 +105,7 @@ pub fn linear(axis: &Axis, values: &[f64], text: RungText) -> Result<Option<Valu
             values,
             anchored,
         );
+        let ends = (baked.domain_min, baked.domain_max);
         // An independent panel owns its floor; only the authored domain reaches here.
         let min = if axis.independent { None } else { baked.domain_min };
         let mixed_sign = anchored && lo < 0.0 && hi >= 0.0;
@@ -112,7 +120,7 @@ pub fn linear(axis: &Axis, values: &[f64], text: RungText) -> Result<Option<Valu
             .flatten();
         let min = min.or(ladder_floor);
         let ladder = if let Some(authored_values) = axis.values {
-            Ladder::Authored(rungs(authored_values, text))
+            Ladder::Authored(rungs(authored_values, ends, text))
         } else if axis.count.is_none() {
             Ladder::BySize { min_step: axis.min_step }
         } else {
@@ -120,7 +128,7 @@ pub fn linear(axis: &Axis, values: &[f64], text: RungText) -> Result<Option<Valu
                 Some(domain) => clip_to_domain(&baked.ticks, domain),
                 None => baked.ticks,
             };
-            fixed(ticks, authored.map(|a| a.extent), text)?
+            fixed(ticks, ends, authored.map(|a| a.extent), text)?
         };
         let max = baked.domain_max.map(|value| Pin { value, reason: PinReason::Headroom });
         (ladder, min, max)
@@ -230,7 +238,7 @@ pub fn log(base: f64, count: usize, values: &[f64], authored_domain: Option<(f64
     let ticks = Continuous::new(scale.transform(), [start, stop], [0.0, 1.0]);
     let (values_at, shown) = (ticks.ticks(count), ticks.log_tick_visible(count));
     let printed: Vec<f64> = values_at.iter().copied().filter(|tick| shown(*tick)).collect();
-    let mut texts = text(&printed).into_iter();
+    let mut texts = text(&printed, &printed).into_iter();
     let rungs = values_at
         .iter()
         .map(|&value| Rung { value, text: if shown(value) { texts.next().unwrap_or_default() } else { String::new() } })
@@ -273,7 +281,7 @@ pub fn authored(domain: Option<(f64, f64)>) -> Result<Option<Authored>, Invalid>
 }
 
 /// Rungs on the ladder `ticks`, printed together.
-pub(crate) fn fixed(ticks: Vec<f64>, authored: Option<Extent>, text: RungText) -> Result<Ladder, Invalid> {
+pub(crate) fn fixed(ticks: Vec<f64>, ends: (Option<f64>, Option<f64>), authored: Option<Extent>, text: RungText) -> Result<Ladder, Invalid> {
     let bounds = match authored {
         Some(authored) => authored,
         None => {
@@ -282,11 +290,11 @@ pub(crate) fn fixed(ticks: Vec<f64>, authored: Option<Extent>, text: RungText) -
             Extent::new(lo, hi)?
         }
     };
-    Ok(Ladder::Fixed(crate::bound::FixedLadder::new(rungs(&ticks, text), bounds)?))
+    Ok(Ladder::Fixed(crate::bound::FixedLadder::new(rungs(&ticks, ends, text), bounds)?))
 }
 
-pub(crate) fn rungs(values: &[f64], text: RungText) -> Vec<Rung> {
-    let texts = text(values);
+pub(crate) fn rungs(values: &[f64], ends: (Option<f64>, Option<f64>), text: RungText) -> Vec<Rung> {
+    let texts = text(values, &drawn(ends, values));
     assert_eq!(texts.len(), values.len(), "rung text must name every rung");
     values.iter().zip(texts).map(|(&value, text)| Rung { value, text }).collect()
 }
@@ -343,13 +351,15 @@ pub fn require_positive(chart_id: &str, side: Side, field: &str, values: &[f64])
     })
 }
 
-/// Whether `error` is one of the compile errors production raises for a log axis (`require_positive`,
-/// `refuse_log`): the chart's own error card, which the rest of the board draws beside.
-pub fn is_log_error(error: &Diagnostic) -> bool {
+/// Whether `error` is one of the compile errors production raises for an axis scale (`require_positive`,
+/// `refuse_log`, `cartesian::refuse_scale`): the chart's own error card, which the rest of the board
+/// draws beside.
+pub fn is_scale_error(error: &Diagnostic) -> bool {
     [
         diagnostic::codes::ERR_LOG_SCALE_REQUIRES_POSITIVE_DATA.id,
         diagnostic::codes::ERR_LOG_SCALE_REQUIRES_POSITIVE_X_DATA.id,
         diagnostic::codes::ERR_BAR_LOG_SCALE_NOT_SUPPORTED.id,
+        diagnostic::codes::ERR_SCALE_TYPE_SCATTER_ONLY.id,
         diagnostic::codes::ERR_AREA_STACKED_LOG_SCALE_NOT_SUPPORTED.id,
         diagnostic::codes::ERR_AREA_LOG_SCALE_INDEPENDENT_MULTIPLES.id,
         diagnostic::codes::ERR_TICKS_COUNT_REQUIRES_NON_LOG_SCALE.id,
@@ -389,7 +399,7 @@ pub fn refuse_log(chart_id: &str, family: LogUse, count: Option<Count>) -> Resul
 mod tests {
     use super::*;
 
-    fn digits(values: &[f64]) -> Vec<String> {
+    fn digits(values: &[f64], _drawn: &[f64]) -> Vec<String> {
         values.iter().map(|v| v.to_string()).collect()
     }
 

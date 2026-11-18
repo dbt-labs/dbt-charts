@@ -226,6 +226,20 @@ def test_an_uncolored_layer_beside_a_colored_base_skips_the_base_series() -> Non
     assert chart.layers[0].ink == PALETTE[2]
 
 
+WIDE: list[dict[str, Any]] = [{**row, "cost": 5.0 + i} for i, row in enumerate(MONTHS)]
+
+
+def test_an_uncolored_layer_beside_a_wide_base_skips_the_folded_series() -> None:
+    chart = _line(WIDE, y=["revenue", "cost"], layers=[CHURN])
+    assert chart.layers[0].ink == PALETTE[2]
+
+
+def test_an_uncolored_layer_beside_a_wide_base_by_color_skips_every_composite() -> None:
+    rows = [{**row, "cost": 1.0} for row in BY_REGION]
+    chart = _line(rows, y=["revenue", "cost"], color="region", layers=[CHURN])
+    assert chart.layers[0].ink == PALETTE[4]
+
+
 # --- annotations read it ---------------------------------------------------
 
 

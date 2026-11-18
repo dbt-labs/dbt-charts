@@ -1,0 +1,3 @@
+kind: Fixes
+body: On a board narrower than its footer, the timestamp sits above the credit instead of on top of it.
+time: 2026-11-16T18:28:57.527732-08:00

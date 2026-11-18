@@ -2961,6 +2961,37 @@ def project_delete(
     typer.echo(result.message)
 
 
+@cloud_app.command("export-eval")
+def export_eval(
+    include_unapproved: Annotated[
+        bool,
+        typer.Option(
+            "--include-unapproved",
+            help="Also write pairs whose SQL is unreviewed or changed since"
+            " its approval, with a null approved_at",
+        ),
+    ] = False,
+    org: OrgOption = None,
+    project: ProjectOption = None,
+    host: HostOption = None,
+) -> None:
+    """Write the project's approved question-to-SQL pairs to stdout as JSON Lines.
+
+    This is an eval set: the answer key. Keep it out of the project repo and
+    anywhere else the agent you are testing can read.
+    """
+    with _cloud(host, as_json=False) as (client, config):
+        context = _context(client, config, org, project)
+        export = client.export_eval(
+            context.org, context.project, include_unapproved=include_unapproved
+        )
+    typer.echo(export.jsonl, nl=False)
+    if export.skipped_boards:
+        typer.echo(
+            f"Left out {export.skipped_boards} board(s) you cannot view.", err=True
+        )
+
+
 @cloud_app.command("boards")
 def boards(
     org: OrgOption = None,

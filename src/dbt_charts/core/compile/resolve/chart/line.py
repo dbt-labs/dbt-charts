@@ -231,7 +231,7 @@ def _resolve_line(
         has_layers=bool(normalized.layers),
     )
     channels, wide_measure_series = resolve_wide_measure_channels(
-        normalized, channels, "line", has_layers=bool(normalized.layers)
+        normalized, channels, "line"
     )
     inks = _resolve_layer_inks(
         normalized,

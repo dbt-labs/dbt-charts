@@ -76,8 +76,9 @@ pub struct KpiFaces {
 }
 
 impl KpiFaces {
-    /// These faces with what a matched `style.conditional` rule set on the card: the value's and the label's
-    /// weight, and the label's color (the value's color is the headline run's `ink`).
+    /// These faces with what a matched `style.conditional` rule set on the card: the value's, the label's
+    /// and the support row's weight (its glyph's too), and the label's color (the value's color is the
+    /// headline run's `ink`).
     pub fn ruled_by(mut self, kpi: &Kpi) -> Self {
         if let Some(weight) = &kpi.value_weight {
             self.value.weight = Weight::of(weight);
@@ -87,6 +88,10 @@ impl KpiFaces {
         }
         if let Some(color) = &kpi.label_color {
             self.label.color = color.clone();
+        }
+        if let Some(weight) = &kpi.support_weight {
+            self.support.weight = Weight::of(weight);
+            self.support_glyph.weight = Weight::of(weight);
         }
         self
     }
@@ -479,9 +484,9 @@ pub fn draw(card: &KpiCard, plan: &Plan, height: f64) -> Vec<Node> {
         (Some(href), KpiVariant::Stacked) => {
             let mut rest = parts.into_iter();
             let value = rest.next().into_iter().collect();
-            std::iter::once(crate::contract::link(href.as_str(), kpi.link_open, value)).chain(rest).collect()
+            std::iter::once(crate::contract::link(Attrs::new().quick("href", href.as_str()), kpi.link_open, value)).chain(rest).collect()
         }
-        (Some(href), _) => vec![crate::contract::link(href.as_str(), kpi.link_open, parts)],
+        (Some(href), _) => vec![crate::contract::link(Attrs::new().quick("href", href.as_str()), kpi.link_open, parts)],
     };
     vec![Node::new(Role::Chrome, Attrs::new(), Shape::Svg { extent, children: parts })]
 }

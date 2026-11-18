@@ -314,8 +314,16 @@ const PIN_PASSES: usize = 6;
 /// How close two plot boxes must be, in px, to be the same box.
 const PIN_TOLERANCE: f64 = 1e-6;
 
+/// The step, in px, a ceiled fit margin moves the plot box by.
+const PIN_STEP: f64 = 1.0;
+
 fn same_box(a: Rect, b: Rect) -> bool {
     [a.x - b.x, a.y - b.y, a.width - b.width, a.height - b.height].iter().all(|delta| delta.abs() < PIN_TOLERANCE)
+}
+
+/// The farthest any edge of `a` sits from the same edge of `b`, in px.
+fn edge_drift(a: Rect, b: Rect) -> f64 {
+    [a.x - b.x, a.y - b.y, (a.x + a.width) - (b.x + b.width), (a.y + a.height) - (b.y + b.height)].iter().fold(0.0_f64, |m, d| m.max(d.abs()))
 }
 
 /// `lay` (a layout under the given padding, giving the plot box it settled on and whatever else the
@@ -326,13 +334,20 @@ fn same_box(a: Rect, b: Rect) -> bool {
 /// chart's gutter and the authored padding together stays on the card and moves the plot by what
 /// it exceeds instead. The top and bottom give way freely: the ink there is a half-line of the
 /// end tick labels, over the title band and the category labels.
+///
+/// Vega's fit ceils each margin and stops after a fixed number of passes, so the plot box moves in
+/// whole-pixel steps that can skip the unviewed box. When the renegotiation returns to a padding it
+/// tried, no padding lands the box: the closest box it reached stands if every edge is within
+/// [`PIN_STEP`] of the unviewed one.
 pub(crate) fn pin_plot_box<T>(
     whole: Rect,
     authored: Option<Padding>,
     mut lay: impl FnMut(Padding) -> Result<(Rect, T), diagnostic::Diagnostic>,
 ) -> Result<T, diagnostic::Diagnostic> {
+    let edges = |p: Padding| [p.left, p.right, p.top, p.bottom];
     let mut pad = authored.unwrap_or(Padding { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 });
     let (mut at, mut laid) = lay(pad)?;
+    let mut tried = vec![(pad, at)];
     let mut spent = false;
     for _ in 0..PIN_PASSES {
         if same_box(at, whole) {
@@ -342,11 +357,19 @@ pub(crate) fn pin_plot_box<T>(
         let wanted = Padding { left: pad.left + dx, right: pad.right - dx - dw, top: pad.top + dy, bottom: pad.bottom - dy - dh };
         let next = Padding { left: wanted.left.max(0.0), right: wanted.right.max(0.0), ..wanted };
         spent = wanted.left < 0.0 || wanted.right < 0.0;
-        if [next.left, next.right, next.top, next.bottom] == [pad.left, pad.right, pad.top, pad.bottom] {
+        if edges(next) == edges(pad) {
+            break;
+        }
+        if tried.iter().any(|&(p, _)| edges(p) == edges(next)) {
+            let (closest, box_at) = tried.iter().copied().min_by(|a, b| edge_drift(a.1, whole).total_cmp(&edge_drift(b.1, whole))).expect("one padding tried");
+            if edge_drift(box_at, whole) <= PIN_STEP + PIN_TOLERANCE {
+                return Ok(if edges(closest) == edges(pad) { laid } else { lay(closest)?.1 });
+            }
             break;
         }
         pad = next;
         (at, laid) = lay(pad)?;
+        tried.push((pad, at));
     }
     if same_box(at, whole) || spent {
         return Ok(laid);
@@ -616,6 +639,24 @@ mod tests {
     fn labels_wider_than_the_pinned_gutter_spend_the_padding_and_stop_at_the_card_edge() {
         let padding = pin_plot_box(WHOLE, Some(AUTHORED), lay(44.0)).expect("settles");
         assert_eq!(padding.left, 0.0, "the authored 4px of padding is spent, and no more than that");
+    }
+
+    /// A fit whose top margin steps a whole pixel at a time can leave no padding that lands the
+    /// box: the pin then keeps the closest box it reached, one pixel off at most.
+    #[test]
+    fn a_box_no_padding_lands_settles_within_a_pixel() {
+        let stepping = |padding: Padding| {
+            let y = if padding.top < 2.4 { padding.top + 30.0 } else { padding.top + 31.0 };
+            Ok((Rect { y, height: 102.0 - y, ..WHOLE }, padding))
+        };
+        let whole = Rect { y: 33.0, height: 69.0, ..WHOLE };
+        let padding = pin_plot_box(whole, None, stepping).expect("settles within a pixel");
+        assert!([2.0, 3.0].contains(&padding.top), "{}", padding.top);
+        let far = |padding: Padding| {
+            let y = if padding.top < 2.4 { padding.top + 29.0 } else { padding.top + 32.0 };
+            Ok((Rect { y, height: 102.0 - y, ..WHOLE }, padding))
+        };
+        assert!(pin_plot_box(whole, None, far).is_err(), "two pixels off is not settled");
     }
 
     #[test]

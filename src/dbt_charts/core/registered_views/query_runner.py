@@ -237,9 +237,10 @@ def run_registry_queries(
         if result.truncated_reason is not None:
             raise RegistryQueryError(
                 f"Registry query '{query_name}' for view '{view.name}' was truncated "
-                f"to {len(result.data)} rows by {result.truncated_reason!r} — the "
-                "board-generation template would receive incomplete data. "
-                "Raise execution.max_rows or DCT_MAX_ROWS_CEILING to fix this."
+                f"to {len(result.data)} rows by the execution.{result.truncated_reason} "
+                "limit, so the board-generation template would receive "
+                f"incomplete data. Raise execution.{result.truncated_reason} in "
+                "dbt_charts.yml to read the whole result."
             )
 
         if cache is not None and cache_key is not None:

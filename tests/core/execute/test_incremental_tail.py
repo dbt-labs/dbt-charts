@@ -34,6 +34,7 @@ Regression tests for CRITICAL/HIGH review findings:
     against a real DuckDB warehouse succeeds.
 """
 
+import re
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -838,6 +839,100 @@ class TestTruncationKeepsNewest:
         ts_values = {r["ts"] for r in merged}
         assert 6 in ts_values  # newest must be present
         assert 1 not in ts_values  # oldest must be dropped
+
+
+class TestByteStoppedTailKeepsItsTruncation:
+    """A tail the fetch stopped at max_result_bytes is missing its newest rows.
+    The merge drops the prior rows the kept chunk restates, so the merged set
+    can come in under budget; the tail's own reason must still mark it cut."""
+
+    def test_the_merged_result_is_flagged_and_stored_truncated(self, tmp_path) -> None:
+        from dbt_charts.core.column_types import ColumnType, TypedRows
+
+        cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
+        result = df_compile(_BOARD_INC)
+        _executor(result, _adapter([{"ts": 1, "val": 10}]), cache).execute_query("q")
+
+        stopped = TypedRows(
+            ["ts", "val"],
+            [(1, 11), (2, 20)],
+            [ColumnType(kind="integer"), ColumnType(kind="integer")],
+            truncated_reason="max_result_bytes",
+        )
+        tail_env = _adapter(stopped)
+        run = _executor(result, tail_env, cache)
+        run.execute_query("q")
+
+        tail_sql = backend_of(tail_env).execute.call_args[0][1].sql
+        assert "_dct_base" in tail_sql
+        assert ">= 1" in tail_sql
+        truncation = run.ledger.truncations["q"]
+        assert truncation.reason == "max_result_bytes"
+        assert truncation.kept_row_count == 2
+
+    def test_a_cut_tail_is_not_resumed_past_the_rows_it_skipped(self, tmp_path) -> None:
+        """The tail SQL is unordered, so a cut tail must refresh in full, not resume."""
+        from dbt_charts.core.column_types import ColumnType, TypedRows
+
+        integer = ColumnType(kind="integer")
+        warehouse: dict[str, Any] = {"rows": [(1, 10)], "stop_after": None}
+
+        def answer(_source: Any, query: Any) -> TypedRows:
+            rows = warehouse["rows"]
+            if "_dct_base" in query.sql:
+                floor = int(re.search(r">=\s*(\d+)", query.sql).group(1))
+                rows = [row for row in rows if row[0] >= floor]
+            stop = warehouse["stop_after"]
+            if stop is not None and len(rows) > stop:
+                return TypedRows(
+                    ["ts", "val"],
+                    rows[:stop],
+                    [integer, integer],
+                    truncated_reason="max_result_bytes",
+                )
+            return TypedRows(["ts", "val"], rows, [integer, integer], None)
+
+        env = scripted_env(ScriptedBackend(side_effect=answer))
+        cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
+        result = df_compile(_BOARD_INC)
+        _executor(result, env, cache).execute_query("q")
+
+        warehouse["rows"] = [(3, 30), (2, 20), (1, 10)]
+        warehouse["stop_after"] = 1
+        _executor(result, env, cache).execute_query("q")
+
+        warehouse["stop_after"] = None
+        rows = _executor(result, env, cache).execute_query("q")
+        assert sorted(row["ts"] for row in rows) == [1, 2, 3]
+
+    def test_a_byte_cut_of_the_merged_set_outranks_the_tails_row_cut(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.core.column_types import ColumnType
+        from dbt_charts.core.execute.cache_backend import TruncationInfo
+        from dbt_charts.core.execute.incremental import run_incremental_tail
+        from dbt_charts.core.execute.lookup import Tail
+        from dbt_charts.core.execute.query_result import QueryResult
+
+        # Each row serializes to 20 bytes: the merged set of three keeps two.
+        monkeypatch.setattr(
+            "dbt_charts.core.compile.config.resolve_max_result_bytes", lambda: 40
+        )
+        integer = ColumnType(kind="integer")
+        tail_rows = [{"ts": 3, "val": 30}, {"ts": 2, "val": 20}]
+        _kept, truncation = run_incremental_tail(
+            "q",
+            "SELECT * FROM t",
+            "ts",
+            Tail([{"ts": 1, "val": 10}], 1, datetime(2026, 1, 1, tzinfo=UTC)),
+            "duckdb",
+            lambda _sql: QueryResult(
+                data=tail_rows,
+                schema={"ts": integer, "val": integer},
+                truncated_reason="max_rows",
+            ),
+        )
+        assert truncation == TruncationInfo("q", 2, "max_result_bytes")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

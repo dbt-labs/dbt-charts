@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
-from typing import Any, Literal, NamedTuple, Self
+from typing import Any, Literal, NamedTuple, Self, TypeAlias
 from uuid import UUID
 
 from pydantic import BaseModel, model_validator
@@ -68,6 +68,9 @@ class ColumnType(BaseModel, frozen=True):
         return self.kind
 
 
+TruncatedReason: TypeAlias = Literal["max_rows", "max_result_bytes"]
+
+
 class TypedRows(NamedTuple):
     """A warehouse client's result: cells already in declared form, each column
     with the type its source declared."""
@@ -75,6 +78,7 @@ class TypedRows(NamedTuple):
     columns: list[str]
     rows: list[tuple[Any, ...]]  # type-state: explicit_any — warehouse cell values
     types: list[ColumnType]
+    truncated_reason: TruncatedReason | None
 
 
 def column_type_error(column: str, reason: str) -> ExecutionError:

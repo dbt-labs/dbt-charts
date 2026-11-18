@@ -505,7 +505,7 @@ pub(crate) fn render_vertical_panel(
     // own already-normalized rows, mirroring `_overlay.py::_resolve_layer_rows`'s
     // one divergence signal.
     let own_layer_rows = |query_name: Option<&str>, x: Option<&str>| -> Result<Cow<'_, [serde_json::Map<String, Value>]>, String> {
-        if query_name == r.query_name.as_deref() {
+        if query_name == r.query_name.as_deref() && r.wide_measures.is_empty() {
             return Ok(Cow::Borrowed(rows));
         }
         let own_rows = resolve_layer_rows(payload, query_name, r.query_name.as_deref(), "bar")?;
@@ -540,6 +540,7 @@ pub(crate) fn render_vertical_panel(
         .iter()
         .map(|l| {
             use ::bind::layers::{layer_rows_scope, LayerRows};
+            crate::families::layers::refuse_folded_panel_layer(payload, facet.is_some(), l.query_name(), r.query_name.as_deref(), "bar")?;
             let l_rows = match layer_rows_scope(facet.is_some(), band_x && l.is_step_curve(), l.query_name(), r.query_name.as_deref()) {
                 LayerRows::Chart => Cow::Borrowed(chart_rows),
                 LayerRows::Panel | LayerRows::Dataset => own_layer_rows(l.query_name(), l.x())?,
@@ -988,7 +989,8 @@ pub(crate) fn render_vertical_panel(
     // 84.5, and the reference's own axis reads "values from 0 to 100" —
     // `d3_nice(0, 84.5, 10) == 100`, matching exactly (6 gridlines, not 5).
     let shares_this_scale = !layers.is_empty() && !independent_y && date_axis.is_none();
-    if shares_this_scale {
+    // A torn plot ends exactly at its break; a nice would round the domain past it.
+    if shares_this_scale && torn.is_none() {
         let ranged = r.y_start.is_some();
         // An authored pair is nice-rounded too once a layer joins the scale
         // (it is verbatim without one), from its own low end.
@@ -1097,7 +1099,9 @@ pub(crate) fn render_vertical_panel(
             .iter()
             .map(|v| {
                 let domain = if is_stacked { palette_domain } else { &color_domain };
-                Ok((v.clone(), crate::common::series_color(v, domain, &r.series_palette, category_scale, &r.patterns)?.swatch("none", 0.0).fill))
+                // A folded series is keyed by its display label, as the legend paints it.
+                let label = if r.wide_measures.is_empty() { v.clone() } else { ::bind::wide::wide_series_display(v, &wide_labels) };
+                Ok((label, crate::common::series_color(v, domain, &r.series_palette, category_scale, &r.patterns)?.swatch("none", 0.0).fill))
             })
             .collect::<Result<_, String>>()?
     };
@@ -1807,7 +1811,11 @@ pub(crate) fn render_vertical_panel(
         && v_domain_min < linear_domain_max
         && value_extent.1 > linear_domain_max)
         .then_some(linear_domain_max);
-    let value_extent = (value_extent.0, off_chart_max.map_or(value_extent.1, |max| value_extent.1.min(max)));
+    // The cut bar leaves the fit entirely: the plot is what it would be without it.
+    let value_extent = match off_chart_max {
+        Some(max) => (value_extent.0, data_map.values().copied().filter(|v| *v <= max).fold(0.0, f64::max)),
+        None => value_extent,
+    };
 
     // Zero-rule presence/width — shared by the fit branch's ink closure and
     // the composed branch's own left/right ink (a rule's bounds expand by
@@ -3867,8 +3875,9 @@ pub(crate) fn render_vertical_panel(
     }
 
     if let Some(t) = &tear {
-        let gc = crate::common::required_ink(grid.color.as_deref(), "bar", "grid.color")?;
-        plot.push(t.node(&t.cubics(linear.scale(t.edge), plot_h, plot_w), false, gc, grid.width.unwrap_or(1.0)));
+        // The category gridlines' ink, a rung quieter than the value rung it replaces.
+        let gc = crate::common::required_ink(ax_x.grid.color.as_deref(), "bar", "axis_x.grid.color")?;
+        plot.push(t.node(&t.cubics(linear.scale(t.edge), plot_h, plot_w), false, gc, ax_x.grid.width.unwrap_or(1.0)));
     }
 
     // Category gridlines end at the break; the torn bars and their caps tear along one wave.
@@ -5151,7 +5160,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
             continue;
         }
         let tick_y = plot_top + linear.scale(tv) + val_y_delta;
-        if tick_y < plot_top - 1.0 || tick_y > plot_bottom + 1.0 || val_visible.as_ref().is_some_and(|v| !v[i]) {
+        if tick_y < plot_top - 1.0 || tick_y > plot_bottom + 1.0 || val_visible.as_ref().is_some_and(|v| !v[i]) || tear.as_ref().is_some_and(|t| t.edge == tv) {
             continue;
         }
         let abs_y = tick_y + measure::baseline_shift(val_corners.baseline(linear.scale(tv), plot_bottom - plot_top), val_font_size);

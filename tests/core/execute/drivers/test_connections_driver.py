@@ -124,9 +124,27 @@ class TestBulkSchema:
                 "dbt_charts.core.execute.query_result.resolve_effective_row_limit",
                 return_value=_limit(effective=2),
             ),
-            pytest.raises(RuntimeError, match="truncated"),
+            pytest.raises(RuntimeError, match="truncated") as excinfo,
         ):
             bulk_schema_for_config(_source())
+        assert "Raise execution.max_rows in dbt_charts.yml so every column fits" in (
+            str(excinfo.value)
+        )
+        assert "DCT_" not in str(excinfo.value)
+
+    def test_a_byte_cut_reports_the_rows_it_kept(self) -> None:
+        with (
+            fake_lakecompute_driver(_COLUMNS),
+            patch(
+                "dbt_charts.core.execute.query_result.resolve_effective_row_limit",
+                return_value=_limit(effective=10, max_bytes=1),
+            ),
+            pytest.raises(RuntimeError, match="truncated") as excinfo,
+        ):
+            bulk_schema_for_config(_source())
+        assert "truncated to 0 rows by the execution.max_result_bytes limit" in str(
+            excinfo.value
+        )
 
     def test_a_failed_query_is_a_runtime_error(self) -> None:
         connection = _RejectingConnection()
@@ -141,9 +159,11 @@ class TestBulkSchema:
         assert connection.closed
 
 
-def _limit(effective: int) -> RowFetchLimit:
+def _limit(effective: int, max_bytes: int = 10_000_000) -> RowFetchLimit:
     return RowFetchLimit(
-        fetch_limit=effective + 1, effective_limit=effective, ceiling_binding=True
+        limit=effective,
+        ceiling_binding=True,
+        max_bytes=max_bytes,
     )
 
 

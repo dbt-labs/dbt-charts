@@ -99,6 +99,9 @@ class QueryPlan(TypedDict):
     #: The queries only hidden tabs read whose cache policy prefetches; empty unless the plan
     #: was scoped to the active tabs.
     prefetch: list[str]
+    #: The queries something reads directly, the ones a run executes. A query only another
+    #: query embeds is planned for its reader's SQL and never run on its own.
+    reads: list[str]
     #: By public chart id, for the charts the plan shows; keys are those of `queries`.
     chart_queries: dict[str, ChartQueries]
     #: By variable name, for the variables the plan shows; keys are those of `queries`.

@@ -441,6 +441,7 @@ pub(crate) fn panel_layer_rows<'a>(
     base_query_name: Option<&str>,
     family: &str,
 ) -> Result<&'a [serde_json::Map<String, Value>], String> {
+    refuse_folded_panel_layer(payload, is_facet, layer_query_name, base_query_name, family)?;
     match layer_rows_scope(is_facet, band_step, layer_query_name, base_query_name) {
         LayerRows::Panel => Ok(panel_rows),
         LayerRows::Chart => Ok(&payload.rows),
@@ -448,20 +449,43 @@ pub(crate) fn panel_layer_rows<'a>(
     }
 }
 
+/// A facet panel's base-query rows are [`folded`]: a layer on them would need the
+/// unfolded dataset sliced per panel, which no family draws.
+pub(crate) fn refuse_folded_panel_layer(
+    payload: &Payload,
+    is_facet: bool,
+    layer_query_name: Option<&str>,
+    base_query_name: Option<&str>,
+    family: &str,
+) -> Result<(), String> {
+    if is_facet && layer_query_name == base_query_name && folded(payload) {
+        return Err(diagnostic::refuse!("{family}: multiples over a y list with a layer on the base query not supported"));
+    }
+    Ok(())
+}
+
+/// Whether the base folded a `y: [a, b]` list into long rows: its `payload.rows`
+/// then hold one row per (source row, measure), so a layer on the base query
+/// reads the query's own rows from `datasets` instead, as a layer on another
+/// query does.
+fn folded(payload: &Payload) -> bool {
+    payload.resolved.get("wide_measures").and_then(Value::as_array).is_some_and(|m| !m.is_empty())
+}
+
 /// A layer's own rows: `payload.datasets[query_name]` whenever the layer's
 /// `query_name` differs from the base's — `_overlay.py::_resolve_layer_
 /// rows`'s one divergence signal (the query name, not whether one is
-/// authored: it defaults to the base's own for nearly every layer) —
-/// otherwise the base's own already-normalized `payload.rows`. `family`
-/// names the caller in the error message (`"bar"`/`"line"`), matching each
-/// family's own error-message convention.
+/// authored: it defaults to the base's own for nearly every layer) — or the
+/// base [`folded`]; otherwise the base's own already-normalized `payload.rows`.
+/// `family` names the caller in the error message (`"bar"`/`"line"`), matching
+/// each family's own error-message convention.
 pub(crate) fn resolve_layer_rows<'a>(
     payload: &'a Payload,
     layer_query_name: Option<&str>,
     base_query_name: Option<&str>,
     family: &str,
 ) -> Result<&'a [serde_json::Map<String, Value>], String> {
-    if layer_query_name == base_query_name {
+    if layer_query_name == base_query_name && !folded(payload) {
         return Ok(&payload.rows);
     }
     let qn = layer_query_name
@@ -481,7 +505,7 @@ pub(crate) fn resolve_layer_types<'a>(
     base_query_name: Option<&str>,
     family: &str,
 ) -> Result<&'a column_types::ColumnTypes, String> {
-    if layer_query_name == base_query_name {
+    if layer_query_name == base_query_name && !folded(payload) {
         return Ok(&payload.schema.rows);
     }
     let qn = layer_query_name

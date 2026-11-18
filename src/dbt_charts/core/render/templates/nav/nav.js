@@ -8,7 +8,7 @@ var v=s.viewBox&&s.viewBox.baseVal;
 var w=v&&v.width?v.width:parseFloat(s.getAttribute('width'));
 var r=s.getBoundingClientRect();
 if(!isFinite(i)||!isFinite(w)||w<=0||!r.width)return;
-var p=Math.max(0,r.left+(i*r.width/w));
+var p=Math.max(12,r.left-n.getBoundingClientRect().left+(i*r.width/w));
 n.style.setProperty('--dbt-nav-page-inset',p.toFixed(2)+'px');
 }
 function queueSync(){window.requestAnimationFrame?window.requestAnimationFrame(syncInset):syncInset();}
@@ -75,4 +75,15 @@ document.addEventListener('pointerdown',clear,true);
 document.addEventListener('keydown',clear,true);});
 // The back/forward cache restores the page exactly as it was left.
 window.addEventListener('pageshow',clear);
+})();
+(function(){var K='dbt-sidebar',R=document.documentElement,b=document.querySelector('.dbt-sidebar-toggle');
+if(!b)return;
+var s=null;try{s=window.localStorage.getItem(K);}catch(e){}
+// Emitted right after the sidebar markup, so the board's first paint already has its inset.
+R.classList.add('dbt-has-sidebar');
+function set(c){R.classList.toggle('dbt-sidebar-collapsed',c);b.setAttribute('aria-expanded',String(!c));b.setAttribute('aria-label',c?'Expand sidebar':'Collapse sidebar');b.title=b.getAttribute('aria-label');}
+set(s?s==='collapsed':window.innerWidth<640);
+b.addEventListener('click',function(){var c=!R.classList.contains('dbt-sidebar-collapsed');set(c);try{window.localStorage.setItem(K,c?'collapsed':'expanded');}catch(e){}
+// syncInset() re-measures the board, whose width the sidebar just changed.
+window.dispatchEvent(new Event('resize'));});
 })();

@@ -79,16 +79,19 @@ pub struct Node {
 /// What a board contributes to a `cols` row's title band.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Title {
-    /// A titled board's first baseline and body, or a heading's when prose opens
-    /// it, from the board's own top with its chrome.
+    /// A titled board's first baseline and body, from the board's own top with its chrome.
     Own(TitleMetrics),
+    /// A heading that opens a text board with no title, items or controls: it shifts onto its row's
+    /// shared baseline as a title does. A row that would move it is refused (`shift_rows`).
+    OwnText(TitleMetrics),
     /// An untitled board that only wraps a stack: no title, no text, no visible
     /// variables, and a `rows` or `cols` layout (the caller's predicate). It
     /// draws its first item's title (`rows`) or every item's (`cols`), so those
     /// items are the ones that shift.
     Wraps,
     /// Takes no part: a board whose title shares a band with its controls, one
-    /// with text or variables and no title of its own, any other layout.
+    /// with variables, or with text that opens with anything but a heading or sits over authored
+    /// items, and no title of its own, any other layout.
     None,
 }
 

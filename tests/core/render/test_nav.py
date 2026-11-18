@@ -19,7 +19,7 @@ from typing import Any
 
 from dbt_charts.core.project import Project
 from dbt_charts.core.render.dir_context import lazy_dir_context
-from dbt_charts.core.render.nav import nav_context
+from dbt_charts.core.render.nav import nav_context, render_nav_html
 
 from ..._nav import nav_html
 from ..._paths import DBT_CHARTS_PKG_DIR
@@ -556,6 +556,7 @@ class TestRenderNavHtml:
             "",
             show_download=True,
             show_actions=True,
+            sidebar_query=None,
         )
 
         assert 'class="dbt-nav"' in html
@@ -581,7 +582,240 @@ class TestRenderNavHtml:
             "",
             show_download=False,
             show_actions=False,
+            sidebar_query=None,
         )
 
         assert 'href="/sales/"' in html
         assert 'class="dbt-nav-actions"' not in html
+
+
+class TestSidebar:
+    def test_nav_strip_spans_the_sidebar_so_home_stays_put(self) -> None:
+        """The sidebar insets the body; the strip above it must not move."""
+        css = (DBT_CHARTS_PKG_DIR / "core/render/templates/nav/nav.css").read_text()
+        assert (
+            "html.dbt-has-sidebar .dbt-nav{margin-left:calc(-1*var(--dbt-sidebar-width));}"
+            in css
+        )
+        # Before the board streams in, the strip already sits at the board's edge.
+        assert (
+            "html.dbt-has-sidebar .dbt-nav-strip{padding-left:"
+            "var(--dbt-nav-page-inset,var(--dbt-sidebar-width));padding-right:12px;}"
+            in css
+        )
+        js = (DBT_CHARTS_PKG_DIR / "core/render/templates/nav/nav.js").read_text()
+        assert "Math.max(12," in js
+
+    def _nav(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., Project],
+        files: dict[str, str],
+        current: str,
+        sidebar_query: str | None,
+        nav_dir: str = "charts",
+        folders: tuple[str, ...] = ("regions",),
+    ) -> str:
+        boards = tmp_path / "charts"
+        boards.mkdir(parents=True)
+        for folder in folders:
+            (boards / folder).mkdir()
+            (boards / folder / "east.yml").write_text("title: East\n")
+        for name, text in files.items():
+            (boards / name).write_text(text)
+        project = local_project(tmp_path)
+        return render_nav_html(
+            project.directory(nav_dir),
+            "charts",
+            current,
+            None,
+            "",
+            show_download=True,
+            show_actions=True,
+            sidebar_query=sidebar_query,
+        )
+
+    def _two(self, **extra: str) -> dict[str, str]:
+        return {"zeta.yml": "title: Zeta\n", "alpha.yml": "title: Alpha\n", **extra}
+
+    def test_index_and_overview_first_then_filename(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(
+            tmp_path,
+            local_project,
+            self._two(
+                **{
+                    "Bravo.yml": "title: Bravo\n",
+                    "overview.yml": "title: Overview\n",
+                    "index.yml": "title: Home\n",
+                }
+            ),
+            "zeta",
+            "",
+        )
+        order = [
+            html.index(f'href="/{stem}"')
+            for stem in ("index", "overview", "alpha", "Bravo", "zeta")
+        ]
+        assert order == sorted(order)
+
+    def test_labels_are_titles_with_humanized_stem_fallback(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(
+            tmp_path,
+            local_project,
+            self._two(**{"sales_east.yml": "description: x\n"}),
+            "zeta",
+            "",
+        )
+        sidebar = html[html.index('class="dbt-sidebar"') :]
+        assert ">Zeta<" in sidebar
+        assert ">Sales East<" in sidebar
+        assert ">sales_east<" not in sidebar
+
+    def test_single_board_has_no_sidebar(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(
+            tmp_path,
+            local_project,
+            {"alpha.yml": "title: Alpha\n"},
+            "alpha",
+            "",
+            folders=(),
+        )
+        assert 'class="dbt-sidebar"' not in html
+        assert 'id="dbt-nav-file-menu"' in html
+
+    def test_one_board_and_one_folder_show_a_sidebar(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(
+            tmp_path, local_project, {"alpha.yml": "title: Alpha\n"}, "alpha", ""
+        )
+        assert 'class="dbt-sidebar"' in html
+
+    def test_links_carry_query_and_current_is_marked(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(
+            tmp_path, local_project, self._two(), "alpha", "year=2024&region=West"
+        )
+        assert 'href="/zeta?year=2024&amp;region=West"' in html
+        current = re.search(r'<a [^>]*href="/alpha[^"]*"[^>]*>', html)
+        assert current is not None
+        assert 'aria-current="page"' in current.group(0)
+        assert html.count('aria-current="page"') == 1
+
+    def test_empty_query_adds_no_question_mark(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(tmp_path, local_project, self._two(), "alpha", "")
+        assert 'href="/zeta"' in html
+
+    def test_subfolders_carry_query(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(tmp_path, local_project, self._two(), "alpha", "year=2024")
+        assert 'href="/regions/?year=2024"' in html
+
+    def test_rows_say_whether_they_are_a_board_or_a_folder(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(tmp_path, local_project, self._two(), "alpha", "")
+        rows = re.findall(r'<a class="dbt-sidebar-link[^"]*"[^>]*>.*?</a>', html, re.S)
+        kinds = {
+            re.sub(r"<[^>]+>", "", row).strip(): (
+                "folder" if "dbt-sidebar-folder" in row else "board"
+            )
+            for row in rows
+        }
+        assert kinds == {"Alpha": "board", "Zeta": "board", "regions": "folder"}
+        assert all("<svg" in row for row in rows)
+
+    def test_nested_folder_leads_with_a_parent_row(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(
+            tmp_path,
+            local_project,
+            self._two(),
+            "east",
+            "year=2024",
+            nav_dir="charts/regions",
+        )
+        rows = re.findall(r'<a class="dbt-sidebar-link[^"]*"[^>]*>.*?</a>', html, re.S)
+        assert 'href="/regions/?year=2024"' in rows[0]
+        assert "dbt-sidebar-folder" in rows[0]
+        assert re.sub(r"<[^>]+>", "", rows[0]).strip() == ".."
+        assert "Up one level" not in html[html.index('class="dbt-sidebar"') :]
+
+    def test_parent_row_keeps_a_lone_board_navigable(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(
+            tmp_path, local_project, {}, "east", "", nav_dir="charts/regions"
+        )
+        assert 'class="dbt-sidebar"' in html
+        assert 'href="/regions/"' in html[html.index('class="dbt-sidebar"') :]
+
+    def test_root_folder_has_no_parent_row(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(tmp_path, local_project, self._two(), "alpha", "")
+        assert ">..<" not in html
+
+    def test_folder_listing_shows_the_parent_with_the_folder_current(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(
+            tmp_path,
+            local_project,
+            self._two(),
+            "regions",
+            "year=2024",
+            nav_dir="charts/regions",
+        )
+        assert 'href="/alpha?year=2024"' in html
+        current = re.search(r'<a [^>]*aria-current="page"[^>]*>', html)
+        assert current is not None
+        assert 'href="/regions/?year=2024"' in current.group(0)
+
+    def test_root_listing_lists_the_root(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(tmp_path, local_project, self._two(), "/", "year=2024")
+        sidebar = html[html.index('class="dbt-sidebar"') :]
+        assert 'href="/alpha?year=2024"' in sidebar
+        assert 'href="/regions/?year=2024"' in sidebar
+        assert ">..<" not in sidebar
+        assert 'aria-current="page"' not in sidebar
+
+    def test_labels_are_escaped(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(
+            tmp_path,
+            local_project,
+            self._two(**{"evil.yml": "title: '<script>alert(1)</script>'\n"}),
+            "alpha",
+            "",
+        )
+        assert "<script>alert(1)</script>" not in html
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+    def test_dropdown_replaced_by_plain_label_when_sidebar_shows(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(tmp_path, local_project, self._two(), "alpha", "")
+        assert 'id="dbt-nav-file-menu"' not in html
+        assert 'class="dbt-nav-file-label">alpha.yml<' in html
+
+    def test_sidebar_query_none_renders_no_sidebar(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(tmp_path, local_project, self._two(), "alpha", None)
+        assert 'class="dbt-sidebar"' not in html
+        assert 'id="dbt-nav-file-menu"' in html

@@ -81,8 +81,6 @@ impl Heading {
         let title = title
             .filter(|text| !text.is_empty())
             .map(|text| {
-                // `chart_title_spec` reads the heading ramp, which an authored size replaces in production.
-                crate::title::refuse_authored_size(placed)?;
                 // The board title's case, not the chart title slot's: chart-renderer spark_bar.rs:`bind` reads
                 // `board_style.title_case`, which engine.py fills from `board_style.title.font.case`.
                 let text = display_text::case::apply_case(text, placed.title.font.case.as_str()).map_err(diag::err_internal)?;
@@ -192,6 +190,13 @@ struct MoreNote {
     size: f64,
     color: String,
     slant: &'static str,
+}
+
+/// The height a spark_bar with no rows to measure is estimated at (sizing.py:`get_chart_content_height`):
+/// `max_bars` rows and the padding under the last, under the title row when the chart is titled.
+pub fn estimated_height(style: &SparkBarChartStyle, titled: bool) -> f64 {
+    let body = f64::from(style.max_bars) * (style.bar.height + style.bar.padding) + style.bar.padding;
+    if titled { body + TITLE_ROW } else { body }
 }
 
 /// spark_bar.rs:`vertical`: the shifted title block, the rows and the padding under the last, or,

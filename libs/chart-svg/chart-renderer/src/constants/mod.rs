@@ -5,6 +5,7 @@ pub mod bar;
 pub mod color;
 pub mod contrast;
 pub mod estimates;
+pub mod fetch;
 pub mod find_queries;
 pub mod layout;
 pub mod marks;

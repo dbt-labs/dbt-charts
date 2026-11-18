@@ -114,7 +114,7 @@ def _batches(count: int, rows: int) -> list[pa.RecordBatch]:
 def _run(
     close_order: list[str],
     batches: list[pa.RecordBatch],
-    limit_rows: int,
+    limit: int,
     warnings: str = "",
     warnings_option: str | None = None,
     statement: _FakeStatement | None = None,
@@ -126,7 +126,7 @@ def _run(
         patch("nanoarrow.c_array_stream", _readers_returning(reader)),
     ):
         connection = CdnDriverConnection(_connection(), warnings_option, [])
-        return connection.execute("SELECT 1", resolve_effective_row_limit(limit_rows))
+        return connection.execute("SELECT 1", resolve_effective_row_limit(limit))
 
 
 class TestSessionSql:

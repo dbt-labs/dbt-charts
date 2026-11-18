@@ -283,3 +283,46 @@ def test_a_chart_on_an_inline_query_names_its_plan_key() -> None:
     assert key is not None and key in plan["queries"]
     assert plan["chart_queries"]["k"]["layers"] == []
     assert plan["variable_queries"] == {}
+
+
+EMBEDDING = """
+source: wh
+queries:
+  base:
+    sql: SELECT region, amount FROM orders
+  by_region:
+    sql: SELECT region, SUM(amount) AS amount FROM {{ queries.base }} GROUP BY 1
+charts:
+  k:
+    type: bar
+    query: by_region
+    x: region
+    y: amount
+rows:
+  - k
+"""
+
+
+class EmbeddingFiles(Files):
+    def read(self, path: str) -> str | None:
+        return EMBEDDING if path == "a.yml" else None
+
+
+def test_an_embedded_query_is_planned_for_its_reader_but_not_read() -> None:
+    board = _engine.compile(
+        EmbeddingFiles(),
+        "a.yml",
+        boards_root=".",
+        today="2026-11-06",
+        default_theme="clarity",
+        html_policy_ceiling=None,
+        sources={"wh": json.dumps({"type": "duckdb"})},
+        implicit_source=None,
+        cache_root=(True, "24h", False),
+        source_caches={},
+        zones={},
+        sql=Sqlglot(),
+    )
+    plan = run_plan(board)
+    assert list(plan["queries"]) == ["by_region", "base"]
+    assert plan["reads"] == ["by_region"]

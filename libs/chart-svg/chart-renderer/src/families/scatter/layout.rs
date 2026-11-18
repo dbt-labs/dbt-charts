@@ -1273,7 +1273,7 @@ pub(super) fn fit(
             if ::layout::labels_expr::view::active() {
                 axis.register(pw)?;
             }
-            let (mut ticks, labels, rules) = axis.ticks_at(pw)?;
+            let (mut ticks, labels, rules) = axis.ticks_at(pw, ax_x, fonts)?;
             // A band axis sits half a pixel left of its band centers.
             if axis.bandwidth().is_some() {
                 ticks.iter_mut().for_each(|t| *t -= 0.5 / pw);
@@ -1295,7 +1295,7 @@ pub(super) fn fit(
             });
         }
         if let Some(lin) = &linear_x {
-            let (ticks, labels, rules, domain) = lin.at(pw)?;
+            let (ticks, labels, rules, domain) = lin.at(pw, |ticks| ax_x.labeling(ticks, fonts))?;
             if ::layout::labels_expr::view::active() {
                 ::layout::labels_expr::view::register_continuous("x", lin.transform, domain.0, domain.1, ::layout::labels_expr::view::Span::Width);
             }

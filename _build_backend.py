@@ -253,7 +253,14 @@ def _editable_from_prebuilt(
         raise ValueError(f"DCT_PREBUILT_ENGINE must name an _engine.* file: {engine}")
     if not engine.is_file():
         raise FileNotFoundError(f"DCT_PREBUILT_ENGINE names no file: {engine}")
-    shutil.copy2(engine, ROOT / "src" / "dbt_charts" / engine.name)
+    destination = ROOT / "src" / "dbt_charts" / engine.name
+    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as staged:
+        pass
+    # Not `copy2`: the install's own mtime says when it was made, which the equivalence
+    # sweep compares with the engine's sources.
+    shutil.copy(engine, staged.name)
+    # Swap in a new inode: rewriting a loaded .so in place gets it killed on macOS.
+    Path(staged.name).replace(destination)
     with tempfile.TemporaryDirectory() as metadata_directory:
         dist_info = maturin.prepare_metadata_for_build_editable(
             metadata_directory, config_settings

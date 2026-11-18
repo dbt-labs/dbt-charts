@@ -180,7 +180,7 @@ def test_reservation_is_composed_against_the_axis_own_resolved_font():
 
 def test_non_column_forming_axis_bakes_no_reservation():
     ay_merged = _merged_axis_y()
-    _REPEAT_TICKS = (0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0)
+    _REPEAT_TICKS = (0.0, 250_000.0, 500_000.0, 750_000.0, 1_000_000.0, 1_250_000.0)
     ay = build_resolved_axis(
         ay_merged,
         format=baked_format(ay_merged),
@@ -381,7 +381,7 @@ def test_ladderless_zero_crossing_affix_anchors_on_the_last_tick():
     )
 
     fmt = ResolvedFormat(spec=".3~s", prefix="$", repeat="anchor")
-    assert ladderless_tick_label(fmt, (-2_000.0, 500.0)).anchor_at_start is False
+    assert ladderless_tick_label(fmt, (-2_000.0, 500.0), True).anchor_at_start is False
 
 
 def test_no_tick_values_never_compacts():
@@ -451,7 +451,7 @@ def test_non_column_forming_axis_bakes_repeat_mode_regardless_of_ladder():
     vertical ruler with the same ticks.
     """
     ay_merged = _merged_axis_y()
-    _REPEAT_TICKS = (0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0)
+    _REPEAT_TICKS = (0.0, 250_000.0, 500_000.0, 750_000.0, 1_000_000.0, 1_250_000.0)
     for ladder_mode, ticks in (
         (SuffixMode.ANCHOR, _ANCHOR_TICKS),
         (SuffixMode.REPEAT, _REPEAT_TICKS),
@@ -469,6 +469,26 @@ def test_non_column_forming_axis_bakes_repeat_mode_regardless_of_ladder():
         assert ay.ruler is not None
         assert ay.ruler.mode is SuffixMode.REPEAT
         assert ay.ruler.reserve is False
+
+
+@pytest.mark.parametrize(
+    ("column_forming", "mode"),
+    [(True, SuffixMode.ANCHOR), (False, SuffixMode.REPEAT)],
+)
+def test_rolled_up_ladder_anchors_vertical_and_repeats_horizontal_in_millions(
+    column_forming: bool, mode: SuffixMode
+):
+    ay_merged = _merged_axis_y()
+    ay = build_resolved_axis(
+        ay_merged,
+        format=baked_format(ay_merged),
+        tick_values=(0.0, 500_000.0, 1_000_000.0, 1_500_000.0),
+        column_forming=column_forming,
+        chart_id="test",
+        formats=None,
+    )
+    assert ay.ruler is not None
+    assert (ay.ruler.exponent, ay.ruler.mode) == (6, mode)
 
 
 def test_column_forming_compacting_axis_on_non_tabular_font_raises():
@@ -1800,11 +1820,18 @@ def test_tick_label_si_format_and_scientific_format_are_set_together():
     this to build the guard unconditionally, with no defensive fallback.
     """
     with pytest.raises(ValueError, match="si_format and .scientific_format"):
-        ResolvedTickLabel(format=".3~r", si_format=".3~s")
+        ResolvedTickLabel(format=".3~r", si_format=".3~s", column_forming=True)
+    with pytest.raises(ValueError, match="column_forming is set with si_format"):
+        ResolvedTickLabel(format=".3~r", si_format=".3~s", scientific_format=".3~e")
     with pytest.raises(ValueError, match="si_format and .scientific_format"):
         ResolvedTickLabel(format=".3~r", scientific_format=".3~e")
-    # Both set, or both unset, are the only valid states -- no raise.
-    ResolvedTickLabel(format=".3~r", si_format=".3~s", scientific_format=".3~e")
+    # All set, or all unset, are the only valid states -- no raise.
+    ResolvedTickLabel(
+        format=".3~r",
+        si_format=".3~s",
+        scientific_format=".3~e",
+        column_forming=False,
+    )
     ResolvedTickLabel(format=",.0~f")
 
 

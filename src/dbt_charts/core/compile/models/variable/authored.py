@@ -19,7 +19,7 @@ from pydantic import (
     field_validator,
 )
 
-from dbt_charts.core.compile.models.markers import DisplayText
+from dbt_charts.core.compile.models.markers import DisplayText, Exclusive
 from dbt_charts.core.compile.models.primitives import ErrorHint, VariableDependencies
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
 from dbt_charts.core.compile.models.refs import infer_query_type_from_keys
@@ -230,7 +230,7 @@ class Variable(BaseModel):
     )
 
     # Source binding (one of these for data-driven options)
-    column: str | None = Field(
+    column: Annotated[str | None, Exclusive("options_source")] = Field(
         default=None,
         description=(
             "A dropdown of this column's values, as 'table.column'. Use "
@@ -241,13 +241,14 @@ class Variable(BaseModel):
     query: Annotated[
         Annotated[str, StringConstraints(pattern=r"^[^@]")] | AuthoredQuery | None,
         BeforeValidator(_normalize_var_query),
+        Exclusive("options_source"),
         Field(
             default=None,
             description="Query name or inline query definition for populating options.",
         ),
     ] = None
     # Options
-    options: VariableOptions | None = Field(
+    options: Annotated[VariableOptions | None, Exclusive("options_source")] = Field(
         default=None,
         description="Dropdown values come from a query column, or (rarely) a written-out list.",
     )

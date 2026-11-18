@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from difflib import SequenceMatcher
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
@@ -533,8 +534,25 @@ def describe_paths(
     """
     out: list[DescribeBoardResult] = []
     for p in paths:
-        out.extend(_describe_one_path(p, project, chart))
+        results = _describe_one_path(p, project, chart)
+        if len(results) == 1 and not results[0].success:
+            _hint_closest_boards(results[0], p, project)
+        out.extend(results)
     return out
+
+
+def _hint_closest_boards(
+    result: DescribeBoardResult, path: Path, project: Project
+) -> None:
+    """Name the nearest boards on a miss; never describe one in its place."""
+    if [e.code for e in result.errors] not in (
+        [ERR_FILE_NOT_FOUND.code],
+        [ERR_NO_BOARD_FILES.code],
+    ):
+        return
+    (error,) = result.errors
+    if closest := _closest_boards(path, project):
+        error.hint = f"Did you mean {', '.join(closest)}? Pass the path."
 
 
 def _describe_one_path(
@@ -599,29 +617,63 @@ def _describe_one_path(
 
 
 def _resolve_path_or_title(path: Path, project: Project) -> ProjectPath:
-    """Resolve a board path, or the title of one board when no file has that path.
+    """Resolve a board path, or the name of one board when no file has that path.
 
     A path that exists always wins. Otherwise a board whose title equals
-    *path*, ignoring case, is the board meant; a title several boards share
-    raises ``ValueError`` naming them. With no match the unresolved path comes
-    back for the caller to report as missing.
+    *path*, ignoring case and surrounding whitespace, or whose file stem equals
+    a bare *path*, in any board root, is the board meant. Several boards
+    sharing the name raise ``ValueError`` naming them. With no match the
+    unresolved path comes back for the caller to report as missing.
     """
     from dbt_charts.agent_api._paths import resolve_board_path
 
     resolved = resolve_board_path(path, project)
     if resolved.exists() or path.is_absolute():
         return resolved
-    title = path.as_posix()
-    matches = [
-        label.file_path
-        for label in project.board_labels()
-        if label.title.casefold() == title.casefold()
-    ]
+    name = _board_name(path)
+    matches = sorted(
+        {
+            label.file_path
+            for label in project.board_labels()
+            if label.title.strip().casefold() == name.casefold()
+            or ("/" not in name and PurePosixPath(label.file_path).stem == name)
+        }
+    )
     if len(matches) > 1:
         raise ValueError(
-            f"{len(matches)} boards are titled {title!r} ({', '.join(matches)})"
+            f"{len(matches)} boards are named {name!r} ({', '.join(matches)})"
         )
     return project.path(matches[0]) if matches else resolved
+
+
+def _board_name(path: Path) -> str:
+    return path.as_posix().strip()
+
+
+def _closest_boards(path: Path, project: Project) -> list[str]:
+    """Paths of up to three boards whose title or stem nearly matches *path*.
+
+    A suggestion only: the caller reports it, never resolves it.
+    """
+    name = _board_name(path).casefold()
+    suffix = PurePosixPath(name).suffix
+    if suffix in {".yml", ".yaml", ".md"}:
+        name = name.removesuffix(suffix)
+    scored: list[tuple[float, str]] = []
+    for label in project.board_labels():
+        names = [
+            label.title.strip().casefold(),
+            PurePosixPath(label.file_path).stem.casefold(),
+        ]
+        best = max(
+            1.0
+            if min(len(name), len(n)) >= 4 and (name in n or n in name)
+            else SequenceMatcher(None, name, n).ratio()
+            for n in names
+        )
+        if best >= 0.7:
+            scored.append((-best, label.file_path))
+    return [file_path for _, file_path in sorted(scored)[:3]]
 
 
 # ---------------------------------------------------------------------------

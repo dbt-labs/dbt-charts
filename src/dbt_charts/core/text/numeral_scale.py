@@ -200,9 +200,30 @@ def shared_scale_for_ladder(ticks: list[float]) -> SharedScale | None:
     if _integer_digit_count(extreme) < _COMPACTION_DIGIT_THRESHOLD:
         return None
 
+    tier = _rolled_up_tier(tier, step, extreme)
     return SharedScale(
         exponent=tier, mode=_mode_for_scaled_extreme(extreme / (10.0**tier))
     )
+
+
+def _rolled_up_tier(tier: int, step: float, extreme: float) -> int:
+    """``tier``, or the next tier up when the top tick would print 4+ digits.
+
+    A 0-1.75M ladder stepping 500k divides into thousands, but its top tick
+    would read ``1,500k`` and flip the axis to repeat mode. When the step is a
+    whole number of tenths of the next tier (``0.5M``) the ladder reads
+    cleanly there, so it rolls up; a 250k step (2.5 tenths) stays in thousands.
+    """
+    tiers_ascending = sorted(_TIERS)
+    index = tiers_ascending.index(tier)
+    if index + 1 == len(tiers_ascending):
+        return tier
+    if _integer_digit_count(extreme / (10.0**tier)) < _MODE_TRIGGER_DIGITS:
+        return tier
+    tenths = step / (10.0 ** tiers_ascending[index + 1]) * 10
+    if tenths >= 1 and math.isclose(tenths, round(tenths), rel_tol=1e-9, abs_tol=1e-9):
+        return tiers_ascending[index + 1]
+    return tier
 
 
 def _natural_tier(value: float) -> int | None:

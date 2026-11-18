@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.execute.run import run_query
 
@@ -122,9 +123,13 @@ class TestSqliteBackendExecutes:
         assert result.data[0] == {"id": 1, "name": "alice"}
         assert result.data[1] == {"id": 2, "name": "bob"}
 
-    def test_bad_sqlite_query_surfaces_error(self, tmp_path: Path) -> None:
-        """A syntactically invalid SQL query returns a non-None error, not a crash."""
+    def test_missing_table_is_an_unknown_relation(self, tmp_path: Path) -> None:
+        """SQLite's "no such table" carries ERR-BINDER-UNKNOWN-RELATION, not a
+        generic runtime fault, so it gets the missing-relation guidance."""
         from dbt_charts.core.compile.models.source import SQLiteSourceConfig
+        from dbt_charts.core.diagnostics.codes_execute import (
+            ERR_BINDER_UNKNOWN_RELATION,
+        )
 
         from ...._backend_runner import SqliteRunner
 
@@ -134,9 +139,21 @@ class TestSqliteBackendExecutes:
         source_cfg = SQLiteSourceConfig(type="sqlite", path=str(db_path))
         result = adapter.execute(query, source_config=source_cfg)
         assert result.error is not None
-        error = str(result.error)
-        assert "nonexistent_table_xyz" in error or "no such table" in error
-        assert error.startswith("Warehouse rejected the query:")
+        assert result.error.code == ERR_BINDER_UNKNOWN_RELATION
+        assert "no such table: nonexistent_table_xyz" in str(result.error)
+
+    def test_other_sqlite_errors_stay_runtime_faults(self, tmp_path: Path) -> None:
+        from dbt_charts.core.compile.models.source import SQLiteSourceConfig
+        from dbt_charts.core.diagnostics.codes_execute import ERR_WAREHOUSE_RUNTIME
+
+        from ...._backend_runner import SqliteRunner
+
+        db_path = _make_sqlite_db_with_users(tmp_path)
+        query = SqlQuery(sql="SELECT no_such_fn(id) FROM users", source="mydb")
+        source_cfg = SQLiteSourceConfig(type="sqlite", path=str(db_path))
+        result = SqliteRunner().execute(query, source_config=source_cfg)
+        assert result.error is not None
+        assert result.error.code == ERR_WAREHOUSE_RUNTIME
 
     def test_sqlite_nonexistent_path_surfaces_error(self, tmp_path: Path) -> None:
         """A path pointing to a nonexistent file surfaces a connection fault.
@@ -387,6 +404,31 @@ class TestSqliteBackendMaxRowsCeiling:
         assert result.truncated_reason is None
 
 
+def test_a_row_past_the_authors_limit_does_not_type_the_result(tmp_path: Path) -> None:
+    """A row past the author's own limit is never read, so its 2.5 cannot turn
+    the returned integers into floats."""
+    from dbt_charts.core.compile.models.source import SQLiteSourceConfig
+
+    from ...._backend_runner import SqliteRunner
+
+    db_path = tmp_path / "v.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE t (v)")
+    conn.execute("INSERT INTO t VALUES (1), (2), (2.5)")
+    conn.commit()
+    conn.close()
+    query = SqlQuery(sql="SELECT v FROM t ORDER BY v", source="mydb", limit=2)
+
+    result = SqliteRunner().execute(
+        query, source_config=SQLiteSourceConfig(type="sqlite", path=str(db_path))
+    )
+
+    assert result.error is None
+    assert result.data == [{"v": 1}, {"v": 2}]
+    assert result.schema["v"] == ColumnType(kind="integer")
+    assert result.truncated_reason is None
+
+
 class TestSqliteBackendFetchmanyNotFetchall:
     """Regression guard: the ceiling must bound the cursor's own fetch via
     fetchmany(), not fetch all rows then slice. Reverting to fetchall() would
@@ -455,8 +497,6 @@ class TestSqliteBackendFetchmanyNotFetchall:
         source_cfg = SQLiteSourceConfig(type="sqlite", path=str(db_path))
         adapter.execute(query, source_config=source_cfg)
 
-        # fetch_limit = ceiling + 1 = 2 (detects truncation without knowing
-        # the true total — mirrors the agent_api pattern).
         assert fetchmany_args == [2]
         assert not fetchall_called
 
@@ -479,7 +519,6 @@ class TestSqliteBackendFetchmanyNotFetchall:
         source_cfg = SQLiteSourceConfig(type="sqlite", path=str(db_path))
         adapter.execute(query, source_config=source_cfg)
 
-        # Author limit=1 is the binding value; fetch exactly that many.
         assert fetchmany_args == [1]
         assert not fetchall_called
 

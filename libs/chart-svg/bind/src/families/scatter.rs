@@ -227,7 +227,7 @@ fn value_axis(
         }
         domain.ladder = x_ladder(target, &domain, &format, values)?;
     }
-    Ok(ValueAxis { domain, format })
+    cartesian::value_axis(domain, format, column_forming, baked == Baked::Y)
 }
 
 /// Production leaves a scatter x unbaked, and Vega ticks its scale at `ticks.count` (6 when
@@ -238,7 +238,7 @@ fn x_ladder(target: usize, domain: &ValueDomain, format: &ResolvedFormat, values
     let (lo, hi) = (bounds.lo(), bounds.hi());
     let extent_hi = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let rungs = format
-        .unbaked_rungs(&active_number_locale(), (lo, hi), target, None, extent_hi)?
+        .unbaked_rungs(&active_number_locale(), (lo, hi), target, None, extent_hi, false)?
         .into_iter()
         .map(|(value, text)| Rung { value, text })
         .collect();
@@ -465,6 +465,11 @@ pub fn bind(
     }
     let x_format = if x_type == ChannelType::Quantitative { axis_format(&p.x_ladder, p.formats)? } else { ResolvedFormat::default() };
     let y_format = if y_nominal { ResolvedFormat::default() } else { axis_format(&p.y_ladder, p.formats)? };
+    // The right-aligned y gutter reserves production's measure of the labels, which the engine's
+    // matches within a pixel on digits but not on a duration ladder's letters.
+    if y_format.spec == "duration" {
+        return Err(unsupported(refuse!("a scatter y axis `duration` format is not supported")));
+    }
     let color_field = chart.cartesian.color.as_ref().map(ColorColumn::as_str);
     let fields: Vec<&str> = [x_field, y_field].into_iter().chain(color_field).collect();
     let dataset = cartesian::dataset(id, &chart.cartesian, board, run, &fields)?;

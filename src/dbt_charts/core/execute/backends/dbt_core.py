@@ -36,7 +36,7 @@ from dbt_charts.core.execute.backends.dbt_adapter_factory import (
     cancel_open_queries,
 )
 from dbt_charts.core.execute.backends.typed_fetch import fetch_typed
-from dbt_charts.core.execute.query_result import QueryDurationExceeded
+from dbt_charts.core.execute.query_result import QueryDurationExceeded, RowFetchLimit
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 from dbt_charts.core.execute.sql_translate import engine_dialect
 
@@ -157,7 +157,7 @@ class _SourcePool:
         inlined_sql: str,
         setup_sql: str | None,
         time_zone: str,
-        limit: int | None = None,
+        limit: RowFetchLimit,
     ) -> TypedRows:
         """Run SQL on a persistent worker thread, reconnecting once on failure.
 
@@ -172,8 +172,9 @@ class _SourcePool:
         established around the render is invisible where the query is actually sent
         and every job goes out unattributed.
 
-        ``limit`` bounds the driver's own fetch (``cursor.fetchmany(limit)``) —
-        the SQL text sent to the warehouse is never touched.
+        ``limit`` is applied to the fetch, never to the SQL text. The fetch
+        finishes on the worker: the retry and liveness checks there assume it
+        has.
         """
         if self._interrupted:
             raise QueryError.from_code(ERR_QUERY_INTERRUPTED)
@@ -198,7 +199,7 @@ class _SourcePool:
         inlined_sql: str,
         setup_sql: str | None,
         time_zone: str,
-        limit: int | None,
+        limit: RowFetchLimit,
     ) -> TypedRows:
         adapter = self._replace_if_released(self._ensure_connected())
         dirty = self._tls.session_dirty
@@ -298,7 +299,7 @@ class _SourcePool:
         inlined_sql: str,
         setup_sql: str | None,
         time_zone: str,
-        limit: int | None,
+        limit: RowFetchLimit,
     ) -> TypedRows:
         self._apply_time_zone(adapter, time_zone)
         # Single owner of the flag, and set before the send: a setup_sql that fails
@@ -312,14 +313,8 @@ class _SourcePool:
             if setup_sql
             else inlined_sql
         )
-        # dbt-spark's Hive/ODBC cursors implement fetchall but not fetchmany.
-        # Omit the limit for those dialects and fall back to the post-fetch
-        # slice in apply_row_limit_truncation.
-        driver_limit = limit if self._dialect.cursor_supports_driver_limit else None
         try:
-            return fetch_typed(
-                adapter, self._dialect.name, sql, driver_limit, time_zone
-            )
+            return fetch_typed(adapter, self._dialect, sql, time_zone, limit)
         except Exception as exc:  # noqa: BLE001 — classify statement timeout before retry
             if self._dialect.is_statement_timeout_error(exc):
                 raise QueryDurationExceeded(self._timeout_seconds) from exc
@@ -516,13 +511,11 @@ class DbtBackend:
             query.inline(source.type),
             ";\n".join(s.rstrip().rstrip(";") for s in query.setup_sql) or None,
             query.time_zone,
-            limit=query.limit.fetch_limit,
+            query.limit,
         )
         dialect = sqlglot_dialect(engine_dialect(source.type, source))
-        return TypedRows(
-            [result_column_name(col, dialect) for col in typed.columns],
-            typed.rows,
-            typed.types,
+        return typed._replace(
+            columns=[result_column_name(col, dialect) for col in typed.columns]
         )
 
     def _get_source_pool(

@@ -97,6 +97,7 @@ class TestSearchExamples:
         """Two queries that between them land in all three tiers, so each
         branch's score is pinned: deleting any of them changes a list."""
         assert [(h.slug, h.score) for h in search_examples("table").hits] == [
+            ("tables/table-list-columns", 1.0),
             ("tables/table-style-variants", 1.0),
             ("boards/kpi-overview", 0.8),
         ]

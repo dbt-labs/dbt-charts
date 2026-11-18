@@ -110,6 +110,8 @@ pub struct Placed {
     pub shift: TitleShift,
     /// Whether that move is one production makes after sizing (`height::Boxed::deferred`).
     pub deferred: bool,
+    /// How much taller its `cols` row makes it than its natural height (`height::Boxed::stretch`).
+    pub stretch: f64,
 }
 
 /// One board's drawn items in layout order, each in the box its layout gives it.
@@ -263,6 +265,7 @@ fn collect(node: &Node, at: &ItemId, ids: &Ids, boxes: &[Option<Boxed>], card_ga
                 nested,
                 shift: boxed.shift,
                 deferred: boxed.deferred,
+                stretch: boxed.stretch,
             })),
             (Content::Board(inner_node), Held::Board(inner_ids), Some(inner_boxes)) => {
                 items.push(LaidItem::Board(PlacedBoard {

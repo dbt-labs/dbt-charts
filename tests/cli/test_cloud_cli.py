@@ -6434,6 +6434,7 @@ def _settings(**changes: object) -> dict[str, object]:
         "custom_system_prompt": "",
         "branch_mode": False,
         "allow_self_merge": True,
+        "require_linked_author": False,
         "banner_enabled": False,
         "banner_text": "",
         "banner_background": "#fde68a",
@@ -7128,3 +7129,91 @@ class TestComments:
 
         assert result.exit_code == 1
         assert "Only the author or an editor" in out(result)
+
+
+EVAL_PATH = "/api/orgs/acme-data/projects/analytics/eval.jsonl"
+EVAL_LINE = (
+    b'{"question":"How many caf\xc3\xa9s opened?","sql":"SELECT 1\\n",'
+    b'"dialect":"duckdb","source":"db","variables":{"months":12},'
+    b'"board_path":"charts/revenue.yml","query_name":"monthly",'
+    b'"question_origin":"authored","approved_by":"a@example.com",'
+    b'"approved_at":"2026-10-22","sql_digest":"v1:sha256:ab",'
+    b'"a_field_this_dct_predates":1}\n'
+)
+
+
+class TestExportEval:
+    def _serve(self, api: FakeApi, body: bytes, skipped: str | None = "0") -> None:
+        headers = {} if skipped is None else {"X-Dct-Skipped-Boards": skipped}
+        api.routes[("GET", EVAL_PATH)] = [
+            httpx.Response(200, content=body, headers=headers)
+        ]
+
+    def _invoke(self, *extra: str) -> Result:
+        return runner.invoke(
+            app,
+            [
+                "cloud",
+                "export-eval",
+                "--org",
+                "acme-data",
+                "--project",
+                "analytics",
+                *extra,
+            ],
+        )
+
+    def test_stdout_is_the_response_body_byte_for_byte(self, api: FakeApi) -> None:
+        self._serve(api, EVAL_LINE * 2)
+        result = self._invoke()
+        assert result.exit_code == 0, out(result)
+        assert result.stdout_bytes == EVAL_LINE * 2
+        assert result.stderr == ""
+        assert "include_unapproved" not in api.requests[-1].url.params
+
+    def test_include_unapproved_is_sent_as_a_query_parameter(
+        self, api: FakeApi
+    ) -> None:
+        self._serve(api, b"")
+        result = self._invoke("--include-unapproved")
+        assert result.exit_code == 0, out(result)
+        assert api.requests[-1].url.params["include_unapproved"] == "true"
+
+    def test_skipped_boards_are_reported_on_stderr_only(self, api: FakeApi) -> None:
+        self._serve(api, EVAL_LINE, skipped="2")
+        result = self._invoke()
+        assert result.exit_code == 0, out(result)
+        assert result.stdout_bytes == EVAL_LINE
+        assert "2 board(s) you cannot view" in result.stderr
+
+    def test_a_body_that_is_not_the_contract_writes_nothing(self, api: FakeApi) -> None:
+        self._serve(api, b"<html>Sign in</html>\n")
+        result = self._invoke()
+        assert result.exit_code == 1
+        assert result.stdout == ""
+
+    def test_a_board_that_does_not_compile_is_named_and_nothing_is_written(
+        self, api: FakeApi
+    ) -> None:
+        api.routes[("GET", EVAL_PATH)] = [
+            httpx.Response(
+                409,
+                json={
+                    "code": "conflict",
+                    "message": "charts/sales.yml does not compile: bad chart",
+                    "field_errors": {},
+                },
+            )
+        ]
+        result = self._invoke()
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "charts/sales.yml does not compile" in result.stderr
+
+    def test_a_deployment_without_the_route_is_named_as_too_old(
+        self, api: FakeApi
+    ) -> None:
+        api.routes[("GET", EVAL_PATH)] = [httpx.Response(404, content=b"Not Found")]
+        result = self._invoke()
+        assert result.exit_code == 1
+        assert "predates this call" in out(result)

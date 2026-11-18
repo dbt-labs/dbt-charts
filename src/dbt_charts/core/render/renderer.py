@@ -760,7 +760,7 @@ def _render(
                 output=None,
                 board_error=e.to_diagnostic(),
             )
-    query_names = set(ctx.plan["queries"])
+    query_names = set(ctx.plan["reads"])
     tab_variables = _tab_variables(whole_board.layout)
     if strict_variables:
         # scope_tabs empties hidden tabs, but the registry still holds their
@@ -917,6 +917,7 @@ def _render(
                 "controls", False
             )  # type-state: silent_fallback — opt-in host flag, absent means off
         ),
+        page_runtime(format == "html"),
     ):
         try:
             with (

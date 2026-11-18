@@ -970,13 +970,18 @@
   visibility: visible;
 }
 
-{# A sortable table header opens the table's menu. #}
-.dbt-chart text[data-dbt-sortable] {
+{# A sortable table header is its whole cell; it opens the table's menu. #}
+.dbt-chart [data-dbt-sortable] {
   cursor: pointer;
 }
 
-.dbt-chart text[data-dbt-sortable]:hover {
+.dbt-chart [data-dbt-sortable]:hover > text {
   text-decoration: underline;
+}
+
+{# A list row's chevron opens and shuts the row's lists. #}
+.dbt-chart .dbt-table-list-toggle {
+  cursor: pointer;
 }
 
 .dbt-chart .dbt-paginator text,

@@ -22,8 +22,13 @@ import sqlglot.expressions as exp
 
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.cache_backend import ResultRows, TruncationInfo
-from dbt_charts.core.execute.lookup import Tail, limit_rows
-from dbt_charts.core.execute.query_result import QueryResult
+from dbt_charts.core.execute.lookup import Tail
+from dbt_charts.core.execute.query_result import (
+    QueryResult,
+    primary_truncation_reason,
+    resolve_effective_row_limit,
+    take,
+)
 
 
 def watermark_to_sql_node(
@@ -124,7 +129,7 @@ def merge_incremental_rows(
 
     Dedup: tail wins for restated keys (prior rows at the watermark are
     overwritten by the tail's version). Sorted descending by key so HEAD
-    truncation (``limit_rows`` uses rows[:max_rows]) keeps the
+    truncation (``take`` keeps a prefix) keeps the
     newest rows when the merged set exceeds the limit.
 
     No re-typing of prior rows happens here: the cache contract
@@ -189,4 +194,9 @@ def run_incremental_tail(
     merged = merge_incremental_rows(
         list(result.data), tail.prior_rows, key_col, query_name
     )
-    return limit_rows(ResultRows(merged, result.schema), query_name)
+    kept, cut = take(merged, list(result.schema), resolve_effective_row_limit(None))
+    reason = primary_truncation_reason(cut, result.truncated_reason)
+    truncation = (
+        None if reason is None else TruncationInfo(query_name, len(kept), reason)
+    )
+    return ResultRows(kept, result.schema), truncation

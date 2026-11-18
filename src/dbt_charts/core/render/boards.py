@@ -54,6 +54,7 @@ from dbt_charts.core.render.board_variables import (
 from dbt_charts.core.render.chart_interactivity import (
     hover_runtime_attributes,
 )
+from dbt_charts.core.render.controls import ships_page_runtime
 from dbt_charts.core.render.engine_cell import placements
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.prose import render_prose_svg
@@ -66,6 +67,7 @@ from dbt_charts.core.render.svg_utils import (
     divider_dash_attr,
     escape_attr,
     extract_svg_inner_content,
+    flow_bg_attr,
     format_svg_numeric,
     padded_authoring_content,
     px,
@@ -1403,12 +1405,47 @@ def _render_board_svg(
     footer_family = footer_style.font.family
     timestamp_family = board.style.timestamp.font.family
     assert footer_family is not None and timestamp_family is not None
+    render_time_utc = results.rendered_at.astimezone(UTC)
+    timestamp_style = board.style.timestamp
+    display_timestamp = ""
+    if timestamp_style.visible:
+        # Stamp data freshness, not render time, in the board's zone: a static
+        # export can't know the viewer's zone, and the render process's own zone
+        # is an accidental deployment artifact. min() shows the stalest cached
+        # query so the board never reads fresher than it is.
+        cache_hit_ats = results.cache_hit_ats
+        data_as_of = min(cache_hit_ats) if cache_hit_ats else render_time_utc
+        display_timestamp = portable_strftime(
+            data_as_of.astimezone(board.regional.zone), timestamp_style.format
+        )
+    # An authored width wins over the footer row's floor, so a timestamp and
+    # credit that cannot share the row wrap: the credit keeps the last line and
+    # the timestamp takes the line above it, both right-aligned.
+    footer_wrap_step = 0.0
+    if (
+        footer_style.visible
+        and timestamp_style.visible
+        and timestamp_style.position == "footer"
+    ):
+        # TimestampStyle.__constraints__ guarantee font.size is not None.
+        assert timestamp_style.font.size is not None
+        assert timestamp_style.font.line_height is not None
+        stamp_size = float(timestamp_style.font.size)
+        row = (
+            get_font_measurer(timestamp_family).measure(display_timestamp, stamp_size)
+            + timestamp_style.gap
+            + footer_text_width(footer_style, footer_family)
+        )
+        if row > total_width - 2 * page_padding:
+            footer_wrap_step = stamp_size * timestamp_style.font.line_height
     if footer_style.visible:
         # FooterStyle.__constraints__ guarantee font.size is not None.
         assert footer_style.font.size is not None
         footer_font_size = float(footer_style.font.size)
         rule_gap = footer_style.divider.gap if footer_style.divider.visible else 0
-        total_height += footer_style.y_offset + footer_font_size + rule_gap
+        total_height += (
+            footer_style.y_offset + footer_font_size + rule_gap + footer_wrap_step
+        )
 
     # Grid pattern if enabled
     grid_defs = ""
@@ -1419,7 +1456,7 @@ def _render_board_svg(
     # Background rect
     bg_rect = ""
     if background:
-        bg_rect = f'<rect x="0" y="0" width="{escape_attr(total_width)}" height="{escape_attr(total_height)}" fill="{escape_attr(background)}"/>'
+        bg_rect = f'<rect x="0" y="0" width="{escape_attr(total_width)}" height="{escape_attr(total_height)}" fill="{escape_attr(background)}"{flow_bg_attr(ships_page_runtime())}/>'
 
     # Margin guide lines (print-media style alignment guides)
     margin_lines = ""
@@ -1459,7 +1496,6 @@ def _render_board_svg(
         ),
     )
 
-    render_time_utc = results.rendered_at.astimezone(UTC)
     render_timestamp_iso = render_time_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     footer_x = total_width - page_padding
     footer_y = total_height - footer_style.y_offset
@@ -1476,27 +1512,20 @@ def _render_board_svg(
             footer_style, footer_family, footer_x, footer_y
         )
 
-    timestamp_style = board.style.timestamp
     if timestamp_style.visible:
         # All timestamp values come from the style cascade.
         # TimestampStyle.__constraints__ guarantee both non-None.
         assert timestamp_style.font.size is not None
         assert timestamp_style.font.color is not None
         timestamp_font_size = float(timestamp_style.font.size)
-        # Stamp data freshness, not render time, in the board's zone: a static
-        # export can't know the viewer's zone, and the render process's own zone
-        # is an accidental deployment artifact. min() shows the stalest cached
-        # query so the board never reads fresher than it is.
-        cache_hit_ats = results.cache_hit_ats
-        data_as_of = min(cache_hit_ats) if cache_hit_ats else render_time_utc
-        display_timestamp = portable_strftime(
-            data_as_of.astimezone(board.regional.zone), timestamp_style.format
-        )
         if timestamp_style.position == "top":
             timestamp_y = timestamp_style.y
         else:
-            timestamp_y = footer_y
-        if timestamp_style.align == "left":
+            timestamp_y = footer_y - footer_wrap_step
+        if footer_wrap_step:
+            timestamp_x = footer_x
+            timestamp_anchor = "end"
+        elif timestamp_style.align == "left":
             timestamp_x = page_padding
             timestamp_anchor = "start"
         else:
@@ -1519,7 +1548,12 @@ def _render_board_svg(
         assert footer_style.font.color is not None
         footer_parts = []
         if footer_style.divider.visible:
-            rule_y = footer_y - float(footer_style.font.size) - footer_style.divider.gap
+            rule_y = (
+                footer_y
+                - float(footer_style.font.size)
+                - footer_style.divider.gap
+                - footer_wrap_step
+            )
             footer_parts.append(
                 f'<line x1="{format_svg_numeric(page_padding)}" y1="{format_svg_numeric(rule_y)}" '
                 f'x2="{format_svg_numeric(footer_x)}" y2="{format_svg_numeric(rule_y)}" '
@@ -1534,7 +1568,19 @@ def _render_board_svg(
     # is a pure transport attribute to_html() reads back, never seen by a
     # user, and already-persisted Cloud renders carry this exact name --
     # renaming it would 500 on every one of them for no benefit.
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {escape_attr(total_width)} {escape_attr(total_height)}" width="{format_svg_numeric(total_width)}" height="{format_svg_numeric(total_height)}" preserveAspectRatio="xMinYMin meet" style="display: block;" data-rendered-at="{escape_attr(render_timestamp_iso)}" data-dbt-page-title="{escape_attr(page_title)}"{hover_attributes} data-dbt-page-background="{escape_attr(str(board_background))}" aria-label="{escape_attr(page_title)}">
+    # On a live page the footer and a footer timestamp ride the board's bottom
+    # edge down when content above grows; a picture never reflows.
+    tail = f"{timestamp_element}\n{footer_element}"
+    live = ships_page_runtime()
+    flow_box = ' data-dbt-flow-box=""' if live else ""
+    if live:
+        if timestamp_style.visible and timestamp_style.position == "top":
+            tail = (
+                f'{timestamp_element}\n<g data-dbt-flow-follow="">{footer_element}</g>'
+            )
+        else:
+            tail = f'<g data-dbt-flow-follow="">{tail}</g>'
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {escape_attr(total_width)} {escape_attr(total_height)}" width="{format_svg_numeric(total_width)}" height="{format_svg_numeric(total_height)}" preserveAspectRatio="xMinYMin meet" style="display: block;" data-rendered-at="{escape_attr(render_timestamp_iso)}" data-dbt-page-title="{escape_attr(page_title)}"{hover_attributes} data-dbt-page-background="{escape_attr(str(board_background))}" aria-label="{escape_attr(page_title)}"{flow_box}>
 
 <defs>
 {grid_defs}
@@ -1543,8 +1589,7 @@ def _render_board_svg(
 {bg_rect}
 {"".join(content_items)}
 {margin_lines}
-{timestamp_element}
-{footer_element}
+{tail}
 </svg>"""
     return _dedupe_repeated_style_rules(svg)
 
@@ -1780,12 +1825,14 @@ def render_nested_board(
 
     bg_rect = ""
     border_radius = resolved_style.border.radius
+    # On a live page a nested board grows with a table in it that opens rows.
+    live = ships_page_runtime()
 
     if authored_bg:
         bg = str(authored_bg)
-        bg_rect = f'<rect x="0" y="0" width="{escape_attr(board_width)}" height="{escape_attr(board_height)}" fill="{escape_attr(bg)}" rx="{escape_attr(border_radius)}"/>'
+        bg_rect = f'<rect x="0" y="0" width="{escape_attr(board_width)}" height="{escape_attr(board_height)}" fill="{escape_attr(bg)}" rx="{escape_attr(border_radius)}"{flow_bg_attr(live)}/>'
 
-    border_svg = border_rect(board_width, board_height, resolved_style.border)
+    border_svg = border_rect(board_width, board_height, resolved_style.border, "", live)
 
     board_group = translate_group(
         px(board_margin_left),
@@ -1793,7 +1840,8 @@ def render_nested_board(
         f"{bg_rect}\n{border_svg}\n{''.join(inner_items)}",
     )
 
-    svg = f"""<svg width="{escape_attr(total_svg_width)}" height="{escape_attr(total_svg_height)}" viewBox="0 0 {escape_attr(total_svg_width)} {escape_attr(total_svg_height)}">
+    flow_box = ' data-dbt-flow-box=""' if live else ""
+    svg = f"""<svg width="{escape_attr(total_svg_width)}" height="{escape_attr(total_svg_height)}" viewBox="0 0 {escape_attr(total_svg_width)} {escape_attr(total_svg_height)}"{flow_box}>
 {board_group}
 </svg>"""
     return svg, total_svg_height

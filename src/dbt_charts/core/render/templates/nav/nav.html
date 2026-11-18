@@ -16,7 +16,7 @@
       {%- endif -%}
     {%- endfor -%}
     {%- if not ns.first %}{{ sep }}{% endif -%}
-    {%- if files -%}
+    {%- if files and not sidebar -%}
       <span class="dbt-nav-file">
         <a class="dbt-nav-file-trigger" href="{{ current_file_url }}" role="button" aria-haspopup="listbox" aria-expanded="false" data-dbt-nav-menu-id="dbt-nav-file-menu">
           <span class="dbt-nav-file-label">{{ current_label }}</span>

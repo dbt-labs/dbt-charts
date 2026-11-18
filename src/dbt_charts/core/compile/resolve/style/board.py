@@ -32,6 +32,7 @@ from dbt_charts.core.compile.models.primitives import (
     FontStyle,
     FormatTable,
     LanguageCode,
+    NamedFont,
     ResolvedFontStyle,
     ToneLiteral,
     parse_box_shadow,
@@ -772,6 +773,32 @@ def _bake_theme_words(cascaded: Style, language: LanguageCode) -> Style:
     )
 
 
+def _fonts_following_board_family(
+    merged: Style, patch: StylePatch
+) -> dict[str, NamedFont]:
+    """Move the named fonts whose family the board did not author to the family it set
+    on `style.font`. `code` stays monospace."""
+    assert merged.fonts is not None
+    if "font" not in patch.model_fields_set or (
+        "family" not in patch.font.model_fields_set
+    ):
+        return merged.fonts
+
+    def authored(name: str) -> bool:
+        return (
+            patch.fonts is not None
+            and name in patch.fonts
+            and "family" in patch.fonts[name].model_fields_set
+        )
+
+    return {
+        name: font.model_copy(update={"family": merged.font.family})
+        if name != "code" and font.family is not None and not authored(name)
+        else font
+        for name, font in merged.fonts.items()
+    }
+
+
 def _finalize_style(
     base: Style,
     merged: Style,
@@ -930,9 +957,11 @@ def resolve_style_and_context(
     """
     background = base.background if base_background is None else base_background
     if patch is not None:
-        return _finalize_style(
-            base, merge_style(base, patch), background, currency, language
+        merged = merge_style(base, patch)
+        following = merged.model_copy(
+            update={"fonts": _fonts_following_board_family(merged, patch)}
         )
+        return _finalize_style(base, following, background, currency, language)
 
     # Reached only with base_background unset (a nested board with a cascade
     # always has own_patch), so id(base), currency and language are the whole key.

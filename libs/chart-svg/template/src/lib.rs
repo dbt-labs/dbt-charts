@@ -58,6 +58,8 @@ pub struct TemplateInfo {
     /// A construct the dependency walk does not model; the dependency fields
     /// above are then not to be trusted.
     pub unanalyzed: Option<&'static str>,
+    /// `format` is applied as a filter or named as a constant (`map('format', …)`).
+    pub format: bool,
     /// Some expression does arithmetic (`+ - * / // % **`).
     pub arithmetic: bool,
     /// Some expression joins values into text with `~`.
@@ -132,11 +134,58 @@ pub fn parse(source: &str, kind: Kind) -> Result<TemplateInfo, Vec<Diagnostic>> 
         listings_nonliteral: d.listings_nonliteral,
         header,
         unanalyzed: d.unanalyzed,
+        format: d.format,
         arithmetic: d.arithmetic,
         concat: d.concat,
         orderings: d.orderings,
         ordering_chained: d.ordering_chained,
     })
+}
+
+/// Whether display text reads query results, lists boards, or uses the render-only `format`
+/// (`jinja.py::text_needs_render_data`), outside fenced code. Text that does not parse counts.
+pub fn reads_render_data(text: &str) -> bool {
+    let masked = mask::mask_fenced_code(text);
+    if !["queries", "format", "glob_"].iter().any(|word| masked.contains(word)) {
+        return false;
+    }
+    parse(&masked, Kind::Text).map_or(true, |info| {
+        info.queries_nonliteral || info.listings_nonliteral || info.format || !info.queries.is_empty() || !info.listings.is_empty()
+    })
+}
+
+/// The words a template draws whatever its data (`jinja.py::template_literal_text`): every raw
+/// text node, both branches of an `if` kept. A template that does not parse is returned as written.
+pub fn literal_text(source: &str) -> String {
+    use minijinja::machinery::ast::Stmt;
+    fn collect(stmt: &Stmt<'_>, out: &mut String) {
+        let kids: Vec<&Stmt<'_>> = match stmt {
+            Stmt::EmitRaw(r) => {
+                out.push_str(r.raw);
+                return;
+            }
+            Stmt::Template(t) => t.children.iter().collect(),
+            Stmt::ForLoop(f) => f.body.iter().chain(&f.else_body).collect(),
+            Stmt::IfCond(i) => i.true_body.iter().chain(&i.false_body).collect(),
+            Stmt::WithBlock(w) => w.body.iter().collect(),
+            Stmt::SetBlock(s) => s.body.iter().collect(),
+            Stmt::AutoEscape(a) => a.body.iter().collect(),
+            Stmt::FilterBlock(f) => f.body.iter().collect(),
+            Stmt::Block(b) => b.body.iter().collect(),
+            Stmt::Macro(m) => m.body.iter().collect(),
+            Stmt::CallBlock(c) => c.macro_decl.body.iter().collect(),
+            _ => Vec::new(),
+        };
+        kids.into_iter().for_each(|kid| collect(kid, out));
+    }
+    match parse_stmts(source, "<template>", Default::default(), Default::default()) {
+        Ok(root) if jinja2_refusal(&root, source).is_none() => {
+            let mut out = String::new();
+            collect(&root, &mut out);
+            out
+        }
+        _ => source.to_string(),
+    }
 }
 
 /// `{#---\n<yaml>\n---#}` leading a custom chart template.

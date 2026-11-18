@@ -42,7 +42,7 @@ from ..._backend_runner import DuckDBRunner, SqliteRunner
 
 FLOAT = ColumnType(kind="float")
 LIST_FLOAT = ColumnType(kind="list", element=FLOAT)
-LIMIT = RowFetchLimit(fetch_limit=100, effective_limit=100, ceiling_binding=False)
+LIMIT = RowFetchLimit(limit=100, ceiling_binding=False, max_bytes=10_000_000)
 
 
 def test_driver_list_of_doubles_is_list_float() -> None:

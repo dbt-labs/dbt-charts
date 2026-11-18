@@ -335,6 +335,7 @@ struct SparkBarTheme {
     background: String,
     color: String,
     default_max: f64,
+    width: f64,
     border: SparkRadiusTheme,
 }
 
@@ -732,6 +733,10 @@ struct ColConfig {
     // `style.columns.<col>.swatch`: a color-chip column.
     #[serde(default)]
     swatch: Option<bool>,
+    // `style.columns.<col>.list`: each cell holds a list, drawn one value per
+    // line. A live table opens each row's lists on demand.
+    #[serde(default)]
+    list: Option<bool>,
     // Per-column header overflow mode (`TableColumnConfig.header_overflow`).
     #[serde(default)]
     header_overflow: Option<String>,
@@ -1255,6 +1260,11 @@ struct TableBody<'a> {
     /// take no number, so the index and the pager count only these.
     data_rank: &'a [usize],
     row_heights: &'a [f64],
+    /// How much each row grows when its list cells open; zero for a row with
+    /// nothing to open, which draws no chevron.
+    list_extra: &'a [f64],
+    /// The lists are drawn shut (a live table); `row_heights` then excludes `list_extra`.
+    lists_shut: bool,
     summary_gap_unit: f64,
     rows_start_y: f64,
     th: &'a TableTheme,
@@ -1555,11 +1565,11 @@ pub(crate) mod tests {
     use super::*;
     use crate::tree::Tree;
     use super::layout::title_geometry;
-    use super::layout::strip_js_comments;
     use super::layout::signed_fraction;
     use super::layout::render_spark_columns;
     use super::layout::render_spark_cell;
     use super::layout::render_spark_bar;
+    use super::layout::render_spark_column;
     use super::layout::paginator_window;
     use super::layout::numeric_lane_positions;
     use super::layout::max_page_sum;
@@ -1664,7 +1674,7 @@ pub(crate) mod tests {
                 "column": {"width": 16.0, "height": 24.0},
                 "area": {"fill_opacity": 0.3},
                 "bar": {
-                    "background": "#e5e7eb", "color": "#23467f", "default_max": 100.0, "border": {"radius": 0.0}
+                    "background": "#e5e7eb", "color": "#23467f", "default_max": 100.0, "width": 80.0, "border": {"radius": 0.0}
                 }
             },
             "paginator": {
@@ -2943,18 +2953,6 @@ pub(crate) mod tests {
     // ── table_pagination.js embedding ──────────────────────────────────────
 
     #[test]
-    fn strip_js_comments_removes_the_fenced_engineering_note() {
-        let source = "before/*{# a note\nspanning lines #}*/after";
-        assert_eq!(strip_js_comments(source), "before after");
-    }
-
-    #[test]
-    fn strip_js_comments_leaves_plain_comments_untouched() {
-        let source = "// a plain comment\nconst x = 1; /* also plain */";
-        assert_eq!(strip_js_comments(source), source);
-    }
-
-    #[test]
     fn embed_table_pagination_script_strips_wraps_and_escapes() {
         let mut tree = Tree::new();
         embed_table_pagination_script(&mut tree);
@@ -3440,9 +3438,10 @@ pub(crate) mod tests {
     #[test]
     fn pool_mode_headers_are_sortable_columns() {
         let svg = render(&pool_payload("t1", 4, 20, true, false), &test_fonts()).expect("renders");
-        let header = svg.split(">Product<").next().unwrap();
-        let tag = &header[header.rfind("<text").unwrap()..];
+        let tag = header_tag(&svg, "Product");
         assert!(tag.contains("data-col=\"0\"") && tag.contains("data-dbt-sortable=\"true\""), "{tag}");
+        // The focusable group spans its whole header cell, not the label's glyphs.
+        assert!(tag.contains("<rect ") && tag.contains("fill=\"transparent\""), "{tag}");
         let static_svg = render(&pool_payload("t1", 4, 20, false, false), &test_fonts()).expect("renders");
         assert!(!static_svg.contains("data-dbt-sortable"), "{static_svg}");
     }
@@ -3452,10 +3451,7 @@ pub(crate) mod tests {
         let mut payload = pool_payload("t1", 4, 20, true, false);
         payload.rows[1]["revenue"] = json!("N/A");
         let svg = render(&payload, &test_fonts()).expect("renders");
-        let tag_of = |label: &str| {
-            let head = svg.split(&format!(">{label}<")).next().unwrap();
-            head[head.rfind("<text").unwrap()..].to_string()
-        };
+        let tag_of = |label: &str| header_tag(&svg, label);
         assert!(tag_of("Revenue").contains("data-dbt-sort-type=\"number\""), "{svg}");
         assert!(tag_of("Product").contains("data-dbt-sort-type=\"text\""), "{svg}");
         assert!(tag_of("Note").contains("data-dbt-sort-type=\"text\""), "{svg}");
@@ -3463,9 +3459,78 @@ pub(crate) mod tests {
         assert!(!static_svg.contains("data-dbt-sort-type"), "{static_svg}");
     }
 
+    /// The number attribute `name` of the first `<rect` in `tag`.
+    fn rect_attr(tag: &str, name: &str) -> f64 {
+        let rect = &tag[tag.find("<rect ").expect("cell rect")..];
+        let rect = &rect[..rect.find("/>").unwrap()];
+        let value = rect.split(&format!(" {name}=\"")).nth(1).expect(name);
+        value[..value.find('"').unwrap()].parse().expect("a number")
+    }
+
+    #[test]
+    fn a_sortable_headers_rect_is_its_whole_header_cell() {
+        let svg = render(&pool_payload("t1", 4, 20, true, false), &test_fonts()).expect("renders");
+        let cells: Vec<String> = ["Product", "Revenue", "Note"].iter().map(|l| header_tag(&svg, l)).collect();
+        // The cells tile the header row edge to edge, each as tall as the row,
+        // and end at the header rule.
+        for pair in cells.windows(2) {
+            let end = rect_attr(&pair[0], "x") + rect_attr(&pair[0], "width");
+            assert!((end - rect_attr(&pair[1], "x")).abs() < 0.01, "{svg}");
+        }
+        let rule = svg.split("data-dct-role=\"table-header\"").next().unwrap();
+        let rule = &rule[rule.rfind("<rect ").unwrap()..];
+        let rule_bottom = rect_attr(rule, "y") + rect_attr(rule, "height");
+        for cell in &cells {
+            assert_eq!(rect_attr(cell, "y") + rect_attr(cell, "height"), rule_bottom, "{cell}");
+        }
+    }
+
+    /// A sortable header's group, from its opening tag to its label.
     fn header_tag(svg: &str, label: &str) -> String {
         let head = svg.split(&format!(">{label}<")).next().unwrap();
-        head[head.rfind("<text").unwrap()..].to_string()
+        head[head.rfind("<g ").unwrap()..].to_string()
+    }
+
+    /// Region × (year, quarter) revenue, live, with the total region placed
+    /// `total_at` among the wide rows (`None`: no total).
+    fn pivot_pool_payload(total_at: Option<usize>) -> Payload {
+        let mut regions: Vec<(&str, &str)> = vec![("East", "value"), ("West", "value"), ("North", "value")];
+        if let Some(at) = total_at {
+            regions.insert(at, ("All", "total"));
+        }
+        let rows = regions
+            .iter()
+            .enumerate()
+            .flat_map(|(i, (region, role))| {
+                [("2024", "Q1"), ("2024", "Q2")].map(|(year, quarter)| {
+                    json!({"region": region, "year": year, "quarter": quarter, "revenue": i * 10, "role": role})
+                })
+            })
+            .collect();
+        let mut payload = make_pivot_payload(json!({}), rows, vec!["region"], vec!["year", "quarter"], vec!["revenue"]);
+        payload.resolved["id"] = json!("p1");
+        payload.resolved["row_role"] = json!("role");
+        payload.interactive_controls = true;
+        payload
+    }
+
+    #[test]
+    fn a_live_pivot_sorts_by_its_leaf_and_row_headers_but_not_its_spanners() {
+        let svg = render(&pivot_pool_payload(None), &test_fonts()).expect("renders");
+        assert!(svg.contains("data-dbt-table=\"p1\""), "{svg}");
+        assert!(header_tag(&svg, "Q1").contains("data-dbt-sortable=\"true\""), "{svg}");
+        assert!(header_tag(&svg, "Region").contains("data-dbt-sortable=\"true\""), "{svg}");
+        assert!(!header_tag(&svg, "2024").contains("data-dbt-sortable"), "{svg}");
+        assert!(row_group(&svg, 1).contains("data-dbt-sort=\"10\""), "{svg}");
+    }
+
+    #[test]
+    fn a_live_pivot_pools_a_trailing_total_but_not_one_between_detail_rows() {
+        let trailing = render(&pivot_pool_payload(Some(3)), &test_fonts()).expect("renders");
+        assert!(trailing.contains("data-dbt-row=\"3\" data-dbt-row-role=\"total\""), "{trailing}");
+        assert!(trailing.contains("data-dbt-table=\"p1\""), "{trailing}");
+        let between = render(&pivot_pool_payload(Some(1)), &test_fonts()).expect("renders");
+        assert!(!between.contains("data-dbt-table="), "{between}");
     }
 
     #[test]
@@ -3805,15 +3870,24 @@ pub(crate) mod tests {
     /// `libs/playground/tests/js/table-sort-filter-runtime.test.js` loads this engine
     /// output, so a renamed or dropped hook fails the JS suite. Regenerate
     /// with `UPDATE_TABLE_POOL_FIXTURE=1 cargo test -p chart-renderer --lib table_pool_fixture`.
+    fn assert_pool_fixture(payload: &Payload, name: &str) {
+        let svg = render(payload, &test_fonts()).expect("renders");
+        let path = format!("{}/../../playground/tests/js/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("UPDATE_TABLE_POOL_FIXTURE").is_some() {
+            std::fs::write(&path, format!("{svg}\n")).expect("fixture written");
+        }
+        let committed = std::fs::read_to_string(&path).expect("fixture exists");
+        assert_eq!(committed, format!("{svg}\n"), "regenerate with UPDATE_TABLE_POOL_FIXTURE=1");
+    }
+
     #[test]
     fn table_pool_fixture_is_current_engine_output() {
-        let svg = render(&pool_fixture_payload(), &test_fonts()).expect("renders");
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../playground/tests/js/fixtures/table_pool.svg");
-        if std::env::var_os("UPDATE_TABLE_POOL_FIXTURE").is_some() {
-            std::fs::write(path, format!("{svg}\n")).expect("fixture written");
-        }
-        let committed = std::fs::read_to_string(path).expect("fixture exists");
-        assert_eq!(committed, format!("{svg}\n"), "regenerate with UPDATE_TABLE_POOL_FIXTURE=1");
+        assert_pool_fixture(&pool_fixture_payload(), "table_pool.svg");
+    }
+
+    #[test]
+    fn table_pivot_pool_fixture_is_current_engine_output() {
+        assert_pool_fixture(&pivot_pool_payload(Some(3)), "table_pivot_pool.svg");
     }
 
     #[test]
@@ -3878,6 +3952,73 @@ pub(crate) mod tests {
         assert!(at_cap.contains("data-dbt-pager=\"1\""), "the cap itself keeps per-page pagers");
     }
 
+    /// A live table past the pool cap draws one page per render: its canvas
+    /// fits that page, every page holds `page_rows` rows, and a page taller
+    /// than the slot scrolls inside it.
+    #[test]
+    fn live_unpooled_pages_keep_their_size_and_scroll_a_taller_page() {
+        let payload_with = |tall_at: Option<usize>, interactive: bool, height: f64, page: usize| {
+            let rows: Vec<Value> = (0..=ROW_POOL_CAP)
+                .map(|i| json!({"product": format!("Row {i}"), "note": if Some(i) == tall_at { "word ".repeat(40) } else { "ok".to_string() }}))
+                .collect();
+            let columns = json!({"product": {"label": "Product"}, "note": {"label": "Note", "width": 80}});
+            let mut payload = make_paginated_payload_with_id("t1", columns, rows, 10, height);
+            // Every shipped theme; the slot budget and the canvas agree only there.
+            payload.resolved["style"]["table"]["outer_padding"] = json!(0.0);
+            payload.interactive_controls = interactive;
+            payload.variables = json!({"t1_page": page}).as_object().unwrap().clone();
+            payload
+        };
+        let render_page = |tall_at, interactive, height, page| {
+            render(&payload_with(tall_at, interactive, height, page), &test_fonts()).expect("renders")
+        };
+        assert!(
+            rendered_height(&render_page(Some(15), false, 0.0, 1)) > rendered_height(&render_page(None, false, 0.0, 1)),
+            "the page-2 row must wrap taller for this pin to apply"
+        );
+        let page_1 = rendered_height(&render_page(None, true, 0.0, 1));
+        assert_eq!(rendered_height(&render_page(Some(15), true, 0.0, 1)), page_1, "a page-2 row does not size page 1");
+
+        let drawn = |svg: &str| -> Vec<usize> {
+            (0..=ROW_POOL_CAP).filter(|i| svg.contains(&format!(">Row {i}</text>"))).collect()
+        };
+        let first = render_page(Some(15), true, page_1, 1);
+        assert_eq!(drawn(&first), (0..10).collect::<Vec<_>>(), "page 1 in its own slot:\n{first}");
+        assert!(!first.contains("data-dbt-table-scroll"), "page 1 fits");
+        let second = render_page(Some(15), true, page_1, 2);
+        assert_eq!(drawn(&second), (10..20).collect::<Vec<_>>(), "page 2 in page 1's slot:\n{second}");
+        assert!(second.contains(">101<"), "every page holds 10 rows:\n{second}");
+        assert!(attr_f64(&second, "data-max-y") > 0.0, "the taller page scrolls:\n{second}");
+        assert_eq!(rendered_height(&second), page_1, "the slot holds");
+    }
+
+    /// `page_rows: null` lets the slot pick one page size for every page, so a
+    /// taller later page still fits the slot, pager included.
+    #[test]
+    fn live_unpooled_null_page_rows_keeps_every_page_in_the_slot() {
+        let slot = 400.0;
+        let render_page = |page: usize| {
+            let rows: Vec<Value> = (0..=ROW_POOL_CAP)
+                .map(|i| json!({"product": format!("Row {i}"), "note": if i == 15 { "word ".repeat(40) } else { "ok".to_string() }}))
+                .collect();
+            let columns = json!({"product": {"label": "Product"}, "note": {"label": "Note", "width": 80}});
+            let mut payload = make_paginated_payload_with_id("t1", columns, rows, 10, slot);
+            payload.resolved["style"]["table"]["pagination"]["page_rows"] = Value::Null;
+            payload.interactive_controls = true;
+            payload.variables = json!({"t1_page": page}).as_object().unwrap().clone();
+            render(&payload, &test_fonts()).expect("renders")
+        };
+        let first = render_page(1);
+        let rows = (0..=ROW_POOL_CAP).filter(|i| first.contains(&format!(">Row {i}</text>"))).count();
+        for page in 1..=3 {
+            let svg = render_page(page);
+            assert_eq!(rendered_height(&svg), slot, "{svg}");
+            assert!(pager_baseline_y(&svg) <= slot, "page {page} keeps its pager in the slot:\n{svg}");
+            let drawn = (0..=ROW_POOL_CAP).filter(|i| svg.contains(&format!(">Row {i}</text>"))).count();
+            assert_eq!(drawn, rows, "page {page} holds the same page size");
+        }
+    }
+
     /// Wrapped rows of uneven height: the pool canvas, pager included, stays
     /// inside the slot it was given and holds the tallest page a sort can build.
     fn uneven_wrapped_pool(height: f64) -> Payload {
@@ -3926,7 +4067,8 @@ pub(crate) mod tests {
             .map(|s| s.split('"').next().unwrap().parse().unwrap())
             .collect();
         let rows_y = attr_f64(&svg, "data-dbt-rows-y");
-        let rows_end = rows_y + heights[..page_rows].iter().sum::<f64>();
+        // The open page is taller than the slot: it scrolls, and its rows end at the body.
+        let rows_end = (rows_y + heights[..page_rows].iter().sum::<f64>()).min(attr_f64(&svg, "data-rows-bottom"));
         assert_eq!(attr_f64(&svg, "data-dbt-rows-end"), rows_end, "{svg}");
         let mut tallest = heights.clone();
         tallest.sort_by(|a, b| b.total_cmp(a));
@@ -3951,22 +4093,22 @@ pub(crate) mod tests {
         assert_eq!(header_top + attr_f64(edge, " height"), rows_end, "{svg}");
     }
 
+    /// The body fits the open page; a taller page a sort or the pager builds
+    /// scrolls inside it, so the pager stays under the body.
     #[test]
-    fn an_unslotted_pool_with_uneven_wrapped_rows_holds_its_tallest_page_and_pager() {
+    fn an_unslotted_pool_with_uneven_wrapped_rows_fits_its_open_page_and_scrolls_taller_ones() {
         let svg = render(&uneven_wrapped_pool(0.0), &test_fonts()).expect("renders");
-        assert!(svg.contains("data-dbt-table=\"t1\""), "{svg}");
-        assert!(pager_baseline_y(&svg) <= rendered_height(&svg), "{svg}");
-        // The tallest page a sort can build fits in the canvas, pager below it.
-        let mut heights: Vec<f64> = svg
-            .split("data-dbt-h=\"")
-            .skip(1)
-            .map(|s| s.split('"').next().unwrap().parse().unwrap())
-            .collect();
-        heights.sort_by(|a, b| b.total_cmp(a));
-        let tallest_page: f64 = heights.iter().take(10).sum();
-        let rows_y: f64 = svg.split("data-dbt-rows-y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
-        let pager_below_rows = pager_baseline_y(&svg) - attr_f64(&svg, "data-dbt-rows-end");
-        assert!(rows_y + tallest_page + pager_below_rows <= rendered_height(&svg), "{svg}");
+        assert!(svg.contains("data-dbt-page-overflow=\"\""), "{svg}");
+        let rows_end = attr_f64(&svg, "data-dbt-rows-end");
+        assert_eq!(attr_f64(&svg, "data-rows-bottom"), rows_end, "the body clips at the open page");
+        assert_eq!(attr_f64(&svg, "data-dbt-rows-end-max"), rows_end, "the pager stops at the body");
+        assert!(svg.contains("data-min-len="), "the runtime sizes the y thumb per page");
+        let pager = pager_baseline_y(&svg);
+        assert!(rows_end < pager && pager <= rendered_height(&svg), "{svg}");
+        assert!(rendered_height(&svg) - rows_end < 60.0, "no tallest-page space under the open page:\n{svg}");
+
+        let even = render(&pool_payload("t1", 30, 10, true, false), &test_fonts()).expect("renders");
+        assert!(!even.contains("data-dbt-page-overflow"), "even rows fit every page:\n{even}");
     }
 
     #[test]
@@ -4373,9 +4515,11 @@ pub(crate) mod tests {
         let heights = vec![20.0, 20.0, 30.0, 30.0];
         // Size 2's first window (40) fits 50, but window [30, 30] = 60 does
         // not — only size 1 is safe.
-        assert_eq!(largest_safe_page_rows(&heights, 50.0, 4), 1);
+        assert_eq!(largest_safe_page_rows(&heights, 50.0, 4, false), 1);
         // At 60 both size-2 windows fit; size 3's leading window (70) does not.
-        assert_eq!(largest_safe_page_rows(&heights, 60.0, 4), 2);
+        assert_eq!(largest_safe_page_rows(&heights, 60.0, 4, false), 2);
+        // A scroll viewport reads its first rows alone: [20, 20] fits 50.
+        assert_eq!(largest_safe_page_rows(&heights, 50.0, 4, true), 2);
     }
 
     // The control bar anchors below the TALLEST page's rows.
@@ -4458,14 +4602,21 @@ pub(crate) mod tests {
             "company": {"label": "Company"},
             "revenue": {"label": "Revenue"},
         });
-        let payload = live(make_payload(columns, rows, None, 20));
+        let payload = make_payload(columns, rows, None, 20);
         let fonts = test_fonts();
+        // A static export: the slot decides the page size.
         let svg = render(&payload, &fonts).expect("short-slot pagination renders");
-        let svg = visible(&svg);
         assert!(svg.contains("height=\"400\""), "svg height echoes the slot:\n{svg}");
-        assert!(svg.contains("Row 7"), "8th row still on page 1");
-        assert!(!svg.contains("Row 8"), "9th row must fall to page 2:\n{svg}");
+        let page_1 = svg.split("data-page=\"2\"").next().unwrap();
+        assert!(page_1.contains(">Row 7<"), "8th row still on page 1");
+        assert!(!page_1.contains(">Row 8<"), "9th row must fall to page 2:\n{svg}");
         assert!(svg.contains("dbt-paginator"), "control bar present");
+
+        // A live host keeps page_rows on every page and scrolls the page in the slot.
+        let live_svg = visible(&render(&live(payload), &fonts).expect("renders"));
+        assert!(live_svg.contains("height=\"400\""), "svg height echoes the slot:\n{live_svg}");
+        assert!(live_svg.contains(">Row 19</text>") && !live_svg.contains(">Row 20</text>"), "{live_svg}");
+        assert!(live_svg.contains("data-dbt-page-overflow"), "the page scrolls in the slot:\n{live_svg}");
     }
 
     // Subtitle geometry: the subtitle band's height
@@ -5305,7 +5456,7 @@ pub(crate) mod tests {
             "fonts_dir": null,
             "padding": null,
         });
-        let payload = live(crate::test_payload(payload_json));
+        let payload = crate::test_payload(payload_json);
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("renders");
         let svg = visible(&svg);
@@ -6862,6 +7013,130 @@ pub(crate) mod tests {
         assert!(!svg.contains("#3164a3<"), "the hex is paint, not text:\n{svg}");
     }
 
+    fn list_columns() -> Value {
+        json!({"n": {"label": "N"}, "l": {"label": "L", "list": true}, "m": {"label": "M", "list": true}})
+    }
+
+    /// Row `a` has a list to open; `b`'s lists hold one value or none; `c`'s are empty.
+    fn list_rows() -> Vec<Value> {
+        vec![
+            json!({"n": "a", "l": ["x1", "x2", "x3"], "m": ["z1"]}),
+            json!({"n": "b", "l": ["y1"], "m": []}),
+            json!({"n": "c", "l": null, "m": null}),
+        ]
+    }
+
+    fn pooled_list_payload() -> Payload {
+        let mut payload = make_paginated_payload_with_id("t1", list_columns(), list_rows(), 10, 0.0);
+        payload.interactive_controls = true;
+        payload
+    }
+
+    /// A static render draws every list open, one value per line, with a plain
+    /// open chevron on the one row that has more than one value, and no hook a
+    /// runtime would read.
+    #[test]
+    fn a_static_list_column_draws_every_list_open() {
+        let payload = |rows| plain_payload(base_table_theme(), list_columns(), rows, 300.0, 0.0);
+        let svg = render(&payload(list_rows()), &test_fonts()).unwrap();
+        for value in ["x1", "x2", "x3", "y1", "z1"] {
+            assert!(svg.contains(&format!(">{value}</tspan>")), "{svg}");
+        }
+        assert!(!svg.contains("items]"), "{svg}");
+        assert_eq!(svg.matches("<polygon").count(), 1, "one chevron, on row a:\n{svg}");
+        assert!(!svg.contains("data-dbt-list"), "no runtime hook in a picture:\n{svg}");
+        let flat: Vec<Value> = ["a", "b", "c"].iter().map(|n| json!({"n": n, "l": "x1", "m": "z1"})).collect();
+        let text_columns = json!({"n": {"label": "N"}, "l": {"label": "L"}, "m": {"label": "M"}});
+        let one_line =
+            render(&plain_payload(base_table_theme(), text_columns, flat, 300.0, 0.0), &test_fonts()).unwrap();
+        assert!(svg_height(&svg) > svg_height(&one_line), "the open list grows its row:\n{svg}");
+    }
+
+    /// A pooled (live) table draws every row at its shut height, hides the
+    /// lists of the one row it can open, and publishes that row's open height
+    /// and the room under the table. A one-value list stays shown.
+    #[test]
+    fn a_pooled_list_column_draws_shut_and_publishes_its_open_height() {
+        let svg = render(&pooled_list_payload(), &test_fonts()).unwrap();
+        assert!(svg.contains("data-dbt-y=\""), "a pooled table:\n{svg}");
+        let heights: Vec<&str> = svg.split("data-dbt-h=\"").skip(1).map(|s| s.split('"').next().unwrap()).collect();
+        assert!(heights.windows(2).all(|w| w[0] == w[1]), "every row drawn shut: {heights:?}");
+        assert_eq!(svg.matches("data-dbt-h-open=").count(), 1, "only row a opens:\n{svg}");
+        assert_eq!(svg.matches("data-dbt-list=\"\" display=\"none\"").count(), 2, "row a's two lists:\n{svg}");
+        assert!(svg.contains(">y1</tspan>"), "a one-value list stays shown:\n{svg}");
+        assert_eq!(svg.matches("data-dbt-list-toggle=\"closed\"").count(), 1, "{svg}");
+        assert!(svg.contains("data-dbt-rows-slack=\""), "{svg}");
+    }
+
+    /// A table with no list to open publishes no slack, so its runtime never
+    /// grows the board.
+    #[test]
+    fn a_pooled_table_without_lists_to_open_publishes_no_slack() {
+        let rows: Vec<Value> = ["a", "b"].iter().map(|n| json!({"n": n, "l": ["one"], "m": []})).collect();
+        let mut payload = make_paginated_payload_with_id("t1", list_columns(), rows, 10, 0.0);
+        payload.interactive_controls = true;
+        let svg = render(&payload, &test_fonts()).unwrap();
+        assert!(svg.contains("data-dbt-y=\""), "a pooled table:\n{svg}");
+        assert!(!svg.contains("data-dbt-rows-slack"), "{svg}");
+    }
+
+    /// A live table that scrolls draws its lists shut too, but publishes no
+    /// slack: its open rows extend the scroll range, never the board.
+    #[test]
+    fn a_scrolling_live_table_draws_shut_and_publishes_no_slack() {
+        let rows: Vec<Value> = (0..12).map(|i| json!({"n": format!("r{i}"), "l": ["v1", "v2"], "m": []})).collect();
+        let mut payload = make_paginated_payload_with_id("t1", list_columns(), rows, 3, 0.0);
+        payload.resolved["style"]["table"]["pagination"]["mode"] = json!("scroll");
+        payload.interactive_controls = true;
+        let svg = render(&payload, &test_fonts()).unwrap();
+        assert!(svg.contains("data-max-y=\""), "a scrolling table:\n{svg}");
+        assert_eq!(svg.matches("data-dbt-h-open=").count(), 12, "{svg}");
+        assert!(!svg.contains("data-dbt-rows-slack"), "{svg}");
+    }
+
+    /// The chevron gutter sits left of the first column, so the first header
+    /// and a left-aligned row number both start past it.
+    #[test]
+    fn the_list_gutter_moves_the_first_column_and_left_row_numbers() {
+        let mut theme = base_table_theme();
+        theme["outer_padding"] = json!(0.0);
+        theme["row_numbers"] = json!({"visible": true, "header": "#", "align": "left", "font": {"color": "#626366"}});
+        let rows = vec![json!({"n": "a", "l": ["x"]})];
+        let first_x = |list: bool| {
+            let columns = json!({"n": {"label": "Name"}, "l": {"label": "L", "list": list}});
+            let svg = render(&plain_payload(theme.clone(), columns, rows.clone(), 300.0, 0.0), &test_fonts()).unwrap();
+            let at = |needle: &str| -> f64 {
+                let tag = &svg[..svg.find(needle).unwrap_or_else(|| panic!("{needle}:\n{svg}"))];
+                let tag = &tag[tag.rfind("<text").unwrap()..];
+                tag.split(" x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+            };
+            (at(">Name</text>"), at(">#</text>"))
+        };
+        let (plain_header, plain_number) = first_x(false);
+        let (list_header, list_number) = first_x(true);
+        assert!((list_header - plain_header - super::layout::LIST_GUTTER).abs() < 1e-9, "{list_header} {plain_header}");
+        assert!((list_number - plain_number - super::layout::LIST_GUTTER).abs() < 1e-9, "{list_number} {plain_number}");
+    }
+
+    /// With wrapping off, a static slotted table still sizes its pages for the
+    /// open lists, so no value is drawn under the pager.
+    #[test]
+    fn a_static_wrap_off_table_pages_its_open_lists_inside_the_slot() {
+        let rows: Vec<Value> = (0..12)
+            .map(|i| json!({"n": format!("r{i}"), "l": ["v1", "v2", "v3", "v4"], "m": []}))
+            .collect();
+        let mut payload = make_paginated_payload_with_id("t1", list_columns(), rows, 20, 260.0);
+        payload.resolved["style"]["table"]["wrap"] = json!(false);
+        let svg = render(&payload, &test_fonts()).unwrap();
+        assert!(svg.contains("data-paginator-role"), "a paged table:\n{svg}");
+        let pager = pager_baseline_y(&svg);
+        assert!(pager < svg_height(&svg), "the pager sits inside the {} slot:\n{svg}", svg_height(&svg));
+        let mut ys = svg.split("<tspan").skip(1).filter_map(|t| {
+            t.split(" y=\"").nth(1).and_then(|r| r.split('"').next()).and_then(|v| v.parse::<f64>().ok())
+        });
+        assert!(ys.all(|y| y < pager - 8.0), "a value reaches the pager at {pager}:\n{svg}");
+    }
+
     /// A hidden header gives its band and the header/body gap back to the rows.
     #[test]
     fn a_hidden_header_collapses_its_band_and_gap() {
@@ -7444,6 +7719,7 @@ pub(crate) mod tests {
                 background: "#e5e7eb".to_string(),
                 color: "#23467f".to_string(),
                 default_max: 100.0,
+                width: 80.0,
                 border: SparkRadiusTheme { radius: 0.0 },
             },
             column: SparkColumnTheme { width: 16.0 },
@@ -7466,6 +7742,21 @@ pub(crate) mod tests {
             last_visible: None,
             min_max_visible: None,
         }
+    }
+
+    #[test]
+    fn a_nonzero_spark_bar_draws_at_least_one_pixel() {
+        let got = print(&render_spark_bar(1.0, 1000.0, 80.0, 16.0, "#222222", false, "#e5e7eb", 0.0, false));
+        assert_eq!(got, "<rect x=\"0\" y=\"0\" width=\"1\" height=\"16\" fill=\"#222222\"/>");
+        // A signed column grows a negative bar leftward from the midline.
+        let got = print(&render_spark_bar(-1.0, 1000.0, 80.0, 16.0, "#222222", false, "#e5e7eb", 0.0, true));
+        assert_eq!(got, "<rect x=\"39\" y=\"0\" width=\"1\" height=\"16\" fill=\"#222222\"/>");
+    }
+
+    #[test]
+    fn a_nonzero_spark_column_draws_at_least_one_pixel() {
+        let got = print(&render_spark_column(1.0, 1000.0, 16.0, 24.0, "#222222", 0.0, false));
+        assert_eq!(got, "<rect x=\"0\" y=\"23\" width=\"16\" height=\"1\" fill=\"#222222\"/>");
     }
 
     #[test]
@@ -7671,8 +7962,8 @@ pub(crate) mod tests {
         let marker = "<g transform=\"translate(";
         let g_start = svg.find(marker).expect("spark g emitted");
         assert_eq!(
-            &svg[g_start..g_start + marker.len() + "362,82)".len()],
-            "<g transform=\"translate(362,82)",
+            &svg[g_start..g_start + marker.len() + "202,82)".len()],
+            "<g transform=\"translate(202,82)",
             "exact geometry, not just the int-x/float-y format — a cell_x + 8 \
              or row_h-centering mutant must fail this:\n{svg}"
         );
@@ -7742,6 +8033,49 @@ pub(crate) mod tests {
             "a null spark cell draws no mark:\n{svg}"
         );
         assert!(svg.contains(NULL_DISPLAY), "falls through to the ordinary null glyph:\n{svg}");
+    }
+
+    /// Widths of every `<rect>` filled with `fill`.
+    fn rect_widths(svg: &str, fill: &str) -> Vec<f64> {
+        svg.split("<rect ")
+            .skip(1)
+            .filter(|r| r.split('>').next().is_some_and(|tag| tag.contains(&format!("fill=\"{fill}\""))))
+            .filter_map(|r| r.split("width=\"").nth(1)?.split('"').next()?.parse().ok())
+            .collect()
+    }
+
+    #[test]
+    fn a_spark_bar_column_is_sized_for_its_bar_not_its_digits() {
+        // Small integers measure a few pixels of text; the column must still
+        // give the bar room, so the column's largest value draws a long bar.
+        let rows = (0..6).map(|i| json!({"name": format!("Engineer {i}"), "a": i, "b": i, "c": i, "d": i, "n": i * 4})).collect();
+        let columns = json!({
+            "name": {"label": "Name"},
+            "a": {"label": "Pull requests created"},
+            "b": {"label": "PRs with inadequate reviews"},
+            "c": {"label": "Review comments received"},
+            "d": {"label": "Commits authored this sprint"},
+            "n": {"label": "", "spark": {"type": "bar", "color": "#123456"}},
+        });
+        let svg = render(&make_payload(columns, rows, None, 20), &test_fonts()).expect("renders");
+        let longest = rect_widths(&svg, "#123456").into_iter().fold(0.0, f64::max);
+        assert!(longest >= 80.0, "longest bar {longest} < the theme's 80:\n{svg}");
+    }
+
+    #[test]
+    fn an_authored_spark_width_widens_its_column() {
+        let rows = (0..6).map(|i| json!({"name": format!("Engineer {i}"), "a": i, "b": i, "c": i, "d": i, "n": i * 4})).collect();
+        let columns = json!({
+            "name": {"label": "Name"},
+            "a": {"label": "Pull requests created"},
+            "b": {"label": "PRs with inadequate reviews"},
+            "c": {"label": "Review comments received"},
+            "d": {"label": "Commits authored this sprint"},
+            "n": {"label": "", "spark": {"type": "bar", "color": "#123456", "width": 150.0}},
+        });
+        let svg = render(&make_payload(columns, rows, None, 20), &test_fonts()).expect("renders");
+        let longest = rect_widths(&svg, "#123456").into_iter().fold(0.0, f64::max);
+        assert_eq!(longest, 150.0, "{svg}");
     }
 
     #[test]
@@ -8368,11 +8702,11 @@ mod conditional_formatting_tests {
         let payload = cf_payload(columns, rows, cf);
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(
-            svg.contains("text-anchor=\"end\" fill=\"#608470\">A</tspan>"),
+            svg.contains("text-anchor=\"end\" fill=\"#608470\" data-dbt-glyph=\"\">A</tspan>"),
             "glyph tspan with its own fill missing:\n{svg}"
         );
         assert!(
-            svg.contains("text-anchor=\"end\" fill=\"#d49656\">B</tspan>"),
+            svg.contains("text-anchor=\"end\" fill=\"#d49656\" data-dbt-glyph=\"\">B</tspan>"),
             "second row's glyph tspan missing:\n{svg}"
         );
     }
@@ -8398,28 +8732,41 @@ mod conditional_formatting_tests {
         let payload = cf_payload(columns, rows, cf);
         let svg = render(&payload, &test_fonts()).expect("board tones are present; must render");
         assert!(
-            svg.contains("text-anchor=\"end\" fill=\"#008cdd\">A</tspan>"),
+            svg.contains("text-anchor=\"end\" fill=\"#008cdd\" data-dbt-glyph=\"\">A</tspan>"),
             "tone-resolved glyph fill missing:\n{svg}"
         );
         assert!(
-            svg.contains("text-anchor=\"end\" fill=\"#e69812\">B</tspan>"),
+            svg.contains("text-anchor=\"end\" fill=\"#e69812\" data-dbt-glyph=\"\">B</tspan>"),
             "second row's tone-resolved glyph fill missing:\n{svg}"
         );
     }
 
     #[test]
-    fn text_cell_glyph_paints_a_leading_tspan_with_its_own_fill() {
-        let rows = vec![json!({"priority": "urgent"})];
-        let columns = json!({"priority": {"label": "Priority", "width": 200}});
-        let cf = json!({"priority": [
-            {"eq": "urgent", "glyph": "\u{25a0}", "glyph_color": "#a8423a"}
-        ]});
-        let payload = cf_payload(columns, rows, cf);
-        let svg = render(&payload, &test_fonts()).unwrap();
-        assert!(
-            svg.contains(&format!("<tspan fill=\"#a8423a\">{} </tspan>", "\u{25a0}")),
-            "leading glyph tspan missing:\n{svg}"
-        );
+    fn every_cell_glyph_is_a_marked_tspan_with_its_own_fill() {
+        let rows = vec![json!({"priority": "urgent", "lane": 5, "run": 7})];
+        let columns = json!({
+            "priority": {"label": "Priority", "width": 200},
+            "lane": {"label": "Lane"},
+            "run": {"label": "Run", "align": "left"},
+        });
+        let glyph = json!([{"gt": 0, "glyph": "\u{25a0}", "glyph_color": "#a8423a"}]);
+        let cf = json!({
+            "priority": [{"eq": "urgent", "glyph": "\u{25a0}", "glyph_color": "#a8423a"}],
+            "lane": glyph,
+            "run": glyph,
+        });
+        let svg = render(&cf_payload(columns, rows, cf), &test_fonts()).unwrap();
+        for col in 0..3 {
+            let open = format!("data-col=\"{col}\"");
+            let cell = &svg[svg.find(&open).unwrap_or_else(|| panic!("no cell {col}:\n{svg}"))..];
+            let cell = &cell[..cell.find("</text>").unwrap()];
+            let tag = cell.find("data-dbt-glyph=\"\"").unwrap_or_else(|| panic!("cell {col} glyph unmarked:\n{cell}"));
+            let start = cell[..tag].rfind("<tspan").unwrap();
+            let end = cell[tag..].find("</tspan>").unwrap() + tag;
+            let tspan = &cell[start..end];
+            assert!(tspan.contains("fill=\"#a8423a\""), "cell {col} glyph lost its fill: {tspan}");
+            assert!(tspan.contains('\u{25a0}'), "cell {col} marked tspan is not the glyph: {tspan}");
+        }
     }
 
     #[test]
@@ -11393,6 +11740,7 @@ mod header_font_tests {
             11.0,
             true,
             6.0,
+            80.0,
         )
         .unwrap();
         let serif = fonts.measure("quarterly", "Source Serif 4", 11.0).unwrap();

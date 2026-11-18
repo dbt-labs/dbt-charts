@@ -42,6 +42,7 @@ from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.render.board_variables import variable_link
 from dbt_charts.core.render.chart.rendering import render_layout_item
+from dbt_charts.core.render.controls import ships_page_runtime
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.sizing import (
     resolve_active_tab_index,
@@ -61,6 +62,8 @@ from dbt_charts.core.render.svg_utils import (
     border_dash_attrs,
     checked_href,
     escape_attr,
+    flow_bg_attr,
+    format_svg_numeric,
     px,
     selection_boxes,
     translate_group,
@@ -85,6 +88,7 @@ def _bg_rect(
     y: float = 0,
     stroke: str | None = None,
     stroke_width: float = 1,
+    extra_attrs: str = "",
 ) -> str:
     """Return a background rect SVG element."""
     stroke_attr = (
@@ -92,7 +96,20 @@ def _bg_rect(
         if stroke
         else ""
     )
-    return f'<rect x="{escape_attr(x)}" y="{escape_attr(y)}" width="{escape_attr(width)}" height="{escape_attr(height)}" fill="{escape_attr(fill)}"{stroke_attr} rx="{escape_attr(rx)}"/>'
+    return f'<rect x="{escape_attr(x)}" y="{escape_attr(y)}" width="{escape_attr(width)}" height="{escape_attr(height)}" fill="{escape_attr(fill)}"{stroke_attr} rx="{escape_attr(rx)}"{extra_attrs}/>'
+
+
+def _flow_item_attrs(y: float, height: float) -> str:
+    """The top and height a live page reflows a layout by when an item grows.
+
+    Empty for a picture with no page runtime, which never reflows.
+    """
+    if not ships_page_runtime():
+        return ""
+    return (
+        f' data-dbt-flow-y="{format_svg_numeric(y)}"'
+        f' data-dbt-flow-h="{format_svg_numeric(height)}"'
+    )
 
 
 def render_rows_layout(
@@ -157,13 +174,25 @@ def render_rows_layout(
         )
 
         if item_svg:
-            rendered_items.append(translate_group(0, px(current_y), item_svg))
+            rendered_items.append(
+                translate_group(
+                    0,
+                    px(current_y),
+                    item_svg,
+                    _flow_item_attrs(px(current_y), actual_item_height),
+                )
+            )
             actual_total_height = current_y + actual_item_height
             current_y += actual_item_height + gap + card_gap
 
     bg_rect = ""
     if background:
-        bg_rect = _bg_rect(available_width, actual_total_height, background)
+        bg_rect = _bg_rect(
+            available_width,
+            actual_total_height,
+            background,
+            extra_attrs=flow_bg_attr(ships_page_runtime()),
+        )
 
     return f"{bg_rect}\n{''.join(rendered_items)}", actual_total_height
 
@@ -229,12 +258,21 @@ def render_cols_layout(
         )
 
         if item_svg:
-            rendered_items.append(translate_group(px(x_pos), 0, item_svg))
+            rendered_items.append(
+                translate_group(
+                    px(x_pos), 0, item_svg, _flow_item_attrs(0, actual_item_height)
+                )
+            )
             max_actual_height = max(max_actual_height, actual_item_height)
 
     bg_rect = ""
     if background:
-        bg_rect = _bg_rect(available_width, max_actual_height, background)
+        bg_rect = _bg_rect(
+            available_width,
+            max_actual_height,
+            background,
+            extra_attrs=flow_bg_attr(ships_page_runtime()),
+        )
 
     return f"{bg_rect}\n{''.join(rendered_items)}", max_actual_height
 
@@ -302,12 +340,24 @@ def render_grid_layout(
         )
 
         if item_svg:
-            rendered_items.append(translate_group(px(pixel_x), px(pixel_y), item_svg))
+            rendered_items.append(
+                translate_group(
+                    px(pixel_x),
+                    px(pixel_y),
+                    item_svg,
+                    _flow_item_attrs(px(pixel_y), actual_item_height),
+                )
+            )
             max_bottom_edge = max(max_bottom_edge, pixel_y + actual_item_height)
 
     bg_rect = ""
     if background:
-        bg_rect = _bg_rect(available_width, max_bottom_edge, background)
+        bg_rect = _bg_rect(
+            available_width,
+            max_bottom_edge,
+            background,
+            extra_attrs=flow_bg_attr(ships_page_runtime()),
+        )
 
     return f"{bg_rect}\n{''.join(rendered_items)}", max_bottom_edge
 
@@ -540,11 +590,21 @@ def render_tabs_layout(
 
     content_svg = ""
     if item_svg:
-        content_svg = translate_group(px(content_x), px(content_y), item_svg)
+        content_svg = translate_group(
+            px(content_x),
+            px(content_y),
+            item_svg,
+            _flow_item_attrs(px(content_y), actual_item_height),
+        )
 
     bg_rect = ""
     if background:
-        bg_rect = _bg_rect(available_width, actual_height, background)
+        bg_rect = _bg_rect(
+            available_width,
+            actual_height,
+            background,
+            extra_attrs=flow_bg_attr(ships_page_runtime()),
+        )
 
     return f"{bg_rect}\n{tab_bar_svg}\n{content_svg}", actual_height
 

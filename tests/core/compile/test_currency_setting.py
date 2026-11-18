@@ -413,7 +413,7 @@ def test_a_ruler_axis_that_repeats_its_unit_trails_the_magnitude() -> None:
     svg = render_board_to_svg(yaml.safe_dump(board))
     cells = [c for c in re.findall(r"<text[^>]*>([^<]*)</text>", svg) if "€" in c]
     assert len(cells) > 1, cells
-    assert all(re.fullmatch(rf"[\d.]+{_NBSP}Tsd.{_NBSP}€", c) for c in cells), cells
+    assert all(re.fullmatch(rf"[\d.,]+{_NBSP}Mio.{_NBSP}€", c) for c in cells), cells
 
 
 @pytest.mark.parametrize(("locale", "symbol"), [("en-US", "$"), ("de-DE", "€")])

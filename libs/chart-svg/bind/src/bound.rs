@@ -326,6 +326,8 @@ pub struct Kpi {
     pub value_weight: Option<FontWeightValue>,
     pub label_color: Option<String>,
     pub label_weight: Option<FontWeightValue>,
+    /// The weight a matched rule gives the support row and its glyph.
+    pub support_weight: Option<FontWeightValue>,
     /// The sign and currency symbol ahead of the number, set in the affix face; empty for none.
     pub prefix: String,
     /// The number, its sign included when there is no prefix for it to move to.
@@ -471,6 +473,9 @@ pub enum PieLabeled {
 pub struct PieTable {
     pub heading: Option<String>,
     pub table: Table,
+    /// Per listed slice, the text the value column is measured at (`_format_value_for_width`), which
+    /// is not the text it prints.
+    pub value_widths: Vec<String>,
 }
 
 /// A pie's color legend: its entries over the color scale's domain, the title it would draw and the
@@ -554,10 +559,10 @@ pub struct GeoStroke {
 }
 
 /// The ink of a geoshape's stroke: a color, or the theme's self-reference to the board's opaque
-/// background (`theme.background`), which a geoshape's layout will settle on the ground its card draws over.
+/// background (`theme.background`), carrying the canvas under the chart's card that it names.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StrokeInk {
-    BoardBackground,
+    BoardBackground(String),
     Color(String),
 }
 
@@ -569,6 +574,32 @@ pub struct Table {
     /// The query returned no row: the table draws "No results" and the filters that reach it in
     /// place of its columns (`table/layout.rs::lay_out_empty`), and `columns` is empty.
     pub empty: Option<Empty>,
+    /// The links the table's `link:` keys draw; none for a table that authors none.
+    pub links: Option<TableLinks>,
+}
+
+/// Where a table's rows and cells link (`chart-renderer/src/families/table/bind.rs`, `resolve_cell_link`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableLinks {
+    /// The chart's `link:`, one entry per row (none for a row a null placeholder drops); `None` when the
+    /// chart authors no `link:`.
+    pub rows: Option<Vec<Option<RowLink>>>,
+    /// A column's own `link:`, by column then row.
+    pub cells: Vec<Vec<Option<CellLink>>>,
+}
+
+/// A row's link: its target and how it opens, and the `aria-label` its hover band carries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RowLink {
+    pub link: CellLink,
+    pub label: String,
+}
+
+/// A link's checked target and how it opens.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CellLink {
+    pub href: Href,
+    pub open: LinkOpen,
 }
 
 impl Table {
@@ -1464,6 +1495,30 @@ fn duplicate(keys: &[Key]) -> Option<Key> {
 pub struct ValueAxis {
     pub domain: ValueDomain,
     pub format: ResolvedFormat,
+    /// Production paints the labels through a ruler, a `tick_label` or a `labelExpr`
+    /// (`cartesian::value_axis` decides), which leaves the format's spec as the Vega axis `format`.
+    pub composed: bool,
+}
+
+impl ValueAxis {
+    /// The `format` Vega's axis carries for this axis's `labels.format` (`slot_format`,
+    /// `compose_axis_format`): a d3 spec, or `None` where production paints through a `labelExpr`
+    /// and leaves it unset, which the axis description then writes in Vega's own default format.
+    pub fn vega_format(&self) -> Result<Option<&str>, String> {
+        let format = &self.format;
+        if matches!(format.spec.as_str(), "bytes" | "duration") {
+            return Ok(None);
+        }
+        let spec = Some(format.spec.as_str());
+        if self.composed {
+            return Ok(spec);
+        }
+        if !format.prefix.is_empty() || !format.suffix.is_empty() {
+            return Ok(None);
+        }
+        let parts = d3rs::format::parse_parts(&format.spec)?;
+        Ok(if !parts.symbol && format.notation.is_some() && parts.type_ == 's' { None } else { spec })
+    }
 }
 
 /// The continuous scale type a value axis is authored on (`scale.continuous.type`), its parameters

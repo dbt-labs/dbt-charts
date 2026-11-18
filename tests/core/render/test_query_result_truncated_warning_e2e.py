@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from dbt_charts.core.column_types import ColumnType, TypedRows
 from dbt_charts.core.compile import compile
 from dbt_charts.core.render import render
 
@@ -66,6 +67,28 @@ def test_fires_when_query_result_truncated(monkeypatch: pytest.MonkeyPatch) -> N
     assert "max_rows" in w.message
     assert "2" in w.message
     assert w.fix
+
+
+def test_fires_when_the_fetch_stopped_at_the_byte_budget() -> None:
+    """A fetch that stopped at max_result_bytes kept only rows under the budget,
+    so nothing downstream re-cuts them: the reason itself must reach the warning."""
+    result = compile(_BOARD_YAML)
+    assert result.success and result.board is not None, result.errors
+    stopped = TypedRows(
+        ["x"],
+        [(1,), (2,)],
+        [ColumnType(kind="integer")],
+        truncated_reason="max_result_bytes",
+    )
+    executor = Run(
+        result.board, env=scripted_env(ScriptedBackend(side_effect=lambda *_: stopped))
+    )
+
+    render_result = render(result.board, executor.ctx, executor.ledger, format="svg")
+
+    w = next(w for w in render_result.warnings if w.code == _CODE)
+    assert w.chart == "c"
+    assert "max_result_bytes" in w.message
 
 
 def test_silent_when_not_truncated(monkeypatch: pytest.MonkeyPatch) -> None:

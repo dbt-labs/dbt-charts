@@ -58,6 +58,13 @@ MCP_INSTRUCTIONS = (
     f"{SINGLE_VALUE_RULE}"
 )
 
+# Local only: Cloud's connector extends MCP_INSTRUCTIONS and takes no 'markdown'.
+_FENCED_REPLY_RULE = (
+    "A reply that carries ```charts fences is one board: its fences share one "
+    "set of query, chart and variable names. Before you send it, pass the "
+    "whole reply as render_board's 'markdown' and fix what it reports."
+)
+
 _BASE_RESOURCES = [
     (
         "dct://boards",
@@ -154,7 +161,9 @@ def create_server(context: DbtChartsAIContext) -> Any:
             f"Install with: {install_hint('mcp')}"
         ) from e
 
-    server = Server("dbt-charts", instructions=MCP_INSTRUCTIONS)
+    server = Server(
+        "dbt-charts", instructions=f"{MCP_INSTRUCTIONS} {_FENCED_REPLY_RULE}"
+    )
 
     def _uri(value: str) -> AnyUrl:
         return TypeAdapter(AnyUrl).validate_python(value)

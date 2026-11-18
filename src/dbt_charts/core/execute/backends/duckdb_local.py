@@ -30,6 +30,7 @@ import re
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from itertools import chain
 from pathlib import Path  # noqa: TID251 — resolves the DuckDB database file on disk
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -66,10 +67,11 @@ from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.diagnostics.registry import ErrorCode
 from dbt_charts.core.dialects import SQLDialect, get_dialect
 from dbt_charts.core.execute.backends.dbt_adapter_factory import ConnectionSetupFailed
+from dbt_charts.core.execute.backends.typed_fetch import fetch_chunks
 from dbt_charts.core.execute.column_advice import duckdb_unknown_column_advice
 from dbt_charts.core.execute.duckdb_config import normalize_duckdb_config
 from dbt_charts.core.execute.duckdb_types import duckdb_schema, typed_rows
-from dbt_charts.core.execute.query_result import GROUP_BY_MESSAGE
+from dbt_charts.core.execute.query_result import GROUP_BY_MESSAGE, take
 
 # Relative read_csv()/read_parquet() paths resolve against data_dir via a
 # per-connection `SET file_search_path` applied at connection creation. This lock
@@ -682,17 +684,32 @@ class DuckDBBackend:
                     # the connection itself, so it reflects whichever query last
                     # ran on it.
                     description = cursor.description
-                    fetched = cursor.fetchmany(query.limit.fetch_limit)
                 except Exception as exc:  # noqa: BLE001 — classified into a typed QueryError
                     raise _statement_error(exc, conn, query.sql) from exc
+
+                def fetch(
+                    size: int,
+                ) -> list[tuple[Any, ...]]:  # type-state: explicit_any — DuckDB cells
+                    try:
+                        return cursor.fetchmany(size)
+                    except Exception as exc:  # noqa: BLE001 — classified into a typed QueryError
+                        raise _statement_error(exc, conn, query.sql) from exc
+
+                types = duckdb_schema(description) if description else {}
+                rows, reason = take(
+                    chain.from_iterable(
+                        [tuple(row.values()) for row in typed_rows(description, chunk)]
+                        for chunk in fetch_chunks(fetch, query.limit)
+                    )
+                    if description
+                    else [],
+                    list(types),
+                    query.limit,
+                )
         finally:
             if ephemeral:
                 conn.close()
-        types = duckdb_schema(description) if description else {}
-        rows = typed_rows(description, fetched) if description else []
-        return TypedRows(
-            list(types), [tuple(row.values()) for row in rows], list(types.values())
-        )
+        return TypedRows(list(types), rows, list(types.values()), reason)
 
     def reads_only_its_file(self, source: DuckDBSourceConfig) -> bool:
         """Whether a connection for *source* reads nothing but its file.

@@ -55,6 +55,17 @@ fn observed() -> Value {
     json!(["quarter", "region", "revenue"])
 }
 
+/// A list column holds arrays of single values: text is never split into a
+/// list, and a nested array is refused by name.
+#[test]
+fn a_list_column_that_holds_no_list() {
+    let columns = json!({"n": {"label": "N"}, "l": {"label": "L", "list": true}});
+    let text = vec![json!({"n": "a", "l": "x, y"})];
+    assert_eq!(raised(&table(columns.clone(), text)).code, codes::ERR_TABLE_LIST_COLUMN_TYPE.id);
+    let nested = vec![json!({"n": "a", "l": [["x"], ["y"]]})];
+    assert_eq!(raised(&table(columns, nested)).code, codes::ERR_TABLE_LIST_COLUMN_TYPE.id);
+}
+
 /// `_render_swatch_cell`.
 #[test]
 fn a_swatch_cell_that_is_not_a_color() {

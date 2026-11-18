@@ -12,8 +12,8 @@ importers:
         specifier: 6.4.0
         version: 6.4.0
       vega-functions:
-        specifier: 6.1.3
-        version: 6.1.3
+        specifier: 6.2.0
+        version: 6.2.0
 
 packages:
 
@@ -163,9 +163,6 @@ packages:
 
   vega-format@2.1.3:
     resolution: {integrity: sha512-VK0yh3BtK5MUoG7aAXuwb678r2wDdykAUFIKHd9MWvXNo857UqNzZfYixfyXi8xXBK2AV38R4IiQmNKUrXBMUA==}
-
-  vega-functions@6.1.3:
-    resolution: {integrity: sha512-WOgWVxGg1T1tuICyylIppxXWXWEtl7P81Xnj0vQtoIn11VvQ0mrsBZr1aia4g8Sw0fEH1mUO7Dtj7v3o8BgBmQ==}
 
   vega-functions@6.2.0:
     resolution: {integrity: sha512-MRFL7RjVmsv6iYuRZVvrDPZbySLa5Dzd5hC+0LTubysy8OrPengKZEHeRnibvHH6odg3IsKUV44Wv8dN3XzYAw==}
@@ -383,20 +380,6 @@ snapshots:
       d3-array: 3.2.5
       d3-format: 3.1.3
       d3-time-format: 4.1.1
-      vega-time: 3.3.0
-      vega-util: 2.1.3
-
-  vega-functions@6.1.3:
-    dependencies:
-      d3-array: 3.2.5
-      d3-color: 3.1.1
-      d3-geo: 3.1.2
-      vega-dataflow: 6.1.3
-      vega-expression: 6.2.2
-      vega-scale: 8.1.3
-      vega-scenegraph: 5.3.0
-      vega-selections: 6.1.5
-      vega-statistics: 2.0.0
       vega-time: 3.3.0
       vega-util: 2.1.3
 

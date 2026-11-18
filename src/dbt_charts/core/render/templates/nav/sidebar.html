@@ -1,0 +1,16 @@
+<nav class="dbt-sidebar" id="dbt-sidebar" aria-label="Boards">
+  <button type="button" class="dbt-sidebar-toggle" aria-controls="dbt-sidebar" aria-expanded="true" aria-label="Collapse sidebar" title="Collapse sidebar">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M3.5 2h9A2.5 2.5 0 0 1 15 4.5v7a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 1 11.5v-7A2.5 2.5 0 0 1 3.5 2zm0 1.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1H5v-9zm3 0v9h6a1 1 0 0 0 1-1v-7a1 1 0 0 0-1-1z"/></svg>
+  </button>
+  <ul class="dbt-sidebar-list">
+    {%- for row in sidebar %}
+    <li><a class="dbt-sidebar-link{% if row.kind == 'folder' %} dbt-sidebar-folder{% endif %}" href="{{ row.url }}"{% if row.current %} aria-current="page"{% endif %} title="{{ row.label }}">
+      {%- if row.kind == 'folder' -%}
+      <svg class="dbt-sidebar-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 3.5A1 1 0 0 1 2.5 2.5h3.6l1.5 1.5h5.9a1 1 0 0 1 1 1v7.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1zm1.5.5v8h10V5.5H7l-1.5-1.5z"/></svg>
+      {%- else -%}
+      <svg class="dbt-sidebar-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 13.5h12V15H2zM3 8h2.5v4.5H3zm3.75-5h2.5v9.5h-2.5zm3.75 3H13v6.5h-2.5z"/></svg>
+      {%- endif -%}
+      <span class="dbt-sidebar-label">{{ row.label }}</span></a></li>
+    {%- endfor %}
+  </ul>
+</nav>

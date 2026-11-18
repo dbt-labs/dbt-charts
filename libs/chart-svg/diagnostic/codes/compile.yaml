@@ -641,16 +641,34 @@
   summary: Fired when a bar chart's y-axis uses a log scale, which magnitude-from-zero bars
     can't represent.
   docs_topic: charts
+- code: ERR-SCALE-TYPE-SCATTER-ONLY
+  level: error
+  title: pow, sqrt and symlog scales bend only a scatter
+  template: 'Chart {chart_id!r} ({chart_type}): {axis}.scale.continuous.type: {scale_type}
+    is not supported: only a scatter bends its axes on a pow, sqrt or symlog scale, and a {chart_type}
+    would draw {axis} linear under a description naming the type. Use a scatter, or remove
+    the scale type (a line or area y axis also takes `log`; a bar or histogram takes only
+    linear). See charts/axis-scales in the docs.'
+  doc: 'Fired when `axis_x` or `axis_y` sets `scale.continuous.type` to `pow`, `sqrt` or `symlog`
+    on a line, area, bar or histogram chart. Only a scatter bends its axes on those scales;
+    the other families draw their axis linear whichever of them is set, so the axis would
+    be labeled with a scale it does not use. Use a scatter, or remove the scale type. A line
+    or area y axis also takes `log`; a bar or histogram takes only linear (a bar on `log`
+    is `ERR-BAR-LOG-SCALE-NOT-SUPPORTED`). See the axis scales page in the docs, charts/axis-scales.'
+  summary: Fired when a line, area, bar or histogram sets a pow, sqrt or symlog axis scale,
+    which only a scatter draws.
+  docs_topic: charts
 - code: ERR-TORN-OUTLIER-UNSUPPORTED
   level: error
   title: Torn outlier bars are not supported here
   template: 'Chart {chart_id!r}: style.torn_outlier.enabled is not supported {reason}. Set
     style.torn_outlier.enabled: false, or change the chart.'
   doc: 'Fired when `style.torn_outlier.enabled` is on for a chart the tear cannot draw truthfully:
-    a normalized, ranged (`y_start`), layered, small-multiples or histogram chart; one with an
-    authored `axis_y` domain or `zero: false`; one with a negative bar; or one with an annotation
-    past the break. A torn bar''s cap is positioned by its end value above a zero-based break,
-    so these shapes have no honest tear.'
+    a normalized, ranged (`y_start`), small-multiples or histogram chart; one with a bar layer
+    on the shared `axis_y` scale; one with an authored `axis_y` domain above zero or `zero: false`;
+    one that sets both `torn_outlier.at` and an authored `axis_y` domain; or one with an annotation
+    or layer value past the break. A torn bar''s cap is positioned by its end value above a
+    zero-based break, so these shapes have no honest tear.'
   summary: Fired when torn outlier bars are enabled on a chart shape that cannot be torn.
   docs_topic: charts
 - code: ERR-FUNNEL-BAND-WIDTH-TOO-THIN
@@ -1708,15 +1726,6 @@
     with the fold: the series become `<value> - <measure>` composites, one per dimension value
     per measure.'
   docs_topic: charts
-- code: ERR-MULTI-Y-LAYERS-CONFLICT
-  level: error
-  title: 'Multi-y chart cannot also have layers:'
-  template: 'Chart {chart_id!r} ({chart_type}): y: [...] folds measures into a color series
-    automatically -- overlay layers: are not supported with multi-y charts. Keep a single
-    y field and overlay the other measures as layers: entries instead.'
-  doc: 'Fired when a bar, area, line, or scatter chart authors both y: [a, b] and layers:
-    at the same time.'
-  docs_topic: charts
 - code: ERR-WIDE-MEASURE-NAME-CONTAINS-SEPARATOR
   level: error
   title: Wide measure name contains the dimension composite separator
@@ -2023,6 +2032,14 @@
   doc: Fired when a query that another query composes through a `queries.NAME` reference is named like a SQL reserved word, because the composed query becomes a table alias.
   docs_topic: queries
   summary: Fired when a query that another query composes is named like a SQL reserved word.
+- code: ERR-QUERY-EMBED-UNKNOWN
+  level: error
+  title: A query embeds a query the board does not define
+  template: 'Query ''{query}'' embeds {{{{ queries.{ref} }}}}, but no query named ''{ref}'' is defined. Available queries: {available}. Define ''{ref}'' under `queries:` or fix the name.'
+  fix: Define the embedded query under `queries:`, or fix the name in the `queries.<name>` reference.
+  doc: Fired when a query's SQL embeds `{{ queries.NAME }}` and the board and its imports define no query NAME, such as after deleting a query another one still embeds. Python accepts such a board and fails only when it plans the query.
+  docs_topic: queries
+  summary: Fired when a query's SQL embeds a query that is not defined.
 - code: ERR-QUERY-CACHE-REF-UNKNOWN
   level: error
   title: A cache reference names a query the board does not define

@@ -1,0 +1,3 @@
+kind: Features
+body: 'Charts with a multi-measure `y: [...]` accept `layers:`.'
+time: 2026-11-17T10:58:38.679013-08:00

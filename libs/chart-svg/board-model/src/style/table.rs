@@ -478,6 +478,8 @@ pub struct SparkBarCellStyle {
     pub color: Option<Color>,
     /// Default maximum value for bar scale when no explicit max is authored.
     pub default_max: f64,
+    /// Default bar width in pixels; a bar column with no spark.width is sized for it.
+    pub width: f64,
     /// Corner rounding for spark bar cells.
     pub border: CornerStyle,
     /// Spark bar cell font style overrides.
@@ -815,6 +817,9 @@ pub struct ColumnScaleConfig {
     )),
     constraint(forbids(conditional, when(is_in(visible, false)),
         message = "TableColumnConfig: 'conditional' rules on a column with 'visible: false' paint nothing. Remove the rules, show the column, or key a rule on it in style.row.conditional."
+    )),
+    constraint(forbids(format, spark, swatch, when(is_in(list, true)),
+        message = "TableColumnConfig: a 'list: true' column draws each value as text, one per line. Remove 'format', 'spark' or 'swatch', or format the values in the query."
     ))
 )]
 pub struct TableColumnConfig {
@@ -843,6 +848,9 @@ pub struct TableColumnConfig {
     /// its color in the parent chart's palette.
     #[model(absent = "text cells")]
     pub swatch: Option<bool>,
+    /// Each cell is a list, drawn one value per line.
+    #[model(absent = "plain cells")]
+    pub list: Option<bool>,
     /// Column width (integer pixels or CSS string like '10%').
     #[model(absent = "the measured width")]
     pub width: Option<PixelWidth>,

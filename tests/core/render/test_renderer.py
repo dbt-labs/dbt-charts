@@ -29,9 +29,11 @@ from dbt_charts.core.compile.template.daterange import (
 from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_FORMAT_COLUMN_MISSING
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.execute.env import build_exec_env
-from dbt_charts.core.execute.plan import utc_now
+from dbt_charts.core.execute.lookup import Ledger
+from dbt_charts.core.execute.plan import make_context, utc_now
 from dbt_charts.core.render import render
 
+from ..._compile import plan_of
 from ..._run import Run
 from ..._scripted_env import ScriptedBackend, rows_by_sql, scripted_env
 
@@ -876,3 +878,38 @@ def test_a_memo_hit_missing_a_formats_column_fails_only_its_chart(
     assert [d.code for d in rendered.chart_errors] == [
         ERR_QUERY_FORMAT_COLUMN_MISSING.code
     ]
+
+
+_EMBEDDED_UPSTREAM_YAML = """
+title: Embedded upstream
+source: scripted
+queries:
+  base:
+    sql: SELECT 'a' AS cat, 1 AS val FROM wide_table
+  per_cat:
+    sql: SELECT cat, SUM(val) AS val FROM {{ queries.base }} GROUP BY 1
+charts:
+  by_cat:
+    query: per_cat
+    type: bar
+    x: cat
+    y: val
+rows:
+  - by_cat
+"""
+
+
+def test_render_runs_an_embedded_upstream_only_inside_its_reader() -> None:
+    result = compile(_EMBEDDED_UPSTREAM_YAML)
+    assert result.success and result.board is not None, result.errors
+    backend = ScriptedBackend([{"cat": "a", "val": 1}])
+    env = scripted_env(backend)
+    planned = plan_of(result.board, env, utc_now())
+    ledger = Ledger()
+
+    rendered = render(result.board, make_context(result.board, planned, env), ledger)
+
+    assert rendered.board_error is None
+    executed = [call.args[1].sql for call in backend.execute.call_args_list]
+    assert len(executed) == 1, executed
+    assert "GROUP BY" in executed[0]

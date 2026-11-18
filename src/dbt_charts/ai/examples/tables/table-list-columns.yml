@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Open Items by Team
+notes: |
+  One row per team with its owners and tickets as lists. Each list prints one
+  value per line; on a live board every row starts shut and opens from its
+  chevron, and the board grows to fit.
+# Inline `columns`/`values` keep this specimen runnable anywhere. In your own
+# board, return the lists from the query, for example
+# `array_agg(owner) as owners ... group by team`.
+queries:
+  open_items:
+    notes: One row per team; owners and tickets are lists.
+    columns: [team, open_items, owners, tickets]
+    values:
+      - ["Platform", 3, ["Alice", "Bob", "Carol"], ["PLAT-101", "PLAT-117", "PLAT-142"]]
+      - ["Data", 1, ["Dana"], ["DATA-9"]]
+      - ["Growth", 2, ["Eve", "Frank"], ["GRW-33", "GRW-40"]]
+      - ["Security", 4, ["Grace", "Heidi", "Ivan", "Judy"], ["SEC-1", "SEC-2", "SEC-5", "SEC-8"]]
+charts:
+  by_team:
+    type: table
+    query: open_items
+    title: Open items by team
+    style:
+      columns:
+        owners:
+          list: true
+        tickets:
+          list: true
+rows:
+  - by_team

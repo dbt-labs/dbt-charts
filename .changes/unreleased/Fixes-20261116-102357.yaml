@@ -1,0 +1,3 @@
+kind: Fixes
+body: BigQuery stops downloading a result at execution.max_result_bytes, `dct query` and MCP query results on every warehouse are cut and flagged at the row ceiling and that budget, and bulk metadata queries that exceed it fail with an error.
+time: 2026-11-16T10:23:57.750302-05:00

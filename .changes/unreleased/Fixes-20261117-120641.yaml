@@ -1,0 +1,3 @@
+kind: Fixes
+body: A KPI conditional rule that compares to an aggregate function now reports ERR-KPI-CONDITIONAL-AGGREGATE instead of an internal error.
+time: 2026-11-17T12:06:41.603305389Z

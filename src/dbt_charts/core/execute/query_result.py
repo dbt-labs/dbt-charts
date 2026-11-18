@@ -12,12 +12,17 @@ Security:
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 
-from dbt_charts.core.column_types import ColumnType, check_datetime_cells
+from dbt_charts.core.column_types import (
+    ColumnType,
+    TruncatedReason,
+    check_datetime_cells,
+)
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.connections import classify_connection_error
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -92,7 +97,7 @@ class QueryResult:
         schema: dict[str, ColumnType] | None = None,
         error: DbtChartsError | None = None,
         resolved_relations: list[ResolvedRelation] | None = None,
-        truncated_reason: Literal["max_rows"] | None = None,
+        truncated_reason: TruncatedReason | None = None,
     ) -> None:
         """Initialize query result.
 
@@ -106,7 +111,8 @@ class QueryResult:
             truncated_reason: Set to "max_rows" when the execution.max_rows
                 ceiling (not the author's own Query.limit) bound this result at
                 fetch time — i.e. the adapter requested one extra row over the
-                ceiling and got it back. None when the author's own limit was
+                ceiling and got it back — or "max_result_bytes" when the fetch
+                stopped at the byte budget. None when the author's own limit was
                 the binding value, or no ceiling fired.
         """
         self.data = data or []
@@ -125,7 +131,7 @@ class QueryResult:
         self.schema: dict[str, ColumnType] = {} if schema is None else schema
         self.error = error
         self.resolved_relations: list[ResolvedRelation] = resolved_relations or []
-        self.truncated_reason: Literal["max_rows"] | None = truncated_reason
+        self.truncated_reason: TruncatedReason | None = truncated_reason
 
     @property
     def is_success(self) -> bool:
@@ -135,62 +141,88 @@ class QueryResult:
 
 @dataclass(frozen=True)
 class RowFetchLimit:
-    """How many rows to ask the driver for via a bounded fetch (dbt-adapters'
-    ``execute(..., limit=...)`` kwarg, or a direct cursor ``fetchmany()``),
-    resolved against the author's own Query.limit and the configured
-    execution.max_rows ceiling.
+    """The caps a result is cut to: ``limit``, the author's own ``Query.limit``
+    clamped to the ``execution.max_rows`` ceiling, and ``max_bytes``, the
+    ``execution.max_result_bytes`` budget.
 
-    ``fetch_limit`` is what actually gets requested from the driver. When the
-    ceiling is binding, it over-fetches by one row (``effective_limit + 1``)
-    so the caller can tell "there were more rows than the ceiling" without
-    knowing the true total — compare the fetched row count against
-    ``effective_limit`` and slice/flag if over (apply_row_limit_truncation).
-    ``ceiling_binding`` is False when the author's own limit is already at or
-    below the ceiling — in that case fetch_limit == effective_limit and the
-    fetch already returns at most that many rows, so no slicing or
-    truncation flag is ever needed for it.
+    ``ceiling_binding`` is False when the author's own limit is the cap: a cut
+    there is what the author asked for, so it is never flagged. A byte cut is
+    flagged either way.
     """
 
-    fetch_limit: int
-    effective_limit: int
+    limit: int
     ceiling_binding: bool
+    max_bytes: int
+
+    @property
+    def fetch_limit(self) -> int:
+        """Rows a fetch reads: one past a binding ceiling, so :func:`take` can
+        flag that there were more; exactly an author's own limit, so no row
+        outside the result is ever read."""
+        return self.limit + 1 if self.ceiling_binding else self.limit
 
 
 def resolve_effective_row_limit(query_limit: int | None) -> RowFetchLimit:
     """Resolve the row limit to fetch: author's Query.limit, clamped to the
     execution.max_rows ceiling (which may itself be clamped to a deployment
-    ceiling — see resolve_max_rows()).
+    ceiling — see resolve_max_rows()), plus the max_result_bytes budget.
     """
-    from dbt_charts.core.compile.config import resolve_max_rows
-
-    ceiling = resolve_max_rows()
-    if query_limit is not None and query_limit > 0 and query_limit <= ceiling:
-        return RowFetchLimit(
-            fetch_limit=query_limit, effective_limit=query_limit, ceiling_binding=False
-        )
-    return RowFetchLimit(
-        fetch_limit=ceiling + 1, effective_limit=ceiling, ceiling_binding=True
+    from dbt_charts.core.compile.config import (
+        resolve_max_result_bytes,
+        resolve_max_rows,
     )
 
+    ceiling = resolve_max_rows()
+    max_bytes = resolve_max_result_bytes()
+    if query_limit is not None and query_limit > 0 and query_limit <= ceiling:
+        return RowFetchLimit(
+            limit=query_limit, ceiling_binding=False, max_bytes=max_bytes
+        )
+    return RowFetchLimit(limit=ceiling, ceiling_binding=True, max_bytes=max_bytes)
 
-_RowT = TypeVar("_RowT")
+
+_RowT = TypeVar(
+    "_RowT",
+    tuple[Any, ...],  # type-state: explicit_any — warehouse cell values
+    dict[str, Any],  # type-state: explicit_any — warehouse cell values
+)
 
 
-def apply_row_limit_truncation(
-    rows: list[_RowT], limit: RowFetchLimit
-) -> tuple[list[_RowT], Literal["max_rows"] | None]:
-    """Slice fetched rows to the effective limit, flagging truncation only
-    when the ceiling (not the author's own limit) was the binding value.
+def take(
+    rows: Iterable[_RowT], columns: list[str], limit: RowFetchLimit
+) -> tuple[list[_RowT], TruncatedReason | None]:
+    """The rows *limit* keeps, and why it cut, if it did.
 
-    Generic over the row type: each adapter calls this on its own driver's
-    native row shape (agate rows, DuckDB/sqlite3 tuples) before converting to
-    dicts, so the row type is preserved rather than widened to Any.
+    Rows are kept in order until the next would push the running size past
+    ``limit.max_bytes`` or one would land past ``limit.limit``. A row cut names
+    ``"max_rows"`` only when the ceiling, not the author's own ``Query.limit``,
+    was binding. *rows* is read no further than the row that decides the cut.
+
+    A row's size is the length of its row dict serialized as JSON; a tuple row
+    is measured as the dict *columns* would make of it. Callers pass rows
+    already decoded and converted, so the size measured is the size cached.
     """
-    if len(rows) > limit.effective_limit:
-        return rows[
-            : limit.effective_limit
-        ], "max_rows" if limit.ceiling_binding else None
-    return rows, None
+    key_bytes = sum(len(json.dumps(name)) + 2 for name in columns)
+    kept: list[_RowT] = []
+    total_bytes = 0
+    for row in rows:
+        if len(kept) == limit.limit:
+            return kept, "max_rows" if limit.ceiling_binding else None
+        total_bytes += len(json.dumps(row, default=str))
+        if not isinstance(row, dict):
+            total_bytes += key_bytes
+        if total_bytes > limit.max_bytes:
+            return kept, "max_result_bytes"
+        kept.append(row)
+    return kept, None
+
+
+def primary_truncation_reason(
+    cut: TruncatedReason | None, upstream: TruncatedReason | None
+) -> TruncatedReason | None:
+    """Combine the reason rows were cut upstream with a later cut's: a byte
+    cut outranks a row cut, and either outranks none."""
+    return cut if upstream is None or cut == "max_result_bytes" else upstream
 
 
 def resolve_setup_sql(

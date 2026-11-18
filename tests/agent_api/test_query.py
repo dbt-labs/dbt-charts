@@ -10,8 +10,11 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import ColumnType, TypedRows
 from dbt_charts.core.execute.env import ExecEnv, build_exec_env
 from dbt_charts.core.project import Project
+
+from .._scripted_env import ScriptedBackend, scripted_env
 
 
 @pytest.fixture
@@ -1060,3 +1063,96 @@ rows:
         assert result.success is False
         assert any("Duplicate query name 'dup'" in e for e in result.errors)
         assert result.error_code == "ERR-DUPLICATE-QUERY-NAME"
+
+
+def _byte_cut(*_args: object) -> TypedRows:
+    """Two rows, the fetch having stopped at the result byte budget."""
+    return TypedRows(
+        ["n"],
+        [(1,), (2,)],
+        [ColumnType(kind="integer")],
+        truncated_reason="max_result_bytes",
+    )
+
+
+class TestByteCutReportsTruncated:
+    """A result cut at max_result_bytes holds fewer rows than the caller's limit,
+    so only the result's own truncation reason can say it is incomplete."""
+
+    def test_execute_query(self) -> None:
+        from dbt_charts.agent_api.query import execute_query
+
+        env = scripted_env(ScriptedBackend(side_effect=_byte_cut))
+        result = execute_query("SELECT n FROM t", source="wh", limit=50, env=env)
+        assert result.success, result.errors
+        assert result.row_count == 2
+        assert result.truncated is True
+
+    def test_query_board(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        path = _write_board(tmp_path, SIMPLE_BOARD)
+        project = FilesystemProject(tmp_path)
+        env = scripted_env(ScriptedBackend(side_effect=_byte_cut), project=project)
+        result = query_board("revenue", path, project, env=env, limit=50)
+        assert result.success, result.errors
+        assert result.row_count == 2
+        assert result.truncated is True
+
+    def test_query_board_over_a_cache_ref(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The composing query runs over the upstream's cached rows; its own
+        byte cut happens there, not in a warehouse fetch."""
+        from dbt_charts.agent_api.query import query_board
+
+        monkeypatch.setenv("DCT_MAX_RESULT_BYTES_CEILING", "100")
+        board = """
+source: db
+queries:
+  base:
+    sql: SELECT n FROM t
+  padded:
+    sql: SELECT n, repeat('x', 60) AS pad FROM {{ queries.base.cache }}
+charts:
+  c:
+    query: padded
+    type: table
+rows:
+  - c
+"""
+        path = _write_board(tmp_path, board)
+        project = FilesystemProject(tmp_path)
+        rows = [{"n": n} for n in range(3)]
+        env = scripted_env(ScriptedBackend(rows), project=project)
+        result = query_board("padded", path, project, env=env, limit=50)
+        assert result.success, result.errors
+        assert result.row_count == 1
+        assert result.truncated is True
+
+
+def test_query_board_cuts_a_values_query_to_the_row_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dbt_charts.agent_api.query import query_board
+
+    monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "2")
+    board = """
+queries:
+  q:
+    columns: [n]
+    values: [[1], [2], [3]]
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+    path = _write_board(tmp_path, board)
+    project = FilesystemProject(tmp_path)
+    env = scripted_env(ScriptedBackend([]), project=project)
+    result = query_board("q", path, project, env=env, limit=50)
+    assert result.success, result.errors
+    assert result.data == [{"n": 1}, {"n": 2}]
+    assert result.truncated is True

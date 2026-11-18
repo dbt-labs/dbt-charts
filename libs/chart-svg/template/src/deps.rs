@@ -38,6 +38,8 @@ pub struct Deps {
     /// A construct the walk does not model; the dependency fields are not
     /// to be trusted when set.
     pub unanalyzed: Option<&'static str>,
+    /// `format` is applied as a filter or named as a constant (`map('format', …)`).
+    pub format: bool,
     /// Some expression adds, subtracts, multiplies, divides or raises.
     pub arithmetic: bool,
     /// Some expression joins values into text with `~`.
@@ -80,6 +82,7 @@ struct Walk<'a> {
     listing_uses: usize,
     listing_literal: usize,
     unanalyzed: Option<&'static str>,
+    format: bool,
     arithmetic: bool,
     concat: bool,
     orderings: Vec<OrderingSite>,
@@ -135,6 +138,7 @@ impl<'a> Walk<'a> {
             listings: self.listings,
             listings_nonliteral: self.listing_uses != self.listing_literal,
             unanalyzed: self.unanalyzed,
+            format: self.format,
             arithmetic: self.arithmetic,
             concat: self.concat,
             orderings: self.orderings,
@@ -417,7 +421,7 @@ impl<'a> Walk<'a> {
     pub(crate) fn expr(&mut self, expr: &ast::Expr<'a>) {
         match expr {
             ast::Expr::Var(v) => self.read(v.id, false),
-            ast::Expr::Const(_) => {}
+            ast::Expr::Const(c) => self.format |= c.value.as_str() == Some("format"),
             ast::Expr::Slice(s) => {
                 self.expr(&s.expr);
                 self.opt(&s.start);
@@ -461,6 +465,7 @@ impl<'a> Walk<'a> {
                 self.opt(&i.false_expr);
             }
             ast::Expr::Filter(f) => {
+                self.format |= f.name == "format";
                 self.opt(&f.expr);
                 f.args.iter().for_each(|a| self.arg(a));
             }

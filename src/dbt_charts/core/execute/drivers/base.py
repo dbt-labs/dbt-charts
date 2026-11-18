@@ -42,7 +42,7 @@ class DriverConnection(Protocol):
     """One open warehouse session on the Arrow seam."""
 
     def execute(self, sql: str, limit: RowFetchLimit) -> na.Array:
-        """Run *sql* and stop fetching once ``limit.fetch_limit`` rows are in hand.
+        """Run *sql* and stop fetching once it holds ``limit.fetch_limit`` rows.
 
         A coarse bound, not an exact one: a driver reads whole batches, so the
         answer overshoots to the end of the batch that crossed the line. What it

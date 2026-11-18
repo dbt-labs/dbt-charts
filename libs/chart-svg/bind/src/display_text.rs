@@ -79,19 +79,19 @@ pub fn render_text(
     queries: &IndexMap<String, Dataset>,
     formats: &IndexMap<String, Alias>,
 ) -> Result<String, Diagnostic> {
-    let blocks = template::mask::fenced_blocks(text);
-    let mut masked = String::with_capacity(text.len());
-    let mut at = 0;
-    for (i, block) in blocks.iter().enumerate() {
-        masked.push_str(&text[at..block.start]);
-        masked.push_str(&fence_token(i));
-        at = block.end;
-    }
-    masked.push_str(&text[at..]);
+    template::mask::resolve_outside_fences(text, |masked| render_masked(masked, variables, queries, formats))
+}
+
+fn render_masked(
+    masked: &str,
+    variables: &IndexMap<String, VariableValue>,
+    queries: &IndexMap<String, Dataset>,
+    formats: &IndexMap<String, Alias>,
+) -> Result<String, Diagnostic> {
     if !masked.contains("{{") && !masked.contains("{%") {
-        return Ok(text.to_string());
+        return Ok(masked.to_string());
     }
-    let info = template::parse(&masked, Kind::Text).map_err(|errors| {
+    let info = template::parse(masked, Kind::Text).map_err(|errors| {
         let message = errors.first().map_or_else(String::new, |e| e.message.clone());
         Diagnostic::refused(refuse!("display text that does not parse is not supported: {message}"))
     })?;
@@ -108,7 +108,7 @@ pub fn render_text(
     if info.ordering_chained {
         return Err(Diagnostic::refused(refuse!("a chained ordering comparison in display text is not supported")));
     }
-    let source = with_orderings_as_calls(&masked, &info.orderings)?;
+    let source = with_orderings_as_calls(masked, &info.orderings)?;
     let mut context = IndexMap::new();
     for (name, value) in variables {
         if !info.variables.contains(name) {
@@ -185,15 +185,7 @@ pub fn render_text(
     if let Some(error) = raised.take() {
         return Err(error);
     }
-    let mut out = rendered.map_err(engine)?;
-    for (i, block) in blocks.iter().enumerate() {
-        out = out.replace(&fence_token(i), &text[block.clone()]);
-    }
-    Ok(out)
-}
-
-fn fence_token(i: usize) -> String {
-    format!("__DCT_MARKDOWN_FENCE_{i}__")
+    rendered.map_err(engine)
 }
 
 /// A minijinja error: an invalid operation production raises as `ERR-TEXT-TYPE-ERROR`,

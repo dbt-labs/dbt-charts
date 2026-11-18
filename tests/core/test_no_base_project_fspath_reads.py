@@ -88,17 +88,17 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/serve/server.py", 239): (
         "_all_board_roots_mtime(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1210): (
+    ("core/serve/server.py", 1217): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1252): (
+    ("core/serve/server.py", 1259): (
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1286): (
+    ("core/serve/server.py", 1293): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1414): (
+    ("core/serve/server.py", 1421): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
     (
@@ -133,7 +133,7 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/serve.py", 83): (
         "prepare_serve(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1348): (
+    ("core/serve/server.py", 1355): (
         "health: create_server's FilesystemProject parameter, closed over"
     ),
     ("agent_api/serve.py", 478): (

@@ -443,6 +443,34 @@
             return el.children.length > 0;
         }
 
+        /*{# Where the table runtime placed a row's bottom. #}*/
+        function rowBottom(el) {
+            var shift = /translate\(0 (-?[\d.]+)\)/.exec(el.getAttribute('transform') || '');
+            return num(el, 'data-dbt-y') + (shift ? parseFloat(shift[1]) : 0) + num(el, 'data-dbt-h');
+        }
+
+        /*{# The body is sized for the open page; a taller page the runtime #}*/
+        /*{# lays out scrolls inside it, its thumb as long as the share in view. #}*/
+        function fitPage() {
+            var bottom = num(root, 'data-rows-bottom');
+            var end = bottom;
+            Array.prototype.forEach.call(rowsHost.children, function (el) {
+                if (el.getAttribute('display') === 'none' || !el.hasAttribute('data-dbt-h')) return;
+                end = Math.max(end, rowBottom(el));
+            });
+            maxY = end - bottom;
+            var viewport = bottom - num(root, 'data-rows-top');
+            thumbs.forEach(function (t) {
+                if (t.getAttribute('data-dbt-scroll-thumb') !== 'y') return;
+                setShown(t, maxY > 0);
+                var len = num(t, 'data-track-len');
+                t.setAttribute('height', String(Math.min(len, Math.max(num(t, 'data-min-len'), len * viewport / (viewport + maxY)))));
+            });
+            /*{# A page that fits leaves vertical touches to the page. #}*/
+            root.style.touchAction = maxY ? (maxX ? 'none' : 'pan-x') : (maxX ? 'pan-y' : 'auto');
+        }
+        if (root.hasAttribute('data-dbt-page-overflow')) fitPage();
+
         /*{# The table runtime sorts, filters and pages rows in place. The frozen #}*/
         /*{# pane and the rules over the frozen edge then mirror the rows pane, and #}*/
         /*{# the scroll range follows the rows still shown. #}*/
@@ -455,8 +483,7 @@
                 rowEnds = [];
                 Array.prototype.forEach.call(rowsHost.children, function (el) {
                     if (el.getAttribute('display') === 'none' || el.hasAttribute('data-dbt-row-role')) return;
-                    var shift = /translate\(0 (-?[\d.]+)\)/.exec(el.getAttribute('transform') || '');
-                    rowEnds.push(num(el, 'data-dbt-y') + (shift ? parseFloat(shift[1]) : 0) + num(el, 'data-dbt-h') - top);
+                    rowEnds.push(rowBottom(el) - top);
                 });
                 rowEnds.sort(function (a, b) { return a - b; });
                 /*{# The pinned total was computed over rows a filter now hides. #}*/
@@ -466,6 +493,8 @@
             if (num(root, 'data-max-y') > 0) {
                 /*{# The last row lands flush: the body scrolls past every row but a page's worth. #}*/
                 maxY = rangeEl ? Math.max(0, rowTop(rowEnds.length) - rowTop(pageRows)) : 0;
+            } else if (root.hasAttribute('data-dbt-page-overflow')) {
+                fitPage();
             }
             stopEasing();
             state.y = target.y = Math.min(target.y, maxY);

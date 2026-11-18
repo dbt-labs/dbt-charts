@@ -625,6 +625,8 @@ impl TextStyleDoc {
 #[derive(Deserialize)]
 struct FontFamilyDoc {
     family: Option<String>,
+    /// The chrome leading every text role without its own inherits.
+    line_height: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -632,6 +634,8 @@ struct FontSizeColorDoc {
     family: Option<String>,
     size: Option<f64>,
     color: Option<String>,
+    /// Read only when a footer row wraps, for its line step (`footer_wrap_step`).
+    line_height: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -5060,19 +5064,6 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
         .max(content_items_height + 2.0 * page_padding);
 
     let footer = &board.style.footer;
-    if footer.visible {
-        let footer_font_size = footer
-            .font
-            .size
-            .ok_or("footer.font.size must be resolved")?;
-        let rule_gap = if footer.divider.line.visible {
-            footer.divider.gap
-        } else {
-            0.0
-        };
-        total_height += footer.y_offset + footer_font_size + rule_gap;
-    }
-
     let font_family = board
         .style
         .font
@@ -5091,6 +5082,46 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
         .family
         .as_deref()
         .ok_or("timestamp.font.family must be resolved")?;
+
+    // `boards.py::_render_board_svg`'s `footer_wrap_step`: an authored width wins
+    // over the footer row's floor, so a timestamp and credit that cannot share
+    // the row wrap — the credit keeps the last line, the timestamp takes the
+    // line above it, right-aligned.
+    let mut footer_wrap_step = 0.0_f64;
+    if footer.visible
+        && board.style.timestamp.visible
+        && board.style.timestamp.position == "footer"
+    {
+        let stamp_font = &board.style.timestamp.font;
+        let stamp_size = stamp_font
+            .size
+            .ok_or("timestamp.font.size must be resolved")?;
+        let (_, credit_width) =
+            footer_attribution_svg(footer, footer_family, 0.0, 0.0, fonts)?;
+        let row = fonts.measure(&payload.render_timestamp_text, timestamp_family, stamp_size)?
+            + board.style.timestamp.gap
+            + credit_width;
+        if row > total_width - 2.0 * page_padding {
+            // `TimestampStyle.font` inherits `Style.font` (`InheritSlot`).
+            footer_wrap_step = stamp_size
+                * stamp_font
+                    .line_height
+                    .or(board.style.font.line_height)
+                    .ok_or("timestamp.font.line_height must be resolved")?;
+        }
+    }
+    if footer.visible {
+        let footer_font_size = footer
+            .font
+            .size
+            .ok_or("footer.font.size must be resolved")?;
+        let rule_gap = if footer.divider.line.visible {
+            footer.divider.gap
+        } else {
+            0.0
+        };
+        total_height += footer.y_offset + footer_font_size + rule_gap + footer_wrap_step;
+    }
 
     // Root background rect gates on the harness's OWN `background` param
     // (None when the resolved style is literally "transparent" —
@@ -5127,7 +5158,7 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
                 .font
                 .size
                 .ok_or("footer.font.size must be resolved")?;
-            let rule_y = footer_y - footer_font_size - footer.divider.gap;
+            let rule_y = footer_y - footer_font_size - footer.divider.gap - footer_wrap_step;
             footer_parts.push(format!(
                 r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="{}"{}/>"#,
                 num_full(page_padding),
@@ -5159,9 +5190,11 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
         let ts_y = if timestamp.position == "top" {
             timestamp.y
         } else {
-            footer_y
+            footer_y - footer_wrap_step
         };
-        let (ts_x, anchor) = if timestamp.align == "left" {
+        let (ts_x, anchor) = if footer_wrap_step > 0.0 {
+            (footer_x, "end")
+        } else if timestamp.align == "left" {
             (page_padding, "start")
         } else if timestamp.position == "footer" && footer.visible {
             (
@@ -5937,6 +5970,43 @@ mod nested_box_sidecar_tests {
             serde_json::json!(96.0),
             "kpi's padded static height"
         );
+    }
+
+    /// `boards.py`'s footer wrap, ported: a board whose authored width cannot hold
+    /// the timestamp beside the credit puts the credit on the last line and the
+    /// timestamp, right-aligned, one line step above it; a row that fits is untouched.
+    #[test]
+    fn a_footer_too_wide_for_the_width_wraps_the_timestamp_above_the_credit() {
+        let fonts = real_fonts();
+        let render = |width: f64| {
+            let mut resolved = minimal_board_json(serde_json::json!([]));
+            resolved["width"] = serde_json::json!(width);
+            resolved["layout"]["content_width"] = serde_json::json!(width - 32.0);
+            let style = &mut resolved["style"];
+            style["footer"]["visible"] = serde_json::json!(true);
+            style["timestamp"]["visible"] = serde_json::json!(true);
+            // The timestamp inherits the root font's chrome leading.
+            style["font"]["line_height"] = serde_json::json!(1.25);
+            let mut p = payload(resolved);
+            p.render_timestamp_text = "Data as of 12:00 UTC on 1 Jan 2026".to_string();
+            render_board(&p, &fonts).expect("board renders").0
+        };
+        let attr = |svg: &str, marker: &str, name: &str| -> f64 {
+            let at = svg.find(marker).expect(marker);
+            let tag = &svg[svg[..=at].rfind('<').unwrap()..];
+            let tag = &tag[..tag.find('>').unwrap()];
+            let start = tag.find(&format!(" {name}=\"")).unwrap() + name.len() + 3;
+            tag[start..].split('"').next().unwrap().parse().unwrap()
+        };
+        let (wide, narrow) = (render(800.0), render(150.0));
+        let stamp_y = |svg: &str| attr(svg, r#"data-role="render-timestamp""#, "y");
+        let credit_y = |svg: &str| attr(svg, r#"data-dct-role="footer-text""#, "y");
+        assert_eq!(stamp_y(&wide), credit_y(&wide), "a row that fits stays one line");
+        let step = 11.0 * 1.25;
+        assert!((credit_y(&narrow) - stamp_y(&narrow) - step).abs() < 1e-6, "{narrow}");
+        let page_right = attr(&narrow, "<svg", "width") - 16.0;
+        assert_eq!(attr(&narrow, r#"data-role="render-timestamp""#, "x"), page_right);
+        assert!(attr(&narrow, "<svg", "height") - attr(&wide, "<svg", "height") >= step - 1e-6);
     }
 
     fn real_fonts() -> FontBook {

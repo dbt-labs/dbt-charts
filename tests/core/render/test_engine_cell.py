@@ -637,7 +637,7 @@ def test_a_callout_cut_in_its_cell_warns_with_its_text_as_authored() -> None:
 
 
 def _spark_bar_board(chart: str) -> str:
-    """A spark_bar board as `record_spark_bar_engine.py` records it from production."""
+    """A one-spark_bar board."""
     return f"""\
 queries:
   q:
@@ -676,7 +676,7 @@ def test_a_spark_bar_is_measured_and_drawn_in_the_engines_cell_at_productions_he
     height: float,
 ) -> None:
     """Production sized this card through `render_native` at these heights before the
-    cell drew it (`spark_counts`, `spark_titled` in `spark_bar_production.json`)."""
+    cell drew it (`spark_counts`, `spark_titled`)."""
     from dbt_charts.core.compile.models.chart.resolved import ResolvedSparkBarChart
     from dbt_charts.core.render import engine
 

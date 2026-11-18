@@ -399,20 +399,8 @@ pub fn toggle_url(variables: &[(String, String)], name: &str, value: &str) -> St
     }
     let query: Vec<String> = params
         .iter()
-        .map(|(k, v)| format!("{}={}", url_encode(k), url_encode(v)))
+        .map(|(k, v)| format!("{}={}", bind::links::quote_plus(k), bind::links::quote_plus(v)))
         .collect();
     format!("?{}", query.join("&"))
 }
 
-/// `urllib.parse.urlencode`'s quoting: letters, digits and `-_.~` stay, a space is `+`, the rest `%XX`.
-fn url_encode(text: &str) -> String {
-    text.bytes()
-        .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (byte as char).to_string()
-            }
-            b' ' => "+".to_string(),
-            _ => format!("%{byte:02X}"),
-        })
-        .collect()
-}

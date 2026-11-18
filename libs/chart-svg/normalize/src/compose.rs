@@ -103,11 +103,6 @@ pub(crate) fn composed_queries(sql: &str) -> Vec<String> {
     plain
 }
 
-/// The names of `{{ queries.NAME.cache }}` in `sql`.
-fn cache_refs(sql: &str) -> Vec<String> {
-    references(sql).1
-}
-
 /// The plain `{{ queries.NAME }}` names and the `{{ queries.NAME.cache }}` names of `sql`.
 fn references(sql: &str) -> (Vec<String>, Vec<String>) {
     let mut plain = Vec::new();
@@ -185,12 +180,12 @@ fn setup_sql_composes(
 }
 
 /// Refuses the first composition problem among `queries`: a `setup_sql` that composes, every
-/// composed name a usable alias, every `.cache` reference naming a defined query, then no query
-/// reaching itself through the queries it composes,
+/// composed name a usable alias, every `queries.NAME` and `queries.NAME.cache` reference naming a
+/// defined query, then no query reaching itself through the queries it composes,
 /// each checked in `QueryId` order. A query is `own`'s or another file's; `scoped` holds the keys
 /// of the queries an imported chart gathered, which compose the queries of their own file, the
-/// rest those of `own` by name. Only queries that exist are followed, and an inline or option
-/// query (an `@` position no author can write) is composed by none, so it closes no cycle.
+/// rest those of `own` by name. An inline or option query (an `@` position no author can write)
+/// is composed by none, so it closes no cycle.
 pub(crate) fn refuse_cycles(
     own: &ProjectPath,
     queries: &IndexMap<String, Option<QueryAuthored>>,
@@ -218,13 +213,18 @@ pub(crate) fn refuse_cycles(
             own
         };
         if let Some(QueryAuthored::Sql(sql)) = query {
-            for name in cache_refs(sql.sql.as_deref().unwrap_or_default()) {
+            let (plain, cached) = references(sql.sql.as_deref().unwrap_or_default());
+            let refs = plain
+                .into_iter()
+                .map(|name| (name, Ref::Embed))
+                .chain(cached.into_iter().map(|name| (name, Ref::Cache)));
+            for (name, kind) in refs {
                 let known = QueryName::try_from(name.clone())
                     .ok()
                     .and_then(|n| QueryId::new(home.clone(), n).ok())
                     .is_some_and(|c| sorted.contains_key(&c));
                 if !known {
-                    return Err(unknown_cache_ref(own, home, id, key, &name, &sorted));
+                    return Err(unknown_ref(kind, own, home, id, key, &name, &sorted));
                 }
             }
         }
@@ -244,10 +244,19 @@ pub(crate) fn refuse_cycles(
     Ok(())
 }
 
-/// A `queries.NAME.cache` reference to no query: it names the holder, and lists the queries of
-/// `home`, the file the reference resolves in. A query hoisted out of a chart has no `queries.<key>`
-/// node to point at, so its refusal carries no path.
-fn unknown_cache_ref(
+/// How a query's SQL names another: inlined (`queries.NAME`) or read from the cache
+/// (`queries.NAME.cache`).
+#[derive(Clone, Copy)]
+enum Ref {
+    Embed,
+    Cache,
+}
+
+/// A `queries.NAME` or `queries.NAME.cache` reference to no query: it names the holder, and lists
+/// the queries of `home`, the file the reference resolves in. A query hoisted out of a chart has no
+/// `queries.<key>` node to point at, so its refusal carries no path.
+fn unknown_ref(
+    kind: Ref,
     own: &ProjectPath,
     home: &ProjectPath,
     holder: &QueryId,
@@ -260,7 +269,11 @@ fn unknown_cache_ref(
         .filter(|id| !id.name().is_inline() && id.file() == home)
         .map(|id| id.label(own))
         .collect();
-    let refusal = diag::err_query_cache_ref_unknown(holder.label(own), name, available.join(", "));
+    let (label, available) = (holder.label(own), available.join(", "));
+    let refusal = match kind {
+        Ref::Embed => diag::err_query_embed_unknown(label, name, available),
+        Ref::Cache => diag::err_query_cache_ref_unknown(label, name, available),
+    };
     HoistError::refused(match holder.name().is_inline() {
         true => refusal,
         false => refusal.at_path(diagnostic::ModelPath(

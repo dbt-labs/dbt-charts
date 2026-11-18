@@ -24,7 +24,6 @@ from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatte
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FIELD_LABELS_WIDE_COLLISION,
     ERR_MULTI_Y_COLOR_CONFLICT,
-    ERR_MULTI_Y_LAYERS_CONFLICT,
     ERR_WIDE_MEASURE_NAME_CONTAINS_SEPARATOR,
 )
 from dbt_charts.core.text.case import field_title
@@ -261,8 +260,6 @@ def resolve_wide_measure_channels(
     normalized: _CartesianChartFields,
     channels: dict[str, ResolvedStyleChannel],
     chart_type: str,
-    *,
-    has_layers: bool,
 ) -> tuple[dict[str, ResolvedStyleChannel], bool]:
     """Validate + inject the synthetic color channel for a wide (``y: [a, b]``)
     chart. Returns ``(channels, wide_measure_series)`` — ``channels`` is
@@ -273,10 +270,7 @@ def resolve_wide_measure_channels(
     by, and the fold's series become ``<value> - <measure>`` composites. Any
     other ``color:`` (a literal hue, a gradient, a conditional scale) names
     nothing to cross the measures with and raises
-    ``ERR_MULTI_Y_COLOR_CONFLICT``. ``ERR_MULTI_Y_LAYERS_CONFLICT`` covers
-    ``layers:`` — a layer can author its own ``color:``, and even a colorless
-    layer's overlay-merge assumes the base's ``y`` is a real, single field,
-    not the synthetic ``WIDE_VALUE_FIELD``. A measure column whose own name
+    ``ERR_MULTI_Y_COLOR_CONFLICT``. A measure column whose own name
     contains ``WIDE_SERIES_SEPARATOR`` can't be split back into a dimension
     value and a measure once folded, and raises
     ``ERR_WIDE_MEASURE_NAME_CONTAINS_SEPARATOR`` -- checked here, from the
@@ -297,12 +291,6 @@ def resolve_wide_measure_channels(
             chart_id=normalized.id,
             chart_type=chart_type,
             color_field=normalized.color,
-        )
-    if has_layers:
-        raise CompilationError.from_code(
-            ERR_MULTI_Y_LAYERS_CONFLICT,
-            chart_id=normalized.id,
-            chart_type=chart_type,
         )
     assert isinstance(normalized.y, list)
     validate_wide_measure_labels(normalized)

@@ -956,3 +956,12 @@ def test_instructions_and_render_board_say_when_an_answer_is_a_sentence(
     for text in (mcp_server.instructions, RENDER_BOARD["description"]):
         assert "A single value needs no chart" in text
         assert "per day, week or month" in text
+
+
+def test_instructions_say_to_check_a_fenced_reply_whole(mcp_server) -> None:
+    """A reply's fences share one set of names, so the local server tells the
+    host to check the reply itself; Cloud's connector takes no `markdown`."""
+    from dbt_charts.ai.mcp.server import MCP_INSTRUCTIONS
+
+    assert "render_board's 'markdown'" in mcp_server.instructions
+    assert "'markdown'" not in MCP_INSTRUCTIONS

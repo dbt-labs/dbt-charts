@@ -218,15 +218,30 @@ pub struct Row {
     pub footer: Vec<Node>,
 }
 
-/// What the footer adds to the root's height: its offset from the bottom edge, its text and the gap
-/// its divider reserves (`render_board_in_scope`); nothing when it is not visible.
-pub fn footer_height(style: &Style) -> f64 {
+/// What the footer adds to the root's height: its offset from the bottom edge, its text, the gap
+/// its divider reserves (`render_board_in_scope`) and the line a wrapped timestamp takes
+/// ([`wrap_step`]); nothing when it is not visible.
+pub fn footer_height(style: &Style, book: &FontBook, page_width: f64, stamp: &str) -> Result<f64, Diagnostic> {
     let footer = &style.footer;
     if !footer.visible {
-        return 0.0;
+        return Ok(0.0);
     }
     let rule_gap = if footer.divider.divider.visible { footer.divider.gap.get() } else { 0.0 };
-    footer.y_offset + footer.font.size + rule_gap
+    Ok(footer.y_offset + footer.font.size + rule_gap + wrap_step(style, book, page_width, stamp)?)
+}
+
+/// `boards.py::_render_board_svg`'s `footer_wrap_step`: an authored width wins over the footer row's
+/// floor, so a timestamp and credit that cannot share the row wrap, the credit keeping the last
+/// line and the timestamp taking the line above it. The row is measured in the timestamp's family
+/// for the stamp and the footer's for the credit, as production does.
+fn wrap_step(style: &Style, book: &FontBook, page_width: f64, stamp: &str) -> Result<f64, Diagnostic> {
+    let (footer, stamp_style) = (&style.footer, &style.timestamp);
+    if !(footer.visible && stamp_style.visible && stamp_style.position == TimestampPosition::Footer) {
+        return Ok(0.0);
+    }
+    let credit = Attribution::measure(&footer_text(style)?, footer.brand_weight, footer.font.size, footer.font.family.as_str(), book)?;
+    let row = advance(book, stamp, stamp_style.font.family.as_str(), stamp_style.font.size, 400.0)? + stamp_style.gap.get() + credit.width();
+    Ok(if row > page_width - 2.0 * style.frame.margin { stamp_style.font.size * stamp_style.font.line_height } else { 0.0 })
 }
 
 fn element(tag: &str, attrs: Attrs, children: Vec<Child>) -> Element {
@@ -253,11 +268,12 @@ pub fn draw(style: &Style, book: &FontBook, page: Page, stamp: &str) -> Result<R
     let family = &with_emoji(footer.font.family.as_str(), emoji);
     let mut nodes = Vec::new();
     let mut footer_width = 0.0;
+    let wrap = wrap_step(style, book, page.width, stamp)?;
     if footer.visible {
         let size = footer.font.size;
         if footer.divider.divider.visible {
             let rule = &footer.divider.divider;
-            let rule_y = footer_y - size - footer.divider.gap.get();
+            let rule_y = footer_y - size - footer.divider.gap.get() - wrap;
             let line = Attrs::new()
                 .num("x1", padding)
                 .num("y1", rule_y)
@@ -295,8 +311,10 @@ pub fn draw(style: &Style, book: &FontBook, page: Page, stamp: &str) -> Result<R
     }
     let stamp_style = &style.timestamp;
     let timestamp = stamp_style.visible.then(|| {
-        let y = if stamp_style.position == TimestampPosition::Top { stamp_style.y } else { footer_y };
-        let (x, anchor) = if stamp_style.align == TimestampAlign::Left {
+        let y = if stamp_style.position == TimestampPosition::Top { stamp_style.y } else { footer_y - wrap };
+        let (x, anchor) = if wrap > 0.0 {
+            (footer_x, "end")
+        } else if stamp_style.align == TimestampAlign::Left {
             (padding, "start")
         } else if stamp_style.position == TimestampPosition::Footer && footer.visible {
             (footer_x - footer_width - stamp_style.gap.get(), "end")

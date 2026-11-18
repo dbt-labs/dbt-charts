@@ -58,7 +58,7 @@ use crate::Payload;
 use crate::TonesStyle;
 use d3rs::py_float::float_repr;
 use d3rs::py_str::is_py_space;
-use mdsvg::pygments_re::is_py_word;
+use d3rs::py_str::is_py_word;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -1546,6 +1546,29 @@ pub(super) fn is_swatch(col: &ColMeta) -> bool {
     col.cfg.swatch == Some(true)
 }
 
+pub(super) fn is_list(col: &ColMeta) -> bool {
+    col.cfg.list == Some(true)
+}
+
+/// The gutter a table with a list column keeps left of its first column for
+/// each list row's chevron.
+pub(super) fn list_gutter(cols: &[ColMeta]) -> f64 {
+    if cols.iter().any(is_list) {
+        super::layout::LIST_GUTTER
+    } else {
+        0.0
+    }
+}
+
+/// One value of a list cell as it paints: text as written, a null as the em dash.
+pub(super) fn list_item_text(item: &Value) -> String {
+    match item {
+        Value::String(s) => s.clone(),
+        Value::Null => NULL_DISPLAY.to_string(),
+        other => other.to_string(),
+    }
+}
+
 /// A typo'd `columns`/`values`/`rows`
 /// field or an empty measure set, raised before any reshape. With `values` omitted the measures are
 /// `infer_pivot_measure_names`'s: every field `rows`, `columns` and the role
@@ -2054,6 +2077,16 @@ pub(super) fn build_cell_data(
                             // raw JSON array text — so its column's demand (and
                             // therefore compact-pinned width) matches
                             // production exactly.
+                            // A list cell's values, one per line: the column measures
+                            // its widest value (`measure` takes the widest line).
+                            Some(Value::Array(items)) if is_list(col) => Cell {
+                                text: items
+                                    .iter()
+                                    .map(list_item_text)
+                                    .collect::<Vec<_>>()
+                                    .join(&measure::LINE_SEP.to_string()),
+                                ..Default::default()
+                            },
                             Some(Value::Array(items)) => Cell {
                                 text: format!("[{} items]", items.len()),
                                 ..Default::default()

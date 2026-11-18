@@ -152,6 +152,13 @@ def px(v: float) -> int:
     return int(round(v))
 
 
+def flow_bg_attr(grows: bool) -> str:
+    """Marks a rect a live page stretches when the box around it grows: a table
+    that opens rows grows its card, the boards it sits in, and their backgrounds.
+    """
+    return ' data-dbt-flow-bg=""' if grows else ""
+
+
 def translate_group(x: int, y: int, content: str, extra_attrs: str = "") -> str:
     """Wrap ``content`` in a translate ``<g>`` — unless the translate is a
     no-op and there is nothing else to carry, in which case ``content`` is
@@ -200,6 +207,7 @@ def selection_boxes(
     outer_height: float,
     padding: dict[str, float],
     mark: tuple[float, float] | None = None,
+    grows: bool = False,
 ) -> str:
     """Two non-painting rects marking an authored block's selection boundary,
     in the tagged group's own coordinate frame. ``outer_width``/``outer_height``
@@ -242,10 +250,10 @@ def selection_boxes(
     return (
         f'<rect class="dbt-box-outer" x="0" y="{px(mark_y)}"'
         f' width="{px(outer_width)}" height="{px(mark_height)}"'
-        f' fill="transparent"/>'
+        f' fill="transparent"{flow_bg_attr(grows)}/>'
         f'<rect class="dbt-box-inner" x="{px(left)}" y="{px(top)}"'
         f' width="{px(inner_width)}" height="{px(inner_height)}"'
-        f' fill="transparent"/>'
+        f' fill="transparent"{flow_bg_attr(grows)}/>'
     )
 
 
@@ -255,6 +263,7 @@ def padded_authoring_content(
     inner_height: float,
     padding: dict[str, float],
     mark: tuple[float, float] | None = None,
+    grows: bool = False,
 ) -> str:
     """The selection-boundary rects plus ``content`` translated inward by
     ``padding`` — for a family whose content is rendered at its un-padded
@@ -267,7 +276,7 @@ def padded_authoring_content(
     top, bottom = padding["top"], padding["bottom"]
     outer_width = inner_width + left + right
     outer_height = inner_height + top + bottom
-    return f"{selection_boxes(outer_width, outer_height, padding, mark)}" + (
+    return f"{selection_boxes(outer_width, outer_height, padding, mark, grows)}" + (
         translate_group(px(left), px(top), content)
     )
 
@@ -287,7 +296,11 @@ def card_box(
 
 
 def border_rect(
-    width: float, height: float, border: "BorderStyle", css_class: str = ""
+    width: float,
+    height: float,
+    border: "BorderStyle",
+    css_class: str = "",
+    grows: bool = False,
 ) -> str:
     """Stroke-only rect tracing a ``width`` x ``height`` box, inset by half the
     stroke so the border stays inside the box; ``""`` when it draws nothing.
@@ -303,21 +316,34 @@ def border_rect(
         f'height="{escape_attr(max(height - stroke, 0))}" '
         f'fill="none" stroke="{escape_attr(border.color)}" stroke-width="{escape_attr(stroke)}"'
         f"{border_dash_attrs(border)} "
-        f'rx="{escape_attr(max(border.radius - inset, 0))}"/>'
+        f'rx="{escape_attr(max(border.radius - inset, 0))}"{flow_bg_attr(grows)}/>'
     )
 
 
-def round_clipped(content: str, width: float, height: float, radius: float) -> str:
+def round_clipped(
+    content: str,
+    width: float,
+    height: float,
+    radius: float,
+    grows_with: str | None = None,
+) -> str:
     """``content`` clipped to a rounded box, so a square background inside it
     cannot poke out past the corners.
 
     The clip id is the geometry itself: two boxes sharing an id share a shape,
     so a page holding several boards cannot make one clip stand in for another.
+    ``grows_with`` is the placement (``id``, ``id#2``) whose card grows on a
+    live page: its clip then takes an id of its own, as growing a shared one
+    would grow every card that uses it. ``#`` cannot sit in an id ``url()``
+    names, so it becomes ``-``.
     """
     clip_id = f"dbt-card-clip-{format_svg_numeric(width)}-{format_svg_numeric(height)}-{format_svg_numeric(radius)}"
+    if grows_with is not None:
+        clip_id = f"{clip_id}-{grows_with.replace('#', '-')}"
     return (
         f'<clipPath id="{escape_attr(clip_id)}"><rect width="{escape_attr(width)}" '
-        f'height="{escape_attr(height)}" rx="{escape_attr(radius)}"/></clipPath>'
+        f'height="{escape_attr(height)}" rx="{escape_attr(radius)}"'
+        f"{flow_bg_attr(grows_with is not None)}/></clipPath>"
         f'<g clip-path="url(#{escape_attr(clip_id)})">{content}</g>'
     )
 
@@ -329,7 +355,9 @@ class CardShadow:
     radius: float
 
 
-def shadow_rect(width: float, height: float, card: CardShadow) -> str:
+def shadow_rect(
+    width: float, height: float, card: CardShadow, grows: bool = False
+) -> str:
     """Box ``fill``ed with the canvas under a ``drop-shadow`` filter, so the
     shadow falls outside the box and the card's own paint covers the rest.
     """
@@ -339,7 +367,8 @@ def shadow_rect(width: float, height: float, card: CardShadow) -> str:
         f'height="{escape_attr(height)}" rx="{escape_attr(card.radius)}" '
         f'fill="{escape_attr(card.fill)}" '
         f'style="filter: drop-shadow({shadow.dx:g}px {shadow.dy:g}px '
-        f'{shadow.blur:g}px {escape_attr(css_color(shadow.color))})"/>'
+        f'{shadow.blur:g}px {escape_attr(css_color(shadow.color))})"'
+        f"{flow_bg_attr(grows)}/>"
     )
 
 

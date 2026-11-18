@@ -220,8 +220,19 @@ class ResolvedTickLabel:
     # significant-digit register to reach cleanly. See
     # `inject_axis_numeral_expr`.
     scientific_format: str | None = None
+    # Set with `si_format`, never otherwise: whether the ladder-less axis's
+    # ticks stack into a column. The ladder is drawn at render time, which
+    # labels it at one shared tier -- anchored on the top tick for a column,
+    # repeated on every tick for a row.
+    column_forming: bool | None = None
 
     def __post_init__(self) -> None:
+        if (self.si_format is None) != (self.column_forming is None):
+            raise ValueError(
+                "ResolvedTickLabel.column_forming is set with si_format and "
+                f"only then. got si_format={self.si_format!r}, "
+                f"column_forming={self.column_forming!r}"
+            )
         if (self.si_format is None) != (self.scientific_format is None):
             raise ValueError(
                 "ResolvedTickLabel.si_format and .scientific_format are set "
@@ -401,8 +412,6 @@ class ResolvedAxisGridThresholdStyle:
 class ResolvedAxisGridTornBaselineStyle:
     enabled: bool
     amplitude: float
-    wavelength: float
-    sharpness: float
 
 
 @dataclasses.dataclass(frozen=True)

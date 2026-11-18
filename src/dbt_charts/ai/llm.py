@@ -457,14 +457,18 @@ class OpenAIAdapter:
     def _assistant_message_input(
         self, message: AssistantMessage
     ) -> list[dict[str, Any]]:
-        # A preamble immediately followed by tool calls is discardable
-        # commentary — the function_call items alone fully specify what
-        # happened. Echoing that text back as a disconnected message is the
-        # 2026-07-23 incident: it broke function_call/function_call_output
-        # adjacency and degraded the model into writing the tool call as prose.
+        # Without the preamble the model re-announces its plan every
+        # iteration. It goes right before its own call items; anywhere else it
+        # is a disconnected message, which breaks call/output adjacency.
         if message.tool_calls:
+            preamble = (
+                [{"role": "assistant", "content": message.content}]
+                if message.content
+                else []
+            )
             return [
                 *message.reasoning_items,
+                *preamble,
                 *[
                     (
                         {

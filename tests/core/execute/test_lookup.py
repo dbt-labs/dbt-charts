@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from dbt_charts.core.column_types import TruncatedReason
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.cache_backend import (
     CachedQueryFailure,
@@ -15,7 +16,7 @@ from dbt_charts.core.execute.cache_backend import (
     ResultRows,
     TruncationInfo,
 )
-from dbt_charts.core.execute.lookup import limit_rows, lookup, memo_key
+from dbt_charts.core.execute.lookup import lookup, memo_key
 from dbt_charts.core.execute.plan import QueryRun
 from dbt_charts.core.execute.query_plan import PlannedCache, PlannedSqlQuery
 
@@ -161,27 +162,42 @@ def test_unregistered_failure_code_reruns() -> None:
     assert [m.name for m in found.misses] == ["q"] and not found.failures
 
 
-def test_limit_rows_returns_the_cut_and_leaves_its_input_alone(
+def _stored(rows: list[dict[str, Any]], reason: TruncatedReason) -> CacheHit:
+    result = rows_result(rows)
+    return CacheHit(result.rows, result.schema, WRITTEN, reason)
+
+
+def test_store_hit_carries_the_writes_own_truncation() -> None:
+    found = _run(_probe(_query()), FakeCache(_stored([{"a": 1}], "max_rows")))
+    assert found.hits["q"].truncation == TruncationInfo("q", 1, "max_rows")
+
+
+def test_a_stored_byte_cut_outranks_a_row_cut_from_a_lowered_ceiling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("dbt_charts.core.compile.config.resolve_max_rows", lambda: 2)
-    given = rows_result([{"a": 1}, {"a": 2}, {"a": 3}])
-
-    kept, truncation = limit_rows(given, "q")
-
-    assert kept.rows == [{"a": 1}, {"a": 2}]
-    assert truncation == TruncationInfo("q", 2, "max_rows")
-    assert len(given.rows) == 3
+    monkeypatch.setattr("dbt_charts.core.compile.config.resolve_max_rows", lambda: 1)
+    stored = _stored([{"a": 1}, {"a": 2}], "max_result_bytes")
+    hit = _run(_probe(_query()), FakeCache(stored)).hits["q"]
+    assert hit.result.rows == [{"a": 1}]
+    assert hit.truncation == TruncationInfo("q", 1, "max_result_bytes")
 
 
-def test_limit_rows_within_the_ceilings_reports_no_truncation() -> None:
-    kept, truncation = limit_rows(rows_result([{"a": 1}]), "q")
-    assert kept.rows == [{"a": 1}] and truncation is None
+def test_a_byte_cut_from_a_lowered_budget_outranks_a_stored_row_cut(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "dbt_charts.core.compile.config.resolve_max_result_bytes", lambda: 10
+    )
+    stored = _stored([{"a": 1}, {"a": 2}], "max_rows")
+    hit = _run(_probe(_query()), FakeCache(stored)).hits["q"]
+    assert hit.result.rows == [{"a": 1}]
+    assert hit.truncation == TruncationInfo("q", 1, "max_result_bytes")
 
 
-def test_limit_rows_keeps_an_upstream_seed_reason() -> None:
-    _kept, truncation = limit_rows(rows_result([{"a": 1}]), "q", "max_rows")
-    assert truncation == TruncationInfo("q", 1, "max_rows")
+def test_a_stored_truncated_incremental_entry_refreshes_in_full() -> None:
+    stored = _stored([{"ts": 1}], "max_result_bytes")
+    found = _run(_probe(_query(incremental="ts")), FakeCache(stored))
+    assert [(m.name, m.tail) for m in found.misses] == [("q", None)]
 
 
 def test_store_hit_over_a_lowered_ceiling_carries_the_truncation(

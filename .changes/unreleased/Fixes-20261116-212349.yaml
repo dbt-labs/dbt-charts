@@ -1,0 +1,3 @@
+kind: Fixes
+body: A board that overrides one key of an inherited variable now keeps the rest of the variable, so its default and options still apply.
+time: 2026-11-16T21:23:49.870189-08:00

@@ -1,19 +1,17 @@
 //! A spark_bar's data: the label and magnitude of each row within `max_bars`, the scale they share
-//! and the count text. `chart-renderer/src/families/spark_bar.rs::bind` decides the same facts;
-//! what this slice does not model is refused by name.
+//! and the count text. `chart-renderer/src/families/spark_bar.rs::bind` decides the same facts.
 
 use std::collections::BTreeSet;
 
-use board_model::board::Board;
 use board_model::chart::query::ChartQuery;
 use board_model::chart::SparkBarChart;
 use board_model::ids::ChartId;
 use board_model::style::spark_bar::SparkBarChartStyle;
 use column_types::ColumnType;
-use diagnostic::{diag, refuse, Diagnostic};
+use diagnostic::{diag, Diagnostic};
 use serde_json::{json, Map, Value};
 
-use crate::formats::locale::NumberLocale;
+use crate::formats::locale::d3_format;
 use crate::bound::{Family, Failure, SparkBar, SparkBarRow};
 use crate::run::RunResult;
 
@@ -21,12 +19,9 @@ use crate::run::RunResult;
 const LABEL_NAMES: [&str; 4] = ["value", "label", "category", "name"];
 const COUNT_NAMES: [&str; 5] = ["frequency", "count", "freq", "n", "total"];
 
-pub fn bind(id: &ChartId, chart: &SparkBarChart, style: &SparkBarChartStyle, board: &Board, run: &RunResult) -> Result<Result<Family, Failure>, Diagnostic> {
+pub fn bind(id: &ChartId, chart: &SparkBarChart, style: &SparkBarChartStyle, run: &RunResult) -> Result<Result<Family, Failure>, Diagnostic> {
     // A spark_bar draws no link, authored or automatic: production hands its renderer none
     // (engine.py:`build_chart_layout`), so its `link:` is never read here.
-    if board.regional.is_some() {
-        return Err(Diagnostic::refused(refuse!("a number locale other than en-US is not supported")));
-    }
     let Some(ChartQuery::Hoisted(query)) = &chart.shared.base.query else {
         return Err(diag::err_internal(format!("chart {id} has no hoisted query")));
     };
@@ -117,14 +112,13 @@ fn label(row: &Map<String, Value>, y: Option<&str>, datetime: bool, n: usize) ->
 }
 
 /// Production keys on the Python type, which the JSON number keeps: an integral float prints
-/// `str(int(v))`, any other float `,.1f`, an int `,d`.
+/// `str(int(v))`, any other float `,.1f`, an int `,d`, each `d3_format` in the board's number locale.
 fn count_text(n: &serde_json::Number) -> Result<String, Diagnostic> {
-    let locale = &NumberLocale::en_us().locale;
     let text = if n.is_i64() || n.is_u64() {
-        d3rs::format::format(locale, ",d", n.as_f64().unwrap_or(0.0))
+        d3_format(",d", n.as_f64().unwrap_or(0.0))
     } else {
         let f = n.as_f64().unwrap_or(0.0);
-        if f.fract() == 0.0 { Ok(format!("{}", f as i64)) } else { d3rs::format::format(locale, ",.1f", f) }
+        if f.fract() == 0.0 { Ok(format!("{}", f as i64)) } else { d3_format(",.1f", f) }
     };
     text.map_err(diag::err_internal)
 }

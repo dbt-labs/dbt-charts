@@ -25,7 +25,7 @@ from dbt_charts.core.compile.models.source import (
 from dbt_charts.core.dialects import SQLDialect, get_dialect
 from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.env import ExecEnv, make_exec_env
-from dbt_charts.core.execute.query_result import QueryResult
+from dbt_charts.core.execute.query_result import QueryResult, take
 from dbt_charts.core.execute.source_resolver import DbtContext
 from dbt_charts.core.project import Project
 
@@ -41,6 +41,7 @@ def typed_rows(rows: Rows, schema: dict[str, ColumnType] | None = None) -> Typed
         columns=list(schema),
         rows=[tuple(row.get(column) for column in schema) for row in rows],
         types=list(schema.values()),
+        truncated_reason=None,
     )
 
 
@@ -88,8 +89,10 @@ class ScriptedBackend:
                     raise result.error
                 result = typed_rows(result.data or [], result.schema)
             typed = result if isinstance(result, TypedRows) else typed_rows(result)
-            # A backend never fetches past the limit it was handed.
-            return typed._replace(rows=typed.rows[: query.limit.fetch_limit])
+            if typed.truncated_reason is not None:
+                return typed  # scripted as a fetch that already stopped
+            rows, reason = take(typed.rows, typed.columns, query.limit)
+            return typed._replace(rows=rows, truncated_reason=reason)
 
         self.execute = Mock(side_effect=answer)
         self.interrupt = Mock()

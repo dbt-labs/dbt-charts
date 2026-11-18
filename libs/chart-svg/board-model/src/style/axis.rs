@@ -29,7 +29,6 @@ use crate::rule::Auto;
 use crate::string_enum;
 use crate::style::board::PaddingStyle;
 use crate::style::font::FontStyle;
-use crate::unit::Fraction;
 use model_core::{
     Cx, Engine, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, Spell, Tri, TypeExpr,
 };
@@ -420,32 +419,21 @@ pub struct AxisGridThresholdStyle {
     pub width: f64,
 }
 
-/// Torn-baseline wave: the plot edge nearest an off-screen zero.
+/// Torn baseline: the plot edge nearest an off-screen zero.
 ///
-/// When a value axis excludes zero, the plot edge nearest zero is drawn as a
-/// wave in the gridline ink so it cannot be read as a floor at zero. Line
-/// charts draw it on the y-axis and ranged bars on their value axis; other
-/// chart types ignore it.
+/// When a value axis excludes zero, the plot edge nearest zero is torn like
+/// paper, in the gridline ink, so it cannot be read as a floor at zero. Line
+/// charts tear the y-axis and ranged bars their value axis; other chart types
+/// ignore it.
 #[derive(Debug, Clone, PartialEq, Model)]
-// One `range` names one field, so two bounds are two constraints.
-#[allow(clippy::duplicated_attributes)]
-#[model(
-    constraint(range(amplitude, gt = 0)),
-    constraint(range(wavelength, ge = 1))
-)]
+#[model(constraint(range(amplitude, gt = 0)))]
 pub struct AxisGridTornBaselineStyle {
     /// Draw the torn baseline.
     #[model(fill = false)]
     pub enabled: bool,
-    /// Wave height in pixels, edge to crest.
-    #[model(fill = 3.5)]
+    /// Deepest bite of the tear into the plot, in pixels.
+    #[model(fill = 8.0)]
     pub amplitude: f64,
-    /// Length of one full wave in pixels.
-    #[model(fill = 30.0)]
-    pub wavelength: f64,
-    /// 0 draws a smooth sine, 1 a sharp zigzag.
-    #[model(fill = 1.0)]
-    pub sharpness: Fraction,
 }
 
 /// Grid line style for every axis variant.
@@ -468,7 +456,7 @@ pub struct BaseAxisGridStyle {
     pub dash: Option<Vec<f64>>,
     /// Threshold-rule gridline style.
     pub threshold: AxisGridThresholdStyle,
-    /// Torn-baseline wave style.
+    /// Torn-baseline style.
     pub torn_baseline: AxisGridTornBaselineStyle,
 }
 

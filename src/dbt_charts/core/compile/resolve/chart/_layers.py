@@ -76,6 +76,10 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _HasColor,
     _with_color_tokens,
 )
+from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    wide_measure_labels_for,
+    wide_series_names,
+)
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     bake_point_companions,
 )
@@ -176,8 +180,9 @@ def _resolve_layer_inks(
 ) -> tuple[LayerInk, ...]:
     """Each layer's ink on the chart's shared color scale (`_layer_ink.layer_inks`).
 
-    The base claims the scale first: one color per value of its categorical
-    `color`, else its one single-series fill. Layers share that scale only
+    The base claims the scale first: one color per folded series of a list
+    `y`, else one per value of its categorical `color`, else its one
+    single-series fill. Layers share that scale only
     where the base's measure is quantitative and its color, if any, is a
     categorical field.
     """
@@ -186,7 +191,22 @@ def _resolve_layer_inks(
     palette = _effective_palette(chart_style_context, primary)
     board_scales = _bound_scales(normalized, chart_style_context, palette)
     color = channels["color"] if normalized.color is not None else None
-    if color is None:
+    if isinstance(normalized.y, list):
+        measures = tuple(normalized.y)
+        base = LayerBase(
+            measure_quantitative,
+            series_colors(
+                wide_series_names(
+                    measures,
+                    normalized.color,
+                    data,
+                    wide_measure_labels_for(measures, normalized.field_labels),
+                ),
+                palette,
+                None,
+            ),
+        )
+    elif color is None:
         name = _series_display_name(
             normalized.y if isinstance(normalized.y, str) else None,
             normalized.y_label,
@@ -327,7 +347,9 @@ def _resolve_one_layer(
             columns=layer.y,
         )
         if is_d3_si_spec(axis_format.spec) and axis_format.is_house:
-            tick_label = ladderless_tick_label(axis_format, list(_layer_values()))
+            tick_label = ladderless_tick_label(
+                axis_format, list(_layer_values()), column_forming=True
+            )
         else:
             tick_label = affix_tick_label(axis_format, ())
         if tick_label is not None and tick_label.anchor_at_start is not None:

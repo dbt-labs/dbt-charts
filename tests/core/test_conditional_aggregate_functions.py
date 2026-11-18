@@ -41,6 +41,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
     resolve_style_and_context,
 )
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import ERR_KPI_CONDITIONAL_AGGREGATE
 
 from ._engine_render import render_chart_svg, render_table_svg
 
@@ -240,8 +242,9 @@ def test_a_kpi_refuses_a_function() -> None:
             }
         },
     )
-    with pytest.raises(ValueError, match="one row"):
+    with pytest.raises(ChartDataError) as raised:
         resolve(chart, [{"total": 1}], chart_style_context=_CTX)
+    assert raised.value.code == ERR_KPI_CONDITIONAL_AGGREGATE
 
 
 def test_a_table_row_rule_is_computed_over_its_column() -> None:

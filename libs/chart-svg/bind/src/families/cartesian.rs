@@ -21,10 +21,10 @@ use model_core::{Engine, Resolved};
 
 use crate::category_colors::{series_colors, CategoryColorScale};
 use crate::column_kind::{field_channel, ChannelType, Role};
-use crate::formats::locale::{active_number_locale, d3_format};
+use crate::formats::locale::{active_number_locale, d3_format, NumberLocale};
 use crate::derived::{DerivedChart, Placed};
-use crate::formats::{column_format, resolve_format_parts, AuthoredFormat, Formats, Kind, ResolvedFormat, Tiers};
-use crate::bound::{self, AxisStyles, Key, Legend, LegendEntry, Paint, Series, SeriesKey, ValueAxis, ValueDomain, ValueScale, Zero};
+use crate::formats::{column_format, resolve_format_parts, AuthoredFormat, Formats, Kind, Repeat, ResolvedFormat, Tiers};
+use crate::bound::{self, AxisStyles, Key, Ladder, Legend, LegendEntry, Paint, Series, SeriesKey, ValueAxis, ValueDomain, ValueScale, Zero};
 use crate::rows::color_domain_of;
 use crate::plot::caps::caps_bottom;
 use crate::plot::domain::{self, Count};
@@ -112,10 +112,12 @@ impl<'a> Prelude<'a> {
         Ok(Self { style, formats: Formats::new(None), tiers, x_ladder, y_ladder, x_scale, y_scale, x_field, y_field, x_title, y_title, x_labeled: is_labeled(&fields.x_label), y_labeled: is_labeled(&fields.y_label) })
     }
 
-    /// The tooltip's number format, voted by `values`.
+    /// The tooltip's number format, voted by `values`: the chart's own `axis_y.labels.format` over the
+    /// board's tooltip format (`_measure_tooltip_format`).
     pub fn tooltip_format(&self, values: &[f64]) -> Result<ResolvedFormat, Diagnostic> {
         let board = AuthoredFormat::named(self.style.charts.tooltip.format.as_str());
-        column_format(Kind::Number, Tiers { own: Some(&board), ..Tiers::default() }, self.formats, None, None, values)
+        let axis = AxisLadder::own_axis_y_format(&self.tiers);
+        column_format(Kind::Number, Tiers { own: Some(axis.as_ref().unwrap_or(&board)), ..Tiers::default() }, self.formats, None, None, values)
     }
 }
 
@@ -167,15 +169,15 @@ pub fn value(key: &Key) -> Result<Option<f64>, Diagnostic> {
     }
 }
 
-/// The axis's label format, resolved. Only the house `number` is ported: a percent draws a unity
-/// rule and anchors a scatter x at zero, and another format labels its ladder by rules not ported.
+/// The axis's label format, resolved. A percent draws a unity rule and anchors a scatter x at zero,
+/// which no family draws yet: refused by name.
 pub fn axis_format(ladder: &AxisLadder<'_>, formats: Formats<'_>) -> Result<ResolvedFormat, Diagnostic> {
     let format = match ladder.labels_format() {
         Some(authored) => resolve_format_parts(&authored, formats)?,
         None => ResolvedFormat::default(),
     };
-    if format.raw.as_deref() != Some("number") || format.has_affix() {
-        return Err(unsupported(refuse!("a cartesian axis format other than the house `number` is not supported")));
+    if format.spec.contains('%') {
+        return Err(unsupported(refuse!("a cartesian axis percent format is not supported")));
     }
     Ok(format)
 }
@@ -258,42 +260,102 @@ pub fn dataset<'a>(
     run.dataset(query, id)
 }
 
-/// A fixed ladder's rung text (a column of labels when `column_forming`), as production labels a
-/// ladder that does not compact (`decide_tick_label`): each rung in the precision its step needs.
-/// A ladder that compacts takes a magnitude ruler, and a column of mixed decimal depths a measured
-/// pad table; neither is ported.
-pub fn rung_text(format: &ResolvedFormat, column_forming: bool, ticks: &[f64]) -> Result<Vec<String>, Diagnostic> {
-    if d3rs::numeral_scale::shared_scale_for_ladder(ticks).is_some() {
-        return Err(unsupported(refuse!("a cartesian axis whose ladder takes a magnitude ruler is not supported")));
-    }
-    let parts = d3rs::format::parse_parts(&format.spec).map_err(diag::err_internal)?;
+/// The tick label production bakes for a ladder (`decide_tick_label`), `None` where it bakes none; a
+/// ladder that takes a magnitude ruler is refused.
+fn tick_label_choice(
+    format: &ResolvedFormat,
+    column_forming: bool,
+    ticks: &[f64],
+    drawn: &[f64],
+) -> Result<Option<d3rs::numeral_scale::TickLabelChoice>, Diagnostic> {
+    // `bytes` and `duration` are natives with no d3 spec: a literal format, never an SI or fixed one.
+    let parts = if d3rs::predefined_formats::PREDEFINED_NATIVE.contains(&format.spec.as_str()) {
+        None
+    } else {
+        Some(d3rs::format::parse_parts(&format.spec).map_err(diag::err_internal)?)
+    };
+    let type_ = parts.as_ref().map(|parts| parts.type_);
+    let repeat = format.repeat.map(|repeat| repeat.to_string());
     let inputs = d3rs::numeral_scale::LabelInputs {
-        si_format: (parts.type_ == 's').then_some(format.spec.as_str()),
-        fixed_decimal_format: None,
+        si_format: (type_ == Some('s')).then_some(format.spec.as_str()),
+        fixed_decimal_format: (format.is_house() && type_ == Some('f') && parts.as_ref().is_some_and(|parts| parts.precision.is_some_and(|p| p > 0)))
+            .then_some(format.spec.as_str()),
         format_is_house: format.is_house(),
-        format_affixed: false,
-        notation: None,
-        repeat: None,
+        format_affixed: !format.prefix.is_empty() || !format.suffix.is_empty(),
+        notation: format.notation.map(|notation| notation.as_str()),
+        repeat: repeat.as_deref(),
         label_expr_authored: false,
         column_forming,
         start_anchored: false,
-        tabular: false,
+        // Whether the label font is tabular is a measured fact bind has no pixels for: assumed, so the
+        // ruler decides alone and a mixed-depth column refuses in `rung_text`.
+        tabular: true,
     };
-    // A ladder with no step (one rung, as a flat extent bakes) is not labeled at one: production
-    // paints its rung as any tick (`paint_tick`).
-    if ticks.windows(2).all(|pair| pair[0] == pair[1]) {
-        let locale = active_number_locale();
-        return ticks.iter().map(|tick| format.paint_tick(&locale, *tick)).collect();
+    let ruler = d3rs::numeral_scale::decide_ruler(&inputs, ticks).map_err(|e| match e {
+        d3rs::numeral_scale::LabelError::ColumnNeedsTabularFont => unreachable!("the inputs assume a tabular font"),
+        d3rs::numeral_scale::LabelError::Other(message) => diag::err_internal(message),
+    })?;
+    if ruler.is_some() {
+        return Err(unsupported(refuse!("a cartesian axis whose ladder takes a magnitude ruler is not supported")));
     }
-    let choice = d3rs::numeral_scale::decide_tick_label(&inputs, ticks, ticks).map_err(diag::err_internal)?;
-    // The house `number` format (the only one a cartesian axis admits) has no symbol, so a ladder
-    // with a step is labeled at it and never anchored at its start.
-    let choice = choice
-        .filter(|choice| choice.anchor_at_start.is_none())
-        .ok_or_else(|| diag::err_internal("a stepped ladder in the house format takes its step label"))?;
+    d3rs::numeral_scale::decide_tick_label(&inputs, ticks, drawn).map_err(Diagnostic::refused)
+}
+
+/// Whether the format's affix anchors on one rung (`_anchors_affix`).
+fn anchors_affix(format: &ResolvedFormat) -> bool {
+    format.repeat == Some(Repeat::Anchor) && (!format.prefix.is_empty() || !format.suffix.is_empty())
+}
+
+/// The axis over `domain` printing through `format`, and whether production composes its labels
+/// (`ValueAxis::composed`): a baked ladder (`baked`: a fixed or authored one) with a tick label or an
+/// anchored affix, a log ladder with an anchored affix, any other with no ladder baked (Vega ticks
+/// it) with an anchored affix or a house SI format.
+pub fn value_axis(domain: ValueDomain, format: ResolvedFormat, column_forming: bool, baked: bool) -> Result<ValueAxis, Diagnostic> {
+    let rungs = |rungs: &[bound::Rung]| rungs.iter().map(|rung| rung.value).collect::<Vec<_>>();
+    let ticks = match &domain.ladder {
+        Ladder::Fixed(ladder) if baked => Some(rungs(ladder.rungs())),
+        Ladder::Authored(authored) => Some(rungs(authored)),
+        _ => None,
+    };
+    let composed = anchors_affix(&format)
+        || match (&ticks, &domain.ladder) {
+            (Some(ticks), _) => tick_label_choice(&format, column_forming, ticks, ticks)?.is_some(),
+            (None, Ladder::Log(_)) => false,
+            (None, _) => format.is_house_si(),
+        };
+    Ok(ValueAxis { domain, format, composed })
+}
+
+/// A fixed ladder's rung text (a column of labels when `column_forming`), as production labels it
+/// (`build_resolved_axis`, painted by `format_y_label`): a house format whose ladder does not compact
+/// takes the precision its step needs (`decide_tick_label`) with its currency symbol on the anchor
+/// rung, any other format prints each rung as written, zero bare, and an anchored affix
+/// (`repeat: anchor`) wears the anchor rung alone. A ladder that compacts takes a magnitude ruler,
+/// and a column of mixed decimal depths a measured pad table; neither is ported.
+pub fn rung_text(format: &ResolvedFormat, column_forming: bool, ticks: &[f64], drawn: &[f64]) -> Result<Vec<String>, Diagnostic> {
+    let locale = active_number_locale();
+    let Some(choice) = tick_label_choice(format, column_forming, ticks, drawn)? else {
+        return affix_text(format, &locale, ticks, drawn);
+    };
+    let affixed = !format.prefix.is_empty() || !format.suffix.is_empty();
+    let anchor_spec = if choice.prefix.is_empty() { choice.digit_spec.clone() } else { d3rs::format::with_symbol(&choice.digit_spec, &choice.prefix) };
+    let anchored = choice.anchor_at_start.is_some();
     let texts = ticks
         .iter()
-        .map(|tick| Ok(format!("{}{}", choice.prefix, d3_format(&choice.digit_spec, *tick).map_err(diag::err_internal)?)))
+        .map(|tick| {
+            let on_anchor = *tick != 0.0
+                && match choice.anchor_at_start {
+                    Some(true) => Some(tick) == drawn.first(),
+                    Some(false) => Some(tick) == drawn.last(),
+                    None => true,
+                };
+            match (affixed, on_anchor) {
+                (true, true) => format.paint_anchored(&locale, &anchor_spec, *tick, anchored),
+                (true, false) => format.bare_digits(&locale, &choice.digit_spec, *tick),
+                (false, true) if !choice.prefix.is_empty() => d3_format(&anchor_spec, *tick).map_err(diag::err_internal),
+                (false, _) => d3_format(&choice.digit_spec, *tick).map_err(diag::err_internal),
+            }
+        })
         .collect::<Result<Vec<_>, Diagnostic>>()?;
     let depth = |text: &String| text.split_once('.').map_or(0, |(_, fraction)| fraction.len());
     if column_forming && texts.iter().any(|text| depth(text) != depth(&texts[0])) {
@@ -302,15 +364,34 @@ pub fn rung_text(format: &ResolvedFormat, column_forming: bool, ticks: &[f64]) -
     Ok(texts)
 }
 
+/// The rungs of a ladder no tick label decides (`affix_tick_label`): an anchored affix
+/// (`repeat: anchor`) wears the anchor rung alone, any other prints each rung as written.
+fn affix_text(format: &ResolvedFormat, locale: &NumberLocale, ticks: &[f64], drawn: &[f64]) -> Result<Vec<String>, Diagnostic> {
+    if !anchors_affix(format) {
+        return ticks.iter().map(|tick| format.paint_tick(locale, *tick)).collect();
+    }
+    let anchor = if d3rs::numeral_scale::ladder_anchor_at_start(drawn) { drawn.first() } else { drawn.last() };
+    ticks
+        .iter()
+        .map(|tick| {
+            if *tick != 0.0 && Some(tick) == anchor {
+                format.paint_anchored(locale, &format.spec, *tick, true)
+            } else {
+                format.bare_digits(locale, &format.spec, *tick)
+            }
+        })
+        .collect()
+}
+
 /// A domain built over an infallible rung printer: the domain laws take one, so the printer's first
 /// refusal waits here and wins over the domain's result.
 fn printed(
-    print: impl Fn(&[f64]) -> Result<Vec<String>, Diagnostic>,
+    print: impl Fn(&[f64], &[f64]) -> Result<Vec<String>, Diagnostic>,
     domain: impl FnOnce(domain::RungText) -> Result<Option<ValueDomain>, bound::Invalid>,
     context: &str,
 ) -> Result<ValueDomain, Diagnostic> {
     let refused = RefCell::new(None);
-    let text = |ticks: &[f64]| match print(ticks) {
+    let text = |ticks: &[f64], drawn: &[f64]| match print(ticks, drawn) {
         Ok(texts) => texts,
         Err(diagnostic) => {
             refused.borrow_mut().get_or_insert(diagnostic);
@@ -334,7 +415,7 @@ pub fn linear_domain(
     column_forming: bool,
     context: &str,
 ) -> Result<ValueDomain, Diagnostic> {
-    printed(|ticks| rung_text(format, column_forming, ticks), |text| domain::linear(axis, values, text), context)
+    printed(|ticks, drawn| rung_text(format, column_forming, ticks, drawn), |text| domain::linear(axis, values, text), context)
 }
 
 /// The domain of a log axis over `values` (all positive: [`domain::require_positive`]), its rungs
@@ -350,7 +431,7 @@ pub fn log_domain(
 ) -> Result<ValueDomain, Diagnostic> {
     let locale = active_number_locale();
     printed(
-        |ticks| ticks.iter().map(|tick| format.paint_tick(&locale, *tick)).collect(),
+        |ticks, _| ticks.iter().map(|tick| format.paint_tick(&locale, *tick)).collect(),
         |text| domain::log(base, count, values, ladder.domain(), text),
         context,
     )
@@ -368,15 +449,16 @@ pub fn zero_on(scale: ValueScale, verdict: Zero) -> Zero {
 /// The ticks Vega draws on a log measure axis that carries no `ticks.count`: d3's own default of 10.
 pub const LOG_TICK_COUNT: usize = 10;
 
-/// Refuses a value axis scale type the family does not draw, by name. `draws_log` says whether the family
-/// draws a log scale; none draws the bent ones (pow, sqrt, symlog) but a scatter, whose callers do not
-/// ask: production's line and bar ignore `scale.continuous.type` there and draw linear marks
-/// under an axis description naming the type, which no board could mean.
-pub fn refuse_scale(scale: ValueScale, family: &str, axis: &str, draws_log: bool) -> Result<(), Diagnostic> {
+/// Refuses a value axis scale type the family does not draw. A bent scale (pow, sqrt, symlog) is
+/// production's compile error off a scatter, whose callers do not ask: its line, bar and histogram
+/// would draw linear marks under an axis description naming the type. `draws_log` says whether the
+/// family draws a log scale; `axis` is the bare axis letter (`x` or `y`); the diagnostic names it as `axis_{axis}`.
+pub fn refuse_scale(chart_id: &str, scale: ValueScale, family: &str, axis: &str, draws_log: bool) -> Result<(), Diagnostic> {
     match scale {
         ValueScale::Linear => Ok(()),
         scale if scale.is_log() && draws_log => Ok(()),
-        other => Err(unsupported(refuse!("a {family} {axis} axis on a {} scale is not supported", other.name()))),
+        scale if scale.is_log() => Err(unsupported(refuse!("a {family} {axis} axis on a {} scale is not supported", scale.name()))),
+        bent => Err(diag::err_scale_type_scatter_only(chart_id, family, format!("axis_{axis}"), bent.name())),
     }
 }
 
@@ -405,7 +487,7 @@ pub fn measure_axis(
         mark,
     };
     let domain = linear_domain(&axis, values, &format, true, "y domain")?;
-    Ok(ValueAxis { domain, format })
+    value_axis(domain, format, true, true)
 }
 
 /// Whether the rule at zero draws: the grid's threshold rules do, and zero is in the domain,

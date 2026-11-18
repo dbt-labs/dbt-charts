@@ -299,6 +299,23 @@ class TestRowLimit:
         assert len(result.data) == 3
         assert result.truncated_reason == "max_rows"
 
+    def test_a_fetch_past_the_byte_budget_stops_reading(
+        self, tmp_path: Any, monkeypatch: Any
+    ) -> None:
+        monkeypatch.setenv("DCT_MAX_RESULT_BYTES_CEILING", "500")
+        session = _FakeSession(rows=[{"S": "x" * 90} for _ in range(50)])
+        adapter = _registry(session, tmp_path)
+
+        result = run_query(
+            adapter,
+            SqlQuery(sql="SELECT s FROM t", source="sf"),
+            source_config=_snowflake_source(),
+        )
+
+        assert result.truncated_reason == "max_result_bytes"
+        assert 0 < len(result.data) < 50
+        assert len(session.fetched) == len(result.data) + 1
+
     def test_authors_own_limit_is_not_flagged_as_truncation(
         self, tmp_path: Any, monkeypatch: Any
     ) -> None:

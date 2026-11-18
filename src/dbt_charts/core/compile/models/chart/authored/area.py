@@ -9,7 +9,6 @@ from pydantic import ConfigDict, Field
 from dbt_charts.core.compile.models.constraints import (
     Constraint,
     Forbids,
-    IsList,
     IsSet,
 )
 from dbt_charts.core.compile.models.style.authored import AreaChartStylePatch
@@ -30,13 +29,6 @@ class AreaChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
             ("tooltip",),
             "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query.",
             when=(IsSet("layers"),),
-        ),
-        Forbids(
-            ("layers",),
-            "Area chart: layers are not supported with multi-metric "
-            "(y: [...]) charts. Use a long-form query with one y field.",
-            when=(IsList("y"),),
-            nonempty=("layers",),
         ),
     )
 

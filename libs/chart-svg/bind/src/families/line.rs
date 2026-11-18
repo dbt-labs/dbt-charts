@@ -33,7 +33,7 @@ use crate::families::cartesian::{self, axis_format, measure_axis, no_data, plain
 use crate::formats::locale::active_number_locale;
 use crate::bound::{self,
     AuthoredLegend, AxisStyles, Baselines,  Datum, Failure, Key, LineStyle, Mark, MarkLayer, MarkStyle, Naming, Orient,
-    Panels, Pos, RowRef, Scale, ScaleKind, Series, Tooltip, TooltipEntry, TooltipHeader, ValueAxis, ValueScale, Zero,
+    Panels, Pos, RowRef, Scale, ScaleKind, Series, Tooltip, TooltipEntry, TooltipHeader, ValueScale, Zero,
 };
 use crate::plot::domain::{self, LogUse, Side};
 use crate::plot::time;
@@ -124,7 +124,6 @@ pub fn lines(
     placed: &Placed<'_>,
 ) -> Result<Option<Lines>, Diagnostic> {
     let p = Prelude::of(&chart.cartesian, ChannelType::Temporal, ChannelType::Quantitative, placed)?;
-    cartesian::refuse_scale(p.y_scale, "line", "y", true)?;
     let (x_field, y_field) = (p.x_field, p.y_field);
     time::refuse_unmodeled_leaves(&p.tiers, &p.x_ladder, "line")?;
     if p.x_ladder.ticks_count().is_some() {
@@ -133,6 +132,7 @@ pub fn lines(
     let y_format = axis_format(&p.y_ladder, p.formats)?;
     let dataset = cartesian::dataset(id, &chart.cartesian, board, run, &[x_field, y_field])?;
     if dataset.rows.is_empty() {
+        cartesian::refuse_scale(placed.public_id, p.y_scale, "line", "y", true)?;
         return Ok(None);
     }
     let x_type = field_channel(&dataset.schema, &dataset.rows, x_field, Role::Dimension)?;
@@ -143,6 +143,7 @@ pub fn lines(
             _ => error,
         });
     }
+    cartesian::refuse_scale(placed.public_id, p.y_scale, "line", "y", true)?;
     match x_type {
         ChannelType::Temporal => {}
         ChannelType::Nominal => return Err(unsupported(refuse!("a line on a nominal x is not supported"))),
@@ -187,7 +188,7 @@ pub fn lines(
             domain::require_positive(placed.public_id, Side::Y, y_field, &drawn)?;
             domain::refuse_log(placed.public_id, LogUse::Other, cartesian::count(&p.y_ladder)?)?;
             let domain = cartesian::log_domain(base, cartesian::LOG_TICK_COUNT, &p.y_ladder, &drawn, &y_format, "y domain")?;
-            (Zero::Free, ValueAxis { domain, format: y_format })
+            (Zero::Free, cartesian::value_axis(domain, y_format, true, false)?)
         }
         _ => {
             let y_zero = zero::verdict(Family::Line, p.y_ladder.zero_setting(), &drawn);

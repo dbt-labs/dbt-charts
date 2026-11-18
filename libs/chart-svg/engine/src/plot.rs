@@ -12,6 +12,7 @@ use layout::plot::bars::bars;
 use layout::plot::bins::bins;
 use layout::plot::lines::{lines, Metrics};
 use layout::plot::points::{edge_pad, points};
+use layout::plot::rules::points_group;
 use layout::plot::value_axis::GutterRule;
 use layout::plot::{draw, empty, plan, Env, Heading, Painted};
 use measure::shaped::FontBook;
@@ -25,7 +26,7 @@ fn family<'a>(plot: &bound::Plane, cell: Size, mark: &Mark, canvas: &'a str, sco
         Mark::Points { .. } => {
             Ok((GutterRule::BAR_FIT, Some(edge_pad(plot)?), Box::new(|plot, size| {
                 let layer = &plot.layers()[0];
-                points(plot, 0, layer, &layer.panels[0], size, "marks").map(|marks| Painted { marks, y_axis_at: None })
+                points(plot, 0, layer, &layer.panels[0], size, &points_group(plot)).map(|marks| Painted { marks, y_axis_at: None })
             })))
         }
         Mark::Bins => Ok((GutterRule::BAR_FIT, None, Box::new(|plot, size| {

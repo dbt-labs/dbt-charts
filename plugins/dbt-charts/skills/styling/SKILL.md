@@ -238,7 +238,7 @@ Also exist: `divider`, `roles`.
 - `glyph`: Text shown before every cell value
 - `spark` (line|area|bar|bar-normalize|column|columns): Miniature chart drawn inside each cell
 - `conditional` (list of mapping): Rules that restyle this column's cells by the cell's own value
-Also exist: `swatch`, `max_width`, `header_overflow`, `header_link`, `glyph_color`.
+Also exist: `swatch`, `list`, `max_width`, `header_overflow`, `header_link`, `glyph_color`.
 
 `style.columns.<column>.conditional[]`: `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `between`, `in`, `is_null`, `default`, `tone`, `background`, `font`, `glyph`, `glyph_color`.
 - A conditional rule requires exactly one condition operator

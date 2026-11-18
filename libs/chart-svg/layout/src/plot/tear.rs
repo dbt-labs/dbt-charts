@@ -153,7 +153,8 @@ impl Tear {
     }
 }
 
-fn snap(position: f64) -> f64 {
+/// A position on the half pixel a crisp one-pixel stroke stands on.
+pub(super) fn snap(position: f64) -> f64 {
     position.round() + CRISP
 }
 

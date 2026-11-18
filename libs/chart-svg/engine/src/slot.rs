@@ -15,7 +15,13 @@
 //!   family's, plus the card and family padding. The wrapper's selection boxes sit around the
 //!   chart's own `<svg>` and its canvas is `Pie.canvas`. A pie the size stage draws beside or under
 //!   its table (hybrid, full table) is slotted at the height its wheel and table compose to
-//!   (`pie_height`). A pie on an unsized board, or placed twice, is refused.
+//!   (`pie_height`). A pie on an unsized board hugs its family's preferred width, grown to hold its plain
+//!   title on one line unless its own `style:` pins the width; a pie placed twice is refused.
+//! - A geoshape base map is slotted at the geo family's aspect ratio at the slot width, clamped to
+//!   the board's `charts.min_height`/`max_height`, plus the card and family padding
+//!   (`geoshape_natural_height`), and takes spare height as a plot does. Its canvas is
+//!   `Geoshape.canvas`. A geoshape placed twice, or given a title shift (a `cols` row, a host's
+//!   cell), is refused.
 //!
 //! A KPI's and a callout's family style (faces, card, slot width and padding) is read from
 //! `ChartStyles` at the placement (`Slot.placed`), so a nested scope's `charts.kpi` or
@@ -23,7 +29,7 @@
 //! differently is refused by name, because production caches its card by chart id, width and
 //! height, so placements of one size share one scope's card.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use bind::board::ChartStyles;
 use bind::failed::FailedText;
@@ -35,6 +41,8 @@ use board_model::ids::{ChartId, ItemId};
 use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 use serde_json::json;
+
+use crate::texts::ReadsData;
 use board_model::board::layout::TabLayout;
 use layout::board::{bands, chrome};
 use layout::board::band::TitleShift;
@@ -44,7 +52,7 @@ use measure::shaped::FontBook;
 use bind::variables::Controls;
 use layout::board::assemble::{board_geometry, leaf, Facts, NestedBand, Own, StylePatch};
 use layout::board::height::NaturalPlan;
-use layout::board::prose::{self, Source};
+use layout::board::prose::{self, Reading, Source};
 use layout::board::prose_plan::ProsePlans;
 use layout::board::tree::{Chart, Spare, Title};
 use layout::board::width::IntrinsicWidth;
@@ -54,7 +62,7 @@ use layout::families::failed::{ErrorCard, ErrorTile};
 use layout::families::kpi::{KpiCard, KpiFaces};
 use layout::family::{Env, Family as _};
 use layout::families::spark_bar;
-use layout::families::table::{self, TableCard, TableFaces};
+use layout::families::table::{self, Cell as TableCell, TableCard, TableFaces};
 
 use crate::compose::{px, title_text, Header, HeaderFrame};
 use crate::EngineFacts;
@@ -89,6 +97,9 @@ pub(crate) struct Slot<'a> {
     /// The nested board that declares the chart, which its authored path starts from; a chart of
     /// the root has none.
     pub authored_in: Option<ItemId>,
+    /// A pie or donut whose own `width:` or `style:` `preferred_width` the author wrote: a statement
+    /// about this one chart, which the hug never grows (`_chart_width_is_pinned`).
+    pub width_pinned: bool,
 }
 
 pub(crate) struct Slots<'a> {
@@ -110,11 +121,8 @@ pub(crate) struct Slots<'a> {
     panes: BTreeMap<ItemId, &'a Style>,
     /// Whether the root authors its `width:`; an unauthored one hugs its title's and text's width.
     width_authored: bool,
-    /// The nested boards that may sit in a `cols` row's title band (`_title_band_targets`): under any
-    /// parent that is not a `rows` board (a grid's or a details board's conservatively), or under an
-    /// untitled, text-less nested `rows` board that could wrap them into one. A `rows` board that is
-    /// the root or carries its own title or text puts none in a band.
-    in_band: BTreeSet<ItemId>,
+    /// Each board whose authored title or text reads query data, which sizing reads from its template.
+    reads_data: &'a BTreeMap<ItemId, ReadsData>,
 }
 
 /// The board body that places the item at `target`: the root's, or the nested board's that holds it.
@@ -134,22 +142,25 @@ pub(crate) fn total_style(body: &BoardBody) -> Result<&Style, Diagnostic> {
     body.style.as_deref().ok_or_else(|| diag::err_internal("a normalized board carries its total style"))
 }
 
-pub(crate) fn plan<'a>(board: &'a Board, styles: &'a ChartStyles, bound: &'a bound::Board, facts: &impl EngineFacts) -> Result<Slots<'a>, Diagnostic> {
-    let mut slots = Slots { by_placement: BTreeMap::new(), boards: BTreeMap::from([(ItemId::root(), &board.body)]), levels: BTreeMap::new(), drawn: bound.drawn(), closed: BTreeMap::new(), panes: BTreeMap::new(), styles, width_authored: board.width.is_some(), in_band: BTreeSet::new() };
+pub(crate) fn plan<'a>(board: &'a Board, styles: &'a ChartStyles, bound: &'a bound::Board, reads_data: &'a BTreeMap<ItemId, ReadsData>, facts: &impl EngineFacts) -> Result<Slots<'a>, Diagnostic> {
+    let mut slots = Slots { by_placement: BTreeMap::new(), boards: BTreeMap::from([(ItemId::root(), &board.body)]), levels: BTreeMap::new(), drawn: bound.drawn(), closed: BTreeMap::new(), panes: BTreeMap::new(), styles, width_authored: board.width.is_some(), reads_data };
     walk(&board.body, &ItemId::root(), 0, false, board, styles, bound, facts, &mut slots)?;
     refuse_callout_scopes(&slots)?;
     // An unpinned table hugs the board's width to its columns (`_make_chart_width_measurer`).
     if board.width.is_none() && slots.by_placement.values().any(|slot| matches!(slot.drawn, Ok(Family::Table(_)))) {
         return Err(Diagnostic::refused(refuse!("a table on a board with no authored `width:` is not supported")));
     }
-    if board.width.is_none() && slots.by_placement.values().any(|slot| matches!(slot.drawn, Ok(Family::Pie(_))) || matches!((slot.drawn, slot.chart), (Err(_), ModelChart::Pie(_) | ModelChart::Donut(_)))) {
-        return Err(Diagnostic::refused(refuse!("a pie on a board with no authored `width:` is not supported")));
-    }
     // Every id a chart defines ends with its scope, which a later placement of the chart suffixes.
     let mut pies = BTreeMap::new();
     for slot in slots.by_placement.values().filter(|slot| matches!(slot.drawn, Ok(Family::Pie(_)))) {
         if pies.insert(slot.facts.id.as_str(), ()).is_some() {
             return Err(Diagnostic::refused(refuse!("a pie placed more than once is not supported")));
+        }
+    }
+    let mut maps = BTreeMap::new();
+    for slot in slots.by_placement.values().filter(|slot| matches!(slot.drawn, Ok(Family::Geoshape(_)))) {
+        if maps.insert(slot.facts.id.as_str(), ()).is_some() {
+            return Err(Diagnostic::refused(refuse!("a geoshape placed more than once is not supported")));
         }
     }
     Ok(slots)
@@ -220,15 +231,6 @@ fn walk<'a>(
         }
         match placement.item {
             LayoutItem::Board(nested) => {
-                let banded = match &body.layout {
-                    board_model::board::Layout::Rows(_) => {
-                        *at != ItemId::root() && title_text(body).is_none() && prose::board_text(body).is_none()
-                    }
-                    _ => true,
-                };
-                if banded {
-                    out.in_band.insert(placement.id.clone());
-                }
                 out.boards.insert(placement.id.clone(), &nested.body);
                 walk(&nested.body, &placement.id, level, closed, board, styles, bound, facts, out)?
             }
@@ -243,6 +245,7 @@ fn walk<'a>(
                 let own = if drawn.family.is_err() { Some(styles.own_at(&placement.id)?) } else { None };
                 let mut slot = slot(body, chart, placed, own, &placement.id, id, drawn, facts.style(body)?)?;
                 slot.authored_in = styles.chart_boards.get(id).cloned();
+                slot.width_pinned = matches!(chart, ModelChart::Pie(_) | ModelChart::Donut(_)) && (authored_width(chart).is_some() || styles.own_at(&placement.id)?.charts.pie.base.preferred_width.is_some());
                 if let (ModelChart::Table(_), Ok(Family::Table(_))) = (chart, &drawn.family) {
                     let placed = bind::board::placement(board, styles, &placement.id, chart)?;
                     slot.canvas = Some(placed.canvas(&placed.own.charts.table.background, placed.scope())?);
@@ -263,21 +266,22 @@ fn walk<'a>(
     Ok(())
 }
 
-/// A chart's own `width:` (cartesian, funnel, pie): its slot in `rows`, capped at the row
+/// A chart's own `width:` (cartesian, funnel, pie, geo): its slot in `rows`, capped at the row
 /// (`rows_item_width`), and the width a board with none hugs it to, pinned (`preferred_chart_width`).
 fn authored_width(chart: &ModelChart) -> Option<f64> {
     match chart {
         ModelChart::Scatter(ScatterChart { cartesian, .. }) | ModelChart::Histogram(BarChart { cartesian, .. }) | ModelChart::Bar(BarChart { cartesian, .. }) | ModelChart::Funnel(BarChart { cartesian, .. }) => cartesian.width,
         ModelChart::Line(l) => l.cartesian.width,
         ModelChart::Pie(c) | ModelChart::Donut(c) => c.radial.width,
+        ModelChart::Geoshape(c) | ModelChart::Map(c) => c.geo.width,
         _ => None,
     }
     .map(|w| w.get())
 }
 
 /// A chart in a closed tab, as the width hug sees it: its own `width:`, else the preferred width its
-/// placement's style gives its family, with no data (`without_data`). A table's and a pie's widths
-/// read their data, which a closed tab has none of.
+/// placement's style gives its family, with no data (`without_data`). A table's width reads its data, and a
+/// pie's title growth needs the board's text measured; a closed tab has neither, so it refuses both.
 fn closed_chart(chart: &ModelChart, placed: &Style, at: &ItemId, id: &ChartId, width_authored: bool) -> Result<Chart, Diagnostic> {
     let authored = authored_width(chart);
     let preferred = match authored {
@@ -290,6 +294,7 @@ fn closed_chart(chart: &ModelChart, placed: &Style, at: &ItemId, id: &ChartId, w
             ModelChart::Bar(_) => placed.charts.bar.cartesian.painted.base.preferred_width,
             ModelChart::Line(_) => placed.charts.line.cartesian.painted.base.preferred_width,
             ModelChart::Histogram(_) => placed.charts.histogram.cartesian.painted.base.preferred_width,
+            ModelChart::Geoshape(_) | ModelChart::Map(_) => placed.charts.geoshape.geo.base.preferred_width,
             // An authored `width:` ignores every chart's own, so what the hug cannot measure is not asked.
             _ if width_authored => 0.0,
             _ => return Err(Diagnostic::refused(refuse!("a table or pie in a closed tab of a board with no authored `width:` is not supported"))),
@@ -312,7 +317,7 @@ fn slot<'a>(body: &'a BoardBody, chart: &'a ModelChart, placed: &'a Style, own: 
         ModelChart::Kpi(_) => (Some(placed.charts.kpi.preferred_width), leaf(style.charts.kpi.default_height, "style.charts.kpi.default_height")?, false),
         ModelChart::Table(_) => (Some(placed.charts.table.preferred_width), leaf(style.charts.default_table_height, "style.charts.default_table_height")?, true),
         ModelChart::Callout(_) => (Some(placed.charts.callout.preferred_width), 0.0, false),
-        ModelChart::Pie(_) | ModelChart::Donut(_) => (None, 0.0, false),
+        ModelChart::Pie(_) | ModelChart::Donut(_) => (Some(placed.charts.pie.base.preferred_width), 0.0, false),
         ModelChart::SparkBar(_) if matches!(drawn, Ok(Family::SparkBar(_))) => {
             let content = match drawn {
                 Ok(Family::SparkBar(spark)) => {
@@ -333,7 +338,14 @@ fn slot<'a>(body: &'a BoardBody, chart: &'a ModelChart, placed: &'a Style, own: 
         ModelChart::Bar(_) if failed => (None, 0.0, false),
         ModelChart::Line(_) if failed => (None, 0.0, false),
         ModelChart::Histogram(_) if failed => (None, 0.0, false),
-        ModelChart::Geoshape(_) | ModelChart::Map(_) if matches!(drawn, Ok(Family::Geoshape(_))) => return Err(unplaced(Diagnostic::refused(refuse!("sizing the slot of a geoshape is not supported")))),
+        // A failed spark_bar is the error card in its family's width, which every spark_bar placement
+        // hugs, and its estimated height, read off the board's style: the resolved chart that would
+        // carry the chart's own is what failed (`_unresolved_height`).
+        ModelChart::SparkBar(c) if failed => {
+            let titled = c.shared.title.as_ref().is_some_and(|title| !title.as_str().is_empty());
+            (Some(placed.charts.spark_bar.preferred_width), spark_bar::estimated_height(&total_style(body)?.charts.spark_bar, titled), false)
+        }
+        ModelChart::Geoshape(_) | ModelChart::Map(_) if matches!(drawn, Ok(Family::Geoshape(_))) => (Some(placed.charts.geoshape.geo.base.preferred_width), 0.0, false),
         _ if matches!(drawn, Ok(Family::Cartesian(bound::Cartesian::Plane(_)))) => return Err(unplaced(Diagnostic::refused(refuse!("sizing the slot of the plot of chart {id} is not supported")))),
         _ if refused_card => (None, 0.0, false),
         _ => return Err(unplaced(Diagnostic::refused(refuse!("sizing the slot of a failed {id} chart of this family is not supported")))),
@@ -355,8 +367,9 @@ fn slot<'a>(body: &'a BoardBody, chart: &'a ModelChart, placed: &'a Style, own: 
     let padding = match chart {
         ModelChart::Kpi(k) if !failed => (placed.charts.kpi.padding.top, placed.charts.kpi.padding.bottom),
         ModelChart::Table(_) if !failed => (placed.charts.table.padding.top, placed.charts.table.padding.bottom),
-        ModelChart::SparkBar(_) => (placed.charts.spark_bar.padding.top, placed.charts.spark_bar.padding.bottom),
+        ModelChart::SparkBar(_) if !failed => (placed.charts.spark_bar.padding.top, placed.charts.spark_bar.padding.bottom),
         ModelChart::Pie(_) | ModelChart::Donut(_) if !failed => (placed.charts.pie.base.padding.top, placed.charts.pie.base.padding.bottom),
+        ModelChart::Geoshape(_) | ModelChart::Map(_) if matches!(drawn, Ok(Family::Geoshape(_))) => (placed.charts.geoshape.geo.base.padding.top, placed.charts.geoshape.geo.base.padding.bottom),
         ModelChart::Scatter(_) | ModelChart::Line(_) | ModelChart::Histogram(_) | ModelChart::Bar(_) if !failed => {
             let frame = bound.frame.as_ref().ok_or_else(|| diag::err_internal("a plot carries its frame"))?;
             (frame.padding.top, frame.padding.bottom)
@@ -368,6 +381,8 @@ fn slot<'a>(body: &'a BoardBody, chart: &'a ModelChart, placed: &'a Style, own: 
     let (content_sized, spare) = match (chart, bound.frame.as_ref()) {
         (ModelChart::Scatter(_) | ModelChart::Line(_) | ModelChart::Histogram(_) | ModelChart::Bar(_), Some(frame)) => plot_sizing(&frame.sizing),
         _ if pie => (false, Spare::Never),
+        // A map draws to its slot and takes spare height as a plot does (a geoshape is not in `NON_ASPECT_RATIO_TYPES`).
+        _ if matches!(drawn, Ok(Family::Geoshape(_))) => (false, Spare::Always),
         _ => (true, Spare::WhenAlone),
     };
     Ok(Slot {
@@ -386,11 +401,12 @@ fn slot<'a>(body: &'a BoardBody, chart: &'a ModelChart, placed: &'a Style, own: 
         canvas: None,
         ink: None,
         authored_in: None,
+        width_pinned: false,
     })
 }
 
-/// What a pie's sizing and card read of its placement: the board slot's, or a host's cell's.
-pub(crate) struct PieSite<'a> {
+/// What a pie's or map's sizing and card read of its placement: the board slot's, or a host's cell's.
+pub(crate) struct ChartSite<'a> {
     pub body: &'a BoardBody,
     pub chart: &'a ModelChart,
     pub placed: &'a Style,
@@ -421,39 +437,68 @@ impl Heights {
 }
 
 impl<'a> Slot<'a> {
-    pub(crate) fn pie_site(&self) -> PieSite<'_> {
-        PieSite { body: self.body, chart: self.chart, placed: self.placed, id: self.facts.id.as_str() }
+    pub(crate) fn site(&self) -> ChartSite<'_> {
+        ChartSite { body: self.body, chart: self.chart, placed: self.placed, id: self.facts.id.as_str() }
     }
 }
 
 /// `pie_content_height` plus the padding around it (`pie_box`) for a drawn pie: the placement's pie
 /// aspect ratio. The family's `min_height` and `max_height` are not read: production's sizing reads
-/// `chart_defaults` alone. This is the wheel alone's slot, the box the size stage decides the mode in.
-pub(crate) fn pie_natural_height(site: &PieSite, heights: &Heights, width: f64) -> Result<f64, Diagnostic> {
+/// `chart_defaults` alone. This is the slot the wheel alone is drawn in; its mode is decided in
+/// [`pie_mode_height`]'s box.
+pub(crate) fn pie_natural_height(site: &ChartSite, heights: &Heights, width: f64) -> Result<f64, Diagnostic> {
+    pie_slot(site, heights, width, site.placed.charts.pie.aspect_ratio)
+}
+
+/// A pie's `content_slot` at `aspect`: its authored height, else `aspect` at `width`.
+fn pie_slot(site: &ChartSite, heights: &Heights, width: f64, aspect: f64) -> Result<f64, Diagnostic> {
     let padding = &site.placed.charts.pie.base.padding;
     let (ModelChart::Pie(chart) | ModelChart::Donut(chart)) = site.chart else {
         return Err(diag::err_internal("a pie's chart is a pie or donut"));
     };
-    content_slot(site.body, chart.radial.height.map(|h| h.get()), site.placed.charts.pie.aspect_ratio, None, heights, width, (padding.top, padding.bottom))
+    content_slot(site.body, chart.radial.height.map(|h| h.get()), aspect, None, heights, width, (padding.top, padding.bottom))
+}
+
+/// The box the size stage decides a pie's mode in (`pie_box`): `pie_content_height` over the board's
+/// own pie (or donut) aspect ratio (`chart_defaults`), never the chart's own `style.aspect_ratio`,
+/// which sizes only the slot the wheel is drawn in ([`pie_natural_height`]).
+fn pie_mode_height(site: &ChartSite, heights: &Heights, width: f64) -> Result<f64, Diagnostic> {
+    pie_slot(site, heights, width, board_pie_aspect(site.body, site.chart)?)
+}
+
+/// `chart_defaults.donut if is_donut else chart_defaults.pie`: the board's pie aspect ratio, a
+/// donut's `charts.donut` one over it.
+fn board_pie_aspect(body: &BoardBody, chart: &ModelChart) -> Result<f64, Diagnostic> {
+    let board = total_style(body)?;
+    Ok(match chart {
+        ModelChart::Donut(_) => board.charts.donut.as_ref().and_then(|patch| patch.aspect_ratio).unwrap_or(board.charts.pie.aspect_ratio),
+        _ => board.charts.pie.aspect_ratio,
+    })
 }
 
 /// The pie's plan in the mode the size stage chooses: a wheel alone in `(width, height)`, or composed
 /// with its table (`pie::plan`). `height` is the box a wheel alone is drawn in; the mode is decided in
-/// the slot's natural one.
-pub(crate) fn pie_plan(site: &PieSite, heights: &Heights, bound_pie: &bound::Pie, width: f64, height: f64, shift: TitleShift, book: &FontBook) -> Result<pie::Plan, Diagnostic> {
+/// [`pie_mode_height`]'s box.
+pub(crate) fn pie_plan(site: &ChartSite, heights: &Heights, bound_pie: &bound::Pie, width: f64, height: f64, shift: TitleShift, book: &FontBook) -> Result<pie::Plan, Diagnostic> {
     let card = pie_card(site, bound_pie)?;
     let pad = additive_padding(heights.card_padding, &site.placed.charts.pie.base.padding);
-    pie::plan(&card, book, (width, pie_natural_height(site, heights, width)?), (width, height), pad, shift)
+    pie::plan(&card, book, (width, pie_mode_height(site, heights, width)?), (width, height), pad, shift)
+}
+
+/// A map's slot height: the geo family's aspect ratio at `width`, clamped, in the card and chart padding.
+pub(crate) fn geoshape_natural_height(site: &ChartSite, heights: &Heights, width: f64) -> Result<f64, Diagnostic> {
+    let own = &site.placed.charts.geoshape.geo;
+    content_slot(site.body, None, own.aspect_ratio, None, heights, width, (own.base.padding.top, own.base.padding.bottom))
 }
 
 /// The card a bound pie is laid out and drawn as.
-pub(crate) fn pie_card<'a>(site: &PieSite<'a>, bound_pie: &'a bound::Pie) -> Result<PieCard<'a>, Diagnostic> {
+pub(crate) fn pie_card<'a>(site: &ChartSite<'a>, bound_pie: &'a bound::Pie) -> Result<PieCard<'a>, Diagnostic> {
     Ok(PieCard { pie: bound_pie, style: &site.placed.charts.pie, placed: site.placed, chart_id: site.id, emoji: &total_style(site.body)?.font.emoji })
 }
 
 /// The height a pie's slot is: the wheel's natural one, or what the wheel and its table compose
 /// to when the size stage draws it beside or under a table.
-pub(crate) fn pie_height(site: &PieSite, heights: &Heights, bound_pie: &bound::Pie, width: f64, book: &FontBook) -> Result<(f64, bool), Diagnostic> {
+pub(crate) fn pie_height(site: &ChartSite, heights: &Heights, bound_pie: &bound::Pie, width: f64, book: &FontBook) -> Result<(f64, bool), Diagnostic> {
     let natural = pie_natural_height(site, heights, width)?;
     let planned = pie_plan(site, heights, bound_pie, width, natural, TitleShift::default(), book)?;
     Ok(if planned.is_table() { (planned.height(), true) } else { (natural, false) })
@@ -467,11 +512,7 @@ fn failed_height(slot: &Slot, style: &StylePatch, width: f64) -> Result<f64, Dia
     let board = total_style(slot.body)?;
     let padding = (leaf(style.charts.padding.top, "style.charts.padding.top")?, leaf(style.charts.padding.bottom, "style.charts.padding.bottom")?);
     let (authored, family, own) = match slot.chart {
-        ModelChart::Pie(c) => return content_slot(slot.body, c.radial.height.map(|h| h.get()), board.charts.pie.aspect_ratio, None, &Heights::of_patch(style)?, width, padding),
-        ModelChart::Donut(c) => {
-            let family = board.charts.donut.as_ref().and_then(|patch| patch.aspect_ratio).unwrap_or(board.charts.pie.aspect_ratio);
-            return content_slot(slot.body, c.radial.height.map(|h| h.get()), family, None, &Heights::of_patch(style)?, width, padding);
-        }
+        ModelChart::Pie(c) | ModelChart::Donut(c) => return content_slot(slot.body, c.radial.height.map(|h| h.get()), board_pie_aspect(slot.body, slot.chart)?, None, &Heights::of_patch(style)?, width, padding),
         ModelChart::Scatter(c) => (c.cartesian.height, board.charts.scatter.cartesian.painted.aspect_ratio, slot.own.map(|own| own_sizing(&own.charts.scatter.cartesian.painted))),
         ModelChart::Bar(c) => (c.cartesian.height, board.charts.bar.cartesian.painted.aspect_ratio, slot.own.map(|own| own_sizing(&own.charts.bar.cartesian.painted))),
         ModelChart::Histogram(c) => (c.cartesian.height, board.charts.histogram.cartesian.painted.aspect_ratio, slot.own.map(|own| own_sizing(&own.charts.bar.cartesian.painted))),
@@ -540,6 +581,11 @@ impl<'a> Slots<'a> {
         self.by_placement.get(at).ok_or_else(|| diag::err_internal(format!("the chart at {at} has no slot")))
     }
 
+    /// How many placements draw the chart `id`.
+    pub fn placements_of(&self, id: &str) -> usize {
+        self.by_placement.values().filter(|slot| slot.facts.id.as_str() == id).count()
+    }
+
     pub fn facts<'f, F: EngineFacts>(&'f self, facts: &'f F, book: &'f FontBook) -> Adapter<'f, 'a, F> {
         Adapter { slots: self, facts, book }
     }
@@ -569,21 +615,21 @@ impl<F: EngineFacts> Facts for Adapter<'_, '_, F> {
         if !root && !body.variables.is_empty() {
             return Err(Diagnostic::refused(refuse!("a nested board's variables are not supported")));
         }
-        // A heading that opens a nested board's text is drawn as its title, which a `cols` row's band
-        // aligns (`prose_heading_baseline`); outside a band it is plain prose. Refused where a band may
-        // hold it, at any leading `#`, which also refuses prose such as `#tag` that is not a heading.
-        if !root
-            && self.slots.in_band.contains(at)
-            && prose::board_text(body).is_some_and(|text| text.trim_start().starts_with('#'))
-        {
-            return Err(Diagnostic::refused(refuse!("a nested board in a title band whose text opens with a heading is not supported")));
-        }
+        let reads_data = self.slots.reads_data.get(at);
         let own = bands::own(root, total_style(body)?, self.book)?;
+        let title = match reads_data.and_then(|reads| reads.title.as_deref()) {
+            Some(literal) => Some(Reading::Template(literal)),
+            None => title_text(body).map(Reading::Words),
+        };
+        let text = match reads_data.and_then(|reads| reads.text.as_deref()) {
+            Some(literal) => Some(Reading::Template(literal)),
+            None => prose::board_text(body).map(Reading::Words),
+        };
         // An authored `width:` ignores a board's own content; a hugged board takes its title's and text's.
-        if self.slots.width_authored || (title_text(body).is_none() && prose::board_text(body).is_none()) {
+        if self.slots.width_authored || (title.is_none() && text.is_none()) {
             return Ok(own);
         }
-        let ask = prose::own_width(total_style(body)?, title_text(body), self.title_kind(at, root)?, prose::board_text(body), self.book)?;
+        let ask = prose::own_width(total_style(body)?, title, self.title_kind(at, root)?, text, self.book)?;
         Ok(Own { width: own.width.combine_max(ask) })
     }
 
@@ -629,6 +675,18 @@ impl<F: EngineFacts> Facts for Adapter<'_, '_, F> {
                 };
                 Title::Own(TitleMetrics { ascent: geometry.chrome().2 + card_padding + block.baseline, tail: height - block.baseline + gap_below })
             }
+            // `_title_band_targets`: a board with text alone and no controls, items or title takes its
+            // heading's first baseline as its title when its text opens with one; a text that reads
+            // query data joins no band.
+            None if !authored_items(body) && prose::board_text(body).is_some() && self.slots.reads_data.get(at).is_none_or(|reads| reads.text.is_none()) => {
+                let text = prose::board_text(body).expect("checked");
+                let card_padding = total.frame.card_padding;
+                let slot = prose::Slot { width: prose::slot_width(content_width, card_padding).max(1.0), plan: prose.get(at).ok_or_else(|| diag::err_internal(format!("the text of the board at {at} has no plan")))? };
+                match prose::first_baseline(total, text, self.book, slot)? {
+                    Some(baseline) => Title::OwnText(TitleMetrics { ascent: geometry.chrome().2 + card_padding + baseline, tail: 0.0 }),
+                    None => Title::None,
+                }
+            }
             None => Title::None,
         };
         Ok(NestedBand { band: header.band(), title })
@@ -637,7 +695,28 @@ impl<F: EngineFacts> Facts for Adapter<'_, '_, F> {
     fn chart(&mut self, at: &ItemId, _id: &ChartId) -> Result<Chart, Diagnostic> {
         match self.slots.closed.get(at) {
             Some(closed) => Ok(closed.clone()),
-            None => Ok(self.slots.get(at)?.facts.clone()),
+            None => {
+                let slot = self.slots.get(at)?;
+                let mut facts = slot.facts.clone();
+                // An unpinned pie on a board with no `width:` widens until its plain title fits one line
+                // (`config_chart_width`): the grown width can cross a title tier, which sets the title
+                // again, so it is grown a second time.
+                let pie = matches!(slot.chart, ModelChart::Pie(_) | ModelChart::Donut(_));
+                if pie && !self.slots.width_authored && !slot.width_pinned {
+                    if let (Some(preferred), Some(title)) = (facts.intrinsic.preferred, pie_title(slot.chart)) {
+                        let padding = &slot.placed.charts.pie.base.padding;
+                        let chrome = 2.0 * leaf(self.facts.style(slot.body)?.frame.card_padding, "style.frame.card_padding")? + padding.left + padding.right;
+                        let need = |width: f64| layout::title::one_line_title_width(slot.placed, title, width, chrome, self.book);
+                        let mut grown = preferred.max(need(preferred)?);
+                        if grown > preferred {
+                            grown = grown.max(need(grown)?);
+                        }
+                        facts.intrinsic.preferred = Some(grown);
+                        facts.without_data.preferred = Some(grown);
+                    }
+                }
+                Ok(facts)
+            }
         }
     }
 
@@ -666,6 +745,27 @@ impl<F: EngineFacts> Facts for Adapter<'_, '_, F> {
     }
 }
 
+/// A pie's or donut's authored title when it is plain text: a templated one has none to measure before
+/// a render, so it never widens the hug.
+fn pie_title(chart: &ModelChart) -> Option<&str> {
+    let title = match chart {
+        ModelChart::Pie(c) | ModelChart::Donut(c) => c.radial.shared.title.as_ref()?.as_str(),
+        _ => return None,
+    };
+    (!title.is_empty() && !title.contains("{{") && !title.contains("{%")).then_some(title)
+}
+
+/// `board.layout.items`: whether the board's authored layout holds any item, drawn or hidden
+/// (the layout tree has already dropped the hidden ones).
+fn authored_items(body: &BoardBody) -> bool {
+    use board_model::board::Layout;
+    match &body.layout {
+        Layout::Rows(items) | Layout::Cols(items) => !items.is_empty(),
+        Layout::Grid(grid) => !grid.items.is_empty(),
+        Layout::Tabs(tabs) => !tabs.items.is_empty(),
+    }
+}
+
 impl<F: EngineFacts> Adapter<'_, '_, F> {
     fn natural_of(&mut self, chart: &Chart, width: f64) -> Result<NaturalPlan, Diagnostic> {
         // `plan` filled a slot for every placement the layout asks about.
@@ -685,8 +785,8 @@ impl<F: EngineFacts> Adapter<'_, '_, F> {
                 let card_padding = leaf(style.frame.card_padding, "style.frame.card_padding")?;
                 let (left, right, top, bottom) = additive_padding(card_padding, &chart_style.padding);
                 let faces = TableFaces::of(chart_style, slot.placed, table_title(slot.chart), table_subtitle(slot.chart), width)?;
-                let card = TableCard { table: bound_table, style: chart_style, faces: &faces };
-                let planned = table::plan(&card, self.book, (width - left - right).max(0.0), TitleShift::default())?;
+                let card = TableCard { table: bound_table, style: chart_style, faces: &faces, cell: Some(TableCell { id: chart.id.as_str(), padding: (left, right, top, bottom) }) };
+                let planned = table::plan(&card, self.book, (width - left - right).max(0.0), None, TitleShift::default())?;
                 let title = planned.title_metrics().map(|(ascent, tail)| TitleMetrics { ascent: top + ascent, tail });
                 // The card draws inside whole-pixel padding (`compose::px`), so the cell holds the same.
                 return Ok(NaturalPlan { height: planned.height + px(top) + px(bottom), title });
@@ -694,10 +794,20 @@ impl<F: EngineFacts> Adapter<'_, '_, F> {
             // A pie's slot is its content height (`pie_content_height`) inside the card and chart padding.
             (Ok(Family::Pie(bound_pie)), ModelChart::Pie(_) | ModelChart::Donut(_)) => {
                 let style = self.facts.style(slot.body)?;
-                let (height, table) = pie_height(&slot.pie_site(), &Heights::of_patch(style)?, bound_pie, width, self.book)?;
+                let (height, table) = pie_height(&slot.site(), &Heights::of_patch(style)?, bound_pie, width, self.book)?;
                 let (left, right, top, _) = additive_padding(leaf(style.frame.card_padding, "style.frame.card_padding")?, &slot.placed.charts.pie.base.padding);
                 // A pie drawn as a table stays out of a `cols` row's title band (`chart_title_metrics`).
                 let title = if table { None } else { chart_title_metrics(slot, bound_pie.title.as_deref(), bound_pie.subtitle.as_deref(), width, (left, right, top), self.book)? };
+                return Ok(NaturalPlan { height, title });
+            }
+            // A map's slot is its content height (`get_chart_content_height`: the geo family's aspect ratio at this width, clamped to the board's range) inside the card and chart padding.
+            (Ok(Family::Geoshape(geo)), ModelChart::Geoshape(_) | ModelChart::Map(_)) => {
+                let style = self.facts.style(slot.body)?;
+                let heights = Heights::of_patch(style)?;
+                let own = &slot.placed.charts.geoshape.geo;
+                let height = geoshape_natural_height(&slot.site(), &heights, width)?;
+                let (left, right, top, _) = additive_padding(heights.card_padding, &own.base.padding);
+                let title = chart_title_metrics(slot, geo.title.as_deref(), geo.subtitle.as_deref(), width, (left, right, top), self.book)?;
                 return Ok(NaturalPlan { height, title });
             }
             // A failed pie or plot draws the error card too, which is at least its own natural height.

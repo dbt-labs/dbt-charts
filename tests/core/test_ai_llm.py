@@ -95,20 +95,73 @@ class _ScriptedGateway:
         yield from self._turns[turn_index]
 
 
-def test_openai_adapter_second_call_replays_tool_history_without_assistant_echo() -> (
-    None
-):
-    """Regression (2026-07-23 leaked-tool-envelope incident): after a tool-calling
-    turn, the next call's input must carry the tool result and must never echo the
-    assistant's preamble text as a bare disconnected message — that echo is what
-    degrades the model into writing the tool call as prose instead of using it.
+@pytest.mark.parametrize(
+    ("tool_name", "call_type"),
+    [
+        ("execute_sql", "function_call"),
+        ("apply_patch", "apply_patch_call"),
+    ],
+)
+def test_openai_adapter_replays_preamble_directly_before_its_tool_calls(
+    tool_name: str, call_type: str
+) -> None:
+    """A preamble followed by tool calls is replayed as the assistant message
+    immediately before its call items, so the next iteration sees it already
+    announced its plan and does not announce it again.
 
-    Must fail against current main: the incremental branch
-    (``OpenAIAdapter._messages_to_input``) has no case for an assistant message
-    carrying ``tool_calls``, so it falls through to the generic role-based branch
-    and emits ``{"role": "assistant", "content": <preamble>}`` — the exact echo
-    this test forbids.
+    Placement is the contract (2026-07-23 leaked-tool-envelope incident): the
+    preamble once came back as a disconnected assistant message with no call
+    items after it, which broke call/output adjacency and degraded the model
+    into writing the tool call as prose. The order must be the one the model
+    produced: reasoning, message, calls, then their outputs.
     """
+    from dbt_charts.ai.llm import OpenAIAdapter
+    from dbt_charts.ai.messages import (
+        AssistantMessage,
+        ToolCall,
+        ToolResultMessage,
+        UserMessage,
+    )
+    from dbt_charts.ai.openai_gateway import TextDelta
+
+    gateway = _ScriptedGateway([[TextDelta(text="Done.")]])
+    client = OpenAIAdapter(gateway, model="gpt-5.6")
+    reasoning = {"type": "reasoning", "id": "rs_1", "encrypted_content": "x"}
+    messages = [
+        UserMessage(content="render a chart"),
+        AssistantMessage(
+            content="Let me render that for you.",
+            reasoning_items=[reasoning],
+            tool_calls=[
+                ToolCall(id="call_1", name=tool_name, arguments={}),
+                ToolCall(id="call_2", name=tool_name, arguments={}),
+            ],
+        ),
+        ToolResultMessage(tool_call_id="call_1", name=tool_name, content="{}"),
+        ToolResultMessage(tool_call_id="call_2", name=tool_name, content="{}"),
+    ]
+
+    list(client.stream_with_tools(messages=messages, system_prompt="SYSTEM", tools=[]))
+
+    shape = [item.get("type") or item["role"] for item in gateway.captured_inputs[0]]
+    assert shape == [
+        "user",
+        "reasoning",
+        "assistant",
+        call_type,
+        call_type,
+        f"{call_type}_output",
+        f"{call_type}_output",
+    ]
+    assert gateway.captured_inputs[0][2] == {
+        "role": "assistant",
+        "content": "Let me render that for you.",
+    }
+
+
+def test_openai_adapter_second_call_replays_tool_history() -> None:
+    """After a tool-calling turn, the next call's input carries the call and
+    its result."""
     from dbt_charts.ai.llm import OpenAIAdapter
     from dbt_charts.ai.messages import (
         AssistantMessage,
@@ -144,10 +197,7 @@ def test_openai_adapter_second_call_replays_tool_history_without_assistant_echo(
     list(client.stream_with_tools(messages=messages, system_prompt="SYSTEM", tools=[]))
 
     second_call_input = gateway.captured_inputs[1]
-    assert not any(
-        item.get("role") == "assistant" and item.get("content")
-        for item in second_call_input
-    ), f"assistant preamble echoed into input: {second_call_input}"
+    assert any(item.get("type") == "function_call" for item in second_call_input)
     assert any(
         item.get("type") == "function_call_output" for item in second_call_input
     ), f"tool result missing from second call input: {second_call_input}"

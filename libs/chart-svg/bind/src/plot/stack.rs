@@ -81,7 +81,7 @@ pub fn linear(
         }))
     };
     if let Some(authored_values) = axis.values {
-        return domain(Ladder::Authored(super::domain::rungs(authored_values, text)));
+        return domain(Ladder::Authored(super::domain::rungs(authored_values, (None, None), text)));
     }
     let Some(count) = axis.count else {
         return domain(Ladder::BySize { min_step: axis.min_step });
@@ -94,7 +94,7 @@ pub fn linear(
     };
     let ticks = nice_tick_values(tick_min, tick_max, target, axis.min_step);
     if axis.domain.is_some() {
-        return domain(fixed(clip_to_domain(&ticks, (tick_min, tick_max)), authored_domain.map(|a| a.extent), text)?);
+        return domain(fixed(clip_to_domain(&ticks, (tick_min, tick_max)), (None, None), authored_domain.map(|a| a.extent), text)?);
     }
     if let Some(min_step) = axis.min_step.filter(|_| tick_min < 0.0) {
         let unfloored = nice_tick_values(tick_min, tick_max, target, None);
@@ -104,7 +104,7 @@ pub fn linear(
             return domain(Ladder::BySize { min_step: axis.min_step });
         }
     }
-    domain(fixed(ticks, None, text)?)
+    domain(fixed(ticks, (None, None), None, text)?)
 }
 
 #[cfg(test)]
@@ -112,7 +112,7 @@ mod tests {
     use super::*;
     use crate::plot::domain::{Count, Mark};
 
-    fn digits(values: &[f64]) -> Vec<String> {
+    fn digits(values: &[f64], _drawn: &[f64]) -> Vec<String> {
         values.iter().map(|v| v.to_string()).collect()
     }
 
@@ -159,6 +159,23 @@ mod tests {
         let domain = linear(&axis, &[3.0, 4.0, 2.0], &[], Some(95.0), false, &digits).unwrap().unwrap();
         assert_eq!(rungs(&domain), [0.0, 50.0, 100.0, 150.0]);
         assert_eq!((domain.extent.lo(), domain.extent.hi()), (0.0, 95.0));
+    }
+
+    #[test]
+    fn production_anchors_a_stacked_ladder_over_every_rung() {
+        // `_resolve_bar` leaves the stacked branch's domain ends unset, so the rungs above the headroom
+        // pin are still drawn rungs to the label law.
+        let axis = Axis { headroom: 0.1, ..axis() };
+        let seen = std::cell::RefCell::new(None);
+        let text = |ticks: &[f64], drawn: &[f64]| {
+            *seen.borrow_mut() = Some((ticks.to_vec(), drawn.to_vec()));
+            digits(ticks, drawn)
+        };
+        let domain = linear(&axis, &[3.0, 4.0, 2.0], &[], Some(95.0), true, &text).unwrap().unwrap();
+        assert!(domain.max.is_some_and(|pin| pin.value < 150.0), "the pin sits below the top rung");
+        let (ticks, drawn) = seen.into_inner().unwrap();
+        assert_eq!(ticks, [0.0, 50.0, 100.0, 150.0]);
+        assert_eq!(drawn, ticks);
     }
 
     #[test]

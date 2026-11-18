@@ -93,8 +93,7 @@ class TestPackageDirectoryListing:
         ) as client:
             response = client.get("/")
         assert response.status_code == 200
-        assert "pkg_a" in response.text
-        assert 'href="/pkg_a/"' in response.text
+        assert 'href="/pkg_a/"' in response.text.split('class="dbt-sidebar"')[1]
 
 
 class TestHostBoardShadowsPackageBoard:

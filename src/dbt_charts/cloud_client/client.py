@@ -32,6 +32,7 @@ from dbt_charts.cloud_client.config import (
     save_config,
 )
 from dbt_charts.cloud_client.contract import (
+    EVAL_SKIPPED_BOARDS_HEADER,
     AccessCheck,
     AccessList,
     ActionResult,
@@ -48,6 +49,7 @@ from dbt_charts.cloud_client.contract import (
     DeleteResult,
     DeviceAuthorization,
     ErrorCode,
+    EvalRecord,
     GrantList,
     GrantRevokeResult,
     IdentityGroupList,
@@ -118,6 +120,15 @@ SLOW_DOWN_BACKOFF_SECONDS = 5.0
 # Statuses that answer for the credential or the caller, not for one member, so
 # the next member in a batch would get the same answer.
 BATCH_ENDING = frozenset({401, 403, 429})
+
+
+@dataclass(frozen=True)
+class EvalExport:
+    """An eval set off the wire: the JSON Lines body, untouched, so what a
+    person saves is byte for byte what the API served."""
+
+    jsonl: bytes
+    skipped_boards: int
 
 
 @dataclass(frozen=True)
@@ -563,6 +574,31 @@ class CloudClient:
 
     # --- comments ----------------------------------------------------------
 
+    def export_eval(
+        self, org: str, project: str, *, include_unapproved: bool
+    ) -> EvalExport:
+        """The project's eval set, exactly as Cloud wrote it."""
+        path = f"/orgs/{_seg(org)}/projects/{_seg(project)}/eval.jsonl"
+        try:
+            response = self._respond(
+                "GET",
+                path,
+                params={"include_unapproved": "true"} if include_unapproved else None,
+            )
+        except UnexpectedResponse as exc:
+            if exc.status_code == 404:
+                raise CloudTooOld(self.host, f"/api{path}") from exc
+            raise
+        try:
+            for line in response.content.splitlines():
+                EvalRecord.model_validate_json(line)
+            skipped = int(response.headers[EVAL_SKIPPED_BOARDS_HEADER])
+        except (ValidationError, KeyError, ValueError) as exc:
+            raise UnexpectedResponse(
+                str(response.request.url), response.status_code, str(exc)
+            ) from exc
+        return EvalExport(jsonl=response.content, skipped_boards=skipped)
+
     def list_comments(
         self,
         org: str,
@@ -870,14 +906,7 @@ class CloudClient:
         """One round trip. ``payload`` is an unvalidated JSON body by nature —
         the server's forms are what decide whether its fields are right;
         ``params`` is the query string of a read."""
-        response = self._send(method, path, payload, params)
-        if response.status_code == 401 and self._refresh is not None:
-            self._token = self._refresh(self._token)
-            self._http.headers["Authorization"] = f"Bearer {self._token}"
-            response = self._send(method, path, payload, params)
-        url = str(response.request.url)
-        if response.status_code >= 400:
-            raise self._failure(response, url)
+        response = self._respond(method, path, payload, params)
         try:
             return model.model_validate_json(response.content)
         except ValidationError as exc:
@@ -893,8 +922,25 @@ class CloudClient:
             else:
                 skew = SkewDirection.CLOUD_NEWER
             raise UnexpectedResponse(
-                url, response.status_code, str(exc), skew=skew
+                str(response.request.url), response.status_code, str(exc), skew=skew
             ) from exc
+
+    def _respond(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        """A successful response, after one credential refresh on a 401."""
+        response = self._send(method, path, payload, params)
+        if response.status_code == 401 and self._refresh is not None:
+            self._token = self._refresh(self._token)
+            self._http.headers["Authorization"] = f"Bearer {self._token}"
+            response = self._send(method, path, payload, params)
+        if response.status_code >= 400:
+            raise self._failure(response, str(response.request.url))
+        return response
 
     def _post_new_route(self, path: str, model: type[M], payload: dict[str, Any]) -> M:
         """A POST to an endpoint older deployments lack: their answer is a bare

@@ -295,6 +295,75 @@ fn parse_expr(src: &str) -> Result<Expr, String> {
     }
 }
 
+/// A `labels.where` predicate: `<name> <op> <number>`, bare or in one `{{ }}` pair
+/// (`labels_env.py::strip_jinja_braces`), compiled by production as a Jinja expression
+/// over the template's scope. Every other expression is refused by name.
+#[derive(Debug, PartialEq)]
+pub struct Where {
+    name: String,
+    op: Cmp,
+    number: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Cmp {
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
+}
+
+impl Where {
+    pub fn parse(source: &str) -> Result<Where, String> {
+        let trimmed = source.trim();
+        let bare = trimmed.strip_prefix("{{").and_then(|s| s.strip_suffix("}}")).unwrap_or(trimmed).trim();
+        let refused = || bare.to_string();
+        let [name, op, number] = bare.split_whitespace().collect::<Vec<_>>()[..] else { return Err(refused()) };
+        if !name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(refused());
+        }
+        let op = match op {
+            "<" => Cmp::Lt,
+            "<=" => Cmp::Le,
+            ">" => Cmp::Gt,
+            ">=" => Cmp::Ge,
+            "==" => Cmp::Eq,
+            "!=" => Cmp::Ne,
+            _ => return Err(refused()),
+        };
+        let number = number.parse::<f64>().ok().filter(|n| n.is_finite()).ok_or_else(refused)?;
+        Ok(Where { name: name.to_string(), op, number })
+    }
+
+    /// Whether the slice in `scope` keeps its label, as Python compares: a null or text value is
+    /// never equal to a number, and ordering one against a number raises in production, so it errs.
+    /// An int compares through `f64`, exact only below 2^53.
+    pub fn holds(&self, scope: &impl Lookup) -> Result<bool, String> {
+        let x = match scope.get(&self.name)? {
+            Val::Int(i) => i as f64,
+            Val::Float(f) => f,
+            Val::Bool(b) => f64::from(u8::from(b)),
+            other => {
+                return match self.op {
+                    Cmp::Eq => Ok(false),
+                    Cmp::Ne => Ok(true),
+                    _ => Err(format!("pie: slice-label where orders '{}', which is not a number: {other:?}", self.name)),
+                }
+            }
+        };
+        Ok(match self.op {
+            Cmp::Lt => x < self.number,
+            Cmp::Le => x <= self.number,
+            Cmp::Gt => x > self.number,
+            Cmp::Ge => x >= self.number,
+            Cmp::Eq => x == self.number,
+            Cmp::Ne => x != self.number,
+        })
+    }
+}
+
 impl Template {
     /// Parse `source`, dropping the one trailing newline Jinja's default
     /// `keep_trailing_newline=False` drops (a YAML `|` block scalar ends in
@@ -395,4 +464,37 @@ fn py_format(spec: &PySpec, val: &Val, name: &str) -> Result<String, String> {
     };
     let int_part = if spec.comma { d3rs::format::group_digits(int_part) } else { int_part.to_string() };
     Ok(format!("{}{int_part}{tail}", if negative { "-" } else { "" }))
+}
+
+#[cfg(test)]
+mod where_tests {
+    use super::*;
+
+    fn scope<'a>(row: &'a Map<String, Value>, percent: f64) -> Scope<'a> {
+        Scope { row, theta_field: "n", color_field: Some("label"), percent, total: 10.0 }
+    }
+
+    #[test]
+    fn a_where_comparison_holds_per_slice_braced_or_bare() {
+        let row: Map<String, Value> = serde_json::from_str(r#"{"label": "a", "n": 4}"#).unwrap();
+        for (source, holds) in [("{{ percent > 0.3 }}", true), ("percent >= 0.5", false), ("value == 4", true), ("value != 4", false), ("n < 5", true), ("n <= 3.5", false)] {
+            assert_eq!(Where::parse(source).unwrap().holds(&scope(&row, 0.4)).unwrap(), holds, "{source}");
+        }
+    }
+
+    #[test]
+    fn a_where_this_engine_does_not_evaluate_is_named() {
+        for source in ["percent > 0.1 and value < 900", "percent", "label == 'a'", "percent > x", "{{ a }} and {{ b }}"] {
+            assert!(Where::parse(source).is_err(), "{source}");
+        }
+    }
+
+    #[test]
+    fn a_where_ordering_a_null_or_text_value_is_an_error_as_python_raises() {
+        let row: Map<String, Value> = serde_json::from_str(r#"{"label": "a", "n": 4, "note": null}"#).unwrap();
+        assert!(Where::parse("note > 1").unwrap().holds(&scope(&row, 0.4)).is_err());
+        assert!(Where::parse("label > 1").unwrap().holds(&scope(&row, 0.4)).is_err());
+        assert!(!Where::parse("note == 1").unwrap().holds(&scope(&row, 0.4)).unwrap());
+        assert!(Where::parse("label != 1").unwrap().holds(&scope(&row, 0.4)).unwrap());
+    }
 }

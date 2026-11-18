@@ -98,21 +98,25 @@ pub fn automatic<'a>(run: &'a RunResult, public_id: &str) -> Option<&'a str> {
 /// authors no `link:` takes the host's `automatic` one (`automatic`), so every family reads the pair the
 /// same way; `link: false` (`ChartLink::Off`) turns both off.
 pub fn chart_link<'a>(link: Option<&'a ChartLink>, automatic: Option<&'a str>, board: &Board) -> Result<Option<(&'a str, LinkOpen)>, Diagnostic> {
-    let (template, own) = match link {
-        None => match automatic {
-            Some(template) => (template, None),
-            None => return Ok(None),
-        },
-        Some(ChartLink::Off) => return Ok(None),
-        Some(ChartLink::On(LinkSpec::Url(url))) => (url.as_str(), None),
-        Some(ChartLink::On(LinkSpec::Block(block))) => {
+    match link {
+        None => Ok(automatic.map(|template| (template, link_open(None, template, board)))),
+        Some(ChartLink::Off) => Ok(None),
+        Some(ChartLink::On(spec)) => spec_link(spec, board).map(Some),
+    }
+}
+
+/// A `link` value as authored, a bare URL or a `{url, open}` block: its template and how it opens.
+pub fn spec_link<'a>(spec: &'a LinkSpec, board: &Board) -> Result<(&'a str, LinkOpen), Diagnostic> {
+    let (template, own) = match spec {
+        LinkSpec::Url(url) => (url.as_str(), None),
+        LinkSpec::Block(block) => {
             let Some(url) = block.url.as_deref() else {
-                return Err(diag::err_internal("a chart `link` block reaches bind with no `url`"));
+                return Err(diag::err_internal("a `link` block reaches bind with no `url`"));
             };
             (url, match block.open { Tri::Value(open) => Some(open), Tri::Unset | Tri::Null => None })
         }
     };
-    Ok(Some((template, link_open(own, template, board))))
+    Ok((template, link_open(own, template, board)))
 }
 
 /// `split_link`: the link's own `open`, else a query-only `?var=` template updates the board in
@@ -135,12 +139,31 @@ pub fn resolve(raw: &str, run: &RunResult) -> Result<Href, Diagnostic> {
     }
 }
 
+/// Python's `urllib.parse.quote_plus` with the default (empty) `safe` set: the RFC 3986 unreserved
+/// bytes pass, a space becomes `+`, every other byte percent-encodes.
+pub fn quote_plus(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'~' => out.push(char::from(byte)),
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn at(root: &str, slug: &str, origin: &str) -> LinkContext {
         LinkContext { root: root.into(), current_board_slug: slug.into(), origin: origin.into() }
+    }
+
+    #[test]
+    fn quote_plus_encodes_as_python_does() {
+        assert_eq!(quote_plus("a b&c=d/é~_.-"), "a+b%26c%3Dd%2F%C3%A9~_.-");
     }
 
     #[test]

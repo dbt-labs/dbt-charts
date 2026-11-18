@@ -75,7 +75,9 @@ __all__ = [
     "_check_bar_span",
     "_check_layer_axis_kinds",
     "_first_non_numeric_y",
+    "_headroom_floor",
     "_numeric_y_values",
+    "_shared_layer_y_values",
     "_reject_non_positive_log_layer_data",
     "_reject_non_positive_log_scale_data",
     "_reject_non_positive_log_x_data",
@@ -315,6 +317,11 @@ def _axis_headroom(ay: AxisYStyle) -> float | None:
     return ay.scale.headroom if ay.scale is not None else None
 
 
+def _headroom_floor(raw_min: float, headroom: float | None) -> float:
+    """A negative data floor pushed out by ``headroom``, exact (no rounding)."""
+    return raw_min * (1.0 + headroom) if headroom else raw_min
+
+
 def _numeric_y_values(data: ChartRows, y_fields: tuple[str, ...]) -> list[float]:
     """Extract finite numeric values of every column in ``y_fields`` from data rows.
 
@@ -549,6 +556,12 @@ def _check_layer_axis_kinds(
         )
 
 
+def _base_y_fields(y_field: str, chart: CartesianChart) -> tuple[str, ...]:
+    if isinstance(chart, BarChart) and chart.y_start is not None:
+        return (y_field, chart.y_start)
+    return (y_field,)
+
+
 def _shared_y_values(
     data: ChartRows,
     y_field: str,
@@ -562,18 +575,28 @@ def _shared_y_values(
     line floats above the axis top — and once the base max is small enough
     relative to it, autosize-fit collapses the plot height to zero and the chart
     renders as title-plus-axis only.
+    """
+    return _numeric_y_values(
+        data, _base_y_fields(y_field, chart)
+    ) + _shared_layer_y_values(data, y_field, chart, datasets)
+
+
+def _shared_layer_y_values(
+    data: ChartRows,
+    y_field: str,
+    chart: CartesianChart,
+    datasets: LayerDatasets,
+) -> list[float]:
+    """The values of the layers drawn on the chart's primary y scale, base series excluded.
 
     Layers on their own scales (``layers_own_y_scale``) must not widen it.
     Layers sharing the base query read from ``data``; own-query layers read
     from ``datasets`` when the caller can supply it.
     """
-    base_fields: tuple[str, ...] = (y_field,)
-    if isinstance(chart, BarChart) and chart.y_start is not None:
-        base_fields = (y_field, chart.y_start)
-    values = _numeric_y_values(data, base_fields)
     if layers_own_y_scale(chart):
-        return values
-    seen = {(chart.query_name, field) for field in base_fields}
+        return []
+    values: list[float] = []
+    seen = {(chart.query_name, field) for field in _base_y_fields(y_field, chart)}
     for layer in chart.layers:
         if layer.y is None:
             continue
@@ -768,9 +791,7 @@ def _resolve_cartesian_ticks(
     # owns its own.
     negative_floor: float | None = None
     if scale != "independent" and zero_anchor and y_floats and max(y_floats) < 0:
-        _raw_min = min(y_floats)
-        _h = _axis_headroom(ay)
-        negative_floor = _raw_min * (1.0 + _h) if _h else _raw_min
+        negative_floor = _headroom_floor(min(y_floats), _axis_headroom(ay))
     authored_ladder = _authored_tick_ladder(ay)
     if authored_ladder is not None:
         return _CartesianTickResolution(authored_ladder, None, negative_floor)
@@ -839,7 +860,7 @@ def _resolve_cartesian_ticks(
             # what tells resolve which positive rungs exist.
             domain_max = tick_max
             if raw_min < 0:
-                mixed_sign_floor = raw_min * (1.0 + h) if h else raw_min
+                mixed_sign_floor = _headroom_floor(raw_min, h)
         else:
             # All-negative: the anchored edge is the ladder's TOP (0, pinned by
             # `zero: True`), so the floor can no longer come from its bottom

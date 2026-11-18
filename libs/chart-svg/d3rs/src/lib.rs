@@ -29,6 +29,7 @@ pub mod radial_fit;
 pub mod predefined_formats;
 pub mod py_float;
 pub mod py_str;
+pub mod py_word;
 pub mod sankey;
 pub mod sankey_circular;
 pub mod scale;

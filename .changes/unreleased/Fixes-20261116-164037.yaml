@@ -1,0 +1,3 @@
+kind: Fixes
+body: A query that embeds a query the board does not define now fails to compile naming the missing query and the defined ones, rather than reporting that the engine cannot draw the chart.
+time: 2026-11-16T16:40:37.262476-08:00

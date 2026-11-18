@@ -8,6 +8,22 @@ pub fn is_py_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
+/// Python's `\w` for one character of a `str` pattern: `str.isalnum()` or `_`, over the Unicode database
+/// the table was generated from.
+pub fn is_py_word(c: char) -> bool {
+    crate::py_word::PY_WORD
+        .binary_search_by(|&(lo, hi)| {
+            if c < lo {
+                std::cmp::Ordering::Greater
+            } else if c > hi {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
+}
+
 /// `DividerStyle._space_separated`: a dash pattern stripped of Python's
 /// whitespace set, its `[ ,]+` separators joined by single spaces. The one
 /// reading `compile` and `board-model` share, for input the `Dasharray`

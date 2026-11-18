@@ -619,8 +619,8 @@ fn reduce(op: &str, vals: &[f64]) -> Result<Option<f64>, String> {
 /// How one strip row spells its numbers: digits alone, whatever the format, with the unit its
 /// cells leave out kept in `unit` for the row label to name (`Pipeline, $K`). An `s`-type (SI)
 /// format is COMPOSED: the row divides by one shared magnitude and formats through a rebuilt
-/// fixed-point spec. A row that cannot share a tier (values a tier apart, or a sliver that would
-/// print as zero) prints every integer digit of its values and names no tier, so no cell ever
+/// fixed-point spec, its decimals and unit shared by every cell as in a table column. A row with
+/// no tier at all prints every integer digit of its values and names no tier, so no cell ever
 /// carries a magnitude letter the label does not name.
 pub struct StripNumerals {
     pub(crate) digit_spec: String,
@@ -629,7 +629,8 @@ pub struct StripNumerals {
     /// What a non-negative composed cell leads with when the spec asks for a sign
     /// (`+` or a space); a negative one leads with the locale's minus instead.
     plus: String,
-    divisor: f64,
+    /// A composed row's shared magnitude and the decimals its grid prints, `None` for any other row.
+    grid: Option<(f64, i32)>,
     /// A row that names no tier: each cell keeps every integer digit (a rounded `951,000` would
     /// read as exact) and its shortest decimals up to this many significant digits, the spec's
     /// precision, so a float's representation noise never prints.
@@ -648,7 +649,7 @@ impl StripNumerals {
         if parts.type_ != 's' {
             let percent = if parts.type_ == '%' { active_number_locale().locale.percent.clone() } else { String::new() };
             let unit = currency.into_iter().chain((!percent.is_empty()).then(|| percent.clone())).collect();
-            return Ok(StripNumerals { digit_spec: spec, percent, plus: String::new(), divisor: 1.0, exact: None, unit });
+            return Ok(StripNumerals { digit_spec: spec, percent, plus: String::new(), grid: None, exact: None, unit });
         }
         let sign = if parts.sign == '-' { String::new() } else { parts.sign.to_string() };
         let significant = parts.precision.unwrap_or(6).max(1) as i32;
@@ -656,43 +657,32 @@ impl StripNumerals {
             digit_spec: format!("{sign},~f"),
             percent: String::new(),
             plus: String::new(),
-            divisor: 1.0,
+            grid: None,
             exact: Some(significant),
             unit: currency.clone(),
         };
         let voters: Vec<f64> = values.iter().copied().filter(|v| *v != 0.0 && v.is_finite()).collect();
-        let extreme = voters.iter().fold(0.0_f64, |a, v| a.max(v.abs()));
-        // The tier most values sit in; a tie that includes values below every tier goes to the largest value's.
+        // The tier most values sit in, as a table column votes (`shared_scale_for_column`): values
+        // below every tier win any tie they are part of, and the row keeps its digits.
         let mut tally: std::collections::HashMap<Option<i32>, usize> = std::collections::HashMap::new();
         for v in &voters {
             *tally.entry(natural_tier(*v)).or_insert(0) += 1;
         }
         let top = tally.values().copied().max().unwrap_or(0);
         let tied: Vec<Option<i32>> = tally.iter().filter(|(_, &count)| count == top).map(|(tier, _)| *tier).collect();
-        let tier = if tied.contains(&None) { natural_tier(extreme) } else { tied.iter().filter_map(|t| *t).max() };
-        let Some(majority) = tier else { return Ok(full_digits()) };
+        let Some(majority) = tied.iter().copied().max().filter(|_| !tied.contains(&None)).flatten() else {
+            return Ok(full_digits());
+        };
         let magnitude = 10f64.powi(majority);
-        let finest = voters.iter().copied().min_by(|a, b| a.abs().partial_cmp(&b.abs()).expect("voters are finite")).expect("a tier needs a voter");
-        // Values more than one tier below the shared one would inflate every sibling's precision.
-        let tiers_ascending = [3, 6, 9, 12];
-        let tier_index = |tier: i32| tiers_ascending.iter().position(|&t| t == tier).expect("a tier") as i32;
-        match natural_tier(finest) {
-            Some(own) if tier_index(majority) - tier_index(own) <= 1 => {}
-            _ => return Ok(full_digits()),
-        }
-        let decimals = (significant - decimal_exponent(finest.abs() / magnitude)).max(0);
+        // Decimals come from the smallest value at or above the unit, as a table column's do, so
+        // they stay within the spec's significant digits; a value further below prints on that
+        // grid or as its floor (`cell_text`).
+        let unit_floor = voters.iter().map(|v| v.abs()).filter(|v| *v >= magnitude).fold(f64::INFINITY, f64::min);
+        let decimals = (significant - decimal_exponent(unit_floor / magnitude)).max(0);
         let digit_spec = format!(",.{decimals}~f");
-        // A voter whose scaled form prints no non-zero digit would be indistinguishable from a genuine zero.
-        for v in &voters {
-            let printed = ::bind::formats::locale::d3_format(&digit_spec, v / magnitude)
-                .map_err(|e| format!("support_table: format {digit_spec:?}: {e}"))?;
-            if !printed.chars().any(|c| c.is_ascii_digit() && c != '0') {
-                return Ok(full_digits());
-            }
-        }
         let plus = if matches!(parts.sign, '+' | ' ') { parts.sign.to_string() } else { String::new() };
         let unit = currency.into_iter().chain([crate::common::suffix_at_register(majority, true)?]).collect();
-        Ok(StripNumerals { digit_spec, percent: String::new(), plus, divisor: magnitude, exact: None, unit })
+        Ok(StripNumerals { digit_spec, percent: String::new(), plus, grid: Some((magnitude, decimals)), exact: None, unit })
     }
 
     /// The unit around `self`'s own: an authored `prefix` leads it and a `suffix` trails it.
@@ -742,10 +732,21 @@ impl StripNumerals {
             let decimals = shortest.min((significant - decimal_exponent(v)).max(0) as usize);
             let spec = self.digit_spec.replacen("~f", &format!(".{decimals}f"), 1);
             ::bind::formats::locale::d3_format(&spec, v).map_err(wrong)?
-        } else if self.divisor != 1.0 {
-            let digits = ::bind::formats::locale::d3_format(&self.digit_spec, v.abs() / self.divisor).map_err(wrong)?;
+        } else if let Some((divisor, decimals)) = self.grid {
+            let scaled = v.abs() / divisor;
+            // Too small for the row's decimals: the grid's smallest step as a bound, never a
+            // bare zero (a table column's `format_kpi_parts` floor). Decided on the number, as a
+            // locale may print its own digits.
+            let floored = v != 0.0 && (scaled * 10_f64.powi(decimals)).round() == 0.0;
+            let shown = if floored { 10_f64.powi(-decimals) } else { scaled };
+            let digits = ::bind::formats::locale::d3_format(&self.digit_spec, shown).map_err(wrong)?;
+            let bound = match (floored, v > 0.0) {
+                (false, _) => "",
+                (true, true) => "<",
+                (true, false) => ">",
+            };
             let locale = active_number_locale();
-            format!("{}{digits}", if v < 0.0 { locale.locale.minus.as_str() } else { self.plus.as_str() })
+            format!("{bound}{}{digits}", if v < 0.0 { locale.locale.minus.as_str() } else { self.plus.as_str() })
         } else {
             ::bind::formats::locale::d3_format(&self.digit_spec, v).map_err(wrong)?
         };
@@ -1894,32 +1895,38 @@ mod numerals_tests {
         assert_eq!(euros.labeled("Net"), "Net, EUR K");
     }
 
-    /// A row that cannot share one tier prints full digits and names no tier: no cell carries a
-    /// magnitude letter the label leaves out.
+    /// One row keeps one unit and one decimal grid, as a table column does: the decimals come
+    /// from the smallest value at or above the unit, and a value below it prints on that grid,
+    /// or as the grid's smallest step when it is too small to show a digit.
     #[test]
-    fn a_mixed_tier_row_prints_full_digits_under_a_label_with_no_tier() {
+    fn a_row_below_its_unit_prints_on_the_units_grid_or_its_floor() {
+        let row = StripNumerals::for_values(&[950_000.0, 812_000.0, 120.0], "$.3~s").unwrap();
+        assert_eq!(row.cell_text(950_000.0).unwrap(), "950");
+        assert_eq!(row.cell_text(120.0).unwrap(), "<1");
+        assert_eq!(row.labeled("Revenue"), "Revenue, $K");
+        let spread = StripNumerals::for_values(&[1_234_567.0, 2_000_000.0, 4_500_000.0, 3.0, 15_670.0, 0.0, -3.0], "$.3~s").unwrap();
+        assert_eq!(spread.cell_text(1_234_567.0).unwrap(), "1.23");
+        assert_eq!(spread.cell_text(15_670.0).unwrap(), "0.02");
+        assert_eq!(spread.cell_text(3.0).unwrap(), "<0.01");
+        assert_eq!(spread.cell_text(0.0).unwrap(), "0");
+        assert_eq!(spread.cell_text(-3.0).unwrap(), ">\u{2212}0.01");
+        assert_eq!(spread.labeled("Units"), "Units, $M");
+        let sliver = StripNumerals::for_values(&[4e-7, 2e-7], ".3~s").unwrap();
+        assert_eq!(sliver.cell_text(4e-7).unwrap(), "0.0000004", "a row with no tier keeps its digits");
+    }
+
+    /// Values below every tier win any tie they are part of, as in a table column's vote: the
+    /// row keeps its digits and names no tier.
+    #[test]
+    fn a_row_tied_with_tierless_values_keeps_its_digits() {
         let row = StripNumerals::for_values(&[950_000.0, 120.0], "$.3~s").unwrap();
         assert_eq!(row.cell_text(950_000.0).unwrap(), "950,000");
         assert_eq!(row.cell_text(120.0).unwrap(), "120");
         assert_eq!(row.labeled("Revenue"), "Revenue, $");
-        let spread = StripNumerals::for_values(&[1_200_000.0, 3.0], ".3~s").unwrap();
-        assert_eq!(spread.cell_text(1_200_000.0).unwrap(), "1,200,000");
-        assert_eq!(spread.labeled("Units"), "Units");
-    }
-
-    /// A mixed-tier row prints each value exactly: a rounded `951,000` would read as exact.
-    #[test]
-    fn a_mixed_tier_row_prints_its_values_unrounded() {
-        let row = StripNumerals::for_values(&[951_234.0, 120.0], ".3~s").unwrap();
-        assert_eq!(row.cell_text(951_234.0).unwrap(), "951,234");
-        let spread = StripNumerals::for_values(&[1_234_567.0, 3.0], "$.3~s").unwrap();
-        assert_eq!(spread.cell_text(1_234_567.0).unwrap(), "1,234,567");
-        assert_eq!(spread.cell_text(3.0).unwrap(), "3");
-        let sliver = StripNumerals::for_values(&[4e-7, 2e-7], ".3~s").unwrap();
-        assert_eq!(sliver.cell_text(4e-7).unwrap(), "0.0000004");
         let fine = StripNumerals::for_values(&[1.23456789, 2_000_000.0], ".3~s").unwrap();
         assert_eq!(fine.cell_text(1.23456789).unwrap(), "1.23");
         assert_eq!(fine.cell_text(2_000_000.0).unwrap(), "2,000,000");
+        assert_eq!(fine.labeled("Units"), "Units");
     }
 
     /// Full digits keep every integer digit but no more decimals than the spec's significant
@@ -1934,15 +1941,13 @@ mod numerals_tests {
         let small = StripNumerals::for_values(&[0.5, 1.5, 12.25], ".3~s").unwrap();
         assert_eq!(small.cell_text(0.5).unwrap(), "0.5");
         assert_eq!(small.cell_text(12.25).unwrap(), "12.3");
-        let mixed = StripNumerals::for_values(&[951_234.5678, 120.0], ".3~s").unwrap();
-        assert_eq!(mixed.cell_text(951_234.5678).unwrap(), "951,235");
         let sliver = StripNumerals::for_values(&[4.123456e-7, 2e-7], ".3~s").unwrap();
         assert_eq!(sliver.cell_text(4.123456e-7).unwrap(), "0.000000412");
         let no_precision = StripNumerals::for_values(&[0.3, 0.25], ".0~s").unwrap();
         assert_eq!(no_precision.cell_text(0.3).unwrap(), "0.3");
     }
 
-    /// A signed row keeps one sign per cell, and a sliver is not rounded to a zero cell.
+    /// A signed row keeps one sign per cell, and a sliver prints its floor, never a zero cell.
     #[test]
     fn a_signed_row_prints_one_sign_per_cell() {
         let row = StripNumerals::for_values(&[14_000_000.0, -14_000_000.0, 2_500_000.0, 0.0], "+.3~s").unwrap();
@@ -1950,8 +1955,8 @@ mod numerals_tests {
         assert_eq!(row.cell_text(-14_000_000.0).unwrap(), "\u{2212}14");
         assert_eq!(row.cell_text(2_500_000.0).unwrap(), "+2.5");
         assert_eq!(row.cell_text(0.0).unwrap(), "+0");
-        let sliver = StripNumerals::for_values(&[5_000_000.0, 40.0], ".3~s").unwrap();
-        assert_eq!(sliver.cell_text(40.0).unwrap(), "40");
+        let sliver = StripNumerals::for_values(&[5_000_000.0, 3_000_000.0, 40.0], "+.3~s").unwrap();
+        assert_eq!(sliver.cell_text(40.0).unwrap(), "<+0.01");
     }
 
     /// The board's words and decimal are the locale's: the unit names the analytic word.
@@ -1966,6 +1971,19 @@ mod numerals_tests {
             let row = StripNumerals::for_values(&[1_200_000.0, 3_400_000.0], "$.3~s").unwrap();
             assert_eq!(row.cell_text(1_200_000.0).unwrap(), "1,2");
             assert_eq!(row.labeled("Umsatz"), "Umsatz, $\u{a0}M");
+        });
+    }
+
+    /// A locale that prints its own digits keeps true values: a floor is decided on the number.
+    #[test]
+    fn a_row_in_a_locale_with_its_own_digits_floors_only_what_is_too_small() {
+        let mut wire = ::bind::formats::locale::en_us_wire();
+        wire["numerals"] = serde_json::json!(["\u{660}", "\u{661}", "\u{662}", "\u{663}", "\u{664}", "\u{665}", "\u{666}", "\u{667}", "\u{668}", "\u{669}"]);
+        let arabic: ::bind::formats::locale::NumberLocale = serde_json::from_value(wire).unwrap();
+        ::bind::formats::locale::with_number_locale(&arabic, || {
+            let row = StripNumerals::for_values(&[1_753_000.0, 2_000_000.0, 3.0], ".3~s").unwrap();
+            assert_eq!(row.cell_text(1_753_000.0).unwrap(), "\u{661}.\u{667}\u{665}");
+            assert_eq!(row.cell_text(3.0).unwrap(), "<\u{660}.\u{660}\u{661}");
         });
     }
 

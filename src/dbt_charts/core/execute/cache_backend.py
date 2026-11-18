@@ -59,7 +59,6 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import (
     Any,
-    Literal,
     NamedTuple,
     Protocol,
     TypeAlias,
@@ -68,11 +67,8 @@ from typing import (
 )
 
 from dbt_charts import _engine
-from dbt_charts.core.column_types import ColumnType
+from dbt_charts.core.column_types import ColumnType, TruncatedReason
 from dbt_charts.core.execute.rows_wire import dumps_rows
-
-# The set of causes a cached rows entry can carry.
-TruncatedReason: TypeAlias = Literal["max_rows", "max_result_bytes"]
 
 
 @dataclass(frozen=True)

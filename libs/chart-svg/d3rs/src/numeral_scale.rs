@@ -88,10 +88,27 @@ pub fn shared_scale_for_ladder(ticks: &[f64]) -> Option<SharedScale> {
     if integer_digit_count(extreme) < COMPACTION_DIGIT_THRESHOLD {
         return None;
     }
+    let tier = rolled_up_tier(tier, step, extreme);
     Some(SharedScale {
         exponent: tier,
         mode: mode_for_scaled_extreme(extreme / 10f64.powi(tier)),
     })
+}
+
+/// `_rolled_up_tier`: `tier`, or the next tier up when the top tick would
+/// print 4+ digits and `step` is a whole number of tenths of that next tier
+/// (500k -> `0.5M`; 250k stays in thousands).
+fn rolled_up_tier(tier: i32, step: f64, extreme: f64) -> i32 {
+    let Some(&next) = TIERS.iter().filter(|&&t| t > tier).min() else { return tier };
+    if integer_digit_count(extreme / 10f64.powi(tier)) < MODE_TRIGGER_DIGITS {
+        return tier;
+    }
+    let tenths = step / 10f64.powi(next) * 10.0;
+    if tenths >= 1.0 && (tenths - tenths.round()).abs() <= 1e-9 * tenths.round().abs().max(1.0) {
+        next
+    } else {
+        tier
+    }
 }
 
 /// `_natural_tier`: the SI tier `value`'s own magnitude falls into, `None` below thousands.
@@ -420,6 +437,47 @@ pub fn render_align<'a>(
     fallback_fires: bool,
 ) -> Option<&'a str> {
     effective_align(if fallback_fires { None } else { label_align }, edge)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LADDER_1_75M: [f64; 4] = [0.0, 500_000.0, 1_000_000.0, 1_500_000.0];
+
+    fn inputs(column_forming: bool) -> LabelInputs<'static> {
+        LabelInputs {
+            si_format: Some(",.1s"),
+            fixed_decimal_format: None,
+            format_is_house: true,
+            format_affixed: false,
+            notation: None,
+            repeat: None,
+            label_expr_authored: false,
+            column_forming,
+            start_anchored: false,
+            tabular: true,
+        }
+    }
+
+    #[test]
+    fn a_vertical_ladder_whose_thousands_would_reach_four_digits_anchors_one_tier_up() {
+        let ruler = decide_ruler(&inputs(true), &LADDER_1_75M).ok().flatten().unwrap();
+        assert_eq!((ruler.exponent, ruler.mode), (6, SuffixMode::Anchor));
+    }
+
+    #[test]
+    fn a_horizontal_ladder_repeats_at_the_rolled_up_tier() {
+        let ruler = decide_ruler(&inputs(false), &LADDER_1_75M).ok().flatten().unwrap();
+        assert_eq!((ruler.exponent, ruler.mode), (6, SuffixMode::Repeat));
+    }
+
+    #[test]
+    fn a_quarter_million_step_stays_in_thousands() {
+        let ticks = [0.0, 250_000.0, 500_000.0, 750_000.0, 1_000_000.0, 1_250_000.0];
+        let scale = shared_scale_for_ladder(&ticks).unwrap();
+        assert_eq!((scale.exponent, scale.mode), (3, SuffixMode::Repeat));
+    }
 }
 
 #[cfg(test)]

@@ -86,8 +86,35 @@ def test_bulk_schema_raises_when_execution_max_rows_truncates_it(
     monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "1")
     registry = _duckdb_registry(tmp_path, local_project)
 
-    with pytest.raises(RuntimeError, match="truncated"):
+    with pytest.raises(RuntimeError, match="truncated") as excinfo:
         bulk_schema(source="wh", env=registry)
+    assert "Raise execution.max_rows in dbt_charts.yml" in str(excinfo.value)
+    assert "DCT_" not in str(excinfo.value)
+
+
+def test_bulk_schema_byte_cut_names_the_result_byte_limit(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dbt_charts.core.column_types import ColumnType
+    from dbt_charts.core.execute.query_result import QueryResult
+
+    cut = QueryResult(
+        data=[{"n": 1}],
+        schema={"n": ColumnType(kind="integer")},
+        truncated_reason="max_result_bytes",
+    )
+    monkeypatch.setattr(
+        "dbt_charts.core.inspect.bulk_schema.run_query", lambda *_a, **_k: cut
+    )
+    registry = _duckdb_registry(tmp_path, local_project)
+
+    with pytest.raises(RuntimeError, match="truncated") as excinfo:
+        bulk_schema(source="wh", env=registry)
+    assert "execution.max_result_bytes" in str(excinfo.value)
+    assert "max_rows" not in str(excinfo.value)
+    assert "DCT_" not in str(excinfo.value)
 
 
 def test_bulk_schema_over_sqlite_source(

@@ -10,7 +10,6 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.chart.authored import (
-    AreaChart,
     BarChart,
     HeatmapChart,
     KpiSupportConfig,
@@ -143,25 +142,6 @@ CASES: list[tuple[str, type[BaseModel], dict[str, Any], str]] = [
         BarChart,
         {**_BAR, "y": ["b"], "y_start": "a"},
         "y_start sets one start per bar, so y must name a single column, not a list.",
-    ),
-    (
-        "bar-multi-y-layers",
-        BarChart,
-        {**_BAR, "y": ["a", "b"], "layers": [{"type": "line", "y": "b"}]},
-        "Bar chart: layers are not supported with multi-metric (y: [...]) "
-        "charts. Use a long-form query with one y field.",
-    ),
-    (
-        "area-multi-y-layers",
-        AreaChart,
-        {
-            "type": "area",
-            "x": "a",
-            "y": ["a", "b"],
-            "layers": [{"type": "line", "y": "b"}],
-        },
-        "Area chart: layers are not supported with multi-metric (y: [...]) "
-        "charts. Use a long-form query with one y field.",
     ),
     (
         "scatter-support-table",

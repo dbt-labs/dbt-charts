@@ -94,7 +94,7 @@ Jinja helpers in query SQL:
 - `style` (mapping): Appearance overrides for this chart alone
 Also exist: `tooltip`, `id`, `notes`, `link`, `visible`, `type`, `warnings_ignore`, `support_table`, `pattern`, `y_start`, `annotations`.
 
-Name the SQL column as the axis should read (`AS weight_lbs` titles "Weight (lb)"); set `x_label`, `y_label` or `field_labels` only when the title must say more.
+Name the SQL column as the axis should read (`AS weight_lbs` titles "Weight (lb)"); set `x_label`, `y_label` or `field_labels` only to say more. Titles use the axis unit.
 
 Name no channel on a chart whose query no other chart uses: the columns bind in order, dimensions first, measure last: `bar`, `funnel`, `line`, `area`: `x, y` or `x, color, y`; `scatter`: `x, y` or `color, x, y`; `heatmap`: `x, y, color`; `pie`, `donut`: `theta` or `color, theta`; `kpi`: `value`; `histogram`: `x`. A query other charts share stays top-level and its charts name `x`, `y` or `color`; never split a shared query so a chart can skip them.
 

@@ -384,11 +384,9 @@ class TestReadOnlyDuckDB:
 
 
 class TestLimitFetchDialects:
-    """The row limit bounds the driver's own fetch — dbt-adapters'
-    execute(..., limit=...) kwarg, which does cursor.fetchmany(limit)
-    internally — for every dialect uniformly, including SQL Server (no LIMIT
-    keyword) and BigQuery. The SQL text sent to the warehouse is never
-    rewritten, so no dialect-specific rewrite can ever get it wrong.
+    """The row limit reaches the fetch as its caps, for every dialect
+    uniformly, including SQL Server (no LIMIT keyword) and BigQuery. The SQL
+    text sent to the warehouse is never rewritten.
     """
 
     def _captured_call_for_dialect(
@@ -398,8 +396,8 @@ class TestLimitFetchDialects:
         limit: int | None = 10,
         sql: str = "SELECT 1 AS x",
     ) -> tuple[str, dict]:
-        """Run _execute_via_dbt_adapter with a mock build_adapter; return the
-        (sql, kwargs) the data query was sent with."""
+        """Run the query on a mock adapter; return the (sql, kwargs) the data
+        query was sent with, its ``limit`` the caps the fetch was handed."""
         from unittest.mock import MagicMock, patch
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -437,7 +435,7 @@ class TestLimitFetchDialects:
 
         assert captured, f"No call captured for dialect {dialect!r}"
         # captured[0] is the connection-setup timeout SQL; captured[-1] is
-        # the data query (the call we're verifying carries limit=).
+        # the data query.
         return captured[-1]
 
     @pytest.mark.parametrize(
@@ -447,24 +445,21 @@ class TestLimitFetchDialects:
         self, local_project: Callable[..., FilesystemProject], dialect: str
     ) -> None:
         sql, kwargs = self._captured_call_for_dialect(local_project, dialect)
-        assert kwargs["limit"] == 10
+        assert (kwargs["limit"].limit, kwargs["limit"].ceiling_binding) == (10, False)
         # No dialect-specific rewrite ever runs — the SQL text is exactly
         # what the author wrote, byte for byte.
         assert sql == "SELECT 1 AS x"
 
 
 class TestMaxRowsCeilingFetchLimit:
-    """The execution.max_rows ceiling bounds the driver's own fetch (the
-    limit= kwarg passed to dbt-adapters' execute()), never the SQL text. The
-    ceiling binds (and requests ceiling + 1 rows, to detect truncation)
-    whenever no author limit is set, or the author's own limit exceeds the
-    ceiling. When the author's own limit is already at or below the ceiling,
-    the driver is asked for exactly that many rows.
+    """The execution.max_rows ceiling bounds the fetch, never the SQL text.
+    The ceiling binds whenever no author limit is set, or the author's own
+    limit exceeds it; otherwise the author's limit is the cap.
     """
 
     _captured_call_for_dialect = TestLimitFetchDialects._captured_call_for_dialect
 
-    def test_no_author_limit_requests_ceiling_plus_one(
+    def test_no_author_limit_caps_at_the_ceiling(
         self,
         local_project: Callable[..., FilesystemProject],
         monkeypatch: pytest.MonkeyPatch,
@@ -473,10 +468,10 @@ class TestMaxRowsCeilingFetchLimit:
         sql, kwargs = self._captured_call_for_dialect(
             local_project, "postgres", limit=None
         )
-        assert kwargs["limit"] == 51
+        assert (kwargs["limit"].limit, kwargs["limit"].ceiling_binding) == (50, True)
         assert sql == "SELECT 1 AS x"
 
-    def test_author_limit_above_ceiling_requests_ceiling_plus_one(
+    def test_author_limit_above_ceiling_caps_at_the_ceiling(
         self,
         local_project: Callable[..., FilesystemProject],
         monkeypatch: pytest.MonkeyPatch,
@@ -485,10 +480,10 @@ class TestMaxRowsCeilingFetchLimit:
         sql, kwargs = self._captured_call_for_dialect(
             local_project, "postgres", limit=1000
         )
-        assert kwargs["limit"] == 51
+        assert (kwargs["limit"].limit, kwargs["limit"].ceiling_binding) == (50, True)
         assert sql == "SELECT 1 AS x"
 
-    def test_author_limit_below_ceiling_requests_exactly_that_many(
+    def test_author_limit_below_ceiling_is_the_cap(
         self,
         local_project: Callable[..., FilesystemProject],
         monkeypatch: pytest.MonkeyPatch,
@@ -497,42 +492,8 @@ class TestMaxRowsCeilingFetchLimit:
         sql, kwargs = self._captured_call_for_dialect(
             local_project, "postgres", limit=10
         )
-        assert kwargs["limit"] == 10
+        assert (kwargs["limit"].limit, kwargs["limit"].ceiling_binding) == (10, False)
         assert sql == "SELECT 1 AS x"
-
-
-class TestDriverLimitOmittedForFetchmanyIncapableDialects:
-    """dbt-spark's Hive/ODBC cursor wrappers implement fetchall but not
-    fetchmany — passing limit= to their execute() raises AttributeError
-    inside dbt-adapters' get_result_from_cursor. The dialect's
-    cursor_supports_driver_limit flag must gate limit= off for those
-    dialects; the ceiling still applies via the post-fetch slice in
-    apply_row_limit_truncation, just without a driver-level fetch bound.
-    """
-
-    _captured_call_for_dialect = TestLimitFetchDialects._captured_call_for_dialect
-
-    def test_spark_never_receives_a_limit_kwarg(
-        self,
-        local_project: Callable[..., FilesystemProject],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "50")
-        _, kwargs = self._captured_call_for_dialect(local_project, "spark", limit=None)
-        assert kwargs["limit"] is None
-
-    def test_databricks_still_receives_the_ceiling_as_a_limit_kwarg(
-        self,
-        local_project: Callable[..., FilesystemProject],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Regression guard: databricks (dbt-databricks, fetchmany-capable)
-        must keep the driver-bound fetch — only spark (dbt-spark) falls back."""
-        monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "50")
-        _, kwargs = self._captured_call_for_dialect(
-            local_project, "databricks", limit=None
-        )
-        assert kwargs["limit"] == 51
 
 
 class TestSqlTextNeverRewrittenByRowLimit:
@@ -561,7 +522,7 @@ class TestSqlTextNeverRewrittenByRowLimit:
         assert sql == "SELECT TOP 1000000 * FROM orders"
         # The ceiling still bounds the fetch even though the author's own
         # TOP is far above it — the driver, not the SQL text, enforces it.
-        assert kwargs["limit"] == 6
+        assert (kwargs["limit"].limit, kwargs["limit"].ceiling_binding) == (5, True)
 
     def test_duplicate_output_column_names_survive_untouched(
         self, local_project: Callable[..., FilesystemProject]
@@ -582,7 +543,7 @@ class TestSqlTextNeverRewrittenByRowLimit:
             local_project, "postgres", sql="EXPLAIN SELECT 1 AS a"
         )
         assert sql == "EXPLAIN SELECT 1 AS a"
-        assert kwargs["limit"] == 10
+        assert (kwargs["limit"].limit, kwargs["limit"].ceiling_binding) == (10, False)
 
     def test_trailing_semicolon_survives_untouched(
         self, local_project: Callable[..., FilesystemProject]
@@ -606,7 +567,7 @@ class TestSqlTextNeverRewrittenByRowLimit:
             local_project, "postgres", limit=None, sql="SELECT * FROM orders LIMIT 1"
         )
         assert sql == "SELECT * FROM orders LIMIT 1"
-        assert kwargs["limit"] == 1000001
+        assert kwargs["limit"].limit == 1_000_000
 
 
 class TestResolveDuckdbConnectKwargs:
@@ -1323,7 +1284,7 @@ class TestExecuteResolved:
 
         pool = MagicMock()
         pool.execute.return_value = TypedRows(
-            ["n"], [(1,)], [ColumnType(kind="integer")]
+            ["n"], [(1,)], [ColumnType(kind="integer")], None
         )
         # A placeholder-shaped literal that a second render would corrupt.
         wrapped = dataclasses.replace(resolved, sql="SELECT '{{ x }}' AS wrapped")

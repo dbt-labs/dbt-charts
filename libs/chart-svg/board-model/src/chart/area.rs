@@ -11,9 +11,6 @@ use model_derive::Model;
 #[model(
     constraint(forbids(tooltip, when(set(layers)),
         message = "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query."
-    )),
-    constraint(forbids(layers, when(list(y)), nonempty(layers),
-        message = "Area chart: layers are not supported with multi-metric (y: [...]) charts. Use a long-form query with one y field."
     ))
 )]
 #[allow(clippy::duplicated_attributes)]

@@ -75,7 +75,7 @@ def wire_sql(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         self: DbtBackend, source: ResolvedSourceConfig, query: ResolvedQuery
     ) -> TypedRows:
         seen["sql"] = query.inline(source.type)
-        return TypedRows([], [], [])
+        return TypedRows([], [], [], None)
 
     monkeypatch.setattr(DbtBackend, "execute", _fake)
     return seen

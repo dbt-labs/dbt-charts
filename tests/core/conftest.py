@@ -37,12 +37,13 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedTotalValueSlot,
 )
 from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
+from dbt_charts.core.dialects import SQLDialect
 from dbt_charts.core.execute.backends.base import BackendRegistry
 from dbt_charts.core.execute.backends.dbt_core import DbtBackend
 from dbt_charts.core.execute.backends.typed_fetch import TypedRows
 from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.env import close_env, make_exec_env
-from dbt_charts.core.execute.query_result import QueryResult
+from dbt_charts.core.execute.query_result import QueryResult, RowFetchLimit, take
 from dbt_charts.core.execute.run import execute_on_backend, run_query
 
 # Ink palette slot 0 from the default resolved theme.
@@ -422,17 +423,23 @@ def typed_via_execute(monkeypatch: pytest.MonkeyPatch) -> None:
     """Answer the dbt-adapter data query from a mocked ``adapter.execute``.
 
     For tests of the pool, retry and routing behavior, which script the adapter
-    and assert on what it was sent; the typed fetch itself is covered by
+    and assert on what it was sent; the caps the fetch was handed reach it as
+    ``limit=``. The typed fetch itself is covered by
     ``execute/test_typed_fetch.py``.
     """
 
     def fetch(
-        adapter: Any, dialect: str, sql: str, limit: int | None, time_zone: str
+        adapter: Any,
+        dialect: SQLDialect,
+        sql: str,
+        time_zone: str,
+        row_limit: RowFetchLimit,
     ) -> TypedRows:
-        _, table = adapter.execute(sql, auto_begin=False, fetch=True, limit=limit)
+        _, table = adapter.execute(sql, auto_begin=False, fetch=True, limit=row_limit)
         columns = list(table.column_names)
+        rows, reason = take([tuple(row) for row in table.rows], columns, row_limit)
         return TypedRows(
-            columns, list(table.rows), [ColumnType(kind="string") for _ in columns]
+            columns, rows, [ColumnType(kind="string") for _ in columns], reason
         )
 
     monkeypatch.setattr("dbt_charts.core.execute.backends.dbt_core.fetch_typed", fetch)

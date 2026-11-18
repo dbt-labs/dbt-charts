@@ -13,7 +13,7 @@ use crate::title::TitleMetrics;
 
 /// How much taller than its authored `height:` a lone table's slot may grow, to
 /// hold every row rather than paginate: one pagination control bar.
-const TABLE_PAGINATION_CONTROL_HEIGHT: f64 = 28.0;
+pub const TABLE_PAGINATION_CONTROL_HEIGHT: f64 = 28.0;
 
 /// What a chart needs at a width: its natural height there, its floors and card
 /// padding included but not the shift its `cols` row gives it, and where its
@@ -74,6 +74,10 @@ pub struct Boxed {
     pub shift: TitleShift,
     /// A chart whose wrapped title the row's band moves (`Slot::deferred`).
     pub deferred: bool,
+    /// How much taller its `cols` row makes the chart than its own natural height, the row's title
+    /// shifts apart: production re-renders a chart this much taller at the row's height
+    /// (`fix_slot_heights`). Zero outside a `cols` row.
+    pub stretch: f64,
     pub board: Option<Vec<Option<Boxed>>>,
 }
 
@@ -191,6 +195,16 @@ fn shift_rows(board: &Node, measured: &mut Measured) -> Result<(), Diagnostic> {
     }
     let shifts = row_shifts(&targets.iter().map(|(_, m)| *m).collect::<Vec<_>>());
     for ((path, _), shift) in targets.iter().zip(shifts) {
+        // A heading-text card moves by `title_dy` alone (`boards.py`'s `text_shift`), and its
+        // row sizes it unshifted while drawing it grown, so its picture and its report disagree:
+        // only a card the row leaves in place is drawn, and its `body_dy` is not its own.
+        let text_card = matches!(item_at(board, path).content, Content::Board(Node { title: Title::OwnText(_), .. }));
+        if text_card && shift.title_dy != 0.0 {
+            return Err(Diagnostic::refused(refuse!(
+                "a heading that opens a nested board's text, shifted onto its row's title band, is not supported"
+            )));
+        }
+        let shift = if text_card { TitleShift::default() } else { shift };
         let slot = slot_at(measured, path);
         if path.len() > 1 && shift != slot.shift {
             if slot.board.is_some() {
@@ -226,7 +240,7 @@ fn title_targets(
         Content::Chart(_) => targets.extend(slot.title.map(|m| (path.clone(), shifted(m)))),
         Content::Board(inner) if inner.details.is_some() => {}
         Content::Board(Node {
-            title: Title::Own(m),
+            title: Title::Own(m) | Title::OwnText(m),
             ..
         }) => targets.push((path.clone(), shifted(*m))),
         Content::Board(inner) if inner.title == Title::Wraps => {
@@ -249,6 +263,16 @@ fn title_targets(
             }
         }
         Content::Board(_) => {}
+    }
+}
+
+/// The item a path from `board` names.
+fn item_at<'a>(board: &'a Node, path: &[usize]) -> &'a Item {
+    let item = &board.items[path[0]];
+    match (&item.content, &path[1..]) {
+        (_, []) => item,
+        (Content::Board(inner), rest) => item_at(inner, rest),
+        (Content::Chart(_), _) => unreachable!("a path descends through boards"),
     }
 }
 
@@ -559,9 +583,14 @@ fn place(
     if items.is_empty() {
         return vec![None; board.items.len()];
     }
+    let mut row_height = 0.0;
     let rects = match board.kind {
         Kind::Rows => rows_boxes(board, &items, room, gap),
-        Kind::Cols => cols_boxes(board, &items, room, gap),
+        Kind::Cols => {
+            let (rects, row) = cols_boxes(board, &items, room, gap);
+            row_height = row;
+            rects
+        }
         Kind::Grid { columns } => grid_boxes(board, measured, &items, columns, room, gap),
         Kind::Tabs {
             pane_offset,
@@ -580,6 +609,8 @@ fn place(
                 .collect()
         }
     };
+    // The title shifts the row's cells share: its cells' natural heights are what `fix_slot_heights` compares.
+    let row_shift = items.iter().map(|d| d.slot.shift.body_dy).fold(0.0, f64::max);
     let mut boxed: Vec<Option<Boxed>> = vec![None; board.items.len()];
     for (d, rect) in items.iter().zip(rects) {
         let authored_here = authored_above || d.item.height.is_some();
@@ -625,6 +656,10 @@ fn place(
             height: rect.height,
             shift: d.slot.shift,
             deferred: d.slot.deferred,
+            stretch: match (&d.item.content, board.kind) {
+                (Content::Chart(_), Kind::Cols) => (row_height - row_shift - (d.slot.content - d.slot.shift.body_dy)).max(0.0),
+                _ => 0.0,
+            },
             board: nested,
         });
     }
@@ -704,7 +739,7 @@ fn rows_boxes(board: &Node, items: &[Drawn], room: f64, gap: f64) -> Vec<Rect> {
 /// Cols share one row height: the tallest authored height wins and overflows
 /// the room; otherwise the tallest content, capped at the room, or all of it
 /// when the board fills.
-fn cols_boxes(board: &Node, items: &[Drawn], room: f64, gap: f64) -> Vec<Rect> {
+fn cols_boxes(board: &Node, items: &[Drawn], room: f64, gap: f64) -> (Vec<Rect>, f64) {
     let demand = cols_demand(items, room);
     // Production's row law keeps a zero row when nothing asks for height (`sizing.py`), but a nested
     // board paints at least its slot (`render_nested_board`'s `available_height`), so cells that ask
@@ -718,7 +753,7 @@ fn cols_boxes(board: &Node, items: &[Drawn], room: f64, gap: f64) -> Vec<Rect> {
         (row, row)
     };
     let mut x = 0.0;
-    items
+    let rects = items
         .iter()
         .map(|d| {
             let height = if holds_only_content_sized(d.item) {
@@ -730,7 +765,8 @@ fn cols_boxes(board: &Node, items: &[Drawn], room: f64, gap: f64) -> Vec<Rect> {
             x += d.slot.width + gap;
             rect
         })
-        .collect()
+        .collect();
+    (rects, row)
 }
 
 /// Grid rows cost their tallest item; over the room, only rows no authored

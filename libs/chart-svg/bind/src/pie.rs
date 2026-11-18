@@ -12,7 +12,7 @@
 //! and the total format only. The chart's own `style:`, a legend that is not a plain key beside, above or below
 //! the wheel, a shared color field
 //! and every field the slice does not draw are refused by name. `engine`'s `tests/it/board.rs`
-//! replays the recorded `PIES` cases (`record_cases/pie.py`).
+//! draws the pie cases of `board_inputs.json`.
 
 use board_model::board::Board;
 use board_model::chart::query::ChartQuery;
@@ -32,9 +32,9 @@ use serde_json::{Map, Value};
 
 use crate::derived::Placed;
 use crate::formats::locale::{active_number_locale, d3_format};
-use crate::formats::{column_format, AuthoredFormat, Formats, Kind, Tiers};
+use crate::formats::{column_format, resolve_format_parts, AuthoredFormat, Formats, Kind, ResolvedFormat, Tiers};
 use crate::kpi::declared_column_format;
-use crate::label_template::{Scope, Template};
+use crate::label_template::{Scope, Template, Where};
 use crate::bound::{TablePosition, CategoryExcess, Empty, Failure, Family, Href, Listed, Pie, PieCenter, PieEmpty, PieKeyEdge, PieLabel, PieLabeled, PieLegend, PieSlice, PieTable, Table, TableCell, TableColumn};
 use crate::table::{number_columns, swatch_cell, table_cell, NumberInput, Role};
 use board_model::style::table::{CellAlign, SymbolMode, TableChartStyle};
@@ -99,7 +99,6 @@ enum Data {
     ThetaNotNumber,
     NoColor,
     NoTheta,
-    Negative,
     NoTotal,
 }
 
@@ -110,16 +109,16 @@ impl Data {
             Data::ThetaNotNumber => "a theta column that is not a plain number",
             Data::NoColor => "a slice with no color value",
             Data::NoTheta => "a slice with no theta value",
-            Data::Negative => "a negative theta",
             Data::NoTotal => "a theta that does not sum to a positive total",
         };
         Diagnostic::refused(refuse!("a pie over {what} is not supported"))
     }
 }
 
-/// A slice label's template or value format that this engine does not evaluate.
+/// A slice label's template, `where` or value format that this engine does not evaluate.
 enum Label {
     Template(String),
+    Where(String),
     Affix,
     Quote,
 }
@@ -128,6 +127,7 @@ impl Label {
     fn refusal(self) -> Diagnostic {
         let what = match self {
             Label::Template(why) => format!("template this engine does not evaluate ({why})"),
+            Label::Where(why) => format!("`where` this engine does not evaluate ({why})"),
             Label::Affix => "value format affix holding `{`".to_string(),
             Label::Quote => "value format spec holding both quote kinds".to_string(),
         };
@@ -142,11 +142,6 @@ fn missing_theta_column() -> Diagnostic {
 
 fn donut_leaf(leaf: &str) -> Diagnostic {
     unmodeled(&format!("a donut style setting `{leaf}`"))
-}
-
-/// A table value the default number format (`.3~s`) would abbreviate or round.
-fn abbreviated_value() -> Diagnostic {
-    unmodeled("an attached table over a value that is not a whole number under a thousand")
 }
 
 fn format_block() -> Diagnostic {
@@ -175,12 +170,14 @@ pub fn bind_pie(
         let diagnostic = diag::err_pie_total_without_hole(format!("charts.{}.total", placed.public_id)).with_sink_param("chart_id", placed.public_id.into());
         return Ok(Err(Failure { chart: id.clone(), diagnostic }));
     }
-    refuse_unmodeled(chart, donut, board, placed)?;
+    refuse_unmodeled(chart, donut, placed)?;
     let (Some(theta), Some(color)) = (&chart.radial.theta, &chart.radial.color) else {
         return Err(diag::err_internal("a pie without `theta:` and `color:` passed the unmodeled refusals"));
     };
     let (theta, color) = (theta.as_str(), color.as_str());
     let link = crate::links::chart_link(chart.radial.shared.base.link.as_ref(), crate::links::automatic(run, placed.public_id), board)?;
+    // A chart that authors no `link:` draws the host's automatic one, already resolved for its page.
+    let automatic = chart.radial.shared.base.link.is_none();
     // `?name={{ color }}` sets a board variable from the clicked slice, which drives the board's
     // selection (`selected::Selection`): the recede and the legend's series links.
     if link.is_some_and(|(template, _)| crate::links::sets_variable(template)) {
@@ -200,14 +197,30 @@ pub fn bind_pie(
         let headline = pie_legend(placed, style)?.label.element.font;
         let empty = Some(PieEmpty { empty: Empty { filters: run.empty_filters_line(placed.public_id) }, headline });
         // No slice, so no table: layout draws the card and never reads these.
-        let full = Ok(PieTable { heading: None, table: Table { columns: Vec::new(), empty: None } });
+        let full = Ok(PieTable { heading: None, table: Table { columns: Vec::new(), empty: None, links: None }, value_widths: Vec::new() });
         return Ok(Ok(Family::Pie(Box::new(Pie { canvas, ground, background, title, subtitle, hole, slices: Vec::new(), link_open, total: 0.0, center: None, legend: None, table_position: table_position(placed, style), labeled: PieLabeled::Direct, full, excess_categories: None, empty }))));
     }
     if dataset.schema.get(color).map_err(diag::err_internal)? != &ColumnType::String {
         return Err(Data::ColorNotText.refusal());
     }
-    if !matches!(dataset.schema.get(theta).map_err(|_| missing_theta_column())?, ColumnType::Integer | ColumnType::Float) {
-        return Err(Data::ThetaNotNumber.refusal());
+    // `validate_pie_theta` (resolve): a null theta, then a negative one, is the chart's error; a
+    // text theta is `refuse_text_measures`' at render.
+    let chart_error = |diagnostic: Diagnostic| Ok(Err(Failure { chart: id.clone(), diagnostic }));
+    let null_rows = rows.iter().filter(|row| matches!(row.get(theta), Some(Value::Null))).count();
+    if null_rows > 0 {
+        return chart_error(diag::err_pie_null_theta(placed.public_id, null_rows, theta));
+    }
+    let negative_rows = rows.iter().filter(|row| row.get(theta).and_then(Value::as_f64).is_some_and(|v| v < 0.0)).count();
+    if negative_rows > 0 {
+        return chart_error(diag::err_pie_negative_theta(placed.public_id, negative_rows, theta));
+    }
+    match dataset.schema.get(theta).map_err(|_| missing_theta_column())? {
+        ColumnType::Integer | ColumnType::Float => {}
+        ColumnType::String => {
+            let source_path = format!("charts.{}", placed.public_id);
+            return chart_error(diag::err_chart_measure_is_text(theta).with_sink_param("source_path", source_path.into()).with_sink_param("chart_id", placed.public_id.into()));
+        }
+        _ => return Err(Data::ThetaNotNumber.refusal()),
     }
     let mut thetas = Vec::with_capacity(rows.len());
     let mut numbers = Vec::with_capacity(rows.len());
@@ -222,9 +235,6 @@ pub fn bind_pie(
             (Some(Value::Number(_)), _) => return Err(Data::NoColor.refusal()),
             _ => return Err(Data::NoTheta.refusal()),
         }
-    }
-    if thetas.iter().any(|v| *v < 0.0) {
-        return Err(Data::Negative.refusal());
     }
     // `compute_shares` (resolve) reads the compensated sum; the render stage reads the plain one.
     let shares_total = py_float_sum(&thetas);
@@ -255,6 +265,10 @@ pub fn bind_pie(
         None => default_label_template(&labels.default_template.with_color, &tooltip.prefix, &tooltip.spec, &tooltip.suffix)?,
     };
     let template = Template::parse(&template).map_err(|e| Label::Template(e).refusal())?;
+    // A donut's `where` is its `charts.donut` leaf over the pie's (`_family_reaches_recipe`).
+    // A donut never reaches here with its own `where`: any `charts.donut` leaf but the hole and the
+    // total format is refused ([`effective_inner_radius`]), and a board's `charts.pie` reaches it as one.
+    let keep = labels.r#where.as_ref().map(|source| Where::parse(source.as_str()).map_err(|e| Label::Where(e).refusal())).transpose()?;
     if tooltip.spec.is_empty() {
         return Err(diag::err_internal("the tooltip format settles a spec"));
     }
@@ -276,8 +290,10 @@ pub fn bind_pie(
         aria.extend(extra.rows(row, &dataset.schema, &locale)?);
         aria.push(format!("{MUTED}{ROLE_TOTAL}Σ: {}", tooltip.paint(&locale, total)?));
         let aria = aria.join("; ");
-        let label = if shares[idx] > WEDGE_LABEL_MIN_SHARE {
-            let scope = Scope { row, theta_field: theta, color_field: Some(color), percent: share, total };
+        let scope = Scope { row, theta_field: theta, color_field: Some(color), percent: share, total };
+        // `prepare_label_data`: a slice its `where` rejects gets no label.
+        let kept = keep.as_ref().map_or(Ok(true), |w| w.holds(&scope)).map_err(|e| Label::Where(e).refusal())?;
+        let label = if kept && shares[idx] > WEDGE_LABEL_MIN_SHARE {
             let lines = template.render(&scope).map_err(|e| Label::Template(e).refusal())?;
             let ink = match scale {
                 Some(scale) => category_colors::ink_at(scale, names[idx], &companions, &canvas).map_err(diag::err_internal)?,
@@ -287,7 +303,7 @@ pub fn bind_pie(
         } else {
             None
         };
-        let href = link.map(|(template, _)| slice_href(template, row, theta, color, run)).transpose()?;
+        let href = link.map(|(template, _)| slice_href(template, automatic, row, theta, color, run)).transpose()?;
         slices.push(PieSlice { value: thetas[idx], fill, aria, label, href });
     }
     // `merge_unset(board_pie, primary)`: a pie-typed chart whose own `style:` sets the hole takes the
@@ -298,7 +314,7 @@ pub fn bind_pie(
         None => None,
     };
     let legend = bind_legend(placed, style, color, field_labels, &names, &palette, scale, run)?;
-    let attach = |rows: Vec<usize>, heading: Option<String>| refuse_table_style(&placed.style.charts.table).and_then(|()| attached_table(&rows, &shares, &names, &slices, &thetas, &numbers, placed.style.charts.table.symbol_mode, formats, heading));
+    let attach = |rows: Vec<usize>, heading: Option<String>| refuse_table_style(&placed.style.charts.table).and_then(|()| attached_table(&rows, &shares, &names, &slices, &numbers, placed.style.charts.table.symbol_mode, formats, declared.as_ref(), heading));
     let labeled = labeled_mode(&shares, || {
         let small = (0..shares.len()).filter(|&i| shares[i] <= WEDGE_LABEL_MIN_SHARE).collect();
         attach(small, Some(display_text::language::tr("pie.too_small_to_label", None, &[]).map_err(diag::err_internal)?))
@@ -315,15 +331,16 @@ pub fn bind_pie(
 
 /// `row_href` over `pie_link_value` (`click_interactivity.py`'s `_channel_field` for a pie): the
 /// link's `{{ color }}` is the slice's name and `{{ theta }}` its value, as the row holds them; a pie
-/// has no `x` or `y`, which production refuses with its own words. The expanded href resolves in the
-/// host's link context, its scheme checked, as a bar's and a table cell's do (`href::hosted`).
-fn slice_href(template: &str, row: &Map<String, Value>, theta: &str, color: &str, run: &RunResult) -> Result<Href, Diagnostic> {
+/// has no `x` or `y`, which production refuses with its own words. An authored href resolves in the
+/// host's link context, as a bar's and a table cell's do (`href::hosted`); the host's automatic link
+/// is drawn as given (production applies no `resolve_href` to it). Either has its scheme checked.
+fn slice_href(template: &str, automatic: bool, row: &Map<String, Value>, theta: &str, color: &str, run: &RunResult) -> Result<Href, Diagnostic> {
     let raw = crate::links::expand_channels(template, |channel| match channel {
         "color" => crate::links::js_string(row.get(color)),
         "theta" => crate::links::js_string(row.get(theta)),
         other => Err(Diagnostic::refused(format!("link template references channel '{{{{ {other} }}}}' but chart has no '{other}' encoding assigned"))),
     })?;
-    crate::links::resolve(&raw, run)
+    if automatic { Href::new(&raw) } else { crate::links::resolve(&raw, run) }
 }
 
 /// The pie's legend as the board's `charts.legend` with the pie family's patch walked over it, the
@@ -489,7 +506,7 @@ fn own_hole(placed: &Placed) -> Option<f64> {
     placed.own.charts.pie.inner_radius.as_ref().map(|hole| hole.get())
 }
 
-/// Every chart field, style and board fact that changes what the pie says and is not modeled:
+/// Every chart field and style that changes what the pie says and is not modeled:
 /// the chart's fields, and the family styles this slice does not paint.
 /// The chart's own `style:` needs no check of its own: production reads it folded over the board's
 /// family tier (`merge_unset(board_pie, primary)`), which is `placed.style`, so these checks see
@@ -498,7 +515,6 @@ fn own_hole(placed: &Placed) -> Option<f64> {
 fn refuse_unmodeled(
     chart: &PieChart,
     donut: bool,
-    board: &Board,
     placed: &Placed,
 ) -> Result<(), Diagnostic> {
     let style = &placed.style.charts.pie;
@@ -512,10 +528,9 @@ fn refuse_unmodeled(
         (!donut && own_hole(placed).is_none() && radial.total.as_ref().is_some_and(|t| t.visible && t.label.is_none()), "a `total` drawn with no caption"),
         (chart.pattern.pattern.is_some(), "a `pattern`"),
         (radial.theta.is_none() || radial.color.is_none(), "no authored `theta:` and `color:`"),
-        (board.regional.is_some(), "a locale other than en-US"),
         (style.titled.title.is_some(), "a `title` style"),
         (!matches!(style.marks.slice.opacity, Engine::Rule(_)), "a slice `opacity`"),
-        (style.marks.slice.labels.r#where.is_some(), "`labels.where`"),
+        (!style.conditional.is_empty(), "`style.conditional`"),
     ];
     match checks.iter().find(|(set, _)| *set) {
         Some((_, what)) => Err(unmodeled(what)),
@@ -554,9 +569,9 @@ fn refuse_table_style(table: &TableChartStyle) -> Result<(), Diagnostic> {
 }
 
 /// `plan_attachment`'s rows (`project_pie_table_rows`) as a table the table family draws: the wedge's
-/// own fill as the swatch, the slice label's `.0%` share, the name and the value. Production gives the
-/// value column no format, so a whole number prints under the board's `integer` format (`inferred_number_format`);
-/// any other value is refused rather than printed another way.
+/// own fill as the swatch, the slice label's `.0%` share, the name and the value. The value column is the
+/// table's own numeric column (`number_columns`, each value at its own magnitude: `allow_shared_scale` false) under
+/// the format the query declares for the theta, else the type default (`inferred_number_format`).
 /// The header is never drawn (`header.visible: false`).
 #[allow(clippy::too_many_arguments)]
 fn attached_table(
@@ -564,10 +579,10 @@ fn attached_table(
     shares: &[f64],
     names: &[&str],
     slices: &[PieSlice],
-    thetas: &[f64],
     numbers: &[&serde_json::Number],
     symbols: SymbolMode,
     formats: Formats<'_>,
+    declared: Option<&AuthoredFormat>,
     heading: Option<String>,
 ) -> Result<PieTable, Diagnostic> {
     let text = |name: &str| table_cell(Some(&Value::String(name.to_string())), &ColumnType::String);
@@ -575,17 +590,17 @@ fn attached_table(
     let mut share = Vec::with_capacity(rows.len());
     let mut name = Vec::with_capacity(rows.len());
     let mut value = Vec::with_capacity(rows.len());
+    let measured_format = declared.map(|format| resolve_format_parts(format, formats)).transpose()?;
+    let mut value_widths = Vec::with_capacity(rows.len());
     for &i in rows {
         swatch.push(TableCell::Text(swatch_cell(Some(&Value::String(slices[i].fill.clone())))?));
         share.push(text(&d3_format(".0%", shares[i]).map_err(diag::err_internal)?)?);
         name.push(text(names[i])?);
-        if thetas[i].fract() != 0.0 || !(0.0..1000.0).contains(&thetas[i]) {
-            return Err(abbreviated_value());
-        }
         value.push(numbers[i]);
+        value_widths.push(value_width_text(slices[i].value, measured_format.as_ref())?);
     }
     let cells: Vec<Option<&serde_json::Number>> = value.iter().map(|n| Some(*n)).collect();
-    let input = NumberInput { cells: &cells, name: "value", tiers: Tiers { own: Some(&AuthoredFormat::named("integer")), ..Tiers::default() }, at: "a pie's attached table value column", role: Role::Painted };
+    let input = NumberInput { cells: &cells, name: "value", tiers: Tiers { own: declared, ..Tiers::default() }, at: "a pie's attached table value column", role: Role::Painted };
     let value = number_columns(&[input], formats, symbols, false)?.remove(0);
     let column = |key: &str, cells: Vec<TableCell>, align: CellAlign, swatch: bool| -> Result<TableColumn, Diagnostic> {
         Ok(TableColumn { header: slug_to_text(key).map_err(diag::err_internal)?, cells, align, width: None, swatch, max_width: None, background: None, ink: None, weight: None })
@@ -596,7 +611,15 @@ fn attached_table(
         column("name", name, CellAlign::Left, false)?,
         column("value", value, CellAlign::Right, false)?,
     ];
-    Ok(PieTable { heading, table: Table { columns, empty: None } })
+    Ok(PieTable { heading, table: Table { columns, empty: None, links: None }, value_widths })
+}
+
+/// `_format_value_for_width`: the value column is measured at its value under `,.0f` (or the column
+/// format's own `.0%` or `$,.0f`) between the format's affixes, whatever the cell prints.
+fn value_width_text(value: f64, format: Option<&ResolvedFormat>) -> Result<String, Diagnostic> {
+    let spec = format.and_then(|f| f.raw.as_deref()).filter(|raw| matches!(*raw, ".0%" | "$,.0f")).unwrap_or(",.0f");
+    let (prefix, suffix) = format.map_or(("", ""), |f| (f.prefix.as_str(), f.suffix.as_str()));
+    Ok(format!("{prefix}{}{suffix}", d3_format(spec, value).map_err(diag::err_internal)?))
 }
 
 /// The palette a pie paints with (`_effective_palette`): the board's categorical one.
@@ -706,7 +729,7 @@ mod tests {
 
     #[test]
     fn the_shares_alone_decide_the_labeled_mode() {
-        let small = || Ok(PieTable { heading: None, table: Table { columns: Vec::new(), empty: None } });
+        let small = || Ok(PieTable { heading: None, table: Table { columns: Vec::new(), empty: None, links: None }, value_widths: Vec::new() });
         assert_eq!(labeled_mode(&[0.5, 0.3, 0.2], small), PieLabeled::Direct);
         assert!(matches!(labeled_mode(&[0.6, 0.25, 0.14, 0.01], small), PieLabeled::Hybrid(_)));
         assert_eq!(labeled_mode(&[1.0 / 14.0; 14], small), PieLabeled::None);
@@ -716,11 +739,17 @@ mod tests {
     }
 
     #[test]
-    fn an_attached_table_over_a_value_the_default_number_format_abbreviates_is_refused_by_name() {
-        let big = serde_json::Number::from(1500);
-        let slice = PieSlice { value: 1500.0, fill: "#40639c".to_string(), aria: String::new(), label: None, href: None };
-        let refused = attached_table(&[0], &[1.0], &["A"], &[slice], &[1500.0], &[&big], SymbolMode::All, Formats::new(None), None).unwrap_err().to_string();
-        assert!(refused.contains("a pie with an attached table over a value that is not a whole number under a thousand is not supported"), "{refused}");
+    fn an_attached_table_prints_its_values_under_the_type_default_or_the_declared_format() {
+        let (big, small) = (serde_json::Number::from(1500), serde_json::Number::from(40));
+        let slices = [PieSlice { value: 1500.0, fill: "#40639c".to_string(), aria: String::new(), label: None, href: None }, PieSlice { value: 40.0, fill: "#779bc9".to_string(), aria: String::new(), label: None, href: None }];
+        let table = attached_table(&[0, 1], &[0.9, 0.1], &["A", "B"], &slices, &[&big, &small], SymbolMode::All, Formats::new(None), None, None).unwrap();
+        let printed: Vec<String> = table.table.columns[3].cells.iter().map(|cell| cell.text().into_owned()).collect();
+        assert_eq!(printed, ["1,500", "40"]);
+        // The query's declared theta format is the column's own, so it decides the digits.
+        let declared = AuthoredFormat::named("currency");
+        let table = attached_table(&[0, 1], &[0.9, 0.1], &["A", "B"], &slices, &[&big, &small], SymbolMode::All, Formats::new(None), Some(&declared), None).unwrap();
+        let printed: Vec<String> = table.table.columns[3].cells.iter().map(|cell| cell.text().into_owned()).collect();
+        assert_ne!(printed, ["1,500", "40"]);
     }
 
     #[test]
@@ -728,7 +757,7 @@ mod tests {
         let (a, b) = (serde_json::Number::from(60), serde_json::Number::from(1));
         let slice = |fill: &str| PieSlice { value: 0.0, fill: fill.to_string(), aria: String::new(), label: None, href: None };
         let slices = [slice("#40639c"), slice("#775770")];
-        let listed = attached_table(&[1], &[0.99, 0.01], &["Apples", "Figs"], &slices, &[60.0, 1.0], &[&a, &b], SymbolMode::All, Formats::new(None), Some("Too small to label".to_string())).unwrap();
+        let listed = attached_table(&[1], &[0.99, 0.01], &["Apples", "Figs"], &slices, &[&a, &b], SymbolMode::All, Formats::new(None), None, Some("Too small to label".to_string())).unwrap();
         assert_eq!(listed.heading.as_deref(), Some("Too small to label"));
         let cells: Vec<Vec<String>> = listed.table.columns.iter().map(|c| c.cells.iter().map(|cell| cell.text().into_owned()).collect()).collect();
         assert_eq!(cells, [["#775770"], ["1%"], ["Figs"], ["1"]]);

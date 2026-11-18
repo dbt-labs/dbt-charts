@@ -683,6 +683,36 @@ class TestCacheRefMaxRowsEnforcement:
             "the persistent cache must never receive the untruncated composed result"
         )
 
+    def test_composed_result_cut_at_the_byte_budget_before_cache_write(
+        self,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No later cut re-measures a composed result: the composition's own
+        cut is all that keeps an oversized one out of the memo and the store."""
+        # Each composed row serializes to 16 bytes ({"n": 0, "x": 1}): keeps three.
+        monkeypatch.setenv("DCT_MAX_RESULT_BYTES_CEILING", "50")
+        cache = TrivialDuckDBCache()
+        board = _build_board(
+            {
+                "source_a": "SELECT 1 AS x",
+                "composed": (
+                    "SELECT * FROM range(20) AS t(n), {{ queries.source_a.cache }}"
+                ),
+            },
+            chart_query="source_a",
+        )
+
+        executor = _executor_with_cache(board, cache, local_project)
+        rows = executor.execute_query("composed")
+
+        assert len(rows) == 3
+        assert executor.ledger.truncations["composed"].reason == "max_result_bytes"
+        key = plan(executor.ctx, ["composed"])[0].cache_key
+        cached = cache.get(*key, ttl=None)
+        assert cached is not None
+        assert len(cached.rows) == 3
+
     def test_composing_querys_own_limit_is_honored(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
@@ -714,8 +744,8 @@ class TestCacheRefMaxRowsEnforcement:
         """Regression guard: the ceiling must bound compose_over_named_rows'
         own fetch via fetchmany(), not fetch all rows then slice. Reverting
         to fetchall() would make the row-count assertions above still pass
-        (apply_row_limit_truncation/limit_rows reproduce
-        identical visible output from a full fetch) while silently pulling
+        (take() reproduces identical visible output from a full fetch) while
+        silently pulling
         an unbounded composed result into memory — the OOM the driver-bound
         fetch exists to prevent, on the isolated compose connection too.
 

@@ -78,10 +78,8 @@ class ClickHouseDialect(SQLDialect):
     # https://clickhouse.com/docs/sql-reference/syntax#string
     escapes_backslashes = True
     uses_named_params = True
-    # dbt-clickhouse's ConnectionManager.execute accepts the limit kwarg and
-    # ignores it: its client fetches the whole result set regardless. Declaring
-    # False routes the row cap to the post-fetch slice instead of trusting a
-    # bound that was never applied.
+    # dbt-clickhouse's client fetches the whole result set whatever limit it is
+    # given.
     cursor_supports_driver_limit = False
 
     def param(self, index: int) -> str:

@@ -658,8 +658,8 @@ def _bulk_rows_for_config(
     )
     from dbt_charts.core.execute.drivers import is_driver_source
     from dbt_charts.core.execute.query_result import (
-        apply_row_limit_truncation,
         resolve_effective_row_limit,
+        take,
     )
     from dbt_charts.core.inspect.bulk_schema import bulk_schema_scope
 
@@ -668,9 +668,6 @@ def _bulk_rows_for_config(
     dialect = get_dialect(source_type)
     sql = build_sql(dialect, bulk_schema_scope(source_type, creds))
 
-    # Same execution.max_rows/DCT_MAX_ROWS_CEILING guard as the registry path:
-    # bound the driver fetch where the cursor supports it, post-slice otherwise,
-    # and raise rather than return a silently partial result.
     row_limit = resolve_effective_row_limit(None)
     driver_limit = (
         row_limit.fetch_limit if dialect.cursor_supports_driver_limit else None
@@ -691,8 +688,10 @@ def _bulk_rows_for_config(
             _response, table = adapter.execute(
                 sql, auto_begin=False, fetch=True, limit=driver_limit
             )
-        rows, truncated_reason = apply_row_limit_truncation(list(table.rows), row_limit)
         reject_duplicate_columns(table.column_names)
+        rows, truncated_reason = take(
+            [tuple(row) for row in table.rows], list(table.column_names), row_limit
+        )
         result_rows = [dict(zip(table.column_names, row, strict=True)) for row in rows]
     except (
         Exception  # noqa: BLE001 — normalize driver errors to RuntimeError
@@ -701,9 +700,9 @@ def _bulk_rows_for_config(
     if truncated_reason is not None:
         raise RuntimeError(
             f"{label} query for {source_type!r} was truncated to "
-            f"{row_limit.effective_limit} rows by {truncated_reason!r} — result "
-            f"is incomplete. Raise execution.max_rows or "
-            f"DCT_MAX_ROWS_CEILING above the source's {unit} count to fix this."
+            f"{len(result_rows)} rows by the execution.{truncated_reason} "
+            f"limit, so the result is incomplete. Raise "
+            f"execution.{truncated_reason} in dbt_charts.yml so every {unit} fits."
         )
     return result_rows
 
@@ -737,9 +736,10 @@ def _bulk_rows_via_driver(
     if result.truncated_reason is not None:
         raise RuntimeError(
             f"{label} query for {source_type!r} was truncated to "
-            f"{row_limit.effective_limit} rows by {result.truncated_reason!r} — "
-            f"result is incomplete. Raise execution.max_rows or "
-            f"DCT_MAX_ROWS_CEILING above the source's {unit} count to fix this."
+            f"{len(result.data)} rows by the execution."
+            f"{result.truncated_reason} limit, so the result is incomplete. Raise "
+            f"execution.{result.truncated_reason} in dbt_charts.yml so every "
+            f"{unit} fits."
         )
     return list(result.data)
 

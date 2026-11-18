@@ -34,7 +34,11 @@ from graphlib import TopologicalSorter
 from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.attribution import attribute
-from dbt_charts.core.column_types import ColumnType, declared_literal_cells
+from dbt_charts.core.column_types import (
+    ColumnType,
+    TruncatedReason,
+    declared_literal_cells,
+)
 from dbt_charts.core.compile.format import missing_format_columns
 from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
 from dbt_charts.core.compile.models.primitives import Regional
@@ -90,7 +94,6 @@ from dbt_charts.core.execute.lookup import (
     Miss,
     cache_failure,
     cache_outcome,
-    limit_rows,
     memo_key,
 )
 from dbt_charts.core.execute.observability import WarehouseObserver, notify_observers
@@ -122,12 +125,12 @@ from dbt_charts.core.execute.query_result import (
     ResolvedRelation,
     RowFetchLimit,
     adapter_unavailable,
-    apply_row_limit_truncation,
     classify_warehouse_error,
     connection_failure,
     handle_adapter_error,
     plain_error,
     resolve_effective_row_limit,
+    take,
 )
 from dbt_charts.core.execute.result import rows_to_query_result
 from dbt_charts.core.execute.schema_adapter import schema_rows
@@ -382,8 +385,12 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
         composed, cache_ref_reason = _execute_cache_ref_query(
             ctx, ledger, entry, planned.upstreams, query_name
         )
-        limited, truncation = limit_rows(composed, query_name, cache_ref_reason)
-        return Rows(limited, ctx.clock(), truncation=truncation)
+        truncation = (
+            None
+            if cache_ref_reason is None
+            else TruncationInfo(query_name, len(composed.rows), cache_ref_reason)
+        )
+        return Rows(composed, ctx.clock(), truncation=truncation)
 
     try:
         source_config = resolve_source()
@@ -441,11 +448,17 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
         result.error.fields.setdefault("query_name", query_name)
         return Failed(result.error, result.error)
 
-    data_as_of = ctx.clock()
-    limited, truncation = limit_rows(
-        ResultRows(result.data, result.schema), query_name, result.truncated_reason
+    truncation = (
+        None
+        if result.truncated_reason is None
+        else TruncationInfo(query_name, len(result.data), result.truncated_reason)
     )
-    return Rows(limited, data_as_of, result.resolved_relations, truncation)
+    return Rows(
+        ResultRows(result.data, result.schema),
+        ctx.clock(),
+        result.resolved_relations,
+        truncation,
+    )
 
 
 def run_and_settle(
@@ -517,7 +530,7 @@ def _execute_cache_ref_query(
     entry: PlannedQuery,
     upstreams: Mapping[str, QueryRun],
     query_name: str,
-) -> tuple[ResultRows, Literal["max_rows"] | None]:
+) -> tuple[ResultRows, TruncatedReason | None]:
     """Execute a ``{{ queries.X.cache }}`` composing query in an isolated engine.
 
     For each referenced upstream query NAME:
@@ -541,9 +554,9 @@ def _execute_cache_ref_query(
         query_name: Name of the composing query (for error messages).
 
     Returns:
-        The isolated composition engine's rows with their declared schema, and "max_rows" when the
-        composed result came back over the ceiling (rows already sliced to
-        it) — mirroring how adapters signal via QueryResult.truncated_reason.
+        The isolated composition engine's rows with their declared schema, cut
+        to the context's row limit (:func:`take`), and the reason it cut, if
+        it did.
 
     Raises:
         ExecutionError: No result cache is attached, or it cannot serve refs.
@@ -600,16 +613,18 @@ def _execute_cache_ref_query(
     # Bounds the composition engine's own fetch (fetchmany()) — composed_sql
     # runs unmodified, so an author's own inline LIMIT in the composing SQL
     # behaves exactly as it would without this ceiling.
-    row_fetch_limit = ctx.row_limit or resolve_effective_row_limit(None)
+    row_limit = (
+        resolve_effective_row_limit(None) if ctx.row_limit is None else ctx.row_limit
+    )
     rows, schema = compose_over_named_rows(
         composed_sql,
         named_rows,
         params,
-        limit=row_fetch_limit.fetch_limit,
+        limit=row_limit.fetch_limit,
         schemas=schemas,
         time_zone=TimeZoneName(ctx.plan["time_zone"]),
     )
-    rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
+    rows, truncated_reason = take(rows, list(schema), row_limit)
     return ResultRows(rows, schema), truncated_reason
 
 
@@ -862,6 +877,16 @@ def run_values(query: ValuesQuery) -> QueryResult:
     )
 
 
+def _cut_to_ceiling(result: QueryResult) -> QueryResult:
+    """Cut a values or schema result, which no fetch cut, to the ceiling and
+    byte budget only: a caller's sample limit must not shrink what the shared
+    cache stores for it."""
+    result.data, result.truncated_reason = take(
+        result.data, result.columns, resolve_effective_row_limit(None)
+    )
+    return result
+
+
 def _source_origin(env: "ExecEnv", source_config: ResolvedSourceConfig) -> str:
     """What a source is, for the agent repairing its connection: the warehouse
     type, plus the dbt project when it expanded from a dbt profile.
@@ -975,20 +1000,15 @@ def run_file_source(
     source_name: str | None,
     dialect: str | None,
     strict: bool,
-    row_fetch_limit: RowFetchLimit,
+    row_limit: RowFetchLimit,
     variables: VariableValues | None,
     prepare: Callable[[], ResolvedQuery | QueryResult],
     rewrite: Callable[[str], str] | None = None,
 ) -> QueryResult:
     """Run a SQL query on a csv/json/parquet source through the materializer.
 
-    Applies the same row limit / ``execution.max_rows`` contract
-    the backends honor, but not the same mechanism: they bound the driver cursor
-    itself, so an over-the-ceiling result is never fully fetched.
-    ``materialize_and_run`` has no cursor to bound — it returns every row the
-    materialized cache holds, and this slices to ``row_fetch_limit`` afterward.
-    ``truncated_reason`` is set only when the ceiling (not the author's own
-    limit) was the binding value.
+    ``materialize_and_run`` returns every row the materialized cache holds;
+    this cuts them to ``row_limit`` (:func:`take`).
 
     *prepare* composes the query exactly as every backend gets it:
     ``{{ queries.X }}`` refs expand and variables render before the
@@ -1027,7 +1047,7 @@ def run_file_source(
             )
         except (DbtChartsError, RuntimeError, OSError, ValueError) as exc:
             return handle_adapter_error("File-source execution", exc)
-        rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
+        rows, truncated_reason = take(rows, list(schema), row_limit)
         return QueryResult(
             data=rows,
             columns=list(schema),
@@ -1065,7 +1085,9 @@ def run_planned(
     with attributed(source_config, name, plan["board_id"]):
         if entry["type"] == "values":
             values = ValuesQuery.model_validate(entry["spec"])
-            return observed(env.observers, None, lambda: run_values(values))
+            return observed(
+                env.observers, None, lambda: _cut_to_ceiling(run_values(values))
+            )
         if entry["type"] == "schema":
             schema = SchemaQuery.model_validate(entry["spec"])
             if source_config is not None and is_file_source(source_config):
@@ -1075,7 +1097,9 @@ def run_planned(
                     "an authored `type: schema` query) is not yet "
                     "supported for file sources."
                 )
-            return observed(env.observers, None, lambda: schema_rows(env, schema))
+            return observed(
+                env.observers, None, lambda: _cut_to_ceiling(schema_rows(env, schema))
+            )
         assert entry["type"] == "sql"
         if source_config is None:
             return handle_adapter_error(

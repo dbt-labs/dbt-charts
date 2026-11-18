@@ -52,6 +52,7 @@ else:
         HAS_DUCKDB = False
 
 from dbt_charts._install_hint import install_hint
+from dbt_charts.core.column_types import TruncatedReason
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import ERR_CACHE_FILE_UNAVAILABLE
 from dbt_charts.core.diagnostics.execution import ExecutionError
@@ -60,7 +61,6 @@ from dbt_charts.core.execute.cache_backend import (
     CacheEntry,
     CacheUser,
     CacheVariables,
-    TruncatedReason,
 )
 from dbt_charts.core.execute.cache_keys import stored_query_hash
 

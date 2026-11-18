@@ -626,6 +626,10 @@ pub fn err_jinja_error(message: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_JINJA_ERROR, [("message", message.into())])
 }
 
+pub fn err_kpi_conditional_aggregate(chart_id: impl Into<Value>, column: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_KPI_CONDITIONAL_AGGREGATE, [("chart_id", chart_id.into()), ("column", column.into())])
+}
+
 pub fn err_kpi_format_kind_mismatch(chart_id: impl Into<Value>, spec: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_KPI_FORMAT_KIND_MISMATCH, [("chart_id", chart_id.into()), ("spec", spec.into())])
 }
@@ -866,10 +870,6 @@ pub fn err_multi_y_color_conflict(chart_id: impl Into<Value>, chart_type: impl I
     Diagnostic::new(&codes::ERR_MULTI_Y_COLOR_CONFLICT, [("chart_id", chart_id.into()), ("chart_type", chart_type.into()), ("color_field", color_field.into())])
 }
 
-pub fn err_multi_y_layers_conflict(chart_id: impl Into<Value>, chart_type: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_MULTI_Y_LAYERS_CONFLICT, [("chart_id", chart_id.into()), ("chart_type", chart_type.into())])
-}
-
 pub fn err_multiples_endpoint_labels(chart_id: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_MULTIPLES_ENDPOINT_LABELS, [("chart_id", chart_id.into())])
 }
@@ -994,6 +994,10 @@ pub fn err_query_duration_exceeded(seconds: impl Into<Value>, source: impl Into<
     Diagnostic::new(&codes::ERR_QUERY_DURATION_EXCEEDED, [("seconds", seconds.into()), ("source", source.into())])
 }
 
+pub fn err_query_embed_unknown(query: impl Into<Value>, r#ref: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_QUERY_EMBED_UNKNOWN, [("query", query.into()), ("ref", r#ref.into()), ("available", available.into())])
+}
+
 pub fn err_query_format_column_missing(query: impl Into<Value>, column: impl Into<Value>, columns: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_QUERY_FORMAT_COLUMN_MISSING, [("query", query.into()), ("column", column.into()), ("columns", columns.into())])
 }
@@ -1076,6 +1080,10 @@ pub fn err_ribbon_labels_funnel_only(chart_id: impl Into<Value>, field_path: imp
 
 pub fn err_scale_domain_requires_continuous_x(chart_id: impl Into<Value>, vl_type: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_SCALE_DOMAIN_REQUIRES_CONTINUOUS_X, [("chart_id", chart_id.into()), ("vl_type", vl_type.into())])
+}
+
+pub fn err_scale_type_scatter_only(chart_id: impl Into<Value>, chart_type: impl Into<Value>, axis: impl Into<Value>, scale_type: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_SCALE_TYPE_SCATTER_ONLY, [("chart_id", chart_id.into()), ("chart_type", chart_type.into()), ("axis", axis.into()), ("scale_type", scale_type.into())])
 }
 
 pub fn err_scatter_multi_y_not_numeric(chart_id: impl Into<Value>, y_field: impl Into<Value>) -> Diagnostic {
@@ -1216,6 +1224,10 @@ pub fn err_table_freeze_invalid(chart_id: impl Into<Value>, reason: impl Into<Va
 
 pub fn err_table_link_filter_unknown(filter_name: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_TABLE_LINK_FILTER_UNKNOWN, [("filter_name", filter_name.into())])
+}
+
+pub fn err_table_list_column_type(column: impl Into<Value>, found: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_TABLE_LIST_COLUMN_TYPE, [("column", column.into()), ("found", found.into())])
 }
 
 pub fn err_table_not_found(schema: impl Into<Value>, table: impl Into<Value>, source: impl Into<Value>) -> Diagnostic {
@@ -1860,6 +1872,10 @@ pub fn warn_temporal_single_point(chart_id: impl Into<Value>, chart_type: impl I
 
 pub fn warn_text_undeclared_name(field: impl Into<Value>, name: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_TEXT_UNDECLARED_NAME, [("field", field.into()), ("name", name.into())])
+}
+
+pub fn warn_title_unit_mismatch(chart_id: impl Into<Value>, axis_unit: impl Into<Value>, stated: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_TITLE_UNIT_MISMATCH, [("chart_id", chart_id.into()), ("axis_unit", axis_unit.into()), ("stated", stated.into())])
 }
 
 pub fn warn_too_many_color_categories(chart_id: impl Into<Value>, field: impl Into<Value>, count: impl Into<Value>, max_categories: impl Into<Value>) -> Diagnostic {

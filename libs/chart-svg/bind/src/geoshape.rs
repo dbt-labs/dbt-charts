@@ -67,7 +67,7 @@ pub fn bind_geoshape(chart: &GeoshapeChart, run: &RunResult, placed: &Placed) ->
     let stroke = match &mark.stroke {
         Some(s) => match (&s.color, &s.width) {
             (Engine::Value(color), Engine::Value(width)) => {
-                let ink = if color.as_str() == "theme.background" { StrokeInk::BoardBackground } else { StrokeInk::Color(color.as_str().to_string()) };
+                let ink = if color.as_str() == "theme.background" { StrokeInk::BoardBackground(placed.canvas(&Tri::Unset, placed.scope())?) } else { StrokeInk::Color(color.as_str().to_string()) };
                 Some(GeoStroke { ink, width: width.get() })
             }
             _ => return Err(unmodeled("a stroke color or width that is not a plain value")),

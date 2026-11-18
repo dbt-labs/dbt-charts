@@ -289,6 +289,13 @@ class TableColumnConfig(ConstrainedModel):
             "key a rule on it in style.row.conditional.",
             when=(ValueIn("visible", (False,)),),
         ),
+        Forbids(
+            ("format", "spark", "swatch"),
+            "TableColumnConfig: a 'list: true' column draws each value as text, one "
+            "per line. Remove 'format', 'spark' or 'swatch', or format the values "
+            "in the query.",
+            when=(ValueIn("list", (True,)),),
+        ),
     )
 
     visible: bool | None = Field(
@@ -327,6 +334,9 @@ class TableColumnConfig(ConstrainedModel):
             "Useful for series-keyed tables, e.g. a 'Series' column where each row "
             "is identified by its color in the parent chart's palette."
         ),
+    )
+    list: bool | None = Field(
+        default=None, description="Each cell is a list, drawn one value per line."
     )
     width: PixelWidth = Field(
         default=None,

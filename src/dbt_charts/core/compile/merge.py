@@ -232,7 +232,7 @@ def merge_patches(lower: P, upper: P) -> P:
             # Field not written in upper → keep whatever lo is (may be cleared
             # by an exclusive group, or the original lower value).
             out[name] = lo
-            if name in lower.model_fields_set or lo is not None:
+            if name in lower.model_fields_set:
                 result_fields_set.add(name)
         elif hi is None:
             # Explicit null in upper → clear the inherited value.
@@ -385,13 +385,13 @@ def _combine_field(
     if isinstance(lo, dict) and isinstance(hi, dict):
         if strat == "deep":
             # Entries present on both sides merge as models, so a theme layer
-            # can add one field to an entry a lower layer declared.
+            # can add one field to an entry a lower layer declared. Entries of
+            # different models (a ref over an inline definition) replace.
             return {
                 **lo,
                 **{
                     key: recurse(lo[key], value)
-                    if isinstance(lo.get(key), BaseModel)
-                    and isinstance(value, BaseModel)
+                    if isinstance(value, BaseModel) and type(lo.get(key)) is type(value)
                     else value
                     for key, value in hi.items()
                 },

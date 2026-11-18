@@ -38,7 +38,7 @@ def test_helper_accepts_distinct_columns() -> None:
 
 def test_arrow_result_raises() -> None:
     table = pa.Table.from_arrays([pa.array([1]), pa.array([2])], names=["a", "a"])
-    limit = RowFetchLimit(fetch_limit=2, effective_limit=1, ceiling_binding=False)
+    limit = RowFetchLimit(limit=1, ceiling_binding=False, max_bytes=10_000_000)
     with pytest.raises(ExecutionError) as excinfo:
         arrow_to_query_result(table, limit)
     assert excinfo.value.code is ERR_RESULT_DUPLICATE_COLUMN

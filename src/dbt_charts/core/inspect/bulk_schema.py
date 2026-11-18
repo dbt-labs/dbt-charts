@@ -122,9 +122,9 @@ def bulk_schema(source: str, env: ExecEnv) -> SchemaTree:
     if result.truncated_reason is not None:
         raise RuntimeError(
             f"bulk_schema query for {source!r} was truncated to {len(result.data)} rows "
-            f"by {result.truncated_reason!r} — schema tree is incomplete. "
-            "Raise execution.max_rows or DCT_MAX_ROWS_CEILING above the source's "
-            "column count to fix this."
+            f"by the execution.{result.truncated_reason} limit, so the schema "
+            f"tree is incomplete. Raise execution.{result.truncated_reason} in "
+            "dbt_charts.yml to read the whole schema."
         )
 
     return parse_bulk_schema_rows(result.data)

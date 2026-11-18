@@ -28,7 +28,7 @@
 use board_model::primitives::LinkOpen;
 use bind::bound::{Href, Listed, Pie, PieKeyEdge, PieLabeled, PieLegend, PieTable, Table, TableCell, TableColumn};
 use board_model::style::legend::LegendAlign;
-use board_model::style::board::EmojiMode;
+use board_model::style::board::{EmojiMode, OverflowMode};
 use board_model::style::pie::PieChartStyle;
 use board_model::style::style::Style;
 use board_model::style::table::TableChartStyle;
@@ -88,6 +88,7 @@ enum Refused {
     Weight,
     LegendCut,
     LegendFit,
+    TitleClip,
 }
 
 impl Refused {
@@ -101,6 +102,7 @@ impl Refused {
             Refused::Weight => "whose font weight names no axis value",
             Refused::LegendCut => "whose legend text is cut at its limit",
             Refused::LegendFit => "whose aligned legend is no smaller than its plot",
+            Refused::TitleClip => "whose title `overflow: clip` cuts it",
         };
         Diagnostic::refused(refuse!("a pie {what} is not supported"))
     }
@@ -482,22 +484,33 @@ struct Framed {
 fn framed(card: &PieCard, book: &FontBook, tier: f64, width: f64, pad: (f64, f64, f64, f64)) -> Result<Framed, Diagnostic> {
     // The title takes the top of the card's padding box, in the mode guard's solve as in the drawn one.
     let title = chart_title(card.chart_id, card.pie.title.as_deref().unwrap_or_default(), card.pie.subtitle.as_deref(), card.placed, tier, width - pad.0 - pad.1, book)?;
+    // Production clips by its own estimate, not by the painted face: a title `clip` cuts is refused
+    // until the clip law is ported.
+    let clipped = card.placed.charts.title.base.overflow == OverflowMode::Clip
+        && title.as_ref().is_some_and(|t| t.diagnostics.iter().any(|d| d.code == diagnostic::codes::WARN_CHART_TITLE_TRUNCATED.id && d.params.get("authored_field").and_then(|f| f.as_str()) == Some("title")));
+    if clipped {
+        return Err(Refused::TitleClip.refusal());
+    }
     let title_h = title.as_ref().map_or(0.0, |t| t.band.height());
     Ok(Framed { title, title_at: (pad.0, pad.2), pad: (pad.0, pad.1, pad.2 + title_h, pad.3) })
 }
 
-/// `plan_attachment`'s columns: one `column_width` over the strings a column holds, at the table's
-/// body weight. A null name measures as nothing, as production's `str(row["name"] or "")` does.
-fn column_width(face: &PieFace, book: &FontBook, column: &TableColumn, floor: f64, pad: f64) -> Result<f64, Diagnostic> {
+/// `plan_attachment`'s `column_width` over the strings a column is measured at, at the table's body
+/// weight: the share and name columns' cells (a null name measures as nothing, as production's
+/// `str(row["name"] or "")` does), the value column's `value_widths`.
+fn column_width<'t>(face: &PieFace, book: &FontBook, texts: impl IntoIterator<Item = std::borrow::Cow<'t, str>>, floor: f64, pad: f64) -> Result<f64, Diagnostic> {
     let mut widest = 0.0_f64;
-    for cell in &column.cells {
-        let text = match cell {
-            TableCell::Null => "".into(),
-            cell => cell.text(),
-        };
+    for text in texts {
         widest = widest.max(face.width(book, &text)?);
     }
     Ok(floor.max((widest + pad * 2.0 + 3.0).ceil()))
+}
+
+fn cell_texts(column: &TableColumn) -> impl Iterator<Item = std::borrow::Cow<'_, str>> {
+    column.cells.iter().map(|cell| match cell {
+        TableCell::Null => "".into(),
+        cell => cell.text(),
+    })
 }
 
 /// `attachment_for` and `plan_attachment`: the table measured into `width`, where it sits
@@ -519,10 +532,14 @@ fn attach(card: &PieCard, book: &FontBook, listed: &PieTable, width: f64, card_p
     let face = PieFace::of(font.family.as_str(), font.size, &font.weight, font.style.as_str() == "italic", "", card.emoji);
     let pad = style.column_layout.cell_padding;
     let mut table = listed.table.clone();
-    for (column, floor) in table.columns.iter_mut().zip([SWATCH_COLUMN_PX, SHARE_COLUMN_FLOOR, NAME_COLUMN_FLOOR, VALUE_COLUMN_FLOOR]) {
-        // The swatch column is a constant (`swatch_width = 24`); the others fit their widest cell.
-        column.width = Some(if column.swatch { floor } else { column_width(&face, book, column, floor, pad)? });
-    }
+    let [swatch, share, name, value] = table.columns.as_mut_slice() else {
+        return Err(diag::err_internal("a pie's attached table holds a swatch, share, name and value column"));
+    };
+    // The swatch column is a constant (`swatch_width = 24`); the others fit their widest measured text.
+    swatch.width = Some(SWATCH_COLUMN_PX);
+    share.width = Some(column_width(&face, book, cell_texts(share), SHARE_COLUMN_FLOOR, pad)?);
+    name.width = Some(column_width(&face, book, cell_texts(name), NAME_COLUMN_FLOOR, pad)?);
+    value.width = Some(column_width(&face, book, listed.value_widths.iter().map(|text| text.as_str().into()), VALUE_COLUMN_FLOOR, pad)?);
     let natural: f64 = table.columns.iter().filter_map(|column| column.width).sum();
     let region = width - natural - ATTACHED_TABLE_GAP;
     let beside = region >= BESIDE_MIN_FRACTION * width && region >= BESIDE_MIN_PX;
@@ -547,7 +564,7 @@ fn attach(card: &PieCard, book: &FontBook, listed: &PieTable, width: f64, card_p
         Placement::Left | Placement::Right => LegendAlign::Start,
         Placement::Top | Placement::Bottom => LegendAlign::Center,
     });
-    let laid = table::plan(&TableCard { table: &table, style: &style, faces: &faces }, book, table_width, TitleShift::default())?;
+    let laid = table::plan(&TableCard { table: &table, style: &style, faces: &faces, cell: None }, book, table_width, None, TitleShift::default())?;
     let heading = listed.heading.as_ref().map(|text| Heading { text: text.clone(), size: faces.body.size, family: faces.body.family.clone(), weight: faces.header.weight.attr(), color: faces.body.color.clone() });
     let block = heading.as_ref().map_or(0.0, |heading| heading.size + 2.0 + HYBRID_HEADING_GAP);
     let height = laid.height + block;
@@ -686,7 +703,7 @@ pub fn draw(card: &PieCard, plan: &Plan, (w, h): (f64, f64)) -> Result<Node, Dia
         return Ok(root(w, h, wheel_nodes(card, plan, (w, h))?));
     };
     let wheel = Node::group(Role::Chrome, Attrs::new(), wheel_nodes(card, plan, (attached.wheel_width, attached.wheel_height))?);
-    let table_card = TableCard { table: &attached.table, style: &attached.style, faces: &attached.faces };
+    let table_card = TableCard { table: &attached.table, style: &attached.style, faces: &attached.faces, cell: None };
     let mut table_nodes = table::draw(&table_card, &attached.laid)?;
     if let Some(heading) = &attached.heading {
         let block = heading.size + 2.0 + HYBRID_HEADING_GAP;
@@ -725,7 +742,7 @@ fn root(w: f64, h: f64, children: Vec<Node>) -> Node {
 /// `href::linked`: a mark inside its slice's `<a>`, as the shared `href` encoding paints every layer.
 fn linked(href: Option<&Href>, open: LinkOpen, mark: Node) -> Node {
     match href {
-        Some(href) => link(href.as_str(), open, vec![mark]),
+        Some(href) => link(Attrs::new().quick("href", href.as_str()), open, vec![mark]),
         None => mark,
     }
 }

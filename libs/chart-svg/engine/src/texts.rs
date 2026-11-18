@@ -5,9 +5,10 @@
 //! that reads a query defined in another file is refused by name: the engine fills no data there. The `format`
 //! filter reads the board's `style.formats` aliases.
 
-use bind::run::RunResult;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::convert::Infallible;
 
+use bind::run::RunResult;
 use bind::bound::DrawnSet;
 use board_model::board::layout::{items, Layout, LayoutItem};
 use board_model::board::{Board, BoardBody};
@@ -17,6 +18,41 @@ use diagnostic::{refuse, Diagnostic};
 use layout::board::prose::has_template_syntax;
 
 use crate::facts::EngineFacts;
+
+/// What sizing reads of a board whose title or text reads query data, which production does not
+/// resolve before the render (`text_needs_render_data`): each one's literal words
+/// (`template_literal_text`, fenced code kept as written). Production sizes a board by what its author
+/// wrote, so a template that fills to nothing still asks for its width.
+#[derive(Debug, Default)]
+pub(crate) struct ReadsData {
+    pub title: Option<String>,
+    pub text: Option<String>,
+}
+
+/// Each board, by where it sits, whose authored title or text reads query data.
+pub(crate) fn reading_data(board: &Board) -> BTreeMap<ItemId, ReadsData> {
+    fn walk(body: &BoardBody, at: &ItemId, out: &mut BTreeMap<ItemId, ReadsData>) {
+        let literal = |source: &str| -> Option<String> {
+            template::reads_render_data(source).then(|| {
+                let Ok(literal) = template::mask::resolve_outside_fences(source, |masked| Ok::<_, Infallible>(template::literal_text(masked)));
+                literal
+            })
+        };
+        let title = body.title.as_ref().and_then(|title| literal(title.as_str()));
+        let text = body.text.as_ref().and_then(|text| literal(text.as_str()));
+        if title.is_some() || text.is_some() {
+            out.insert(at.clone(), ReadsData { title, text });
+        }
+        for placement in items(body, at) {
+            if let LayoutItem::Board(nested) = placement.item {
+                walk(&nested.body, &placement.id, out);
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(&board.body, &ItemId::root(), &mut out);
+    out
+}
 
 /// `board`, with each title and text that carries template syntax replaced by its filled words.
 pub(crate) fn filled(board: &Board, styles: &ChartStyles, run: &RunResult, facts: &impl EngineFacts) -> Result<Board, Diagnostic> {
@@ -51,12 +87,12 @@ fn fill(body: &mut BoardBody, shown: &BTreeSet<BoardId>, styles: &ChartStyles, r
     }
     if let Some(title) = &body.title {
         if has_template_syntax(title.as_str()) {
-            body.title = Some(words(title.as_str(), body, styles, run, facts)?.try_into().map_err(|_| refuse!("a filled board title is not a display text"))?);
+            body.title = Some(nonempty(words(title.as_str(), body, styles, run, facts)?)?.try_into().map_err(|_| refuse!("a filled board title is not a display text"))?);
         }
     }
     if let Some(text) = &body.text {
         if has_template_syntax(text.as_str()) {
-            body.text = Some(words(text.as_str(), body, styles, run, facts)?.try_into().map_err(|_| refuse!("a filled board text is not markdown"))?);
+            body.text = Some(nonempty(words(text.as_str(), body, styles, run, facts)?)?.try_into().map_err(|_| refuse!("a filled board text is not markdown"))?);
         }
     }
     fill_layout(&mut body.layout, shown, styles, run, facts)
@@ -80,6 +116,15 @@ fn fill_layout(layout: &mut Layout, shown: &BTreeSet<BoardId>, styles: &ChartSty
         }
     }
     Ok(())
+}
+
+/// Production draws a title or text by what its author wrote: one that fills to nothing still draws its
+/// heading or header, which an empty one, here the same as none, would not.
+fn nonempty(filled: String) -> Result<String, Diagnostic> {
+    if filled.is_empty() {
+        return Err(Diagnostic::refused(refuse!("a board's title or text whose template fills to nothing is not supported")));
+    }
+    Ok(filled)
 }
 
 /// `text` of `body` rendered against the variables and the results of the queries it reads.

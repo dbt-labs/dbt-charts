@@ -16,7 +16,9 @@ use board_model::cascade;
 use board_model::facet::Color;
 use board_model::ids::{ItemId, Step};
 use board_model::names::ThemeName;
-use board_model::nested::{family_reaches_recipe, in_force, scope_patch, GapLayout};
+use board_model::nested::{
+    board_family_reaches_fonts, family_reaches_recipe, in_force, scope_patch, GapLayout,
+};
 use board_model::style::style::Style;
 use diagnostic::{diag, restated_text, Diagnostic, ModelPath};
 use model_core::{CascadeError, Leaf, Resolved, ToAuthored, ToPatch, Tri};
@@ -370,6 +372,7 @@ impl Walk {
         context.palettes.extend(resolve.palettes.clone());
         context.roles.extend(resolve.roles.clone());
         board_model::palette::adopt_board_palette(&mut context, &resolve);
+        board_family_reaches_fonts(&mut resolve, &folded);
         folded.merge(resolve);
         let resolved = Resolved::base_in(&cascade::TABLES, folded, &context).map_err(|e| {
             ScopeError::Invalid(cascade_diagnostics(

@@ -32,7 +32,7 @@ use scene::{Attrs, Chars, Escape, Extent, Node, PathData, Role, Run, Shape, Tran
 
 use crate::board::band::TitleShift;
 use crate::legacy;
-use crate::title::{chart_title_spec, refuse_authored_size, TitleMetrics, TITLE_ASCENT_RATIO};
+use crate::title::{chart_title_spec, TitleMetrics, TITLE_ASCENT_RATIO};
 
 /// callout.rs:45-46. A card is never narrower or shorter.
 pub(super) const MIN_WIDTH: f64 = 120.0;
@@ -231,7 +231,6 @@ impl ChartTitle {
     /// the card's padding and the tile's top under the baseline, in the face a card of `width` gives
     /// a title, with Vega's title offset.
     pub fn metrics(style: &Style, width: f64, card_padding: f64) -> Result<TitleMetrics, Diagnostic> {
-        refuse_authored_size(style)?;
         let (size, ..) = chart_title_spec(style, width)?;
         let ascent = (size * TITLE_ASCENT_RATIO).round_ties_even();
         Ok(TitleMetrics { ascent: card_padding + ascent, tail: size + VEGA_TITLE_OFFSET - ascent })

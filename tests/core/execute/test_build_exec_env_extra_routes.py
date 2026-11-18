@@ -39,7 +39,7 @@ class _StubBackend:
 
     def execute(self, source: Any, query: ResolvedQuery) -> TypedRows:
         self.ran.append(query.sql)
-        return TypedRows(["stub"], [(True,)], [ColumnType(kind="boolean")])
+        return TypedRows(["stub"], [(True,)], [ColumnType(kind="boolean")], None)
 
     def interrupt(self) -> None:
         pass

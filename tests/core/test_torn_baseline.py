@@ -62,17 +62,13 @@ def test_theme_values_bake_field_for_field() -> None:
             ResolvedAxisGridTornBaselineStyle(
                 enabled=authored.enabled,
                 amplitude=authored.amplitude,
-                wavelength=authored.wavelength,
-                sharpness=authored.sharpness,
             )
         )
 
 
 def test_an_axis_y_override_reaches_axis_y_only() -> None:
     base = get_theme_style()
-    override = AxisGridTornBaselineStyle(
-        enabled=True, amplitude=6.5, wavelength=21.0, sharpness=0.25
-    )
+    override = AxisGridTornBaselineStyle(enabled=True, amplitude=6.5)
     axis_y = base.charts.axis_y.model_copy(
         update={
             "grid": base.charts.axis_y.grid.model_copy(
@@ -84,20 +80,20 @@ def test_an_axis_y_override_reaches_axis_y_only() -> None:
         update={"charts": base.charts.model_copy(update={"axis_y": axis_y})}
     )
     assert _resolved_torn(theme, "axis_y", "quantitative") == (
-        ResolvedAxisGridTornBaselineStyle(
-            enabled=True, amplitude=6.5, wavelength=21.0, sharpness=0.25
-        )
+        ResolvedAxisGridTornBaselineStyle(enabled=True, amplitude=6.5)
     )
     assert _resolved_torn(theme, "axis_x", "ordinal").enabled is False
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [("amplitude", 0.0), ("wavelength", 0.5), ("sharpness", 1.5)],
-)
-def test_out_of_range_wave_settings_are_rejected(field: str, value: float) -> None:
+def test_a_bite_of_zero_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="amplitude"):
+        AxisGridTornBaselineStyle(amplitude=0.0)
+
+
+@pytest.mark.parametrize("field", ["wavelength", "sharpness"])
+def test_the_wave_settings_are_gone(field: str) -> None:
     with pytest.raises(ValidationError, match=field):
-        AxisGridTornBaselineStyle(**{field: value})
+        AxisGridTornBaselineStyle.model_validate({field: 1.0})
 
 
 def _line_svg(torn_enabled: bool) -> str:

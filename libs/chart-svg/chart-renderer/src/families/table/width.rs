@@ -391,6 +391,7 @@ pub(super) fn natural_width(
         header_size,
         th.header.visible,
         cell_pad,
+        th.spark.bar.width,
     )?;
     let natural: Vec<NaturalColumn> = cols
         .iter()
@@ -416,6 +417,7 @@ pub(super) fn natural_width(
         0.0
     };
     let edges = 2.0 * outer_padding + th.row_scrollbar_band(rows.len());
+    let row_number_width = row_number_width + super::bind::list_gutter(cols);
     let columns_width = content_width + row_number_width + edges;
     let min_width = min_content_width + row_number_width + edges;
 

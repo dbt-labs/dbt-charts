@@ -194,21 +194,18 @@ def test_served_nav_script_wires_custom_menu(tmp_path: Path) -> None:
     assert "ArrowDown" in response.text
 
 
-def test_served_nav_script_aligns_to_board_content_inset(tmp_path: Path) -> None:
-    """The HTML nav mirrors the scaled board content inset instead of using a
-    fixed page padding."""
+def test_served_nav_aligns_to_the_board_edge(tmp_path: Path) -> None:
+    """The home button lines up with the board render's left edge, not its
+    content, so it sits in the same place on every page."""
     with TestClient(
         create_server(FilesystemProject(_project(tmp_path))),
         raise_server_exceptions=False,
     ) as client:
-        response = client.get("/overview")
-    assert response.status_code == 200
-    assert '<div class="dbt-nav" data-dbt-content-left="' in response.text
-    assert '<svg data-dbt-content-left="' not in response.text
-    assert "--dbt-nav-page-inset" in response.text
-    assert "getBoundingClientRect" in response.text
-    assert "viewBox.baseVal" in response.text
-    assert "resize" in response.text
+        pages = [client.get(url) for url in ("/overview", "/", "/support/")]
+    for page in pages:
+        assert page.status_code == 200
+        assert 'class="dbt-nav"' in page.text
+        assert 'class="dbt-nav" data-dbt-content-left="0"' in page.text
 
 
 def test_served_nested_board_includes_breadcrumb(tmp_path: Path) -> None:
@@ -668,3 +665,68 @@ def test_embed_param_serves_the_board_without_nav(tmp_path: Path) -> None:
     assert 'class="dbt-nav' in page.text
     assert 'class="dbt-nav' not in embedded.text
     assert "Overview" in embedded.text
+
+
+def _two_board_project(tmp_path: Path) -> Path:
+    boards = tmp_path / "charts"
+    (boards / "regions").mkdir(parents=True)
+    (boards / "a.yml").write_text(_BOARD.replace("Overview", "Alpha"))
+    (boards / "b.yml").write_text(_BOARD.replace("Overview", "Beta"))
+    (boards / "regions" / "x.yml").write_text(_BOARD)
+    (boards / "regions" / "y.yml").write_text(_BOARD)
+    return tmp_path
+
+
+def _get(project: Path, url: str) -> str:
+    with TestClient(create_server(FilesystemProject(project))) as client:
+        response = client.get(url)
+    assert response.status_code == 200, response.text
+    return response.text
+
+
+def test_sidebar_links_carry_variables_but_not_internal_keys(tmp_path: Path) -> None:
+    project = _two_board_project(tmp_path)
+    html = _get(project, "/a/?year=2024&_foo=1&format=html")
+    assert 'class="dbt-sidebar"' in html
+    assert 'href="/b?year=2024"' in html
+    assert "_foo" not in html.split('class="dbt-sidebar"')[1].split("</nav>")[0]
+    assert "Beta" in _get(project, "/b?year=2024")
+
+
+def test_embed_has_no_sidebar(tmp_path: Path) -> None:
+    html = _get(_two_board_project(tmp_path), "/a/?_embed")
+    assert 'class="dbt-sidebar"' not in html
+
+
+def test_folder_listing_shows_the_parent_with_the_folder_current(
+    tmp_path: Path,
+) -> None:
+    html = _get(_two_board_project(tmp_path), "/regions/?year=2024")
+    assert 'href="/a?year=2024"' in html
+    assert 'href="/regions/?year=2024" aria-current="page"' in html
+
+
+def test_parent_row_goes_back_one_level(tmp_path: Path) -> None:
+    """`..` opens the listed folder's page, whose sidebar lists its parent."""
+    project = _two_board_project(tmp_path)
+    (project / "charts" / "regions" / "west").mkdir()
+    (project / "charts" / "regions" / "west" / "w.yml").write_text(_BOARD)
+    board = _get(project, "/regions/x?year=2024")
+    sidebar = board.split('class="dbt-sidebar"')[1].split("</nav>")[0]
+    assert 'href="/regions/?year=2024"' in sidebar
+    folder = _get(project, "/regions/west/")
+    sidebar = folder.split('class="dbt-sidebar"')[1].split("</nav>")[0]
+    assert 'href="/regions/"' in sidebar
+    assert 'href="/regions/west/" aria-current="page"' in sidebar
+
+
+def test_root_listing_shows_the_sidebar(tmp_path: Path) -> None:
+    html = _get(_two_board_project(tmp_path), "/")
+    assert 'href="/a"' in html.split('class="dbt-sidebar"')[1]
+    assert "data-dbt-board" in html
+
+
+def test_server_nav_false_has_no_sidebar(tmp_path: Path) -> None:
+    project = _two_board_project(tmp_path)
+    (project / "dbt_charts.yml").write_text("server:\n  nav: false\n")
+    assert "dbt-sidebar" not in _get(project, "/a/")

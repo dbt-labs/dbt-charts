@@ -32,7 +32,7 @@ fn parts(shadow: &BoxShadow) -> Result<(f64, f64, f64, &str), Diagnostic> {
 }
 
 /// `svg_utils.format_svg_numeric`: an integer bare, else the float's repr.
-fn numeric(value: f64) -> String {
+pub(crate) fn numeric(value: f64) -> String {
     if value.fract() == 0.0 && value.abs() < 1e12 {
         format!("{}", value as i64)
     } else {

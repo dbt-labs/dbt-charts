@@ -267,40 +267,13 @@ _SCALAR_TYPES = _NUMERIC_TYPES | {"str", "bool"}
 _SCALAR_SHORTHAND = frozenset({"str", "int", "float"})
 _NAME_GUARDS = frozenset({NON_BLANK, CHANNEL_COLUMN})
 
-# Every wide-capable family folds its measures onto one mark family, which spends
-# the layer stack (and the mark fill) on the measures themselves — so a
-# list-valued `y` and any of these siblings cannot both be authored.
-#
-# The rule is one rule; where it *fires* is not. Bar and area raise from
-# their `__constraints__` at parse time, line and scatter from
-# `resolve_wide_measure_channels` (`resolve/chart/_wide_fields.py`) at resolve.
-# The save endpoint re-parses and nothing more, so the resolve-time half is the
-# worse one: the panel's edit passes the gate, is written to git, and the chart
-# stops rendering — which is why line and scatter have to be in this table
-# even though the parse-gate test cannot see them. `_RENDER_FIXTURES` in the
-# tests reaches it.
-#
-# The two halves do not cover the same siblings. `resolve_wide_measure_channels`
-# reads `layers:` (and refuses a `color:` that is not a plain column) and
-# nothing else, so a line or scatter chart carrying a list `y` and `layers:`
-# renders with no diagnostic caught at parse — their rows exist for the render
-# sweep only, because a table that claims more than the compiler enforces
-# hides a control on a board that works. `color` is in neither row: a column
-# there composes with a list `y` (one series per value per measure).
-#
-# Forward: once `y` holds a list, the conflicting sibling is not a control, or
-# the panel shows one half of a mutually exclusive pair and hides the other.
-# Mirror: once a sibling is authored, `y` is not a *multi-value* control, since
-# the list is the edit that creates the collision. `layers` has no control
-# (`_NOT_DESIGN`), so for it only the mirror direction is live; `y_start` is a
-# control (a text box), so it is live in both.
-# GATED — the parse sweep (bar, area) and the render sweep (line, scatter).
+# A list-valued `y` and these siblings cannot both be authored. Forward: once
+# `y` holds a list, the sibling is not a control. Mirror: once a sibling is
+# authored, `y` is not a multi-value control.
+# GATED — the parse sweep.
 _LIST_CONFLICTS = {
     # A bar with y_start draws one start per bar, so it takes one y.
-    "bar": ("y", ("layers", "y_start")),
-    "AreaChart": ("y", ("layers",)),
-    "LineChart": ("y", ("layers",)),
-    "ScatterChart": ("y", ("layers",)),
+    "bar": ("y", ("y_start",)),
 }
 
 # What a list-valued `y` collides with that is neither a sibling field nor a
@@ -375,10 +348,9 @@ _VALUE_CONFLICTS = {
 # measure.
 #
 # `HeatmapChart.y` is the other, and the only one with no validator behind it at
-# all. Bar and area declare the multi-metric layers rule every wide family
-# obeys — the fold spends the mark fill on the measures — and a heatmap's color
-# *is* its measure, so there is nothing left to spend. Heatmap neither declares
-# that rule nor refuses from its own resolver, so `y: [region, revenue]` renders
+# all. A wide fold spends the color channel on the measures, and a heatmap's
+# color *is* its measure, so there is nothing left to spend. Heatmap refuses
+# neither at parse nor from its own resolver, so `y: [region, revenue]` renders
 # clean: a y band stacking two columns' values against each other, and a cell
 # color that has stopped encoding magnitude. Neither gate can see a chart that
 # is merely wrong, so this one is pinned by an explicit test.
@@ -1473,9 +1445,7 @@ def _support_table_attach_blocked(instance: Any) -> bool:
     - No `x:` — the engine's support-table strip requires an x-encoding to align
       its columns to.
     - `color:` — a color-encoded chart is long-format, and the correct entry
-      there is `per_series:`, which this control cannot author (the same
-      standard `_LIST_CONFLICTS["LineChart"]` applies to `y:` against
-      `layers:`); the engine's ambiguous-source
+      there is `per_series:`, which this control cannot author; the engine's ambiguous-source
       check would also fire on it the moment a query returns more than one
       row per x, which this verb cannot see coming.
 

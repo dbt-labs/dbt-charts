@@ -557,18 +557,26 @@ class TestTableProportionalSizing:
         # for a 4-char header needs data of 5+ chars.
         data = [{"name": f"row_{i:02d}"} for i in range(5)]
         chart = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
-        with interactive_controls(True):
-            svg = render_table_svg(
+
+        def _render() -> str:
+            return render_table_svg(
                 chart,
                 data,
                 width=800,
                 height=explicit_height,
                 board_style=resolve_style(get_theme_style()),
             )
-        svg = visible_svg(svg)
 
-        assert "row_01" in svg
-        assert "row_02" not in svg
+        # A static export lets the slot cut the page.
+        page_1 = _render().split('data-page="2"')[0]
+        assert "row_01" in page_1
+        assert "row_02" not in page_1
+
+        # A live host keeps the page size; the page scrolls in the slot.
+        with interactive_controls(True):
+            svg = visible_svg(_render())
+        assert "row_04" in svg
+        assert "data-dbt-page-overflow" in svg
 
 
 class TestHeaderLink:

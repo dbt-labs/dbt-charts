@@ -40,21 +40,19 @@ def test_spark_bar_accepts_single_element_y_list():
 
 
 # =============================================================================
-# bar / area — layers: is single-series-only with a y list; color: composes
+# bar / area — layers: and color: compose with a y list
 # =============================================================================
 
 
 @pytest.mark.parametrize("chart_type", ["bar", "area"])
-def test_rejects_layers_with_multi_field_y(chart_type: str):
-    with pytest.raises(
-        ValidationError, match="layers are not supported with multi-metric"
-    ):
-        _validate(
-            type=chart_type,
-            x="month",
-            y=["revenue", "cost"],
-            layers=[{"type": "line", "y": "target"}],
-        )
+def test_accepts_layers_with_multi_field_y(chart_type: str):
+    chart = _validate(
+        type=chart_type,
+        x="month",
+        y=["revenue", "cost"],
+        layers=[{"type": "line", "y": "target"}],
+    )
+    assert len(chart.layers) == 1
 
 
 @pytest.mark.parametrize("fields", [{}, {"color": "region"}, {"y": []}, {"y": ""}])

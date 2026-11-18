@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{histogram_bins_by, Bin, Resolved};
-use crate::common::{axis_title_text, format_y_label, MirrorGhost};
+use crate::common::{axis_title_text, MirrorGhost};
 use ::bind::rows::{row_num};
 use diagnostic::Diagnostic;
 use crate::families::color_scale::ContinuousColor;
@@ -35,9 +35,8 @@ pub struct Bound {
     pub(crate) bins: Vec<BoundBin>,
     /// The x scale's domain, `NaN` for both when no row has a numeric x.
     pub(crate) x_extent: (f64, f64),
-    /// Each bin edge, which the binned scale ticks, and its label.
+    /// Each bin edge, which the binned scale ticks.
     pub(crate) x_ticks: Vec<f64>,
-    pub(crate) x_labels: Vec<String>,
     /// The tallest bin, or the group of rows with no numeric x if that is taller.
     pub(crate) max_count: f64,
     /// The count scale's top: `[0, nice(max_count)]`.
@@ -168,20 +167,9 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let x_slot = ax_x.labels.format.as_ref();
     let x_ticks: Vec<f64> =
         if bins.is_empty() { Vec::new() } else { bins.iter().map(|bin| bin.start).chain([bin_stop]).collect() };
-    let x_labels: Vec<String> = if x_ticks.is_empty() {
-        Vec::new()
-    } else {
-        let slot = x_slot.ok_or("histogram: axis_x.labels.format missing (theme required)")?;
-        x_ticks
-            .iter()
-            .enumerate()
-            .map(|(i, &tv)| {
-                let label = format_y_label(tv, ax_x.ruler.as_ref(), ax_x.tick_label.as_ref(), Some(slot), i, x_ticks.len())
-                    .map_err(|e| format!("histogram x label format: {e}"))?;
-                ax_x.labels.apply_expr("x", tv, label, i, x_ticks.len())
-            })
-            .collect::<Result<_, _>>()?
-    };
+    if !x_ticks.is_empty() && x_slot.is_none() {
+        return Err("histogram: axis_x.labels.format missing (theme required)".into());
+    }
 
     // ── Y: never baked (a count aggregate has no static column); the ticks are
     // re-derived at the fitted extent at layout.
@@ -281,7 +269,6 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         bins: bound_bins,
         x_extent: (bin_start, bin_stop),
         x_ticks,
-        x_labels,
         max_count,
         y_domain_max,
         x_title,

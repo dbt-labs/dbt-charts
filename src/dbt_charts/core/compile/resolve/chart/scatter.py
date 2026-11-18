@@ -178,7 +178,7 @@ def _resolve_scatter(
     scatter = merge_unset(board_family_style(chart_style_context, normalized), primary)
     channels = plan.channels
     channels, wide_measure_series = resolve_wide_measure_channels(
-        normalized, channels, "scatter", has_layers=bool(normalized.layers)
+        normalized, channels, "scatter"
     )
     # Scatter (and bubble -- a scatter with a size channel, not a separate
     # family) never routes to a top legend: its legend swatch is a circle

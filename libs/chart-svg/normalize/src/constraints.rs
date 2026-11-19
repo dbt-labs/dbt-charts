@@ -38,13 +38,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 use yaml::Node;
 
-struct Spine {
-    schema: Schema,
+pub(crate) struct Spine {
+    pub(crate) schema: Schema,
 }
 
 const COMPLETED_BY_BUILD: [&str; 3] = ["FooterStyle", "TimestampStyle", "SparkEmptyStyle"];
 
-fn spine() -> Result<&'static Spine, String> {
+pub(crate) fn spine() -> Result<&'static Spine, String> {
     static SPINE: OnceLock<Result<Spine, String>> = OnceLock::new();
     SPINE
         .get_or_init(|| {

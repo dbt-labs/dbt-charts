@@ -968,6 +968,7 @@ def _render_layout(
             variables,
             layout_content_width,
             layout_content_height,
+            card_gap,
             list(layout.tab_titles),
             list(layout.tab_slugs),
             layout.tab_variable,

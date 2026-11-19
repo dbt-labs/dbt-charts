@@ -1021,14 +1021,12 @@ mod tests {
         super::render(payload, fonts)
     }
 
-    /// `marks.bar.max_size` caps a band's bar thickness and centers it; an
-    /// unauthored one leaves the band-fraction bar as it was.
-    /// A step layer over a grouped base turns the offset scale into a point
-    /// scale: zero-width columns `band / (series + 1)` apart.
-    #[test]
-    fn a_step_layers_point_scale_spaces_zero_width_columns_by_one_more_than_the_series() {
-        let cols = BandColumns::point_slots(120.0, 2);
-        assert_eq!((cols.width, cols.left(10.0, 0), cols.left(10.0, 1)), (0.0, 10.0, 50.0));
+    /// The ink a value label over a bar of `fill` takes on `canvas`: the canvas or the outside
+    /// labels' ink, whichever contrasts more with the bar.
+    fn knockout_ink_on(canvas: &str, fill: &str) -> String {
+        let ink = dbt_charts_color::ensure_readable_ink("#313233", canvas, super::labels::OUTSIDE_INK_CONTRAST).unwrap();
+        let on = |c: &str| dbt_charts_color::wcag_contrast(c, fill).unwrap();
+        if on(&ink) > on(canvas) { ink } else { canvas.to_string() }
     }
 
     /// Vega paints grouped bars in data order, which shows where they overlap:
@@ -1643,14 +1641,17 @@ mod tests {
                 "three layer bars at the next palette slot: {svg}"
             );
 
-            // "middle" position labels: half the value, white text
-            // (background) since middle sits inside the bar.
+            // "middle" position labels sit inside the bar, knocked out in the
+            // canvas held to label contrast against each bar's fill.
             for label in [">60<", ">75<", ">90<", ">70<", ">85<", ">100<"] {
                 assert!(!svg.contains(label), "labels show the REAL value, not half of it: {svg}");
             }
-            for label in ["120", "150", "180", "140", "170", "200"] {
-                let needle = format!("fill=\"#ffffff\">{label}<");
-                assert!(svg.contains(&needle), "value label {label} present in white: {svg}");
+            for (labels, bar) in [(["120", "150", "180"], "#3164a3"), (["140", "170", "200"], "#779bc9")] {
+                let ink = super::knockout_ink_on("#ffffff", bar);
+                for label in labels {
+                    let needle = format!("fill=\"{ink}\">{label}<");
+                    assert!(svg.contains(&needle), "value label {label} present in {ink}: {svg}");
+                }
             }
 
             // Legend: base ("revenue") and layer ("target") resolve to
@@ -2029,6 +2030,160 @@ mod tests {
             assert!(svg.contains(">41.5</text>") && svg.contains(">63.5</text>"), "{svg}");
         }
 
+        /// The `fill` of the value label printing `text`.
+        fn label_fill(svg: &str, text: &str) -> String {
+            let tag = svg
+                .split("<text ")
+                .find(|t| t.contains(&format!(">{text}</text>")))
+                .unwrap_or_else(|| panic!("no label `{text}`: {svg}"));
+            tag.split("fill=\"").nth(1).and_then(|r| r.split('"').next()).expect("label fill").to_string()
+        }
+
+        /// Jan's 50 sits inside its 100 bar, Feb's 90 over the empty canvas above a 20 bar.
+        fn labeled_layer_svg(font_color: Option<&str>) -> String {
+            let mut layer = line_layer_json("#dea628");
+            layer["line_mark"]["labels"]["visible"] = serde_json::json!(true);
+            layer["line_mark"]["labels"]["font"] = match font_color {
+                Some(color) => serde_json::json!({"color": color}),
+                None => serde_json::Value::Null,
+            };
+            let payload = make_payload(payload_with_layer(&[("Jan", 100.0, 50.0), ("Feb", 20.0, 90.0)], layer));
+            render(&payload, &test_fonts()).expect("renders")
+        }
+
+        #[test]
+        fn an_unauthored_layer_label_over_a_dark_bar_takes_the_canvas_and_over_the_canvas_keeps_its_ink() {
+            let svg = labeled_layer_svg(None);
+            assert_eq!(label_fill(&svg, "50"), "#ffffff", "{svg}");
+            assert_eq!(label_fill(&svg, "90"), "#313233", "{svg}");
+        }
+
+        #[test]
+        fn layer_and_bar_value_labels_over_the_canvas_take_the_board_font_color() {
+            let mut layer = line_layer_json("#dea628");
+            layer["line_mark"]["labels"]["visible"] = serde_json::json!(true);
+            let mut layered = payload_with_layer(&[("Jan", 100.0, 50.0), ("Feb", 20.0, 90.0)], layer);
+            layered["board_style"] = serde_json::json!({"font_color": "#2a3b4c"});
+            let svg = render(&make_payload(layered), &test_fonts()).expect("renders");
+            assert_eq!(label_fill(&svg, "90"), "#2a3b4c", "{svg}");
+
+            let mut bars = make_vertical_payload(&[("Jan", 100.0), ("Feb", 20.0)], false);
+            bars["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
+                "visible": true, "position": "above", "field": null, "format": null, "dx": null, "dy": null, "font": null
+            });
+            bars["board_style"] = serde_json::json!({"font_color": "#2a3b4c"});
+            let svg = render(&make_payload(bars), &test_fonts()).expect("renders");
+            assert_eq!(label_fill(&svg, "20"), "#2a3b4c", "{svg}");
+        }
+
+        /// Two 1234 bars with an outside ("above") label each and a layer line at `target`.
+        fn labels_above_with_a_line_at(target: f64, position: &str) -> String {
+            let mut layer = line_layer_json("#dea628");
+            layer["line_mark"]["labels"]["visible"] = serde_json::json!(false);
+            let mut payload = payload_with_layer(&[("Jan", 1234.0, target), ("Feb", 1234.0, target)], layer);
+            payload["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
+                "visible": true, "position": position, "field": null, "format": null, "dx": null, "dy": null, "font": null
+            });
+            render(&make_payload(payload), &test_fonts()).expect("renders")
+        }
+
+        /// The y of the first label printing `text`.
+        fn label_y(svg: &str, text: &str) -> f64 {
+            let tag = svg.split("<text ").find(|t| t.contains(&format!(">{text}</text>"))).unwrap_or_else(|| panic!("no label `{text}`: {svg}"));
+            tag.split(" y=\"").nth(1).and_then(|r| r.split('"').next()).expect("a y").parse().expect("a number")
+        }
+
+        #[test]
+        fn a_bar_label_on_a_layer_line_takes_the_other_side_of_the_bar_end() {
+            let clear = labels_above_with_a_line_at(1900.0, "above");
+            let crossed = labels_above_with_a_line_at(1264.0, "above");
+            assert!(label_y(&crossed, "1234") > label_y(&clear, "1234") + 10.0, "inside the bar, below the tip: {crossed}");
+            assert_eq!(label_fill(&crossed, "1234"), "#ffffff", "{crossed}");
+            assert_eq!(label_fill(&clear, "1234"), "#313233", "{clear}");
+        }
+
+        #[test]
+        fn an_inside_bar_label_on_a_layer_line_moves_out_past_the_tip() {
+            let clear = labels_above_with_a_line_at(1900.0, "top");
+            let crossed = labels_above_with_a_line_at(1204.0, "top");
+            assert!(label_y(&crossed, "1234") < label_y(&clear, "1234") - 10.0, "outside the bar, above the tip: {crossed}");
+            assert_eq!(label_fill(&crossed, "1234"), "#313233", "{crossed}");
+        }
+
+        /// A 1234 bar and a bar of `short` with a `bottom` label each, and a layer line at `target`.
+        fn short_bar_with_a_line_at(short: f64, target: f64) -> String {
+            let mut layer = line_layer_json("#dea628");
+            layer["line_mark"]["labels"]["visible"] = serde_json::json!(false);
+            let mut payload = payload_with_layer(&[("Jan", 1234.0, target), ("Feb", short, target)], layer);
+            payload["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
+                "visible": true, "position": "bottom", "field": null, "format": null, "dx": null, "dy": null, "font": null
+            });
+            render(&make_payload(payload), &test_fonts()).expect("renders")
+        }
+
+        #[test]
+        fn a_short_bar_label_flipped_onto_a_layer_line_takes_the_far_end_of_the_bar() {
+            let clear = short_bar_with_a_line_at(3.0, 1900.0);
+            let crossed = short_bar_with_a_line_at(3.0, 60.0);
+            assert!(label_y(&crossed, "3") > label_y(&clear, "3") + 10.0, "below the baseline, not above the tip: {crossed}");
+            assert_eq!(label_fill(&crossed, "3"), "#313233", "{crossed}");
+        }
+
+        /// Two 300 horizontal bars with a "300" label each and a layer line at `target`.
+        fn horizontal_labels_with_a_line_at(target: f64, position: &str) -> String {
+            let mut payload = horizontal_layer_payload(line_layer_json("#dea628"));
+            payload["rows"] = serde_json::json!([
+                {"product": "Jan", "revenue": 300.0, "target": target},
+                {"product": "Feb", "revenue": 300.0, "target": target},
+            ]);
+            payload["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
+                "visible": true, "position": position, "field": null, "format": null, "dx": null, "dy": null, "font": null
+            });
+            render(&make_payload(payload), &test_fonts()).expect("renders")
+        }
+
+        /// The x of the first label printing `text`.
+        fn label_x(svg: &str, text: &str) -> f64 {
+            let tag = svg.split("<text ").find(|t| t.contains(&format!(">{text}</text>"))).unwrap_or_else(|| panic!("no label `{text}`: {svg}"));
+            tag.split("x=\"").nth(1).and_then(|r| r.split('"').next()).expect("an x").parse().expect("a number")
+        }
+
+        #[test]
+        fn a_horizontal_bar_label_on_a_layer_line_takes_the_other_side_of_the_bar_end() {
+            let clear = horizontal_labels_with_a_line_at(400.0, "above");
+            let crossed = horizontal_labels_with_a_line_at(330.0, "above");
+            assert!(label_x(&crossed, "300") < label_x(&clear, "300") - 4.0, "inside the bar, left of the tip: {crossed}");
+            assert_eq!(label_fill(&crossed, "300"), "#ffffff", "{crossed}");
+            assert_eq!(label_fill(&clear, "300"), "#313233", "{clear}");
+        }
+
+        #[test]
+        fn an_inside_horizontal_bar_label_on_a_layer_line_moves_out_past_the_tip() {
+            let clear = horizontal_labels_with_a_line_at(200.0, "top");
+            let crossed = horizontal_labels_with_a_line_at(250.0, "top");
+            assert!(label_x(&crossed, "300") > label_x(&clear, "300") + 4.0, "outside the bar, right of the tip: {crossed}");
+            assert_eq!(label_fill(&clear, "300"), "#ffffff", "{clear}");
+            assert_eq!(label_fill(&crossed, "300"), "#313233", "{crossed}");
+        }
+
+        #[test]
+        fn a_value_label_without_a_board_font_color_names_the_field() {
+            let mut bars = make_vertical_payload(&[("Jan", 100.0)], false);
+            bars["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
+                "visible": true, "position": "above", "field": null, "format": null, "dx": null, "dy": null, "font": null
+            });
+            let mut payload = make_payload(bars);
+            payload.board_style.as_mut().expect("a board style").font_color = None;
+            let err = render(&payload, &test_fonts()).err().expect("refuses").to_string();
+            assert!(err.contains("board_style.font_color"), "{err}");
+        }
+
+        #[test]
+        fn an_authored_layer_label_color_stays_over_a_dark_bar() {
+            let svg = labeled_layer_svg(Some("#475166"));
+            assert_eq!(label_fill(&svg, "50"), "#475166", "{svg}");
+        }
+
         /// A right value axis rides the rail concat, which reserves a layer's room beside the rail.
         #[test]
         fn a_layer_beside_a_rail_with_a_right_value_axis_renders() {
@@ -2232,6 +2387,25 @@ mod tests {
                 assert!((bands - bands.round()).abs() < 1e-3, "off a band edge: {xs:?}");
             }
             assert_eq!(xs.len(), 1 + 2 * 5, "d3 step-after draws two vertices per later one of the six doubled rows: {d}");
+        }
+
+        /// A step layer over a grouped base leaves the base's dodged columns their width.
+        #[test]
+        fn a_step_layer_over_a_grouped_base_keeps_every_bar_wide() {
+            let mut layer = line_layer_json("#dea628");
+            layer["line_mark"]["curve"] = serde_json::json!("step");
+            let mut payload_json = make_vertical_payload(&[("Jan", 100.0), ("Feb", 120.0)], true);
+            for row in payload_json["rows"].as_array_mut().unwrap() {
+                row["target"] = serde_json::json!(50.0);
+            }
+            payload_json["resolved"]["layers"] = serde_json::json!([layer]);
+            payload_json["resolved"]["legend"]["visible"] = serde_json::json!(true);
+            let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+            let flat: Vec<&str> = svg.match_indices("d=\"M").map(|(i, _)| svg[i + 3..].split('"').next().unwrap()).filter(|d| {
+                let xs: Vec<&str> = d.split(['M', 'L']).filter(|p| !p.is_empty()).filter_map(|p| p.split(',').next()).collect();
+                d.ends_with('Z') && xs.windows(2).all(|w| w[0] == w[1])
+            }).collect();
+            assert!(flat.is_empty(), "zero-width bars: {flat:?}");
         }
 
         /// `apply_step_band` rejects a data-driven color on a step layer over a band x.
@@ -4366,6 +4540,11 @@ mod tests {
             open[at..at + open[at..].find('"').expect("closing quote")].to_string()
         }
 
+        /// The overlay canvas a label over a `#779bc9` layer bar knocks out in, held to label contrast.
+        fn on_layer_bar() -> String {
+            super::knockout_ink_on(OVERLAY_CANVAS, "#779bc9")
+        }
+
         #[test]
         fn a_color_matched_bar_layer_label_inks_the_canvas_not_the_transparent_card() {
             let mut bar_layer = stacked_bar_layer_json(Some("series"));
@@ -4378,7 +4557,7 @@ mod tests {
                 disconnected_step_layer_json("round", Some("butt")),
             ));
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
-            assert_eq!(fill_of_tag(&svg, "text", ">8<"), OVERLAY_CANVAS, "{svg}");
+            assert_eq!(fill_of_tag(&svg, "text", ">8<"), on_layer_bar(), "{svg}");
         }
 
         #[test]
@@ -4401,7 +4580,7 @@ mod tests {
             });
             let svg = render(&make_payload(on_transparent_card(payload_json)), &test_fonts())
                 .expect("renders");
-            assert_eq!(fill_of_tag(&svg, "text", ">140<"), OVERLAY_CANVAS, "{svg}");
+            assert_eq!(fill_of_tag(&svg, "text", ">140<"), on_layer_bar(), "{svg}");
         }
 
         /// A hollow overlay point authors no `fill` (`point_mark.fill` is
@@ -4660,6 +4839,35 @@ mod tests {
         payload.width = 900.0;
         let years = svg_year_labels(&render(&payload, &test_fonts()).expect("renders"));
         assert_eq!(years[..3], [1991, 2000, 2010], "{years:?}");
+    }
+
+    /// A top `support_table` re-renders the chart at a width shrunk by the strip's chrome overhead, but the plot
+    /// box ends identical: the cadence ladder must judge months against the slot width the chart was placed at, so
+    /// the strip chart labels every month wherever the same chart without a strip does.
+    #[test]
+    fn a_support_table_bar_keeps_the_month_cadence_its_stripless_twin_gets() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let dates: Vec<String> = (0..12).map(|i| format!("{}-{:02}-01", 2025 + (i + 11) / 12, (i + 11) % 12 + 1)).collect();
+        let mut plain_json = make_time_payload(&dates);
+        for (i, row) in plain_json["rows"].as_array_mut().unwrap().iter_mut().enumerate() {
+            row["orders"] = serde_json::json!(100.0 + i as f64);
+        }
+        let mut strip_json = plain_json.clone();
+        strip_json["resolved"]["support_table"] = serde_json::json!({
+            "entries": [{"source": "orders", "format": {"spec": ",.0f", "raw": "number"}, "label": " "}]
+        });
+        strip_json["resolved"]["effective_support_table_style"] = support_table_style_json();
+        let fonts = test_fonts();
+        let mut plain = make_payload(plain_json);
+        let mut strip = make_payload(strip_json);
+        plain.width = 560.0;
+        strip.width = 560.0;
+        let plain_svg = crate::render_fitted(&plain, &fonts).expect("plain renders").svg;
+        assert!(plain_svg.contains(">Feb</text>"), "the stripless twin labels months: {plain_svg}");
+        let strip_svg = crate::render_fitted(&strip, &fonts).expect("strip renders").svg;
+        assert!(strip_svg.contains(">Feb</text>") && !strip_svg.contains(">Q2</text>"), "{strip_svg}");
+        let cells = (0..12).filter(|i| strip_svg.contains(&format!(">{}</text>", 100 + i))).count();
+        assert_eq!(cells, 12, "twelve strip cells: {strip_svg}");
     }
 
     fn months_from_2000(n: usize) -> Vec<String> {
@@ -7828,11 +8036,13 @@ mod tests {
         j["resolved"]["background"] = serde_json::json!("transparent");
         j["resolved"]["canvas"] = serde_json::json!("#d9a45b");
         j["background"] = serde_json::json!("#ffffff");
+        let bar = j["resolved"]["style"]["single_series_fill"].as_str().expect("a single-series fill").to_string();
         let svg = render(&make_payload(j), &test_fonts()).expect("renders");
         assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"600\" height=\"400\" fill=\"transparent\"/>"), "{svg}");
         let i = svg.find(">800<").expect("label present");
         let tag = &svg[svg[..i].rfind("<text").unwrap()..i];
-        assert!(tag.contains("fill=\"#d9a45b\""), "top label paints the chart's own canvas: {tag}");
+        let ink = knockout_ink_on("#d9a45b", &bar);
+        assert!(tag.contains(&format!("fill=\"{ink}\"")), "top label takes the chart's own canvas or the text ink against its bar: {tag}");
     }
 
     /// A horizontal bar's tooltip headers a detected calendar-grain x by that grain,
@@ -14734,11 +14944,13 @@ mod tests {
         j["resolved"]["background"] = serde_json::json!("transparent");
         j["resolved"]["canvas"] = serde_json::json!("#d9a45b");
         j["background"] = serde_json::json!("#ffffff");
+        let bar = j["resolved"]["style"]["single_series_fill"].as_str().expect("a single-series fill").to_string();
         let svg = render(&make_payload(j), &test_fonts()).expect("renders");
         assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"800\" height=\"500\" fill=\"transparent\"/>"), "{svg}");
         let i = svg.find(">1800<").expect("label present");
         let tag = &svg[svg[..i].rfind("<text").unwrap()..i];
-        assert!(tag.contains("fill=\"#d9a45b\""), "middle label paints the chart's own canvas: {tag}");
+        let ink = knockout_ink_on("#d9a45b", &bar);
+        assert!(tag.contains(&format!("fill=\"{ink}\"")), "middle label takes the chart's own canvas or the text ink against its bar: {tag}");
     }
 
     #[test]

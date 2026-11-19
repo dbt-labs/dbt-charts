@@ -293,6 +293,14 @@ struct SparkTheme {
     column: SparkColumnTheme,
     area: SparkAreaTheme,
     bar: SparkBarTheme,
+    // Defaults for a `spark.value` lane; a column's own `position`/`gap` win.
+    value: SparkValueTheme,
+}
+
+#[derive(Deserialize)]
+pub(super) struct SparkValueTheme {
+    position: SparkValuePosition,
+    gap: f64,
 }
 
 #[derive(Deserialize)]
@@ -376,6 +384,32 @@ struct SparkConfig {
     negative_color: Option<bool>,
     last_visible: Option<bool>,
     min_max_visible: Option<bool>,
+    value: Option<SparkValue>,
+}
+
+/// `spark.value`: the cell's value in its own lane beside a `bar`, `bar-normalize` or `column`.
+#[derive(Deserialize, Clone)]
+struct SparkValue {
+    visible: bool,
+    position: Option<SparkValuePosition>,
+    gap: Option<f64>,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum SparkValuePosition {
+    Left,
+    Right,
+}
+
+impl SparkConfig {
+    /// The value lane's side and gap, the column's own over the theme's; None when hidden.
+    fn value_lane(&self, theme: &SparkValueTheme) -> Option<(SparkValuePosition, f64)> {
+        self.value
+            .as_ref()
+            .filter(|v| v.visible)
+            .map(|v| (v.position.unwrap_or(theme.position), v.gap.unwrap_or(theme.gap)))
+    }
 }
 
 fn default_width_similarity_threshold() -> f64 {
@@ -1282,6 +1316,8 @@ struct TableBody<'a> {
     number_xs: &'a [f64],
     /// Per column, the widest formatted number of the lane (nulls excluded).
     number_ws: &'a [f64],
+    lane_xs: &'a [f64],
+    spark_lanes: &'a [Option<(f64, f64)>],
     suffix_xs: &'a [f64],
     outer: f64,
     pad: f64,
@@ -1415,6 +1451,8 @@ struct ColumnInputs {
     header_demands: BTreeMap<String, f64>,
     /// The widest unbreakable token, plus both cell paddings.
     word_floors: BTreeMap<String, f64>,
+    /// A `spark.value` column's narrowest width: its value lane plus `spark.width`, or the minimum spark lane.
+    spark_floors: BTreeMap<String, f64>,
     /// The columns whose word floor is their header's widest word, by column.
     header_floor_words: BTreeMap<String, String>,
 }
@@ -1675,7 +1713,8 @@ pub(crate) mod tests {
                 "area": {"fill_opacity": 0.3},
                 "bar": {
                     "background": "#e5e7eb", "color": "#23467f", "default_max": 100.0, "width": 80.0, "border": {"radius": 0.0}
-                }
+                },
+                "value": {"position": "right", "gap": 6.0}
             },
             "paginator": {
                 "color_active": "#222222",
@@ -3374,6 +3413,144 @@ pub(crate) mod tests {
         assert!(row_group(&svg, 0).contains("<g transform=\"translate("), "{svg}");
         assert!(!row_group(&svg, 1).contains("<g transform=\"translate("), "{svg}");
         assert!(row_group(&svg, 1).contains(">328<"), "the total prints its value:\n{svg}");
+    }
+
+    fn attr_after(text: &str, marker: &str, name: &str) -> f64 {
+        let tail = &text[text.find(marker).unwrap_or_else(|| panic!("no {marker}:\n{text}"))..];
+        let key = format!("{name}=\"");
+        let from = tail.find(&key).unwrap_or_else(|| panic!("no {name} after {marker}:\n{tail}")) + key.len();
+        tail[from..].split('"').next().unwrap().parse().unwrap()
+    }
+
+    /// The x-range of a row's spark mark (translate x to track width) and of its value text.
+    fn spark_and_value_lanes(svg: &str, row: usize, value: &str, fonts: &FontBook) -> ((f64, f64), (f64, f64)) {
+        let group = row_group(svg, row);
+        let start = {
+            let tail = &group[group.find("translate(").expect("a spark mark")..];
+            tail["translate(".len()..].split([',', ' ']).next().unwrap().parse::<f64>().unwrap()
+        };
+        let spark_w = attr_after(&group[group.find("translate(").unwrap()..], "<rect", "width");
+        let text_x = {
+            let before = &group[..group.find(&format!(">{value}<")).expect("the value text")];
+            let tspan = &before[before.rfind("<tspan").unwrap()..];
+            attr_after(tspan, "<tspan", "x")
+        };
+        let width = fonts.measure(value, "Inter", 11.0).expect("measures");
+        ((start, start + spark_w), (text_x - width, text_x))
+    }
+
+    fn value_lane_svg(position: &str) -> String {
+        value_lane_svg_in(position, 600.0)
+    }
+
+    fn value_lane_svg_in(position: &str, width: f64) -> String {
+        let rows = vec![
+            json!({"c": "Alpha", "v": 18, "row_role": "value"}),
+            json!({"c": "Beta", "v": 7, "row_role": "value"}),
+            json!({"c": "Total", "v": 328, "row_role": "total"}),
+        ];
+        let columns = json!({
+            "c": {"label": "C"},
+            "v": {"label": "V", "spark": {"type": "bar-normalize", "value": {"visible": true, "position": position}}}
+        });
+        let mut payload = make_payload(columns, rows, Some("row_role"), 20);
+        payload.width = width;
+        render(&payload, &test_fonts()).expect("renders")
+    }
+
+    #[test]
+    fn a_spark_value_lane_never_overlaps_the_spark_lane() {
+        let fonts = test_fonts();
+        for position in ["left", "right"] {
+            let svg = value_lane_svg(position);
+            let (spark, value) = spark_and_value_lanes(&svg, 0, "18", &fonts);
+            let (before, after) = if position == "left" { (value, spark) } else { (spark, value) };
+            assert!(before.1 <= after.0, "{position}: {before:?} must end before {after:?}\n{svg}");
+        }
+    }
+
+    fn value_lane_svg_with(value: Value, theme_position: &str) -> String {
+        let rows = vec![json!({"c": "Alpha", "v": 18})];
+        let columns = json!({"c": {"label": "C"}, "v": {"label": "V", "spark": {"type": "bar", "value": value}}});
+        let mut payload = make_payload(columns, rows, None, 20);
+        payload.resolved["style"]["table"]["spark"]["value"]["position"] = json!(theme_position);
+        render(&payload, &test_fonts()).expect("renders")
+    }
+
+    #[test]
+    fn a_spark_value_lane_takes_its_position_from_the_theme_unless_the_column_sets_one() {
+        let fonts = test_fonts();
+        for (value, theme, value_first) in [
+            (json!({"visible": true}), "left", true),
+            (json!({"visible": true}), "right", false),
+            (json!({"visible": true, "position": "right"}), "left", false),
+        ] {
+            let svg = value_lane_svg_with(value.clone(), theme);
+            let (spark, lane) = spark_and_value_lanes(&svg, 0, "18", &fonts);
+            assert_eq!(lane.1 <= spark.0, value_first, "{value} on theme {theme}:\n{svg}");
+        }
+    }
+
+    #[test]
+    fn a_column_spark_value_gap_overrides_the_theme_gap() {
+        let fonts = test_fonts();
+        for (value, gap) in [
+            (json!({"visible": true, "position": "left"}), 6.0),
+            (json!({"visible": true, "position": "left", "gap": 20.0}), 20.0),
+        ] {
+            let svg = value_lane_svg_with(value.clone(), "right");
+            let (spark, lane) = spark_and_value_lanes(&svg, 0, "18", &fonts);
+            assert!((spark.0 - lane.1 - gap).abs() < 0.5, "{value}: {lane:?} then {spark:?}\n{svg}");
+        }
+    }
+
+    #[test]
+    fn a_spark_value_lane_survives_a_narrow_container() {
+        let fonts = test_fonts();
+        let svg = value_lane_svg_in("left", 90.0);
+        let (spark, value) = spark_and_value_lanes(&svg, 0, "18", &fonts);
+        assert!(value.1 <= spark.0, "{value:?} must end before {spark:?}\n{svg}");
+    }
+
+    #[test]
+    fn a_spark_width_fits_beside_a_formatted_value_lane() {
+        let fonts = test_fonts();
+        for format in ["currency_whole", "currency"] {
+            let rows = vec![
+                json!({"a": 1, "v": 1200}),
+                json!({"a": 2, "v": 812}),
+            ];
+            let columns = json!({
+                "a": {"label": "A"},
+                "v": {"label": "V", "format": format, "spark": {"type": "bar-normalize", "width": 80, "value": {"visible": true, "position": "right"}}}
+            });
+            let mut payload = make_payload(columns, rows, None, 20);
+            payload.width = 180.0;
+            let svg = render(&payload, &fonts).unwrap_or_else(|e| panic!("{format}: {e}"));
+            let group = row_group(&svg, 0);
+            let rect = attr_after(&group[group.find("translate(").unwrap()..], "<rect", "width");
+            assert!((rect - 80.0).abs() < 1e-6, "{format}: spark lane is {rect}px\n{svg}");
+        }
+    }
+
+    #[test]
+    fn a_spark_value_lane_row_total_draws_its_value_and_no_bar() {
+        let svg = value_lane_svg("left");
+        let total = row_group(&svg, 2);
+        assert!(total.contains(">328<"), "{svg}");
+        assert!(!total.contains("<g transform=\"translate("), "{svg}");
+    }
+
+    #[test]
+    fn a_pinned_width_too_narrow_for_the_spark_lane_is_refused() {
+        let rows = vec![json!({"c": "Alpha", "v": 18})];
+        let columns = json!({
+            "c": {"label": "C"},
+            "v": {"label": "V", "width": 50, "spark": {"type": "bar", "value": {"visible": true, "position": "left"}}}
+        });
+        let payload = make_payload(columns, rows, None, 20);
+        let err = render(&payload, &test_fonts()).expect_err("refuses");
+        assert!(err.to_string().contains("spark lane"), "{err}");
     }
 
     #[test]
@@ -7724,6 +7901,7 @@ pub(crate) mod tests {
             },
             column: SparkColumnTheme { width: 16.0 },
             area: SparkAreaTheme { fill_opacity: 0.3 },
+            value: SparkValueTheme { position: SparkValuePosition::Right, gap: 6.0 },
         }
     }
 
@@ -7741,15 +7919,16 @@ pub(crate) mod tests {
             negative_color: None,
             last_visible: None,
             min_max_visible: None,
+            value: None,
         }
     }
 
     #[test]
     fn a_nonzero_spark_bar_draws_at_least_one_pixel() {
-        let got = print(&render_spark_bar(1.0, 1000.0, 80.0, 16.0, "#222222", false, "#e5e7eb", 0.0, false));
+        let got = print(&render_spark_bar(1.0, 1000.0, 80.0, 16.0, "#222222", None, 0.0, false));
         assert_eq!(got, "<rect x=\"0\" y=\"0\" width=\"1\" height=\"16\" fill=\"#222222\"/>");
         // A signed column grows a negative bar leftward from the midline.
-        let got = print(&render_spark_bar(-1.0, 1000.0, 80.0, 16.0, "#222222", false, "#e5e7eb", 0.0, true));
+        let got = print(&render_spark_bar(-1.0, 1000.0, 80.0, 16.0, "#222222", None, 0.0, true));
         assert_eq!(got, "<rect x=\"39\" y=\"0\" width=\"1\" height=\"16\" fill=\"#222222\"/>");
     }
 
@@ -7766,7 +7945,7 @@ pub(crate) mod tests {
         // bar-normalize): no background track, fill_x bare "0", fill_width
         // genuine `:.1f`, height bare (a Python int), rx `py_float` of the
         // theme's 0.0 border radius.
-        let got = print(&render_spark_bar(650.0, 812.0, 200.0, 16.0, "#222222", false, "#e5e7eb", 0.0, false));
+        let got = print(&render_spark_bar(650.0, 812.0, 200.0, 16.0, "#222222", None, 0.0, false));
         assert_eq!(
             got,
             "<rect x=\"0\" y=\"0\" width=\"160.1\" height=\"16\" fill=\"#222222\"/>"
@@ -7778,7 +7957,7 @@ pub(crate) mod tests {
         // Ground truth: render_spark_bar(61, max_value=100, width=214,
         // height=16, normalize=True) — track first (fill="e5e7eb"), then
         // the fill rect on top.
-        let got = print(&render_spark_bar(61.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false));
+        let got = print(&render_spark_bar(61.0, 100.0, 214.0, 16.0, "#23467f", Some("#e5e7eb"), 0.0, false));
         assert_eq!(
             got,
             "<rect x=\"0\" y=\"0\" width=\"214\" height=\"16\" fill=\"#e5e7eb\"/>\
@@ -7790,7 +7969,7 @@ pub(crate) mod tests {
     fn spark_bar_zero_fill_draws_the_track_but_no_fill_rect() {
         // The `fill_width > 0` gate: a zero value draws
         // the normalize track alone.
-        let got = print(&render_spark_bar(0.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false));
+        let got = print(&render_spark_bar(0.0, 100.0, 214.0, 16.0, "#23467f", Some("#e5e7eb"), 0.0, false));
         assert_eq!(
             got,
             "<rect x=\"0\" y=\"0\" width=\"214\" height=\"16\" fill=\"#e5e7eb\"/>"
@@ -8110,6 +8289,21 @@ pub(crate) mod tests {
             svg.contains("<g transform=\"translate("),
             "bar-normalize still draws its track at value 0:\n{svg}"
         );
+    }
+
+    #[test]
+    fn spark_bar_draws_a_track_only_when_background_is_authored() {
+        for (background, want) in [(Some("#ff0000"), true), (None, false)] {
+            let rows = vec![json!({"c": "Alpha", "v": 40})];
+            let mut spark = json!({"type": "bar", "max": 100.0});
+            if let Some(bg) = background {
+                spark["background"] = json!(bg);
+            }
+            let columns = json!({"c": {"label": "C"}, "v": {"label": "V", "spark": spark}});
+            let payload = make_payload(columns, rows, None, 20);
+            let svg = render(&payload, &test_fonts()).expect("renders");
+            assert_eq!(svg.contains("fill=\"#ff0000\""), want, "{background:?}:\n{svg}");
+        }
     }
 
     #[test]
@@ -10932,7 +11126,7 @@ mod row_link_tests {
         let err = render(&hostile, &test_fonts()).unwrap_err().to_string();
         assert!(err.contains("font_color") || err.contains("color"), "{err}");
         let mut absent = row_link_payload(link, rows);
-        absent.board_style = crate::test_board_style(json!({}));
+        absent.board_style = crate::test_board_style(json!({"font_color": null}));
         let err = render(&absent, &test_fonts()).unwrap_err().to_string();
         assert!(err.contains("font_color"), "{err}");
     }
@@ -11741,6 +11935,7 @@ mod header_font_tests {
             true,
             6.0,
             80.0,
+            &SparkValueTheme { position: SparkValuePosition::Right, gap: 6.0 },
         )
         .unwrap();
         let serif = fonts.measure("quarterly", "Source Serif 4", 11.0).unwrap();

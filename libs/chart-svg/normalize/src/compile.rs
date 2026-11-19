@@ -524,11 +524,14 @@ fn fold<'a>(
         .to_string();
     // The compile report carries the board's own file's restatements; an index has no use for them.
     let restated = if restated {
+        let defaults = crate::restated_defaults::defaults(&as_written, &merged.layers)
+            .map_err(|e| CompileError::Invalid(vec![diag::err_internal(e)]))?;
         merged
             .restated(host.default_theme)
             .map_err(|e| CompileError::Invalid(vec![diag::err_internal(e.to_string())]))?
             .into_iter()
             .map(|w| w.diagnostic)
+            .chain(defaults)
             .filter(|d| !written_by_migration(d, &migrated_paths))
             .collect()
     } else {

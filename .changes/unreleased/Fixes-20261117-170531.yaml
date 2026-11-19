@@ -1,0 +1,3 @@
+kind: Fixes
+body: A variable key that sets a value back to its default over a meta.yml or extends value is no longer reported as restated.
+time: 2026-11-17T17:05:31.543378-08:00

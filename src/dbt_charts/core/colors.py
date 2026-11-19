@@ -991,15 +991,15 @@ def ensure_readable_ink(color: str, background: str, min_ratio: float = 4.5) -> 
     ``label_ink()``'s dark-move alone doesn't clear -- e.g. a sequential-gray
     override like ``dbt-seq-gray.2``, or a mark color that was never a
     palette member at all (e.g. a named border token). Binary-searches OKLCH
-    lightness, moving toward WHICHEVER OF BLACK/WHITE HAS MORE CONTRAST
-    against *background*, for the closest-to-original L that still clears
-    ``min_ratio`` -- C and H stay fixed, so the result still reads as the
-    same hue, just legible.
+    lightness toward each of black and white that clears ``min_ratio``
+    against *background* and keeps the closest-to-original L -- the
+    higher-contrast pole on a tie. C and H stay fixed, so the result still
+    reads as the same hue, just legible.
     Returns *color* unchanged when it already clears the floor.
 
-    Picking the higher-contrast endpoint (rather than pivoting on the
-    background's own luminance at the 0.5 midpoint) is load-bearing: the
-    luminance at which black and white give EQUAL contrast is ≈0.18, not
+    Searching only toward a pole that clears the floor (rather than pivoting
+    on the background's own luminance at the 0.5 midpoint) is load-bearing:
+    the luminance at which black and white give EQUAL contrast is ≈0.18, not
     0.5 (WCAG relative luminance and contrast are both nonlinear) -- a
     background between those two thresholds would otherwise search toward
     the LOWER-contrast endpoint and return ink that still fails the floor.
@@ -1021,11 +1021,21 @@ def ensure_readable_ink(color: str, background: str, min_ratio: float = 4.5) -> 
             f"{max(black_contrast, white_contrast):.2f}:1)"
         )
     L, C, H = hex_to_oklch(color)
-    pass_l, fail_l = (0.0, L) if is_light_canvas(background) else (1.0, L)
-    for _ in range(30):
-        mid = (pass_l + fail_l) / 2
-        if wcag_contrast(oklch_to_hex(mid, C, H), background) >= min_ratio:
-            pass_l = mid
-        else:
-            fail_l = mid
-    return oklch_to_hex(pass_l, C, H)
+
+    def toward(pole: float) -> float:
+        pass_l, fail_l = pole, L
+        for _ in range(30):
+            mid = (pass_l + fail_l) / 2
+            if wcag_contrast(oklch_to_hex(mid, C, H), background) >= min_ratio:
+                pass_l = mid
+            else:
+                fail_l = mid
+        return pass_l
+
+    higher = 0.0 if is_light_canvas(background) else 1.0
+    best_l = toward(higher)
+    if min(black_contrast, white_contrast) >= min_ratio:
+        other_l = toward(1.0 - higher)
+        if abs(other_l - L) < abs(best_l - L):
+            best_l = other_l
+    return oklch_to_hex(best_l, C, H)

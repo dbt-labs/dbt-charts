@@ -72,6 +72,7 @@ _UNION_DISCRIMINATOR_PREFIXES = (
     "list[",
     "tagged-union[",
     "union[",
+    "literal[",
 )
 
 # Branch names that are literal Pydantic type names (not real YAML fields)
@@ -2020,19 +2021,21 @@ def _layout_item_discriminator_error(
         items = [
             ([*field_path, str(i)], item)
             for i, item in enumerate(value)
-            if isinstance(item, dict)
+            if not isinstance(item, str)
         ]
     else:
         return None
     valid_types = get_valid_chart_types()
+    accepted = (
+        "Accepted here: a chart id, a layout container (rows, cols, grid or "
+        "tabs), or an inline chart whose `type:` is one of: "
+        f"{', '.join(valid_types)}."
+    )
     for path, item in items:
+        if not isinstance(item, dict):
+            return path, f"this item is `{item!r}`, not a mapping. {accepted}"
         if any(key in item for key in _LAYOUT_KEYS):
             continue
-        accepted = (
-            "Accepted here: a chart id, a layout container (rows, cols, grid or "
-            "tabs), or an inline chart whose `type:` is one of: "
-            f"{', '.join(valid_types)}."
-        )
         authored_type = item.get("type")
         if not item or authored_type in valid_types:
             continue

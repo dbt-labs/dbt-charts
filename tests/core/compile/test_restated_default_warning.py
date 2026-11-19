@@ -270,3 +270,11 @@ def test_turning_off_what_the_funnel_recipe_turns_on_is_not_restated(
     """The plain bar slot has these off, but a funnel's board style is the recipe."""
     extra = f"    style:\n      marks:\n        bar:\n          {leaf}:\n            visible: false\n"
     assert restated(_FUNNEL.format(extra=extra)) == []
+
+
+def test_variable_override_back_to_the_default_is_kept(
+    restated: Callable[..., list[Diagnostic]],
+) -> None:
+    meta = "variables:\n  region:\n    visible: false\n"
+    board = "variables:\n  region:\n    visible: true\n" + _BODY
+    assert restated(board, meta=meta) == []

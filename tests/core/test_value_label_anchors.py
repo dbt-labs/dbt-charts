@@ -164,9 +164,30 @@ def test_compile_rejects_last_on_scatter() -> None:
     assert _compile_errors(chart) == ["ERR-LABELS-ANCHOR-UNSUPPORTED"]
 
 
-def test_compile_rejects_last_on_a_layer() -> None:
-    chart = """    type: line
+@pytest.mark.parametrize(
+    ("layer_type", "mark"), [("line", "line"), ("area", "line"), ("scatter", "point")]
+)
+def test_compile_accepts_anchors_on_a_line_area_or_scatter_layer(
+    layer_type: str, mark: str
+) -> None:
+    chart = f"""    type: bar
     x: m
+    y: v
+    layers:
+      - type: {layer_type}
+        y: v
+        style:
+          marks:
+            {mark}:
+              labels:
+                visible: [first, last]
+"""
+    assert _compile_errors(chart) == []
+
+
+def test_compile_rejects_last_on_a_layer_of_a_scatter_chart() -> None:
+    chart = """    type: scatter
+    x: v
     y: v
     layers:
       - type: line
@@ -178,6 +199,23 @@ def test_compile_rejects_last_on_a_layer() -> None:
                 visible: last
 """
     assert _compile_errors(chart) == ["ERR-LABELS-ANCHOR-UNSUPPORTED"]
+
+
+def test_a_line_layer_over_bars_labels_only_its_first_and_last_points() -> None:
+    body = """    layers:
+      - type: line
+        y: w
+        style:
+          marks:
+            line:
+              labels:
+                visible: [first, last]
+                position: top
+"""
+    rows = [{**r, "w": r["v"] * 2} for r in _ROWS]
+    svg = _render(body, rows, "bar")
+    assert ">10<" in svg and ">16<" in svg
+    assert ">18<" not in svg and ">24<" not in svg
 
 
 def test_compile_rejects_last_on_a_bar_layer() -> None:
@@ -471,21 +509,5 @@ def test_compile_rejects_value_anchors_on_scatter() -> None:
         point:
           labels:
             visible: [max]
-"""
-    assert _compile_errors(chart) == ["ERR-LABELS-ANCHOR-UNSUPPORTED"]
-
-
-def test_compile_rejects_value_anchors_on_a_layer() -> None:
-    chart = """    type: line
-    x: m
-    y: v
-    layers:
-      - type: line
-        y: v
-        style:
-          marks:
-            line:
-              labels:
-                visible: [min, max]
 """
     assert _compile_errors(chart) == ["ERR-LABELS-ANCHOR-UNSUPPORTED"]

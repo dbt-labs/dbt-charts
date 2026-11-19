@@ -204,8 +204,8 @@ CASES: list[Case] = [
     Case("daterange_empty", "daterange", "", DATE_RANGE, ("d", "ts"), ALL),
     # --- select/radio: the value comes back from the URL as a string; the
     # option source says what it is. Static numeric options imply number, a
-    # query-driven source needs `data_type`, and a date-typed select compares
-    # the column as a date like a date input does.
+    # query-driven source its column's type unless `data_type` says otherwise,
+    # and a date-typed select compares the column as a date like a date input.
     Case("select_str", "select", "gold", FILTER_EQ, ("s",), {1}, ("gold", "silver")),
     Case("radio_str", "radio", "silver", FILTER_EQ, ("s",), {3}, ("gold", "silver")),
     Case("select_int_default", "select", 2, FILTER_EQ, ("n",), {2}, (1, 2, 3)),

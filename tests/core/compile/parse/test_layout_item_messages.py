@@ -45,6 +45,18 @@ class TestLayoutItemWithoutAType:
         assert "`type: barr`" in message
         assert "Did you mean 'bar'?" in message
 
+    @pytest.mark.parametrize("item", ["5", "[c]", "null"])
+    def test_a_non_mapping_item_names_its_path_and_the_accepted_forms(
+        self, item: str
+    ) -> None:
+        errors = _errors(f"rows:\n  - cols:\n      - q\n      - {item}\n")
+
+        message = _by_path(errors, "rows.0.cols.1").message
+        assert "Unable to extract tag" not in message
+        assert "_discriminate" not in message
+        assert "a chart id" in message
+        assert not [e for e in errors if e.path == "rows.0.cols"]
+
     def test_no_error_is_reported_at_the_list_itself(self) -> None:
         errors = _errors("rows:\n  - cols:\n      - query: q\n        x: a\n")
 
@@ -74,3 +86,20 @@ class TestEveryProblemCarriesItsFieldPath:
         message = str(excinfo.value)
         assert "Field 'rows'" in message
         assert "Unknown field 'zzz'" in message
+
+
+class TestUnionBranchLabelsStayOutOfPaths:
+    def test_a_bad_literal_or_list_value_reports_the_field_not_the_type_name(
+        self,
+    ) -> None:
+        board = (
+            "queries:\n  q:\n    sql: SELECT 1 AS a, 2 AS b\n"
+            "charts:\n  c:\n    type: line\n    query: q\n    x: a\n    y: b\n"
+            "    annotations:\n      - type: note\n        x: 1\n        y: 1\n"
+            "        series: AAPL\nrows:\n  - c\n"
+        )
+        messages = [e.message for e in compile(board).errors]
+
+        assert messages
+        assert not [m for m in messages if "literal[" in m]
+        assert any("charts.c.annotations.0.series'" in m for m in messages)

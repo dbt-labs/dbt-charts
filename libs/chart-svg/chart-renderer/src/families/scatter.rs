@@ -3360,7 +3360,7 @@ mod tests {
 
     fn with_board_font(json: &mut serde_json::Value) {
         json["board_style"] = serde_json::json!({
-            "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "secondary_color": null, "tones": null,
+            "font_color": "#313233", "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "secondary_color": null, "tones": null,
             "title_case": null, "continuous_height": null,
             "format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire()
         });

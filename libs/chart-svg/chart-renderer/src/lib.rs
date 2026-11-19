@@ -152,8 +152,8 @@ pub struct BoardStyle {
     #[serde(default)]
     pub font: Option<String>,
     /// The board's own text color (`ResolvedStyle.font.color`): a linked table
-    /// cell takes it. Optional in the envelope; a table with a link errors
-    /// when it is absent.
+    /// cell and every value label take it. Optional in the envelope; a linked
+    /// table or a value label errors when it is absent.
     #[serde(default)]
     pub font_color: Option<String>,
     /// `style.fonts.numeral`: the family a table sets its digits in. Optional in
@@ -317,6 +317,7 @@ fn with_required_board_fields(mut style: Value) -> Value {
     fields.entry("text_mark_font").or_insert_with(|| {
         serde_json::json!({"family": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif", "size": 11.0})
     });
+    fields.entry("font_color").or_insert(serde_json::json!("#313233"));
     fields.entry("numeral_family").or_insert(serde_json::json!(common::TAB_FONT));
     fields.entry("column_block_share_warn_ratio").or_insert(serde_json::json!(0.4));
     fields
@@ -496,6 +497,11 @@ pub struct Payload {
     /// one mints its ids in a namespace of its own (`contract::scoped_id`).
     #[serde(default)]
     pub placement: usize,
+    /// Set on the width-corrected re-render of a support_table chart: the slot width the chart was
+    /// placed at, before the correction shrank `width`. The plot box is the same either way, so a
+    /// bar's label cadence is judged against this, not the shrunk `width`.
+    #[serde(skip)]
+    pub slot_width: Option<f64>,
     /// A pie's sized mode (`direct`, `hybrid`, `full_table`): what the size stage
     /// decided from the pie's box (`families::pie::pie_layout`). Absent, the pie
     /// decides from the box it is rendered in.
@@ -531,7 +537,7 @@ impl Payload {
     /// This payload over `resolved` and `rows`, without copying the ones it replaces.
     pub(crate) fn with_inputs(&self, resolved: Value, rows: impl Into<SharedRows>) -> Payload {
         let rows = rows.into();
-        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, variable_options, filter_variables, empty_filters, interactive_controls, link_context, datasets, schema, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, placement, max_template_output_bytes, cell_text } = self;
+        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, variable_options, filter_variables, empty_filters, interactive_controls, link_context, datasets, schema, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, placement, slot_width, max_template_output_bytes, cell_text } = self;
         Payload {
             resolved,
             rows,
@@ -558,6 +564,7 @@ impl Payload {
             board_composed: *board_composed,
             authored_height: *authored_height,
             placement: *placement,
+            slot_width: *slot_width,
             max_template_output_bytes: *max_template_output_bytes,
             cell_text: cell_text.clone(),
         }
@@ -926,6 +933,7 @@ fn render_width_fitted(
         None => Ok((svg, None)),
         Some(shrunk_width) => {
             let mut corrected_payload = payload.clone();
+            corrected_payload.slot_width = Some(payload.width);
             corrected_payload.width = shrunk_width;
             if let Some(resolved) = corrected_payload.resolved.as_object_mut() {
                 resolved.remove("slot_resolved");

@@ -85,7 +85,7 @@ string_enum!(
 #[derive(Debug, Clone, PartialEq)]
 pub enum SparkSpec {
     Type(SparkType),
-    Block(<SparkConfig as Leaf>::Whole),
+    Block(Box<<SparkConfig as Leaf>::Whole>),
 }
 
 /// A block's colors are its `color` and the plain-string colors beside it: the `thresholds` values
@@ -124,7 +124,7 @@ impl Spell for SparkSpec {
 impl ReadScalar for SparkSpec {
     fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
         if matches!(node.kind, model_core::Kind::Map(_)) {
-            return SparkConfig::whole(node, cx).map(Self::Block);
+            return SparkConfig::whole(node, cx).map(|b| Self::Block(Box::new(b)));
         }
         SparkType::read(node, cx).map(Self::Type)
     }
@@ -526,6 +526,18 @@ pub struct SparkStyle {
     pub bar: SparkBarCellStyle,
     /// Style for area sparklines.
     pub area: SparkAreaStyle,
+    /// Defaults for a spark's value lane.
+    pub value: SparkValueStyle,
+}
+
+/// Defaults for a spark's value lane (`spark.value`).
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(range(gap, ge = 0)))]
+pub struct SparkValueStyle {
+    /// Which side of the spark mark the value sits on.
+    pub position: SparkValuePosition,
+    /// Gap in pixels between the value and the spark mark.
+    pub gap: f64,
 }
 
 /// Leading row-number column (`style.table.row_numbers`).
@@ -739,11 +751,37 @@ pub struct TableColumnDefaultsConfig {
     pub font: Option<ColumnFontStyle>,
 }
 
+string_enum!(
+    /// Which side of the spark mark its value lane sits on.
+    SparkValuePosition { Left = "left", Right = "right" }
+);
+
+/// The cell's value drawn in its own lane beside a spark bar or column.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(range(gap, ge = 0)))]
+pub struct SparkValueConfig {
+    /// Draw the cell's value beside the spark mark.
+    #[model(fill = false)]
+    pub visible: bool,
+    /// Which side of the spark mark the value sits on.
+    #[model(absent = "the theme's spark.value.position")]
+    pub position: Option<SparkValuePosition>,
+    /// Gap in pixels between the value and the spark mark.
+    #[model(absent = "the theme's spark.value.gap")]
+    pub gap: Option<f64>,
+}
+
 /// A sparkline column's miniature chart.
 #[derive(Debug, Clone, PartialEq, Model)]
 // One `range` names one field, so two bounds are two constraints.
 #[allow(clippy::duplicated_attributes)]
-#[model(constraint(range(height, gt = 0)), constraint(range(width, gt = 0)))]
+#[model(
+    constraint(range(height, gt = 0)),
+    constraint(range(width, gt = 0)),
+    constraint(forbids(value, when(is_in(type, "line", "area", "columns", null)),
+        message = "SparkConfig: 'value' needs a single-number spark type (bar, bar-normalize or column); line, area and columns draw a series."
+    ))
+)]
 pub struct SparkConfig {
     /// Spark chart type (line, area, bar, bar-normalize, column, columns).
     #[model(fill = "line")]
@@ -757,6 +795,9 @@ pub struct SparkConfig {
     /// Spark chart width in pixels.
     #[model(absent = "the table's spark width")]
     pub width: Option<u32>,
+    /// Draw the cell's value in its own lane beside the mark (bar, bar-normalize, column).
+    #[model(absent = "no value lane")]
+    pub value: Option<SparkValueConfig>,
     /// Highlight the last data point (line/area spark charts).
     #[model(absent = "not highlighted")]
     pub last_visible: Option<bool>,
@@ -773,8 +814,8 @@ pub struct SparkConfig {
     /// Color thresholds for bar / bar-normalize / column: {value: CSS color string}.
     #[model(default_empty)]
     pub thresholds: IndexMap<String, String>,
-    /// Background track color for bar-normalize chart.
-    #[model(absent = "the table's track color")]
+    /// Track color behind the bar. Turns the track on for bar; overrides the theme track for bar-normalize.
+    #[model(absent = "no track on bar; the theme track on bar-normalize")]
     pub background: Option<String>,
     /// Corner radius in pixels for bar, bar-normalize, and column bars, and for the bar-normalize track.
     #[model(absent = "the table's corner radius")]

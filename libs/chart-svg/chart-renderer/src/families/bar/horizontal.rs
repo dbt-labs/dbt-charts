@@ -860,9 +860,16 @@ pub(super) fn render_horizontal_panel(
                 rows,
                 board_style,
             )?;
-            let items = ::bind::rows::valued_rows(rows.iter(), &sl.y)
+            let at_cat: Vec<_> = ::bind::rows::valued_rows(rows.iter(), &sl.y)
                 .into_iter()
-                .map(|(row, val)| {
+                .filter_map(|(row, val)| Some((row, cat_domain.iter().position(|cat| *cat == row_str(row, cat_field))? as f64, val)))
+                .collect();
+            let printed = style.printed(sl.color.as_deref(), &at_cat);
+            let items = at_cat
+                .iter()
+                .zip(printed)
+                .filter(|(_, printed)| *printed)
+                .map(|(&(row, _, val), _)| {
                     let caption = style.caption(row, val, None).map_err(|e| format!("bar: {e}"))?;
                     Ok(LayerLabelFitItem {
                         val,
@@ -1445,14 +1452,14 @@ pub(super) fn render_horizontal_panel(
                     let center = horizontal_center(band.bandwidth());
                     let geom = LabelGeometry { band: &band, center: &center, linear: &linear };
                     for layer in label_layers.iter().chain(bar_layer_labels.iter().flatten()) {
-                        layer.ink(&geom, None, b);
+                        layer.ink(&geom, b);
                     }
                     if cat_axis_in_panel && !cat_on_right {
                         let clear = label_layers
                             .iter()
                             .chain(bar_layer_labels.iter().flatten())
                             .filter(|layer| !layer.total)
-                            .flat_map(|layer| layer.site_inks(&geom, None))
+                            .flat_map(|layer| layer.site_inks(&geom))
                             .filter(|(_, ink)| ink.x1 < 0.0)
                             .map(|(site, ink)| {
                                 let row_w = if cat_flip { cat_ws[&site.cat] } else if cat_center { cat_ws[&site.cat] / 2.0 } else { 0.0 };
@@ -2154,8 +2161,8 @@ pub(super) fn render_horizontal_panel(
                 if let (Some(ml), Some(label_layer)) = (bl.bar_mark.labels.as_ref(), labels) {
                     let center = horizontal_center(band.bandwidth());
                     let geom = LabelGeometry { band: &band, center: &center, linear: &linear };
-                    label_layer.warn_if_crowded(&r.id, Some(position), &geom, None, None);
-                    let points = label_layer.points(&geom, None, &LabelDecors::new(), &crate::selected::Selection::default(), |site| {
+                    label_layer.warn_if_crowded(&r.id, Some(position), &geom, None);
+                    let points = label_layer.points(&geom, &LabelDecors::new(), &crate::selected::Selection::default(), |site| {
                         Ok(tooltip_labels.then(|| {
                             crate::contract::native_label(&[
                                 (bl.x.as_deref().unwrap_or(cat_title_text.as_str()), site.cat.clone()),
@@ -2163,7 +2170,8 @@ pub(super) fn render_horizontal_panel(
                             ])
                         }))
                     })?;
-                    plot.extend(mark_labels(ml, true, false, true, &points, 0, board_style, 0.0, 0.0, r.canvas.as_str(), r.link_open)?);
+                    let under = crate::annotation::DataMark::plot_marks(&plot);
+                    plot.extend(mark_labels(ml, true, false, true, &points, 0, board_style, 0.0, 0.0, r.canvas.as_str(), &under, r.link_open)?);
                 }
             }
             OverlayLayer::Scatter(sl) => {
@@ -2173,6 +2181,7 @@ pub(super) fn render_horizontal_panel(
                 let encoded = |row: &serde_json::Map<String, Value>| {
                     claim.row_color(&layer_scale, sl.color.as_deref().expect("an encoded layer groups by color"), row)
                 };
+                let under = crate::annotation::DataMark::plot_marks(&plot);
                 plot.extend(crate::families::layers::scatter_layer_marks(sl,
                     layer_rows,
                     size,
@@ -2205,13 +2214,14 @@ pub(super) fn render_horizontal_panel(
                     board_style,
                     |_, _| Ok(None),
 crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), layer_clips[position].then_some(((plot_w, plot_h), &clips)),
-crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },)
+crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts }, &under)
                 .map_err(|e| format!("bar: {e}"))?);
             }
             OverlayLayer::Line(l) => {
                 let layer_name = claim.label.as_str();
                 let band = BandScale::new(cat_domain.clone(), 0.0, plot_h, band_pi, band_po);
                 let layer_link = crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref()));
+                let under = crate::annotation::DataMark::plot_marks(&plot);
                 let paint = |rows: &[serde_json::Map<String, Value>],
                              fill: &str,
                              color_value: Option<&str>,
@@ -2238,10 +2248,10 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
                         board_style,
                         |_, _| Ok(None),
                         None,
-                        0.0,
                         stack,
                         layer_link,
                         crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
+                        &under,
                     )
                     .map_err(|e| format!("bar: {e}"))
                 };
@@ -2307,16 +2317,17 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
     // each, after the layers already painted (`painted_layers`).
     let center = horizontal_center(band.bandwidth());
     let geom = LabelGeometry { band: &band, center: &center, linear: &linear };
+    let under = crate::annotation::DataMark::plot_marks(&plot);
     for layer in &label_layers {
-        layer.warn_if_crowded(&r.id, None, &geom, None, None);
-        let points = layer.points(&geom, None, &label_decors, &r.selection, |site| {
+        layer.warn_if_crowded(&r.id, None, &geom, None);
+        let points = layer.points(&geom, &label_decors, &r.selection, |site| {
             bar_datum_aria(
                 tooltip_labels, &site.cat, Some(&cat_axis), tooltip_tu, x_is_standard_date, grain_header_format, None, None, value_title,
                 tooltip_fmt, site.value, None, None, &[], None,
             )
         })?;
         tail.extend(mark_labels(&layer.spec.ml, true, layer.stacked, !layer.total, &points, painted_layers, board_style,
-            plot_left, plot_top, r.canvas.as_str(), r.link_open)?);
+            plot_left, plot_top, r.canvas.as_str(), &under, r.link_open)?);
         if !layer.total {
             painted_layers += 1;
         }

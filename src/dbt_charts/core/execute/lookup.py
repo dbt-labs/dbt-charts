@@ -452,8 +452,9 @@ def lookup_names(
 ) -> Lookup:
     """Which of *names* are answered without executing, applying hits.
 
-    Plans each name and runs ``lookup_and_record``; the cache-ref upstreams of
-    a query that missed are planned and looked up too, so one run orders them. An ``ExecutionError`` raised while planning a name
+    Plans each name and runs ``lookup_and_record``; the prerequisites of a query
+    that missed (``QueryRun.prerequisites``) are planned and looked up too, so
+    one run orders them. An ``ExecutionError`` raised while planning a name
     (a missing file source, an unknown query) is that name's failure, never
     raised here: reading it from the collected results raises it as a per-chart
     diagnostic. A cached error is a failure, not a hit.
@@ -486,15 +487,17 @@ def lookup_names(
 
     found = look_up(list(planned.values()))
     hits, misses, failures = dict(found.hits), list(found.misses), dict(found.failures)
-    # A composing query that must run reads its upstreams, so only a miss pulls
-    # them in: a consumer served from the store runs nothing it does not need.
+    # A composing query that must run reads its upstreams, and a query binding an
+    # untyped choice value its options query, so only a miss pulls them in to
+    # run: a consumer served from the store runs nothing it does not need.
+    # (Planning them already happened, since the consumer's key covers them.)
     pending = misses
     while pending:
         upstreams = {
-            name: upstream
+            upstream.name: upstream
             for miss in pending
-            for name, upstream in miss.planned.upstreams.items()
-            if name not in planned
+            for upstream in miss.planned.prerequisites
+            if upstream.name not in planned
         }
         planned.update(upstreams)
         if not upstreams:

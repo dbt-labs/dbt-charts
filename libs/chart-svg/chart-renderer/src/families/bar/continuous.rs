@@ -536,10 +536,16 @@ pub(super) fn render_vertical_continuous_x_panel(
             .map(|(i, layer, ml, is_house, rows)| {
                 let style = crate::families::layers::LayerLabelStyle::new(ml, is_house, rows, board_style)?;
                 let x_field = layer.x().unwrap_or(&r.x);
-                let items = ::bind::rows::valued_rows(rows.iter(), layer.y())
+                let at_x: Vec<_> = ::bind::rows::valued_rows(rows.iter(), layer.y())
                     .into_iter()
-                    .filter_map(|(row, val)| row_num(row, x_field).map(|x| (x, val, row)))
-                    .map(|(x, val, row)| {
+                    .filter_map(|(row, val)| row_num(row, x_field).map(|x| (row, x, val)))
+                    .collect();
+                let printed = style.printed(layer.color(), &at_x);
+                let items = at_x
+                    .iter()
+                    .zip(printed)
+                    .filter(|(_, printed)| *printed)
+                    .map(|(&(row, x, val), _)| {
                         let caption = style.caption(row, val, None).map_err(|e| format!("bar: {e}"))?;
                         Ok((x, val, style.width(fonts, &caption.text)?, caption.spot))
                     })
@@ -1170,6 +1176,7 @@ pub(super) fn render_vertical_continuous_x_panel(
                 );
                 layer_undercoat.borrow_mut().extend(clipped_if(clip, &clips, (plot_w, plot_h), knocked.undercoat));
                 out.extend(clipped_if(clip, &clips, (plot_w, plot_h), knocked.marks));
+                let under = crate::annotation::DataMark::plot_marks(out);
                 out.extend(layer_bar_labels(
                     bl,
                     layer_rows,
@@ -1179,12 +1186,13 @@ pub(super) fn render_vertical_continuous_x_panel(
                     plot_h,
                     |mark| layer_caption(x_title, &name, mark.row, mark.value),
                     crate::families::layers::layer_link(link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())),
-                    (board_style, r.canvas.as_str()),
+                    (board_style, r.canvas.as_str(), &under),
                     (crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts }, &vec![bw; marks.len()]),
                 )?);
             }
             OverlayLayer::Line(l) => {
                 let promoted = l.color.as_deref().is_some_and(|cf| layer_color_promoted(layer_rows, cf));
+                let under = crate::annotation::DataMark::plot_marks(out);
                 let paint = |series_rows: &[serde_json::Map<String, Value>],
                              series_color: &str,
                              stacked: Option<&LayerStack>|
@@ -1207,10 +1215,10 @@ pub(super) fn render_vertical_continuous_x_panel(
                         board_style,
                         |row, val| Ok(layer_caption(x_title, &name, row, val)),
                         None,
-                        0.0,
                         stacked,
 crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
 crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
+&under,
 )
                     .map_err(|e| format!("bar: {e}"))
                 };
@@ -1234,6 +1242,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                 let encoded = |row: &serde_json::Map<String, Value>| {
                     claims[i].row_color(&layer_scale, sl.color.as_deref().expect("an encoded layer groups by color"), row)
                 };
+                let under = crate::annotation::DataMark::plot_marks(out);
                 out.extend(crate::families::layers::scatter_layer_marks(
                     sl,
                     layer_rows,
@@ -1262,6 +1271,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                     |row, val| Ok(layer_caption(x_title, &name, row, val)),
 crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), layer_clipped.then_some(((plot_w, plot_h), &clips)),
 crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
+&under,
 )
                 .map_err(|e| format!("bar: {e}"))?);
             }
@@ -1321,6 +1331,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                     series_fill: None,
                     blank,
                     side,
+                    ends: None,
                     span: None,
                     text: spec.text(None, yv, None)?.0,
                     href: hrefs.get(&(cat.clone(), String::new())).cloned(),
@@ -1331,7 +1342,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                 })
             })
             .collect::<Result<Vec<LabelPoint>, String>>()?;
-        plot.extend(mark_labels(ml, false, false, true, &points, painted_layers, board_style, 0.0, 0.0, r.canvas.as_str(), r.link_open)?);
+        let under = crate::annotation::DataMark::plot_marks(&plot);
+        plot.extend(mark_labels(ml, false, false, true, &points, painted_layers, board_style, 0.0, 0.0, r.canvas.as_str(), &under, r.link_open)?);
     }
     let annotations = crate::annotation::AnnotationCtx { occupied: crate::annotation::DataMark::plot_marks(&plot), ..annotations };
     // Built where the data marks are known, painted right after the x axis so a rule on the plot edge covers its ticks.

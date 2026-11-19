@@ -49,6 +49,8 @@ use super::SparkLayout;
 use super::SparkPaddingTheme;
 use super::SparkSingleValueTheme;
 use super::SparkTheme;
+use super::SparkValuePosition;
+use super::SparkValueTheme;
 use super::TableBody;
 use super::TableTheme;
 use super::TableTitleStyle;
@@ -388,6 +390,11 @@ pub(super) fn auto_column_demand(demand: f64, floor: f64, cap: Option<f64>) -> f
 /// Compact when the demand fits
 /// the ceiling OR the column owns a spark config (spark columns own their own
 /// width regardless of measured demand).
+/// The narrowest a spark mark may be drawn beside its value lane, and the width it
+/// asks for when neither the column nor `spark.width` sets one.
+pub(super) const SPARK_LANE_MIN_WIDTH: f64 = 16.0;
+const SPARK_LANE_AUTO_WIDTH: f64 = 64.0;
+
 pub(super) fn is_compact_column(demand: f64, spark: bool) -> bool {
     spark || demand <= COMPACT_DEMAND_CEILING
 }
@@ -618,8 +625,6 @@ fn cell_measure_family<'a>(
     }
 }
 
-/// The inset a spark keeps from each side of its cell.
-const SPARK_CELL_PADDING: f64 = 8.0;
 
 /// A horizontal spark bar's own width demand: its `spark.width`, else the
 /// theme's `spark.bar.width`, plus the inset the spark draws inside. Any other
@@ -1609,8 +1614,7 @@ pub(super) fn render_spark_bar(
     width: f64,
     height: f64,
     color: &str,
-    normalize: bool,
-    background: &str,
+    track: Option<&str>,
     border_radius: f64,
     has_negative: bool,
 ) -> Vec<Node> {
@@ -1623,8 +1627,8 @@ pub(super) fn render_spark_bar(
         (0.0, visible_length(fraction, width))
     };
     let mut tree = Tree::new();
-    if normalize {
-        tree.rounded(spark_mark(), (0.0, 0.0, width, height), border_radius, Attrs::new().quick("fill", background));
+    if let Some(track) = track {
+        tree.rounded(spark_mark(), (0.0, 0.0, width, height), border_radius, Attrs::new().quick("fill", track));
     }
     if fill_width > 0.0 {
         tree.rounded(spark_mark(), (tenth(fill_x), 0.0, tenth(fill_width), height), border_radius, Attrs::new().quick("fill", color));
@@ -1944,6 +1948,9 @@ fn list_column_error(column: &str, found: String) -> Diagnostic {
     )
 }
 
+/// The inset a spark keeps from each side of its cell.
+pub(super) const SPARK_CELL_PADDING: f64 = 8.0;
+
 /// A spark cell's sizing: `padding = 8`;
 /// `spark_width`/`spark_height` default to `int(cell_width - 2*padding)` /
 /// `int(row_height - padding)` (production's `int()` truncates, matching
@@ -2013,15 +2020,18 @@ pub(super) fn render_spark_cell<'a>(
             let (_, is_negative) = signed_fraction(v, max_value, signed);
             let color = bar_color(v, max_value, is_negative)?;
             let border_radius = spark.border_radius.unwrap_or(theme.bar.border.radius);
-            let background = spark.background.as_deref().unwrap_or(&theme.bar.background);
+            // `bar-normalize` always draws its track; `bar` draws one only when authored.
+            let track = spark
+                .background
+                .as_deref()
+                .or(normalize.then_some(theme.bar.background.as_str()));
             let content = render_spark_bar(
                 v,
                 max_value,
                 spark_width,
                 spark_height,
                 &color,
-                normalize,
-                background,
+                track,
                 border_radius,
                 signed,
             );
@@ -2315,6 +2325,8 @@ impl TableBody<'_> {
             glyph_xs,
             number_xs,
             number_ws,
+            lane_xs,
+            spark_lanes,
             suffix_xs,
             outer,
             pad,
@@ -2752,55 +2764,62 @@ impl TableBody<'_> {
                 // grow its spark, but the mark still centers in the row's
                 // actual (grown) band.
                 if let (Some(spark), false) = (&col.cfg.spark, is_summary) {
-                    if let Some(value) = rows[ri].get(col.name.as_str()) {
-                        if !value.is_null() {
-                            // `column` is the only ported-elsewhere mark whose
-                            // width feeds its own centered alignment; the three
-                            // marks this renderer supports all fill the cell
-                            // width from the left-edge anchor, so the reported
-                            // width is unused here.
-                            // Empty content (a zero-length `bar`/`column`) draws an
-                            // empty cell: no mark, no cell text.
-                            let spark_layout = SparkLayout {
-                                has_negative: signed_columns.contains(col.name.as_str()),
-                                negative_tone: tones.map(|t| t.negative.as_str()),
-                            };
-                            if value.as_array().is_none_or(|items| !items.is_empty()) {
-                                check_spark_column_type(col.name.as_str(), &spark.spark_type, &col.kind)?;
-                            }
-                            if let Some((content, spark_w, spark_h)) = render_spark_cell(
-                                col.name.as_str(),
-                                value,
-                                spark,
-                                col_ws[ci],
-                                row_h,
-                                &th.spark,
-                                bar_auto_max.get(col.name.as_str()).copied(),
-                                &spark_layout,
-                            )? {
-                                if !content.is_empty() {
-                                    // The narrow `column` mark centers under its header
-                                    // on a lane column, else sits at the cell padding;
-                                    // every other mark fills the cell from `cx + 4`.
-                                    let spark_x = if spark.spark_type == "column" {
-                                        if col.is_numeric || col.is_date {
-                                            python_round(cx + (col_ws[ci] - spark_w) / 2.0)
-                                        } else {
-                                            python_round(cx + pad)
-                                        }
+                    let spark_lane = spark_lanes[ci];
+                    let value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
+                    if value.is_none() && spark_lane.is_some() {
+                        // A null leaves both lanes blank.
+                        continue;
+                    }
+                    if let Some(value) = value {
+                        // The mark fills its lane, or the cell from its left edge.
+                        let (lane_x, lane_w) = spark_lane.unwrap_or((cx + 4.0, col_ws[ci]));
+                        let spark_layout = SparkLayout {
+                            has_negative: signed_columns.contains(col.name.as_str()),
+                            negative_tone: tones.map(|t| t.negative.as_str()),
+                        };
+                        // Empty content (a zero-length `bar`/`column`) draws an
+                        // empty cell: no mark, no cell text.
+                        if value.as_array().is_none_or(|items| !items.is_empty()) {
+                            check_spark_column_type(col.name.as_str(), &spark.spark_type, &col.kind)?;
+                        }
+                        let mark_cell_w = spark_lane.map_or(col_ws[ci], |_| lane_w + 2.0 * SPARK_CELL_PADDING);
+                        if let Some((content, spark_w, spark_h)) = render_spark_cell(
+                            col.name.as_str(),
+                            value,
+                            spark,
+                            mark_cell_w,
+                            row_h,
+                            &th.spark,
+                            bar_auto_max.get(col.name.as_str()).copied(),
+                            &spark_layout,
+                        )? {
+                            if !content.is_empty() {
+                                // The narrow `column` mark centers under its header
+                                // on a lane column, else sits at the cell padding;
+                                // every other mark fills from its lane's left edge.
+                                let spark_x = if spark.spark_type == "column" {
+                                    if spark_lane.is_some() {
+                                        python_round(lane_x + (lane_w - spark_w) / 2.0)
+                                    } else if col.is_numeric || col.is_date {
+                                        python_round(cx + (col_ws[ci] - spark_w) / 2.0)
                                     } else {
-                                        python_round(cx + 4.0)
-                                    };
-                                    let spark_y = row_y + (this_row_h - spark_h) / 2.0;
-                                    tree.open_at(
-                                        Open::Group,
-                                        Role::Chrome,
-                                        vec![Transform::Translate { x: spark_x, y: spark_y }],
-                                        Attrs::new().quick_some("class", cell_pe_class),
-                                    );
-                                    tree.extend(row_marks(content, ri));
-                                    tree.close(Open::Group);
-                                }
+                                        python_round(cx + pad)
+                                    }
+                                } else {
+                                    python_round(lane_x)
+                                };
+                                let spark_y = row_y + (this_row_h - spark_h) / 2.0;
+                                tree.open_at(
+                                    Open::Group,
+                                    Role::Chrome,
+                                    vec![Transform::Translate { x: spark_x, y: spark_y }],
+                                    Attrs::new().quick_some("class", cell_pe_class),
+                                );
+                                tree.extend(row_marks(content, ri));
+                                tree.close(Open::Group);
+                            }
+                            // The value's own lane still paints its text below.
+                            if spark_lane.is_none() {
                                 continue;
                             }
                         }
@@ -3003,7 +3022,7 @@ impl TableBody<'_> {
                     };
                     // The text sits where its first tspan does; the tspans place themselves.
                     let first_x = if left_run {
-                        cx + pad
+                        lane_xs[ci] + pad
                     } else if glyph.is_some() {
                         glyph_xs[ci]
                     } else if !affix_lane(by_anchor, |v| v.0.as_deref(), cell.prefix.as_deref()).is_empty() {
@@ -3869,6 +3888,152 @@ pub(super) fn wrapped_headers(
     Ok(out)
 }
 
+/// A numeric or date column's lane extents, measured the way its cells paint.
+struct NumericLane {
+    max_num_w: f64,
+    max_prefix_w: f64,
+    max_glyph_w: f64,
+    max_suffix_w: f64,
+    glyph_gap: f64,
+    is_magnitude: bool,
+    left_aligned_numeric: bool,
+    left_run_rows: Vec<(f64, f64)>,
+}
+
+impl NumericLane {
+    fn reserved_prefix_w(&self) -> f64 {
+        self.max_prefix_w + self.glyph_gap + self.max_glyph_w
+    }
+
+    /// The width the value text takes: prefix, number and suffix with their gaps.
+    fn value_w(&self) -> f64 {
+        let reserved = self.reserved_prefix_w();
+        let prefix_gap = if reserved > 0.0 { SUFFIX_GAP } else { 0.0 };
+        let suffix_gap = if self.is_magnitude { SUFFIX_GAP } else { 0.0 };
+        reserved + prefix_gap + self.max_num_w + suffix_gap + self.max_suffix_w
+    }
+}
+
+/// `col_w` clamps a date lane to its column; `f64::INFINITY` leaves it unclamped.
+fn measure_numeric_lane(
+    col: &ColMeta,
+    cells: &[Cell],
+    rows: &[serde_json::Map<String, Value>],
+    fonts: &FontBook,
+    families: &MeasureFonts,
+    font_size: f64,
+    col_w: f64,
+    pad: f64,
+) -> Result<NumericLane, Diagnostic> {
+    // Production measures the number lane with `num_str.removeprefix
+    // ("-")` — ASCII hyphen-minus only. Every numeric
+    // formatter in this repo (`_with_minus`, d3-format, d3rs's own
+    // MINUS) emits U+2212 MINUS SIGN for negatives, never ASCII "-", so
+    // that removeprefix never actually matches real cell text: it's a
+    // no-op, and production's "unsigned" measurement still counts the
+    // minus glyph's width. Stripping U+2212 here (production's own bug,
+    // faithfully NOT fixed) would narrow the lane and shift the number
+    // left of production's position — port the no-op, not the intent.
+    let mut max_num_w = 0.0_f64;
+    let mut max_prefix_w = 0.0_f64;
+    let mut max_glyph_w = 0.0_f64;
+    let mut max_suffix_w = 0.0_f64;
+    // Only a numeric column's own `align: left` leaves the lane; a date
+    // lane is never left-anchored.
+    let left_aligned_numeric = col.is_numeric && col.cfg.align.as_deref() == Some("left");
+    // Per magnitude row: (left-run digit start offset from the padding,
+    // digit width), as the left run paints them.
+    let mut left_run_rows: Vec<(f64, f64)> = Vec::new();
+    for (ri, c) in cells.iter().enumerate() {
+        // Production's lane pass skips a null: its placeholder is painted
+        // outside the lane and must not widen it.
+        if c.is_null {
+            continue;
+        }
+        // Only a magnitude, or a date-shaped cell (every cell of a
+        // right-aligned date column), sizes the lane; a sentinel beside
+        // magnitudes does not.
+        let raw_lane = rows[ri].get(col.name.as_str());
+        let is_magnitude = coerce_numeric_cell(raw_lane).is_some() && is_numeric_cell(col, raw_lane);
+        let is_date_cell = is_date_text(&col.kind, raw_lane)
+            || (col.is_date
+                && col.cfg.align.as_deref() == Some("right")
+                && matches!(raw_lane, Some(Value::String(s)) if !s.trim().is_empty()));
+        if !(is_magnitude || is_date_cell) {
+            continue;
+        }
+        let unsigned = c.text.trim_start_matches('-');
+        let lane_font = if is_plain_date_lane_cell(col, raw_lane) {
+            families.body
+        } else {
+            families.numeral
+        };
+        let measured = fonts.measure(unsigned, lane_font, font_size)?;
+        // A date cell is wrapped/truncated to its column when painted, so
+        // its lane width is clamped to the content area.
+        let raw_cell = rows[ri].get(col.name.as_str());
+        let numeric_lane_cell = is_numeric_cell(col, raw_cell) && !is_date_text(&col.kind, raw_cell);
+        max_num_w = max_num_w.max(if col.is_date && !numeric_lane_cell {
+            measured.min(col_w - 2.0 * pad)
+        } else {
+            measured
+        });
+        // A glyph sits left of the prefix lane; both are measured so the
+        // lane reserves glyph + gap + prefix.
+        let raw_value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
+        let glyph = resolve_cell_glyph(col, &rows[ri], raw_value)?;
+        if let Some(g) = glyph.as_deref() {
+            max_glyph_w = max_glyph_w.max(fonts.measure(g, families.numeral, font_size)?);
+        }
+        if let Some(p) = c.prefix.as_deref() {
+            max_prefix_w = max_prefix_w.max(fonts.measure(p, families.numeral, font_size)?);
+        }
+        if left_aligned_numeric && is_magnitude {
+            let lead = match (glyph.as_deref(), c.prefix.as_deref()) {
+                (Some(g), Some(p)) => Some(format!("{g} {p}")),
+                (Some(g), None) => Some(g.to_string()),
+                (None, p) => p.map(str::to_string),
+            };
+            let lead_w = match lead {
+                Some(text) => Some(fonts.measure(&text, families.numeral, font_size)?),
+                None => None,
+            };
+            let sign_w = fonts.measure(
+                &c.text[..c.text.len() - unsigned.len()],
+                families.numeral,
+                font_size,
+            )?;
+            left_run_rows.push((left_run_digit_offset(lead_w) + sign_w, measured));
+        }
+        if let Some(sfx) = c.suffix.as_deref() {
+            max_suffix_w =
+                max_suffix_w.max(fonts.measure(sfx, families.numeral, font_size)?);
+        }
+    }
+    // Magnitude gap is date-column-exempt ( hard-zeroes it
+    // there — a date column's suffix, if any, is never a K/M/B magnitude).
+    let is_magnitude = !col.is_date
+        && cells
+            .iter()
+            .find_map(|c| c.suffix.as_deref())
+            .is_some_and(|suffix| is_magnitude_suffix(suffix));
+    let glyph_gap = if max_glyph_w > 0.0 && max_prefix_w > 0.0 {
+        fonts.measure(" ", families.numeral, font_size)?
+    } else {
+        0.0
+    };
+    Ok(NumericLane {
+        max_num_w,
+        max_prefix_w,
+        max_glyph_w,
+        max_suffix_w,
+        glyph_gap,
+        is_magnitude,
+        left_aligned_numeric,
+        left_run_rows,
+    })
+}
+
 /// `_column_demands` over `measure_column_demands` and
 /// `measure_column_word_floors`: every string is
 /// the FORMATTED painted cell text (prefix+number+suffix for numeric lanes),
@@ -3890,11 +4055,13 @@ pub(super) fn column_inputs(
     header_visible: bool,
     pad: f64,
     spark_bar_width: f64,
+    spark_value: &SparkValueTheme,
 ) -> Result<ColumnInputs, Diagnostic> {
     let measure = Measure { fonts };
     let mut demands: BTreeMap<String, f64> = BTreeMap::new();
     let mut header_demands: BTreeMap<String, f64> = BTreeMap::new();
     let mut word_floors: BTreeMap<String, f64> = BTreeMap::new();
+    let mut spark_floors: BTreeMap<String, f64> = BTreeMap::new();
     let mut header_floor_words: BTreeMap<String, String> = BTreeMap::new();
     for (col, cells) in cols.iter().zip(cell_data.iter()) {
         // A swatch cell holds a color, not text: the painted square sets the
@@ -3959,6 +4126,26 @@ pub(super) fn column_inputs(
             token_w = token_w.max(glyph_term);
         }
         word_floors.insert(col.name.to_string(), token_w + 2.0 * pad);
+        if let Some((spark, (_, gap))) = col.cfg.spark.as_ref().and_then(|s| s.value_lane(spark_value).map(|l| (s, l))) {
+            let value = measure_numeric_lane(col, cells, rows, fonts, families, font_size, f64::INFINITY, pad)?;
+            let lane = value.value_w() + gap + 2.0 * pad;
+            demands.insert(
+                col.name.to_string(),
+                lane + spark.width.unwrap_or(match spark.spark_type.as_str() {
+                    "bar" | "bar-normalize" => spark_bar_width,
+                    _ => SPARK_LANE_AUTO_WIDTH,
+                }),
+            );
+            let token_floor = word_floors[col.name.as_str()];
+            word_floors.insert(
+                col.name.to_string(),
+                token_floor.max(lane + SPARK_LANE_MIN_WIDTH),
+            );
+            spark_floors.insert(
+                col.name.to_string(),
+                lane + spark.width.unwrap_or(SPARK_LANE_MIN_WIDTH),
+            );
+        }
         if header_token_w > 0.0 && header_token_w >= token_w {
             header_floor_words.insert(col.name.to_string(), header_word.to_string());
         }
@@ -3967,6 +4154,7 @@ pub(super) fn column_inputs(
         demands,
         header_demands,
         word_floors,
+        spark_floors,
         header_floor_words,
     })
 }
@@ -4143,6 +4331,7 @@ pub(crate) fn lay_out(
             th.header.visible,
             pad_now,
             th.spark.bar.width,
+            &th.spark.value,
         )?;
         let mut pins: BTreeMap<String, f64> = BTreeMap::new();
         let mut caps: BTreeMap<String, Option<f64>> = BTreeMap::new();
@@ -4161,19 +4350,35 @@ pub(crate) fn lay_out(
             eprintln!("RUST demands: {:?}", inputs.demands);
             eprintln!("RUST word_floors: {:?}", inputs.word_floors);
         }
-        let width_map = calculate_column_layout_port(
-            &column_names,
-            &force_compact,
-            &pins,
-            &caps,
-            budget,
-            &inputs.demands,
-            &inputs.header_demands,
-            &inputs.word_floors,
-            th.column_layout.width_similarity_threshold,
-            th.column_layout.content_headroom,
-            pad_now,
-        );
+        // A spark column beside its value lane never narrows past its lane
+        // floor; the pin takes its width out of the other auto columns.
+        let width_map = loop {
+            let widths = calculate_column_layout_port(
+                &column_names,
+                &force_compact,
+                &pins,
+                &caps,
+                budget,
+                &inputs.demands,
+                &inputs.header_demands,
+                &inputs.word_floors,
+                th.column_layout.width_similarity_threshold,
+                th.column_layout.content_headroom,
+                pad_now,
+            );
+            let short: Vec<(&String, f64)> = inputs
+                .spark_floors
+                .iter()
+                .filter(|(name, floor)| !pins.contains_key(*name) && widths[*name] < **floor)
+                .map(|(name, floor)| (name, *floor))
+                .collect();
+            if short.is_empty() {
+                break widths;
+            }
+            for (name, floor) in short {
+                pins.insert(name.clone(), floor);
+            }
+        };
         let col_ws = column_names.iter().map(|n| width_map[n]).collect();
         Ok((inputs, pins, caps, col_ws))
     };
@@ -4348,6 +4553,7 @@ pub(crate) fn lay_out(
         demands,
         header_demands,
         word_floors,
+        spark_floors: _,
         header_floor_words,
     } = inputs;
 
@@ -4610,112 +4816,49 @@ pub(crate) fn lay_out(
     // column earns a lane entry only when it measured content
     // (`max_content_w > 0`).
     let mut lane_extents: Vec<Option<(f64, f64)>> = vec![None; cols.len()];
+    // Where each cell's value text sits: the column's left edge, or its value lane's.
+    let mut lane_xs: Vec<f64> = col_x.clone();
+    // A `spark.value` column's mark lane as `(x, width)`; the value lane takes the rest.
+    let mut spark_lanes: Vec<Option<(f64, f64)>> = vec![None; cols.len()];
     for (ci, col) in cols.iter().enumerate() {
         if !col.is_numeric && !col.is_date {
             continue;
         }
         let cells = &cell_data[ci];
-        // Production measures the number lane with `num_str.removeprefix
-        // ("-")` — ASCII hyphen-minus only. Every numeric
-        // formatter in this repo (`_with_minus`, d3-format, d3rs's own
-        // MINUS) emits U+2212 MINUS SIGN for negatives, never ASCII "-", so
-        // that removeprefix never actually matches real cell text: it's a
-        // no-op, and production's "unsigned" measurement still counts the
-        // minus glyph's width. Stripping U+2212 here (production's own bug,
-        // faithfully NOT fixed) would narrow the lane and shift the number
-        // left of production's position — port the no-op, not the intent.
-        let mut max_num_w = 0.0_f64;
-        let mut max_prefix_w = 0.0_f64;
-        let mut max_glyph_w = 0.0_f64;
-        let mut max_suffix_w = 0.0_f64;
-        // Only a numeric column's own `align: left` leaves the lane; a date
-        // lane is never left-anchored.
-        let left_aligned_numeric = col.is_numeric && col.cfg.align.as_deref() == Some("left");
-        // Per magnitude row: (left-run digit start offset from the padding,
-        // digit width), as the left run paints them.
-        let mut left_run_rows: Vec<(f64, f64)> = Vec::new();
-        for (ri, c) in cells.iter().enumerate() {
-            // Production's lane pass skips a null: its placeholder is painted
-            // outside the lane and must not widen it.
-            if c.is_null {
-                continue;
-            }
-            // Only a magnitude, or a date-shaped cell (every cell of a
-            // right-aligned date column), sizes the lane; a sentinel beside
-            // magnitudes does not.
-            let raw_lane = rows[ri].get(col.name.as_str());
-            let is_magnitude = coerce_numeric_cell(raw_lane).is_some() && is_numeric_cell(col, raw_lane);
-            let is_date_cell = is_date_text(&col.kind, raw_lane)
-                || (col.is_date
-                    && col.cfg.align.as_deref() == Some("right")
-                    && matches!(raw_lane, Some(Value::String(s)) if !s.trim().is_empty()));
-            if !(is_magnitude || is_date_cell) {
-                continue;
-            }
-            let unsigned = c.text.trim_start_matches('-');
-            let lane_font = if is_plain_date_lane_cell(col, raw_lane) {
-                measure_family
-            } else {
-                tab_measure_family
-            };
-            let measured = fonts.measure(unsigned, lane_font, font_size)?;
-            // A date cell is wrapped/truncated to its column when painted, so
-            // its lane width is clamped to the content area.
-            let raw_cell = rows[ri].get(col.name.as_str());
-            let numeric_lane_cell = is_numeric_cell(col, raw_cell) && !is_date_text(&col.kind, raw_cell);
-            max_num_w = max_num_w.max(if col.is_date && !numeric_lane_cell {
-                measured.min(col_ws[ci] - 2.0 * pad)
-            } else {
-                measured
-            });
-            // A glyph sits left of the prefix lane; both are measured so the
-            // lane reserves glyph + gap + prefix.
-            let raw_value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
-            let glyph = resolve_cell_glyph(col, &rows[ri], raw_value)?;
-            if let Some(g) = glyph.as_deref() {
-                max_glyph_w = max_glyph_w.max(fonts.measure(g, tab_measure_family, font_size)?);
-            }
-            if let Some(p) = c.prefix.as_deref() {
-                max_prefix_w = max_prefix_w.max(fonts.measure(p, tab_measure_family, font_size)?);
-            }
-            if left_aligned_numeric && is_magnitude {
-                let lead = match (glyph.as_deref(), c.prefix.as_deref()) {
-                    (Some(g), Some(p)) => Some(format!("{g} {p}")),
-                    (Some(g), None) => Some(g.to_string()),
-                    (None, p) => p.map(str::to_string),
-                };
-                let lead_w = match lead {
-                    Some(text) => Some(fonts.measure(&text, tab_measure_family, font_size)?),
-                    None => None,
-                };
-                let sign_w = fonts.measure(
-                    &c.text[..c.text.len() - unsigned.len()],
-                    tab_measure_family,
-                    font_size,
-                )?;
-                left_run_rows.push((left_run_digit_offset(lead_w) + sign_w, measured));
-            }
-            if let Some(sfx) = c.suffix.as_deref() {
-                max_suffix_w =
-                    max_suffix_w.max(fonts.measure(sfx, tab_measure_family, font_size)?);
-            }
-        }
-        // Magnitude gap is date-column-exempt ( hard-zeroes it
-        // there — a date column's suffix, if any, is never a K/M/B magnitude).
-        let is_magnitude = !col.is_date
-            && cells
-                .iter()
-                .find_map(|c| c.suffix.as_deref())
-                .is_some_and(|suffix| is_magnitude_suffix(suffix));
-        let glyph_gap = if max_glyph_w > 0.0 && max_prefix_w > 0.0 {
-            fonts.measure(" ", tab_measure_family, font_size)?
-        } else {
-            0.0
-        };
+        let lane = measure_numeric_lane(col, cells, rows, fonts, &measure_fonts, font_size, col_ws[ci], pad)?;
+        let measured_value_w = lane.value_w();
+        let NumericLane {
+            max_num_w,
+            max_prefix_w,
+            max_glyph_w,
+            max_suffix_w,
+            glyph_gap,
+            is_magnitude,
+            left_aligned_numeric,
+            left_run_rows,
+        } = lane;
         let reserved_prefix_w = max_prefix_w + glyph_gap + max_glyph_w;
+        let (mut lane_x, mut lane_w) = (col_x[ci], col_ws[ci]);
+        if let Some((spark, (position, gap))) = col.cfg.spark.as_ref().and_then(|s| s.value_lane(&th.spark.value).map(|l| (s, l))) {
+            let value_w = measured_value_w;
+            let free = col_ws[ci] - 2.0 * pad - value_w - gap;
+            if free < SPARK_LANE_MIN_WIDTH || spark.width.is_some_and(|w| w > free) {
+                return Err(Diagnostic::from(format!(
+                    "table: column '{}' leaves {free:.0}px for its spark lane beside the value; the lane needs {:.0}px. Widen the column or drop spark.value.",
+                    col.name,
+                    spark.width.unwrap_or(SPARK_LANE_MIN_WIDTH),
+                )));
+            }
+            lane_w = value_w + 2.0 * pad;
+            let right = position == SparkValuePosition::Right;
+            lane_x = if right { col_x[ci] + col_ws[ci] - lane_w } else { col_x[ci] };
+            let spark_x = if right { col_x[ci] + pad } else { col_x[ci] + lane_w - pad + gap };
+            spark_lanes[ci] = Some((spark_x, spark.width.unwrap_or(free)));
+            lane_xs[ci] = lane_x;
+        }
         let (prefix_x, num_x, suffix_x) = numeric_lane_positions(
-            col_x[ci],
-            col_ws[ci],
+            lane_x,
+            lane_w,
             pad,
             max_num_w,
             reserved_prefix_w,
@@ -4733,7 +4876,7 @@ pub(crate) fn lay_out(
         // at the padding.
         if left_aligned_numeric {
             const ALIGN_EPSILON: f64 = 1e-6;
-            let left_x = col_x[ci] + pad;
+            let left_x = lane_x + pad;
             let right_edges: Vec<f64> = left_run_rows.iter().map(|&(off, w)| left_x + off + w).collect();
             let widest = right_edges.iter().copied().fold(f64::MIN, f64::max);
             let narrowest = right_edges.iter().copied().fold(f64::MAX, f64::min);
@@ -4755,7 +4898,7 @@ pub(crate) fn lay_out(
                 ));
             }
         }
-        if max_num_w > 0.0 && !left_aligned_numeric {
+        if max_num_w > 0.0 && !left_aligned_numeric && spark_lanes[ci].is_none() {
             lane_extents[ci] = Some((prefix_x - reserved_prefix_w, suffix_x + max_suffix_w));
         }
     }
@@ -5587,6 +5730,8 @@ pub(crate) fn lay_out(
         glyph_xs: &glyph_xs,
         number_xs: &number_xs,
         number_ws: &number_ws,
+        lane_xs: &lane_xs,
+        spark_lanes: &spark_lanes,
         suffix_xs: &suffix_xs,
         outer,
         pad,

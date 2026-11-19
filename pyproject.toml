@@ -469,9 +469,9 @@ forbidden_module_paths = [
 # databricks_connection_manager.py behind the databricks adapter gate; it is a
 # transitive dep of the optional
 # `databricks` extra, not a runtime dep.
-# `psycopg2`, `redshift_connector`, `snowflake` and `numpy` are imported inside
-# the family readers of execute/backends/typed_fetch.py for their type
-# constants, each present only when the matching dbt adapter (or, for numpy,
+# `psycopg2`, `redshift_connector`, `snowflake`, `numpy` and `pyarrow` are
+# imported inside the readers of execute/backends/typed_fetch.py, each present
+# only when the matching dbt adapter (or, for numpy and pyarrow,
 # databricks-sql) is installed.
 # `openai` is the lazy import inside ai/openai_gateway.py's OpenAIGateway. No
 # `dct` verb reaches it — the gateway exists for in-repo hosts (Cloud,
@@ -493,6 +493,7 @@ allowed_external_imports = [
     "redshift_connector",
     "snowflake",
     "numpy",
+    "pyarrow",
     "openai",
     "metricflow_sql",
 ]

@@ -152,3 +152,41 @@ def test_tool_names_the_pages_teach_exist_in_the_tool_registry() -> None:
     names = {n for text in taught for n in re.findall(r"`([a-z]+(?:_[a-z]+)+)\(", text)}
     assert {"render_board", "execute_sql", "search_files", "get_skill"} <= names
     assert names <= served, f"pages teach tools the registry lacks: {names - served}"
+
+
+def test_chart_page_says_formats_take_names_and_what_compact_keeps() -> None:
+    from dbt_charts.agent_api.skills import get_skill
+
+    body = get_skill("chart", surface="cli").body
+    assert "A `formats:` entry takes a format name, never a spec" in body
+    assert "`style.formats` (`style.formats.one_decimal" in body
+    assert "`compact` and `currency_compact` keep two significant digits" in body
+
+
+def test_chart_page_lists_the_keys_of_nested_slots_one_level_down(
+    gen: ModuleType,
+) -> None:
+    from dbt_charts.agent_api.skills import get_skill
+
+    chart = get_skill("chart", surface="cli").body
+    assert "- `position` ({edge, align, overlay})" in chart
+    assert "annotations[type=note]" in chart
+    styling = get_skill("styling", surface="cli").body
+    assert "compact: {spec, threshold}" in styling
+    assert "`style.text`:" in styling
+
+
+def test_a_layer_style_does_not_list_one_chart_types_marks() -> None:
+    """`layers[]` stands for every layer type, so its `marks` slots stay closed."""
+    from dbt_charts.agent_api.skills import get_skill
+
+    chart = get_skill("chart", surface="cli").body
+    assert "- `style` ({marks: {}}): Only `marks`" in chart
+
+
+def test_no_page_offers_a_spreadsheet_pattern_as_a_format() -> None:
+    """The validator rejects spreadsheet codes, so no page may offer one."""
+    from dbt_charts.agent_api.skills import get_skill
+
+    for name in ("chart", "styling"):
+        assert "Excel pattern" not in get_skill(name, surface="cli").body, name

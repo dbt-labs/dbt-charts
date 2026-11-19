@@ -1457,8 +1457,8 @@ ERR_LABELS_ANCHOR_UNSUPPORTED = REGISTRY.register(
         domain="compile",
         title="`labels.visible` anchors need the chart's own series",
         message_template="Chart {chart_id!r} sets {field_path} to anchors that pick marks from each series, which is not supported on {where}. Use `true` to label every mark.",
-        doc="`first`, `last`, `min` and `max` on point, line or bar value labels print those marks of each series. A scatter chart has no ordered series and a layer has no series of its own, so neither takes an anchor. A bar chart has a first and last bar only on a time axis; a categorical axis takes `min` and `max`. A grouped bar takes none, and a stacked bar's anchors need `stack: zero`, no `labels.field` and no visible `total_label`. Set `visible: true`, use `min` or `max`, or remove the key.",
-        summary="`labels.visible` anchors on a scatter chart, a layer, a grouped bar, or `first`/`last` on a categorical bar axis.",
+        doc="`first`, `last`, `min` and `max` on point, line or bar value labels print those marks of each series. A line, area or scatter layer over a line, area or bar chart takes them along the chart's x. A scatter chart has no ordered series, so neither it nor its layers take an anchor, and a bar layer takes none. A bar chart has a first and last bar only on a time axis; a categorical axis takes `min` and `max`. A grouped bar takes none, and a stacked bar's anchors need `stack: zero`, no `labels.field` and no visible `total_label`. Set `visible: true`, use `min` or `max`, or remove the key.",
+        summary="`labels.visible` anchors on a scatter chart, a bar layer, a grouped bar, or `first`/`last` on a categorical bar axis.",
         docs_topic="charts",
     )
 )

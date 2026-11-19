@@ -9,6 +9,8 @@ root) and the rects that stretch with each box, and draws the table's lists shut
 import re
 from pathlib import Path
 
+import pytest
+
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.execute.env import build_exec_env
@@ -153,3 +155,44 @@ def test_an_expanded_details_section_grows_border_and_all_on_a_live_page() -> No
     assert 'fill="none"' in border
     assert 'data-dbt-flow-bg=""' in border
     assert "data-dbt-flow" not in svg
+
+
+_TABBED_BORDERED_BOARD = """
+card_gap: true
+tabs:
+  items:
+    - title: Notes
+      rows:
+        - style:
+            border:
+              width: 1
+              color: "#123456"
+          rows:
+            - cols:
+                - text: Short card.
+                - text: Another short card.
+            - cols:
+                - text: |
+                    A taller card.
+
+                    With a second paragraph.
+                - text: One line.
+"""
+
+
+def test_a_bordered_board_in_a_tab_pane_hugs_its_card_gapped_rows() -> None:
+    svg = _render("svg", _TABBED_BORDERED_BOARD)
+    border = svg.index('stroke="#123456"')
+    box_height = float(
+        re.findall(r'<svg width="[\d.]+" height="([\d.]+)"', svg[:border])[-1]
+    )
+    after = svg[border:]
+    first_row = float(
+        re.search(r'<svg width="[\d.]+" height="([\d.]+)"', after).group(1)
+    )
+    second_top, second_row = re.search(
+        r'<g transform="translate\(0, ([\d.]+)\)">\s*<svg width="[\d.]+" height="([\d.]+)"',
+        after,
+    ).groups()
+    assert float(second_top) > first_row + 1
+    assert box_height == pytest.approx(float(second_top) + float(second_row) + 2, abs=1)

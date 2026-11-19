@@ -38,6 +38,40 @@ class TestSparkConfigParsing:
         assert config.thresholds == {50: "yellow", 80: "green"}
 
 
+class TestSparkValueLane:
+    @pytest.mark.parametrize("position", ["left", "right"])
+    def test_value_lane_on_a_single_number_variant(self, position: str) -> None:
+        config = SparkConfig(type="bar", value={"visible": True, "position": position})
+        assert config.value is not None
+        assert config.value.visible is True
+        assert config.value.position == position
+
+    def test_value_lane_leaves_position_and_gap_to_the_theme(self) -> None:
+        config = SparkConfig(type="column", value={})
+        assert config.value is not None
+        assert config.value.visible is False
+        assert config.value.position is None
+        assert config.value.gap is None
+
+    def test_value_lane_takes_a_column_gap(self) -> None:
+        config = SparkConfig(type="bar", value={"visible": True, "gap": 12})
+        assert config.value is not None
+        assert config.value.gap == 12
+
+    def test_value_lane_rejects_a_negative_gap(self) -> None:
+        with pytest.raises(ValidationError):
+            SparkConfig(type="bar", value={"visible": True, "gap": -1})
+
+    @pytest.mark.parametrize("variant", ["line", "area", "columns"])
+    def test_value_lane_is_rejected_on_series_variants(self, variant: str) -> None:
+        with pytest.raises(ValidationError, match="single-number"):
+            SparkConfig(type=variant, value={"visible": True})
+
+    def test_value_lane_rejects_an_unknown_position(self) -> None:
+        with pytest.raises(ValidationError):
+            SparkConfig(type="bar", value={"visible": True, "position": "top"})
+
+
 class TestTableColumnConfig:
     def test_table_column_config_basic(self) -> None:
         config = TableColumnConfig()

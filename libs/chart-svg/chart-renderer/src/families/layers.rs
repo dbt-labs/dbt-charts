@@ -1178,8 +1178,6 @@ pub(crate) struct StepBand {
 /// `None` to skip a row with no position on the base's own domain (a bar
 /// base's category not present there); `y_of` is the shared/independent
 /// linear scale's own `position(val)`, already clamped to the plot.
-/// `step_lead` is the share of the band a step layer's plateaus start after
-/// (`0.0` unless a grouped base's series fill the band's first slots).
 /// An area layer's fill spans each row's pile (`area`): rows sharing an x stack
 /// in row order (Vega-Lite's default `stack: zero` on an area mark with no
 /// series to order by), each row's span running from the pile below it to its
@@ -1205,10 +1203,10 @@ pub(crate) fn line_layer_marks(
     board_style: Option<&crate::BoardStyle>,
     mut describe_label: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
     step_band: Option<StepBand>,
-    step_lead: f64,
     stacked: Option<&LayerStack>,
     link: Option<&crate::href::DatumLink>,
     crowd: LabelCrowd,
+    under: &[crate::annotation::DataMark],
 ) -> Result<Vec<Node>, String> {
     // A band step's marks are drawn from data Vega-Lite rewrites, so they carry no link; its labels still do.
     let mark_link = link.filter(|_| !(l.curve_name() == Some("step") && step_band.is_some()));
@@ -1232,8 +1230,12 @@ pub(crate) fn line_layer_marks(
     let mut labels: Vec<Option<String>> = Vec::with_capacity(rows.len());
     let label_style = l
         .visible_labels()
-        .map(|ml| LayerLabelStyle::painted(ml, l.label_is_house, LayerInks { field: l.color.as_deref(), ink: l.ink.as_deref(), by_value: &l.series_inks }, rows, board_style))
+        .map(|ml| LayerLabelStyle::painted(ml, l.label_is_house, LayerInks { mark: l.line_mark.stroke.color.as_deref(), field: l.color.as_deref(), ink: l.ink.as_deref(), by_value: &l.series_inks }, rows, board_style))
         .transpose()?;
+    let printed = match &label_style {
+        Some(style) => style.printed(l.color.as_deref(), &valued_xs(rows, &l.y, &x_of)),
+        None => Vec::new(),
+    };
     let mut captions: Vec<(LayerCaption, Option<String>)> = Vec::new();
     let mut label_points: Vec<(f64, f64)> = Vec::new();
     let mut caption_hrefs: Vec<Option<String>> = Vec::new();
@@ -1267,7 +1269,7 @@ pub(crate) fn line_layer_marks(
         };
         spans.push(((frame.free_y)(end), (frame.free_y)(below)));
         labels.push(describe(row, val)?);
-        if let Some(style) = &label_style {
+        if let Some(style) = label_style.as_ref().filter(|_| printed[kept_rows.len() - 1]) {
             // A band-width plateau's `left`/`right` caption anchors at its band's edge.
             let band = step_band
                 .filter(|_| l.curve_name() == Some("step"))
@@ -1360,13 +1362,7 @@ pub(crate) fn line_layer_marks(
                 let pairs: Vec<[(f64, f64); 2]> = points
                     .iter()
                     .map(|&(cx, y)| {
-                        // Over a grouped base the plateau is the last slot of the shared offset
-                        // scale, which spans the inset band.
-                        let edge = |at: f64| {
-                            let u = (at - lo) / (hi - lo);
-                            cx - bw / 2.0 + bw * (lo + (hi - lo) * (step_lead + (1.0 - step_lead) * u))
-                        };
-                        [(edge(lo), y), (edge(hi), y)]
+                        [(cx - bw / 2.0 + bw * lo, y), (cx - bw / 2.0 + bw * hi, y)]
                     })
                     .collect();
                 let flat: Vec<(f64, f64)> = pairs.iter().flatten().copied().collect();
@@ -1594,7 +1590,7 @@ pub(crate) fn line_layer_marks(
     if let Some(style) = &label_style {
         let marks = layer_label_marks(label_points.iter().zip(captions).zip(caption_hrefs), step_band, horizontal);
         style.warn_if_crowded(&crowd, &marks)?;
-        out.extend(layer_value_labels(style, &marks, link.map(|link| link.open).unwrap_or_default())?);
+        out.extend(layer_value_labels(style, &marks, link.map(|link| link.open).unwrap_or_default(), crowd.fonts, canvas, under)?);
     }
     Ok(out)
 }
@@ -1648,6 +1644,15 @@ fn layer_label_marks<'a>(
         .collect()
 }
 
+/// A layer's rows with both an x and a value, as `(row, x, value)`.
+fn valued_xs<'a>(
+    rows: &'a [serde_json::Map<String, Value>],
+    y: &str,
+    x_of: impl Fn(&serde_json::Map<String, Value>) -> Option<f64>,
+) -> Vec<(&'a serde_json::Map<String, Value>, f64, f64)> {
+    ::bind::rows::valued_rows(rows, y).into_iter().filter_map(|(row, val)| x_of(row).map(|x| (row, x, val))).collect()
+}
+
 /// A layer's value-label typography and caption law, shared by the painter
 /// and every family's fit ink so the two never drift.
 pub(crate) struct LayerLabelStyle<'a> {
@@ -1656,14 +1661,17 @@ pub(crate) struct LayerLabelStyle<'a> {
     field_is_text: bool,
     pub font: crate::families::bar::labels::LabelFont,
     pub font_style: Option<String>,
-    color: &'a str,
+    color: String,
+    /// An authored `font.color`, a literal or `series`, which no mark behind a label overrides.
+    authored: bool,
     /// The inks an authored `series` color reads.
     series_of: Option<LayerInks<'a>>,
 }
 
-/// What a layer paints its rows: `by_value[row[field]]`, else `ink`.
+/// What a layer paints its rows: an authored `mark` color, else `by_value[row[field]]`, else `ink`.
 #[derive(Clone, Copy)]
 struct LayerInks<'a> {
+    mark: Option<&'a str>,
     field: Option<&'a str>,
     ink: Option<&'a str>,
     by_value: &'a HashMap<String, String>,
@@ -1692,16 +1700,17 @@ impl<'a> LayerLabelStyle<'a> {
         rows: &[serde_json::Map<String, Value>],
         board_style: Option<&crate::BoardStyle>,
     ) -> Result<Self, String> {
-        ml.refuse_anchors("layered chart")?;
         let font = crate::families::bar::labels::label_font(ml, board_style)?;
         let authored = ml.font.as_ref().and_then(|f| f.color.as_deref());
+        let color = authored.map_or_else(|| font.ink.clone(), str::to_string);
         Ok(LayerLabelStyle {
             ml,
             is_house,
             field_is_text: ml.field_is_text(rows),
             font,
             font_style: ml.font.as_ref().and_then(|f| f.style.clone()),
-            color: authored.unwrap_or("#313233"),
+            color,
+            authored: authored.is_some(),
             series_of: None,
         })
     }
@@ -1721,9 +1730,33 @@ impl<'a> LayerLabelStyle<'a> {
 
     /// The label color of `row`: a `series` label takes the ink its row's marks paint.
     fn color_of(&self, row: &serde_json::Map<String, Value>) -> &str {
-        let Some(inks) = self.series_of else { return self.color };
+        let Some(inks) = self.series_of else { return &self.color };
+        if let Some(mark) = inks.mark {
+            return mark;
+        }
         let by_row = inks.field.and_then(|field| layer_color_of(row, field)).and_then(|value| inks.by_value.get(&value));
-        by_row.map(String::as_str).or(inks.ink).unwrap_or("#313233")
+        by_row.map(String::as_str).or(inks.ink).unwrap_or(&self.font.ink)
+    }
+
+    /// Which of a layer's valued rows `(row, x, value)` print a label: all of them, or only
+    /// the rows `labels.visible` anchors pick along `x` in each `color` series (one series
+    /// without a field). The painter and every family's fit ask this, so they never drift.
+    pub(crate) fn printed(&self, color: Option<&str>, points: &[(&serde_json::Map<String, Value>, f64, f64)]) -> Vec<bool> {
+        if self.ml.anchors.is_empty() {
+            return vec![true; points.len()];
+        }
+        let mut xs: Vec<f64> = points.iter().map(|&(_, x, _)| x).collect();
+        xs.sort_by(f64::total_cmp);
+        xs.dedup();
+        let keyed: Vec<(String, usize, f64)> = points
+            .iter()
+            .map(|&(row, x, value)| {
+                let series = color.and_then(|field| layer_color_of(row, field)).unwrap_or_default();
+                (series, xs.binary_search_by(|probe| probe.total_cmp(&x)).expect("x is in xs"), value)
+            })
+            .collect();
+        let picked = crate::common::anchored_points(&self.ml.anchors, &keyed);
+        keyed.into_iter().map(|(series, rank, _)| picked.contains(&(series, rank))).collect()
     }
 
     /// The caption of `row`, whose measure is `val`. `band` is `Some((leading,
@@ -1771,18 +1804,40 @@ pub(crate) struct LayerLabelMark {
     pub href: Option<String>,
 }
 
+/// The contrast a `series` value label keeps against what is behind it, the pattern ink's floor.
+const SERIES_LABEL_CONTRAST: f64 = 3.0;
+
 /// The layer's value-label text mark set, drawn after the layer's marks the
 /// way production layers it, each at its caption's spot.
+/// An unauthored label takes the canvas color over a mark dark enough to swallow its ink
+/// (`knockout_ink` over `under`, the plot's marks in the labels' frame). A `series` label keeps
+/// its mark's hue at the nearest lightness that clears [`SERIES_LABEL_CONTRAST`] against what
+/// is painted behind it, a bar or the canvas; an authored literal holds as written.
 pub(crate) fn layer_value_labels(
     style: &LayerLabelStyle,
     marks: &[LayerLabelMark],
     link_open: crate::href::LinkOpen,
+    fonts: &FontBook,
+    canvas: &str,
+    under: &[crate::annotation::DataMark],
 ) -> Result<Vec<Node>, String> {
     let stamped = marks.iter().any(|m| m.aria.is_some());
     let mut labels = Vec::new();
     for m in marks {
         let spot = &m.caption.spot;
         let anchor = link_open.anchor(m.href.as_deref());
+        let center = || -> Result<(f64, f64), String> {
+            let ink = style.ink(m.x, m.y, style.width(fonts, &m.caption.text)?, spot);
+            Ok(((ink.x1 + ink.x2) / 2.0, (ink.y1 + ink.y2) / 2.0))
+        };
+        let color = if style.series_of.is_some() {
+            let ground = crate::families::bar::labels::ground_at(canvas, under, center()?)?;
+            dbt_charts_color::ensure_readable_ink(&m.caption.color, &ground, SERIES_LABEL_CONTRAST)?
+        } else if style.authored {
+            m.caption.color.clone()
+        } else {
+            crate::families::bar::labels::knockout_ink(canvas, &m.caption.color, under, center()?)?
+        };
         let label = crate::common::value_label(
             m.x + spot.dx,
             m.y + spot.dy + measure::baseline_shift(spot.baseline, style.font.size),
@@ -1791,7 +1846,7 @@ pub(crate) fn layer_value_labels(
             style.font.size,
             &style.font.weight,
             style.font_style.as_deref(),
-            &m.caption.color,
+            &color,
             ::layout::contract::aria_attrs(m.aria.as_deref(), ::layout::contract::ItemRole::TextMark)?,
             &m.caption.text,
         );
@@ -1939,11 +1994,21 @@ pub(crate) fn scatter_layer_marks(
     link: Option<&crate::href::DatumLink>,
     clip: Option<((f64, f64), &PlotClips)>,
     crowd: LabelCrowd,
+    under: &[crate::annotation::DataMark],
 ) -> Result<Vec<Node>, String> {
     let r_pt = crate::common::symbol_radius(size);
     let mut points = Vec::new();
     let ml = l.point_mark.labels.visible.then_some(&l.point_mark.labels);
-    let label_style = ml.map(|ml| LayerLabelStyle::painted(ml, l.label_is_house, LayerInks { field: l.color.as_deref(), ink: l.ink.as_deref(), by_value: &l.series_inks }, rows, board_style)).transpose()?;
+    let mark = match &color {
+        PointColor::Claimed(_) => l.point_mark.color.as_deref(),
+        PointColor::Encoded(_) => None,
+    };
+    let label_style = ml.map(|ml| LayerLabelStyle::painted(ml, l.label_is_house, LayerInks { mark, field: l.color.as_deref(), ink: l.ink.as_deref(), by_value: &l.series_inks }, rows, board_style)).transpose()?;
+    let printed = match &label_style {
+        Some(style) => style.printed(l.color.as_deref(), &valued_xs(rows, &l.y, &x_of)),
+        None => Vec::new(),
+    };
+    let mut drawn = 0;
     let mut label_points: Vec<(f64, f64)> = Vec::new();
     let mut captions: Vec<(LayerCaption, Option<String>)> = Vec::new();
     let mut caption_hrefs: Vec<Option<String>> = Vec::new();
@@ -1961,7 +2026,8 @@ pub(crate) fn scatter_layer_marks(
         };
         let point = overlay_point(layer_index, &l.point_mark, x, y, r_pt, &point_color, canvas, aria.as_deref())?;
         points.push(crate::href::linked(anchor, point));
-        if let Some(style) = &label_style {
+        drawn += 1;
+        if let Some(style) = label_style.as_ref().filter(|_| printed[drawn - 1]) {
             if let Some(label_cross) = label_x_of.map_or(Some(cross), |label_x_of| label_x_of(row)) {
                 label_points.push(if horizontal { (measure, label_cross) } else { (label_cross, measure) });
                 captions.push((style.caption(row, val, None)?, describe_label(row, val)?));
@@ -1977,7 +2043,7 @@ pub(crate) fn scatter_layer_marks(
     if let Some(style) = &label_style {
         let marks = layer_label_marks(label_points.iter().zip(captions).zip(caption_hrefs), None, horizontal);
         style.warn_if_crowded(&crowd, &marks)?;
-        out.extend(layer_value_labels(style, &marks, link.map(|link| link.open).unwrap_or_default())?);
+        out.extend(layer_value_labels(style, &marks, link.map(|link| link.open).unwrap_or_default(), crowd.fonts, canvas, under)?);
     }
     Ok(out)
 }

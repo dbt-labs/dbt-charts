@@ -447,7 +447,7 @@ pub struct Variable {
     /// Dropdown values come from a query column, or (rarely) a written-out list.
     #[model(absent = "no options")]
     pub options: Option<VariableOptions>,
-    /// The type of the values a select, radio or multiselect sends back. 'number', 'date' and 'boolean' convert the value before it reaches SQL; needed when the options come from a query, since a static numeric list already implies 'number'. 'string' and 'array' leave the value as sent.
+    /// The type of the values a select, radio or multiselect sends back. 'number', 'date' and 'boolean' convert the value before it reaches SQL. Without it, a static numeric list implies 'number' and query options their column's declared type. 'string' and 'array' leave the value as sent.
     #[model(absent = "inferred from the options")]
     pub data_type: Option<VariableDataType>,
     /// Minimum value for number, slider and range inputs.

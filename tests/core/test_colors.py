@@ -94,6 +94,18 @@ def test_ensure_readable_ink_picks_the_higher_contrast_endpoint_for_a_midtone_ba
         assert hex_to_oklch(ink)[0] < 0.5, (bg, ink)
 
 
+def test_ensure_readable_ink_takes_the_nearer_lightness_when_both_poles_clear_the_floor():
+    """On a mid blue both black and white clear 3:1; an orange there is nearer the floor
+    lightening than darkening, so it lightens even though black contrasts more."""
+    from dbt_charts.core.colors import hex_to_oklch
+
+    bg = "#0073ff"
+    assert wcag_contrast("#000000", bg) > wcag_contrast("#ffffff", bg) > 3.0
+    ink = ensure_readable_ink("#fe6703", bg, min_ratio=3.0)
+    assert wcag_contrast(ink, bg) >= 3.0
+    assert hex_to_oklch(ink)[0] > hex_to_oklch("#fe6703")[0]
+
+
 def test_is_light_canvas_crossover_below_0_18_luminance_is_dark():
     """#727272 sits just below the ~0.18-luminance crossover: white still
     wins the contrast race, so the canvas reads as dark (not light)."""

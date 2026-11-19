@@ -84,6 +84,7 @@ from dbt_charts.core.execute.metricflow import bundle_files, bundle_fingerprint
 from dbt_charts.core.execute.plan_reader import (
     board_clock,
     expanded_sql,
+    holds_text,
     plan_variables,
     planned_project_sources,
     reachable,
@@ -245,6 +246,14 @@ class QueryRun:
     # Whether a stored incremental hit may be refreshed by a tail. False for any
     # query reading a file source, whatever its route.
     tailable: bool
+    # The options query of each untyped choice variable the query binds, by
+    # variable name: run first, so its declared column type types the value.
+    option_types: dict[str, "QueryRun"]
+
+    @property
+    def prerequisites(self) -> list["QueryRun"]:
+        """The runs a wave settles before this one."""
+        return [*self.upstreams.values(), *self.option_types.values()]
 
 
 def cache_policy(entry: PlannedQuery) -> CachePolicy:
@@ -373,7 +382,8 @@ def plan(
 
     ``use_cache`` overrides the context's store participation for this call; a
     query whose own policy is disabled never uses the store either way. A
-    ``{{ queries.X.cache }}`` query carries its upstreams' runs.
+    ``{{ queries.X.cache }}`` query carries its upstreams' runs, and a query
+    binding an untyped choice variable its options query's run.
 
     Raises:
         ExecutionError: A query is not in the plan, or a file source's version
@@ -391,6 +401,10 @@ def plan(
                 if entry["type"] == "sql"
                 else ()
             )
+            options = untyped_choice_options(ctx.plan, ctx.board, name)
+            option_runs = {
+                run.name: run for run in plan(ctx, options.values(), use_cache)
+            }
             planned[name] = QueryRun(
                 name,
                 entry,
@@ -400,8 +414,44 @@ def plan(
                 (ctx.use_cache if use_cache is None else use_cache)
                 and entry["cache"]["enabled"],
                 not isinstance(keyed_source(ctx, entry, source), FileSourceConfig),
+                {variable: option_runs[query] for variable, query in options.items()},
             )
     return list(planned.values())
+
+
+def untyped_choice_options(
+    query_plan: QueryPlan, board: Board, name: str
+) -> dict[str, str]:
+    """The options query of each choice variable query *name* binds as text, by
+    variable name: one with no ``data_type`` whose options come from a query.
+
+    Text is what a URL or ``--var`` value arrives as; that query's declared
+    column type is the value's type.
+    """
+    registry = (
+        board.variable_registry  # type-state: silent_fallback — None: the board declares no variables
+        or {}
+    )
+    entry = query_plan["queries"][name]
+    if entry["type"] != "sql":
+        return {}
+    found: dict[str, str] = {}
+    for variable in entry["variable_dependencies"]:
+        declared = registry.get(variable)
+        queries = query_plan["variable_queries"].get(variable)
+        options = None if queries is None else queries["options"]
+        if (
+            declared is None
+            or declared.input not in ("select", "radio", "multiselect")
+            or declared.data_type is not None
+            or options is None
+            or options == name
+            or options not in query_plan["queries"]
+            or not holds_text(query_plan["variables"]["query"].get(variable))
+        ):
+            continue
+        found[variable] = options
+    return found
 
 
 def database_file_stat_version(
@@ -520,6 +570,12 @@ def cache_key(
         cache_ref_upstream(ctx, query_name, ref_name)
         upstream_keys.append(
             cache_key(ctx, ref_name, partial(resolve_source, ctx, ref_name))
+        )
+    # The options queries that type its values: their column types decide what
+    # it binds, so a change there is a change here.
+    for options in untyped_choice_options(ctx.plan, ctx.board, query_name).values():
+        upstream_keys.append(
+            cache_key(ctx, options, partial(resolve_source, ctx, options))
         )
     version = (
         source_version(ctx, entry, resolve_source_thunk)

@@ -148,7 +148,8 @@ pub struct Flat<'a> {
 }
 
 impl Ty {
-    fn refs<'a>(&'a self, out: &mut Vec<&'a str>) {
+    /// The models this type names, at any depth.
+    pub fn refs<'a>(&'a self, out: &mut Vec<&'a str>) {
         match self {
             Ty::Ref(n) => out.push(n),
             Ty::List(t)

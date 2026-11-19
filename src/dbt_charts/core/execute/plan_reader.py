@@ -19,7 +19,10 @@ from dbt_charts.core.compile.template.jinja import (
     expand_query_refs,
     extract_sql_variable_dependencies,
 )
-from dbt_charts.core.compile.template.variables import VariableValues
+from dbt_charts.core.compile.template.variables import (
+    VariableValues,
+    coerce_choice_member,
+)
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_NOT_FOUND
 from dbt_charts.core.execute.env import ExecEnv
@@ -93,6 +96,65 @@ def plan_variables(plan: QueryPlan) -> VariableValues:
             case _:
                 bound[name] = _atom(wire)
     return bound
+
+
+def holds_text(wire: JsonValue) -> bool:
+    if not isinstance(wire, dict):
+        return False
+    if wire.get("kind") == "multiselect":
+        members = wire["values"]
+        assert isinstance(members, list)
+        return any(holds_text(member) for member in members)
+    return wire.get("kind") == "text"
+
+
+def typed_plan(plan: QueryPlan, member_types: Mapping[str, str]) -> QueryPlan:
+    """*plan* with each named variable's text read as its member type
+    (``coerce_choice_member``): a copy, the plan is never changed in place.
+
+    Raises:
+        ExecutionError: ERR-VARIABLE-VALUE-INVALID for text that is not one.
+    """
+    wires = plan["variables"]["query"]
+    return {
+        **plan,
+        "variables": {
+            **plan["variables"],
+            "query": {
+                **wires,
+                **{
+                    name: _typed_wire(name, wires[name], member_type)
+                    for name, member_type in member_types.items()
+                },
+            },
+        },
+    }
+
+
+def _typed_wire(name: str, wire: JsonValue, member_type: str) -> JsonValue:
+    assert isinstance(wire, dict)
+    if wire["kind"] == "multiselect":
+        members = wire["values"]
+        assert isinstance(members, list)
+        return {
+            **wire,
+            "values": [_typed_wire(name, member, member_type) for member in members],
+        }
+    if wire["kind"] != "text":
+        return wire
+    text = wire["value"]
+    assert isinstance(text, str)
+    match coerce_choice_member(name, text, member_type):
+        case bool() as flag:
+            return {"kind": "bool", "value": flag}
+        case int() as number:
+            return {"kind": "int", "value": number}
+        case float() as number:
+            return {"kind": "float", "value": number}
+        case date() as day:
+            return {"kind": "date", "value": day.isoformat()}
+        case other:
+            raise AssertionError(f"{member_type} member read as {other!r}")
 
 
 def local_name(key: str) -> str:

@@ -24,26 +24,31 @@ pub(super) fn crossed(marks: &[DataMark], canvas: Color, a: (f64, f64), b: (f64,
     for i in 0..=steps {
         let t = i as f64 / steps as f64;
         let (x, y) = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
-        let mut under: Option<[f64; 3]> = None;
-        for m in marks {
-            let DataMark::Tinted(inner, fill, alpha) = m else { continue };
-            // A pattern or a missing fill has no color to hold contrast against.
-            if fill == "none" || fill.starts_with("url(") || !inner.covers(x, y, half) {
-                continue;
-            }
-            let base = under.unwrap_or(canvas.c);
-            let fill = parse(fill)?.to_rgb();
-            let a = alpha * fill.opacity;
-            under = Some([0, 1, 2].map(|k| (fill.c[k] * a + base[k] * (1.0 - a)).round()));
-        }
-        if let Some([r, g, b]) = under {
-            let c = Color::rgb(r, g, b, 1.0);
+        if let Some(c) = color_under(marks, canvas, (x, y), half)? {
             if !out.contains(&c) {
                 out.push(c);
             }
         }
     }
     Ok(out)
+}
+
+/// The opaque color painted at `(x, y)` (within `half` of a mark): each tinted mark covering it,
+/// composited at its real alpha over the canvas in paint order; `None` where no mark covers it.
+pub(crate) fn color_under(marks: &[DataMark], canvas: Color, (x, y): (f64, f64), half: f64) -> Result<Option<Color>, Diagnostic> {
+    let mut under: Option<[f64; 3]> = None;
+    for m in marks {
+        let DataMark::Tinted(inner, fill, alpha) = m else { continue };
+        // A pattern or a missing fill has no color to hold contrast against.
+        if fill == "none" || fill.starts_with("url(") || !inner.covers(x, y, half) {
+            continue;
+        }
+        let base = under.unwrap_or(canvas.c);
+        let fill = parse(fill)?.to_rgb();
+        let a = alpha * fill.opacity;
+        under = Some([0, 1, 2].map(|k| (fill.c[k] * a + base[k] * (1.0 - a)).round()));
+    }
+    Ok(under.map(|[r, g, b]| Color::rgb(r, g, b, 1.0)))
 }
 
 /// The ladder entry (`ladder` runs canvas end first) an `auto` rule draws in.

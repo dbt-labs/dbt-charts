@@ -279,8 +279,8 @@ class SparkColumnsStyle(BaseModel):
 class SparkBarCellStyle(BaseModel):
     """Inline `spark.type: bar` and `bar-normalize` (single horizontal bar) defaults.
 
-    The variant decides whether the background track is drawn:
-    `bar` paints only the fill; `bar-normalize` paints a track + fill.
+    `bar-normalize` always paints a track + fill; `bar` paints a track only
+    when the column authors `spark.background`.
     Style sub-keys are shared between both variants.
     """
 
@@ -324,6 +324,18 @@ class SparkColumnStyle(BaseModel):
     height: float = Field(description="Spark column default height in pixels.")
 
 
+class SparkValueStyle(BaseModel):
+    """Defaults for a spark's value lane (`spark.value`)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    position: Literal["left", "right"] = Field(
+        description="Which side of the spark mark the value sits on."
+    )
+    gap: float = Field(
+        ge=0, description="Gap in pixels between the value and the spark mark."
+    )
+
+
 class SparkStyle(BaseModel):
     """Inline sparkline defaults (inside table cells)."""
 
@@ -348,6 +360,7 @@ class SparkStyle(BaseModel):
         description="Style for bar/bar-normalize sparklines."
     )
     area: SparkAreaStyle = Field(description="Style for area sparklines.")
+    value: SparkValueStyle = Field(description="Defaults for a spark's value lane.")
 
 
 class TableRowNumbersStyle(BaseModel):

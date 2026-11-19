@@ -383,6 +383,7 @@ def render_tabs_layout(
     variables: VariableValues,
     available_width: float,
     available_height: float,
+    card_gap: float,
     tab_titles: list[str] | None = None,
     tab_slugs: list[str] | None = None,
     tab_variable: str | None = None,
@@ -407,6 +408,7 @@ def render_tabs_layout(
         variables: Variable values for queries
         available_width: Available container width
         available_height: Available container height
+        card_gap: Gap between the active tab's cards
         tab_titles: Display titles for tabs
         tab_slugs: URL-safe slugs for tabs (used in URL params)
         tab_variable: Variable name for tab selection (URL param name)
@@ -442,7 +444,7 @@ def render_tabs_layout(
         active_item,
         results,
         variables,
-        card_gap=0.0,
+        card_gap=card_gap,
         available_width=available_width - content_x,
         available_height=available_height - content_y,
         resolved_style=resolved_style,

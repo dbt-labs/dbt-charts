@@ -334,7 +334,7 @@ impl Torn {
         let Caps { tear, mut caps, ends } = caps;
         let ml = r.style.mark.labels.as_ref().ok_or_else(no_labels)?;
         let font = label_font(ml, board_style)?;
-        let ink = font.color.as_deref().unwrap_or("#313233");
+        let ink = font.color.as_deref().unwrap_or(&font.ink);
         // A label names its bar's datum inside a value-label group, so hover recedes it with its bar.
         let text_node = |at: (f64, f64), anchor: &str, baseline: &str, fill: &str, text: String, aria: Option<&str>| -> Result<Node, String> {
             let attrs = Attrs::new()

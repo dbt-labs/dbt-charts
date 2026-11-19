@@ -206,7 +206,7 @@ jobs:
 
   publish-dev:
     needs: [sdist, wheels]
-    # The message is set by the monorepo's .buildkite/copybara_export.sh.
+    # The message is set by the monorepo's .buildkite/dbt-charts-export/copybara_export.sh.
     if: >-
       github.event_name == 'push'
       && startsWith(github.event.head_commit.message, 'Copybara nightly export')

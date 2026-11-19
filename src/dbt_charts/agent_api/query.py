@@ -763,7 +763,8 @@ def _run_over_memory_cache(
     limit: int,
     cache: QueryResultCache | None,
 ) -> QueryResult:
-    """Run *name* with its ``{{ queries.X.cache }}`` upstreams over *cache*.
+    """Run *name* with its prerequisites over *cache*: its ``{{ queries.X.cache }}``
+    upstreams, and the options queries that type its choice values.
 
     ``None`` means a throwaway in-memory cache, closed on return; a caller's
     cache is left open for it to close.
@@ -812,7 +813,11 @@ def query_board(
     an in-memory cache discarded on return.
     """
     from dbt_charts.core.board import plan_for_board
-    from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE, utc_now
+    from dbt_charts.core.execute.plan import (
+        CACHE_REF_JINJA_RE,
+        untyped_choice_options,
+        utc_now,
+    )
     from dbt_charts.core.execute.plan_reader import (
         board_clock as planned_clock,
         expanded_sql,
@@ -875,6 +880,9 @@ def query_board(
     sql = expanded_sql(plan, key) if entry["type"] == "sql" else None
     noted = query.notes
     composes_cache = sql is not None and CACHE_REF_JINJA_RE.search(sql) is not None
+    needs_upstreams = composes_cache or bool(
+        untyped_choice_options(plan, loaded.board, key)
+    )
 
     # A SQL query against a file source runs through run_planned's
     # own materializer dispatch (or its refusal, when no materializer is
@@ -882,7 +890,7 @@ def query_board(
     # below — one dispatch point, not a second copy here.
     try:
         with board_clock(planned_clock(plan)):
-            if composes_cache:
+            if needs_upstreams:
                 exec_result = _run_over_memory_cache(
                     loaded.board, planned, env, key, limit + 1, cache
                 )

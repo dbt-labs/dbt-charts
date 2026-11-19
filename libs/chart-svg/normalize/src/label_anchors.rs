@@ -1,5 +1,6 @@
 //! `validate/label_anchors.py`: `labels.visible` anchors (`first`, `last`, `min`, `max`) pick marks
-//! from each series, so a scatter chart (no ordered series) and a layer (none of its own) refuse them.
+//! from each series, so a scatter chart and its layers (no ordered series) and a bar layer (no
+//! anchor path) refuse them; a line, area or scatter layer over a line, area or bar chart takes them.
 
 use board_model::chart::layer::CartesianLayerAuthored as L;
 use board_model::chart::ChartAuthored as C;
@@ -58,8 +59,9 @@ fn layer_path(layer: &L) -> Option<&'static str> {
     }
 }
 
-/// The first anchored label under a cartesian chart's own style (a scatter chart) or a layer's,
-/// as Python raises it: the chart first, then each layer in order.
+/// The first anchored label under a cartesian chart's own style (a scatter chart) or a layer's
+/// that refuses them (any layer of a scatter chart, a bar layer elsewhere), as Python raises it:
+/// the chart first, then each layer in order.
 pub fn label_anchor_error(id: &str, chart: &C) -> Option<Diagnostic> {
     let layers = match chart {
         C::Area(c) => &c.layers,
@@ -78,8 +80,14 @@ pub fn label_anchor_error(id: &str, chart: &C) -> Option<Diagnostic> {
         _ => None,
     };
     let (path, whom) = own.or_else(|| {
+        let on_scatter = matches!(chart, C::Scatter(_));
         layers.iter().flatten().enumerate().find_map(|(i, l)| {
-            layer_path(l).map(|p| (format!("charts.{id}.layers[{i}].style.{p}"), "a layer"))
+            let bar = matches!(l, L::Bar(_));
+            if !bar && !on_scatter {
+                return None;
+            }
+            let whom = if bar { "a bar layer" } else { "a layer" };
+            layer_path(l).map(|p| (format!("charts.{id}.layers[{i}].style.{p}"), whom))
         })
     })?;
     Some(diag::err_labels_anchor_unsupported(id, path, whom))

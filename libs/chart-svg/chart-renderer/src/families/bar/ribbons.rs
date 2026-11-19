@@ -10,7 +10,7 @@ use scene::{Attrs, Node, PathData, Role};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::labels::{LabelFont, LABEL_FIT_PADDING, NEUTRAL_INK};
+use super::labels::{LabelFont, LABEL_FIT_PADDING};
 use crate::constants::bar::LABEL_FIT_LINE_HEIGHT_MULTIPLIER;
 
 /// `style.marks.bar.ribbons`, resolved.
@@ -217,7 +217,7 @@ impl LabelPlan<'_> {
         let authored = ctx.font.color.as_deref().filter(|c| *c != "series");
         let (at_x, anchor, align, ink) = if fits {
             // Inside, the font's color or the neutral ink, never the series': a ribbon is already its tint.
-            let base = authored.unwrap_or(NEUTRAL_INK);
+            let base = authored.unwrap_or(&ctx.font.ink);
             (((x + w / 2.0) + (x2 + w2 / 2.0)) / 2.0, "middle", "center", dbt_charts_color::ensure_readable_ink(base, fill, RIBBON_INK_CONTRAST)?)
         } else {
             // As a bar's own outside label: the font's color, else the series' (here the nearer bar's).

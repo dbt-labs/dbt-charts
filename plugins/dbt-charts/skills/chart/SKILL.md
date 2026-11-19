@@ -136,6 +136,18 @@ Derived series (rolling averages, running totals, YoY) are window functions or e
 
 `annotations:` (bar, line, area, scatter) are `type: rule` (a line at `y: 25`, `y: avg()`, `x: <date>`), `band` (`from`/`to`), `note` (at `x` and `y`) or `trend` (`fit: linear()`), each with `text`. One target value is a rule; a target per bar or period is the targets recipe. Peak note: `y: max()`, no `x`; never paste a result.
 
+`annotations[type=note]`:
+- `x` (number|int|date|text): Where on the x axis
+- `y` (number|int|date|text): Where on the y axis
+- `text`: Text drawn with the annotation
+- `series` (each|total): Which series a computed anchor or trend is computed for
+- `style` ({marks: {text: {}, line: {}, circle: {}, rect: {}}}): Appearance overrides for this annotation's marks
+Also exist: `plane`, `y_column`, `type`, `connector`, `enclose`.
+
+`annotations[type=note].style.marks.text`:
+- `position` ({edge, align, overlay}): Which side of the anchor the text sits on, and where along it
+Also exist: `font`, `halo`, `halo_opacity`, `box`, `dx`, `dy`, `max_width`.
+
 `bullet`, `waterfall`, `lollipop`, `dumbbell`, `slope`, `bump`, `gantt`, targets and pacers are recipes, never a `type:`: read them on the recipes page (`get_skill('chart-recipes')`) first.
 
 ## Variables
@@ -182,6 +194,8 @@ rows:
 A `rows` or `cols` entry may be an inline board with its own `title`, `variables`, `queries`, `charts` and `style`. A text row that starts a section puts its title on `title:`, not in a `##` opening its `text:`. Every name in `rows` or `cols` is a key under `charts:`, spelled the same. Read `board-layout` to lay out a board. Also exists: `grid:`, only when the user asks for a grid.
 
 ## Formats
+
+A `formats:` entry takes a format name, never a spec: a built-in name below, or an alias defined once under `style.formats` (`style.formats.one_decimal: ',.1f'`, then `one_decimal` as the column's value under `formats:`). `compact` and `currency_compact` keep two significant digits (1.2M, 45K); another precision is a d3 spec in a `style.formats` alias, such as `.3~s`. Spreadsheet patterns (`#,##0.0`) are not supported.
 
 Built-in names, on 1234567.891 and 0.2534: `currency` $1.23M, `currency_whole` $1,234,568, `currency_full` $1,234,567.89, `currency_compact` $1.2M, `compact` 1.2M, `number` 1.23M, `number_full` 1,234,567.891, `integer` 1,234,568, `id` 1234568, `delta` +1,234,568, `year` 2025, `percent` 25.3%, `percent_whole` 25%, `percent_delta` +25.3%. Also exist: `percent_number`, `percent_number_delta`, `percentage_points_delta`, `duration`, `bytes`, `latitude`, `longitude`, `rating`. Date names: `date_short`, `time_short`, `date_year`, `date_quarter`, `date_month`, `date_week`. A `date_<grain>` name is the engine's own axis label, never a format you write: a date in a table, KPI or axis takes a strftime spec such as `"%b %Y"` or `"%Y"`.
 

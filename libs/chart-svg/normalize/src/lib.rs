@@ -48,6 +48,7 @@ pub mod pathless;
 pub mod public_id;
 mod query_lints;
 mod restated;
+mod restated_defaults;
 mod restated_variables;
 mod retired;
 mod rhythm;

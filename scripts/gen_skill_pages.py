@@ -193,17 +193,42 @@ def _default(field: Any) -> str:
     return "" if d in (None, "None", "{}", "[]", "null") else str(d).strip('"')
 
 
+_MAX_SHAPE_KEYS = 8
+
+
+def _opens(field: Any) -> bool:
+    return field.name != "font" and not any(
+        n.endswith("ChartMarksStylePatch") for n in field.nested_models
+    )
+
+
+def _shape(field: Any, depth: int) -> str | None:
+    """A mapping field's keys as `{a, b: {c, d}}`, a nested mapping opened `depth` more levels.
+
+    None when the field is not a mapping of one model or that model has more
+    than `_MAX_SHAPE_KEYS` keys: its own allowlisted section lists them. A
+    `font` stays `{}`: the same typography keys repeat in every slot. One chart
+    type's nested marks stay `{}`: an entry such as `layers[]` stands for every type.
+    """
+    nested = [n for n in field.nested_models if not n.endswith("Ref")]
+    if len(nested) != 1 or "mapping" not in _type_label(field).split("|"):
+        return None
+    fields = _schema().models[nested[0]].fields
+    if len(fields) > _MAX_SHAPE_KEYS:
+        return None
+    inner = [
+        f"{f.name}: {(depth and _opens(f) and _shape(f, depth - 1)) or '{}'}"
+        if _type_label(f) == "mapping"
+        else f.name
+        for f in fields
+    ]
+    return "{" + ", ".join(inner) + "}"
+
+
 def _line(field: Any, where: str, *, full: bool) -> str:
     typ = _type_label(field)
-    nested = [n for n in field.nested_models if not n.endswith("Ref")]
-    if len(nested) == 1 and "mapping" in typ.split("|"):
-        fields = _schema().models[nested[0]].fields
-        if len(fields) <= 6:
-            names = [
-                f"{f.name}: {{}}" if _type_label(f) == "mapping" else f.name
-                for f in fields
-            ]
-            typ = typ.replace("mapping", "{" + ", ".join(names) + "}", 1)
+    if shape := _shape(field, 1):
+        typ = typ.replace("mapping", shape, 1)
     default = _default(field)
     meta = ", ".join(
         x

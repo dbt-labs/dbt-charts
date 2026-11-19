@@ -258,8 +258,8 @@ class Variable(BaseModel):
         description=(
             "The type of the values a select, radio or multiselect sends back. "
             "'number', 'date' and 'boolean' convert the value before it reaches "
-            "SQL; needed when the options come from a query, since a static "
-            "numeric list already implies 'number'. 'string' and 'array' leave "
+            "SQL. Without it, a static numeric list implies 'number' and query "
+            "options their column's declared type. 'string' and 'array' leave "
             "the value as sent."
         ),
     )

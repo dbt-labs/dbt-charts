@@ -63,6 +63,10 @@ from dbt_charts.core.compile.template.daterange import (
     board_clock,
     board_clock_in_scope,
 )
+from dbt_charts.core.compile.template.variables import (
+    option_member_type,
+    option_value_column,
+)
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_UNKNOWN_RELATION,
@@ -109,8 +113,10 @@ from dbt_charts.core.execute.plan_reader import (
     board_clock as planned_clock,
     compose_fields,
     expanded_sql,
+    plan_variables,
     reachable,
     replaced_sql,
+    typed_plan,
 )
 from dbt_charts.core.execute.plan_sources import (
     resolve_query_source,
@@ -224,20 +230,23 @@ def settle(ctx: ExecContext, ledger: Ledger, miss: Miss, outcome: Outcome) -> No
 
 
 def _waves(misses: Sequence[Miss]) -> list[list[Miss]]:
-    """Layer *misses* so a ``{{ queries.X.cache }}`` upstream runs and settles
-    before its consumer. Upstreams that are not misses (served by lookup) gate
-    nothing."""
+    """Layer *misses* so a ``{{ queries.X.cache }}`` upstream, or the options
+    query that types a value, runs and settles before its consumer.
+    Prerequisites that are not misses (served by lookup) gate nothing."""
     by_name = {miss.name: miss for miss in misses}
     graph: dict[str, set[str]] = {
-        miss.name: (
-            {
-                ref
-                for ref in CACHE_REF_JINJA_RE.findall(miss.entry["sql"])
-                if ref in by_name
-            }
-            if miss.entry["type"] == "sql"
-            else set()
-        )
+        miss.name: {
+            name
+            for name in (
+                *(
+                    CACHE_REF_JINJA_RE.findall(miss.entry["sql"])
+                    if miss.entry["type"] == "sql"
+                    else ()
+                ),
+                *(run.name for run in miss.planned.option_types.values()),
+            )
+            if name in by_name
+        }
         for miss in misses
     }
     sorter = TopologicalSorter(graph)
@@ -373,6 +382,14 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
         wrapped.__cause__ = error
         return Failed(wrapped, error)
 
+    # An options query's failure propagates: run() records it uncached, as
+    # that query's failure, not this one's.
+    member_types = _option_member_types(ledger, planned)
+    try:
+        query_plan = typed_plan(ctx.plan, member_types)
+    except DbtChartsError as e:
+        return failed(e)
+
     # Cache-ref composition ({{ queries.X.cache }}) is detected on the
     # *authored* SQL, before reference resolution. The composing query runs
     # over the upstream rows in an isolated in-process DuckDB — never
@@ -383,7 +400,7 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
     if planned.upstreams:
         assert entry["type"] == "sql"
         composed, cache_ref_reason = _execute_cache_ref_query(
-            ctx, ledger, entry, planned.upstreams, query_name
+            ctx, ledger, entry, planned.upstreams, query_name, query_plan
         )
         truncation = (
             None
@@ -420,7 +437,7 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
                 dialect,
                 lambda tail_sql: run_planned(
                     ctx.env,
-                    replaced_sql(ctx.plan, query_name, tail_sql),
+                    replaced_sql(query_plan, query_name, tail_sql),
                     query_name,
                     source_config=source_config,
                     row_limit=ctx.row_limit,
@@ -436,7 +453,7 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
     try:
         result = run_planned(
             ctx.env,
-            ctx.plan,
+            query_plan,
             query_name,
             source_config=source_config,
             row_limit=ctx.row_limit,
@@ -459,6 +476,19 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
         result.resolved_relations,
         truncation,
     )
+
+
+def _option_member_types(ledger: Ledger, planned: QueryRun) -> dict[str, str]:
+    """The member type each untyped choice variable *planned* binds takes from
+    its options column; a text column types nothing."""
+    member_types: dict[str, str] = {}
+    for variable, options in planned.option_types.items():
+        result = _settled_rows(ledger, options)
+        column = option_value_column(list(result.schema), options.name)
+        member_type = option_member_type(result.schema[column].kind)
+        if member_type is not None:
+            member_types[variable] = member_type
+    return member_types
 
 
 def run_and_settle(
@@ -530,6 +560,7 @@ def _execute_cache_ref_query(
     entry: PlannedQuery,
     upstreams: Mapping[str, QueryRun],
     query_name: str,
+    query_plan: QueryPlan,
 ) -> tuple[ResultRows, TruncatedReason | None]:
     """Execute a ``{{ queries.X.cache }}`` composing query in an isolated engine.
 
@@ -552,6 +583,7 @@ def _execute_cache_ref_query(
             (``{{ queries.X.cache }}`` and ``{{ variable }}`` templates still present).
         upstreams: The run of each referenced X.
         query_name: Name of the composing query (for error messages).
+        query_plan: The plan whose variable values it binds.
 
     Returns:
         The isolated composition engine's rows with their declared schema, cut
@@ -595,7 +627,7 @@ def _execute_cache_ref_query(
     read = "duckdb" if entry["dialect"] is None else entry["dialect"]
     rendered = render_parameterized_with_queries(
         sql,
-        ctx.variables,
+        plan_variables(query_plan),
         queries=reachable(ctx.plan, query_name),
         dialect=INLINE_PLACEHOLDERS,
         warehouse=get_dialect(read),

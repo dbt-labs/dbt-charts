@@ -430,6 +430,19 @@ class _ParameterizedValue:
         )
 
 
+def _refuse_json(
+    obj: Any,  # type-state: explicit_any — json `default` hook receives any object
+) -> NoReturn:
+    """`| tojson` hook: a parameterized variable is a bound parameter, not data."""
+    if isinstance(obj, _ParameterizedValue):
+        raise JinjaError(
+            f"Variable '{obj._name}': the 'tojson' filter cannot serialize a "
+            f"parameterized variable: its value is bound by the warehouse, not "
+            f"inlined. Select the value in SQL instead of printing it as JSON."
+        )
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
 def _compute_template_hash(template: str) -> str:
     """Compute hash of template for caching.
 
@@ -550,6 +563,7 @@ def render_parameterized(
 
     undefined_cls = StrictUndefined if strict else _LenientUndefined
     env = BoardTemplateEnvironment(undefined=undefined_cls)
+    env.policies["json.dumps_kwargs"] = {"sort_keys": True, "default": _refuse_json}
     try:
         jinja_template = env.from_string(template)
         rendered_sql = render_with_budget(jinja_template, context)

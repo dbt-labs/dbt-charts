@@ -29,9 +29,9 @@ For no border, omit `border`; `border: none` is rejected.
 - `palettes` (map of name): Theme palette role assignments: role name to a built-in palette name, never a color. Custom colors go in ``charts.color.categorical.palette: [hex, ...]``. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge
 - `border` (text|{radius, color, width, dash_array, line_cap, dash_offset}): Frame drawn around the whole board: `{width, color, radius}` or `'2px solid #333'`. Omit the key for no border
 - `frame` ({max_width, min_height, margin, card_padding, card_gap}): Board-level structural frame dimensions
-- `title` (mapping): Typography for every heading
+- `title` ({compact_weight, width_offsets: {tiny, narrow, medium, wide}, min_height, overflow, position: {anchor, angle, offset, baseline}, level, subtitle: {font: {}, overflow}, font: {}}): Typography for every heading
 - `text` (mapping): Markdown and plain text content style
-- `footer` (mapping): Page footer chrome visibility
+- `footer` ({visible, text, link, font: {}, y_offset, brand_weight, divider: {visible, color, width, dasharray, gap}}): Page footer chrome visibility
 - `charts` (mapping): Root of all chart-type styles and shared chart configuration
 Also exist: `box_shadow`, `opacity`, `placeholder`, `comments`, `annotations`, `layout`, `variables`, `timestamp`, `tones`, `roles`, `padding`, `margin`, `gap`.
 
@@ -62,8 +62,17 @@ Also exist: `extends`, `style`, `decoration`, `case`, `line_height`, `sizes`.
 - `divider` ({visible, color, width, dasharray, gap}): Hairline above the footer text
 Also exist: `link`, `font`, `y_offset`, `brand_weight`.
 
+`style.text`:
+- `font` (mapping): Text font style overrides
+- `align` (left|center|right): Text alignment for the board body-text block
+- `paragraph` ({margin_top, margin_bottom}): Spacing above/below each paragraph block (in line-height units)
+- `heading` ({margin_top, margin_bottom}): Heading spacing in line-height units
+- `column` ({max_number, divider: {visible, color, width, dasharray}, max_chars}): Multi-column layout for the board body-text block
+- `divider` ({visible, color, width, dasharray}): Markdown horizontal rules (`---`) and markdown-table gridlines
+Also exist: `code`, `blockquote`, `bold`.
+
 `style.formats.<name>`:
-- `spec`: D3 format string (`,.0f`; `.2s` writes 1.2M), preset name (e.g., 'currency'), or Excel pattern. A format is this string alone, or a mapping with `spec`. A date also takes strftime (`%b '%y`)
+- `spec`: D3 format string (`,.0f`; `.2s` writes 1.2M), or preset name (e.g., 'currency'). A format is this string alone, or a mapping with `spec`. A date also takes strftime (`%b '%y`)
 - `prefix`: Text placed before the formatted value (e.g., '$')
 - `suffix`: Text placed after the formatted value (e.g., ' USD', '%')
 - `notation` (analytic|narrative): Notation style: 'analytic' for SI-prefix (1B, 1M) or 'narrative' for prose-style (1bn, 1m)
@@ -87,11 +96,11 @@ Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`
 - `background`: Chart-local background color override; None inherits from theme
 - `padding` ({left, right, top, bottom}): Padding as {top, right, bottom, left} in pixels, never one number
 - `aspect_ratio` (number): Chart aspect ratio (width/height)
-- `color` ({gradient: {}, categorical: {}}): Chart color scales: categorical palette and/or gradient
+- `color` ({gradient: {palette, domain, min, max, nice, null_color, hinge, arm_mode}, categorical: {palette, single_series_palette}}): Chart color scales: categorical palette and/or gradient
 - `axis_x` (mapping): The category or time axis, in either orientation (a horizontal bar's category axis is still `axis_x`). Inherits the global axis_x
 - `axis_y` (mapping): The measure axis, in either orientation: its number format goes here, a horizontal bar's too. Inherits the global axis_y
 - `legend` (mapping): Chart legend style
-- `marks` ({bar: {}, text: {}}): Bar-family mark overrides
+- `marks` ({bar: {}, text: {font: {}, align}}): Bar-family mark overrides
 - `stack` (none|zero|normalize|center): Default stack mode for bar charts; none renders side-by-side columns
 - `orientation` (horizontal|vertical|auto): Preferred bar orientation
 - `endpoint_labels` ({label_offset, height}): Styling of the series names printed on stacked bars (`legend.position.edge: endpoints`)
@@ -143,7 +152,7 @@ Also exist: `dx`, `dy`, `font`, `stacked`, `template`.
 `marks.line`:
 - `stroke` ({color, width, cap, join, dasharray}): Line stroke style
 - `curve` (linear|monotone|natural|basis|cardinal|step|step-before|step-after): Line interpolation curve, one of a fixed set
-- `labels` (mapping): Value label style for line marks
+- `labels` ({visible, field, format, dx, dy, font: {}, position}): Value label style for line marks
 Also exist: `connect`, `disconnected_cap`, `disconnected_width`, `halo_multiplier`.
 
 `marks.point`: `size`, `color`, `shape`, `opacity`, `filled`, `fill`, `stroke_width`, `labels`.
@@ -156,11 +165,12 @@ Also exist: `connect`, `disconnected_cap`, `disconnected_width`, `halo_multiplie
 - `visible` (bool|auto): Show the legend
 - `position` ({align, overlay, edge}): Legend edge (or `endpoints`), align along it, overlay or reserve
 - `values` (list of text): Explicit legend entry order/filter
-Also exist: `direction`, `columns`, `compact_columns`, `row`, `label`, `title`, `symbol_limit`, `symbol_shape`, `symbol_fill`.
+- `label` ({font: {}, padding, max_width}): Legend label style
+Also exist: `direction`, `columns`, `compact_columns`, `row`, `title`, `symbol_limit`, `symbol_shape`, `symbol_fill`.
 
 `color`:
 - `categorical` ({palette, single_series_palette}): Palettes used when color encodes distinct categories, or a lone series
-- `gradient` (mapping): Continuous gradient scale for the color encoding
+- `gradient` ({palette, domain, min, max, nice, null_color, hinge, arm_mode}): Continuous gradient scale for the color encoding
 
 `color.categorical`:
 - `palette` (name|list of text|text): Palette name, or a list of colors, even one: ['#2E6B4F']
@@ -185,10 +195,10 @@ A color request ("make Created orange") pins `category.<hue>` under `style.chart
 `a kpi's style`:
 - `variant` (stacked|inline|compact): Card layout
 - `align` (left|center|right): Horizontal alignment of the value, label, and support text within the card
-- `value` ({font: {}, format, compact: {}, affix: {}, glyph: {}}): KPI headline value slot
+- `value` ({font: {}, format, compact: {spec, threshold}, affix: {font: {}}, glyph: {up, down, neutral, font: {}, arrow: {}}}): KPI headline value slot
 - `label` ({font: {}, overflow}): KPI card label slot
-- `support` ({font: {}, format, tone, glyph: {}}): KPI support row slot
-- `background` (text|{column, scale: {}}): Card background color, or a {column, scale} gradient by value
+- `support` ({font: {}, format, tone, glyph: {up, down, neutral, font: {}}}): KPI support row slot
+- `background` (text|{column, scale: {palette, domain, min, max, nice, null_color, hinge, arm_mode}}): Card background color, or a {column, scale} gradient by value
 - `conditional` (map of list of mapping): Rules that restyle the card by value, keyed by column name
 Also exist: `preferred_width`, `padding`, `font`, `min_card_width`, `default_height`, `border`, `content_padding`.
 
@@ -204,8 +214,8 @@ Also exist: `font`, `format`, `glyph`.
 
 `a table's style`:
 - `wrap` (bool): Allow cell text wrapping; false clips to single line
-- `header` (mapping): Table header row style
-- `row` ({height, stripe: {}, divider: {}, roles: {}, conditional}): Table body row style
+- `header` ({visible, height, font: {}, font_compact: {}, background, overflow, divider: {visible, color, width, dasharray, continuous}}): Table header row style
+- `row` ({height, stripe: {color}, divider: {visible, color, width, dasharray, continuous}, roles: {summary: {}, total: {}}, conditional}): Table body row style
 - `pagination` ({enabled, page_rows, mode}): Client-side pagination defaults for table charts
 - `column_defaults` ({width, align, format, background, font: {}}): Table-level column defaults applied to every column; None means no defaults authored
 - `columns` (map of mapping): Per-column display configuration keyed by column name (label, format, width, etc.)
@@ -238,7 +248,7 @@ Also exist: `divider`, `roles`.
 - `link` (text|{url, open}): URL template for cell values, with the row's fields available
 - `background`: Cell background color (hex string, or 'transparent'/'none'), or a column ID
 - `font` (mapping): Cell font style overrides
-- `scale` ({background: {}, color: {}}): Continuous color mapping configuration for this column
+- `scale` ({background: {palette, domain, min, max, nice, null_color, hinge, arm_mode}, color: {palette, domain, min, max, nice, null_color, hinge, arm_mode}}): Continuous color mapping configuration for this column
 - `glyph`: Text shown before every cell value
 - `spark` (line|area|bar|bar-normalize|column|columns): Miniature chart drawn inside each cell
 - `conditional` (list of mapping): Rules that restyle this column's cells by the cell's own value

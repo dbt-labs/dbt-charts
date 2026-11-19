@@ -2253,6 +2253,7 @@ fn render_error_card_svg(
         link_context: None,
         measuring: false,
         placement: 0,
+        slot_width: None,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
         pie_mode: None,
@@ -2582,6 +2583,7 @@ fn render_chart_item(
         authored_height: item.authored_height,
         measuring: fresh_render.contains(chart_id),
         placement: next_placement(payload, chart_id),
+        slot_width: None,
     };
     // Production keeps a chart's sizing-time render while its box still holds
     // that height (a support_table chart is also corrected against an

@@ -166,7 +166,7 @@ from dbt_charts.core.render.variables_buttons_overflow import (
 from dbt_charts.core.render.variables_resolve import (
     board_variable_defs,
     linked_variable_options,
-    resolve_option_values,
+    resolve_option_cells,
 )
 from dbt_charts.core.render.warnings import (
     WarningContext,
@@ -795,7 +795,7 @@ def _render(
                 if name not in tab_variables
             },
             parsed_variables,
-            lambda name, var: resolve_option_values(
+            lambda name, var: resolve_option_cells(
                 name, var, results, merged_variables
             ),
         )

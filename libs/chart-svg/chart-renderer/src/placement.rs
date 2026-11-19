@@ -123,6 +123,11 @@ impl Obstacle {
         }
     }
 
+    /// How far `b` clears this obstacle's pad: negative where it intrudes.
+    pub(crate) fn slack(&self, b: &Bounds) -> f64 {
+        self.gap(b) - self.pad
+    }
+
     /// The distance from `b` to this obstacle's ink (0 when they touch).
     fn gap(&self, b: &Bounds) -> f64 {
         let Some((points, half)) = &self.stroke else { return gap(b, &self.b) };
@@ -450,7 +455,7 @@ fn place_one(r: &LabelReq, size: f64, comfort: f64, field: &Field) -> Option<Cap
         let hard = field.obstacles.iter().filter(|o| !o.soft && !o.faint && !own_marker(o));
         let squeezed = k == 0 && r.channel;
         let inked = if squeezed { Bounds::new(b.x1, b.y1 + DIGIT_INSET, b.x2, b.y2 - DIGIT_INSET) } else { b };
-        let slack = hard.map(|o| if squeezed { o.gap(&inked) - EPS } else { o.gap(&b) - o.pad }).fold(size, f64::min);
+        let slack = hard.map(|o| if squeezed { o.gap(&inked) - EPS } else { o.slack(&b) }).fold(size, f64::min);
         let over_fill = field.obstacles.iter().any(|o| o.soft && gap(&b, &o.b) < EPS);
         // A vertical gridline barely touches the digits it passes through; a horizontal one runs along them.
         let on_grid = field.obstacles.iter().any(|o| o.faint && o.b.x2 - o.b.x1 > 3.0 && gap(&b, &o.b) < EPS);

@@ -392,6 +392,7 @@ pub(super) fn natural_width(
         th.header.visible,
         cell_pad,
         th.spark.bar.width,
+        &th.spark.value,
     )?;
     let natural: Vec<NaturalColumn> = cols
         .iter()

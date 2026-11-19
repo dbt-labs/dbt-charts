@@ -38,6 +38,7 @@ def planned_query(
         cache_key,
         use_store,
         tailable,
+        {},
     )
 
 

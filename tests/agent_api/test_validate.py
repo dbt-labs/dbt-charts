@@ -1463,7 +1463,7 @@ class TestValidateSyntheticQueryNames:
 # ---------------------------------------------------------------------------
 
 # SQL with {{ var }} in a C-style comment — sqlglot ignores the comment so
-# the SQL is parseable and the CROSS JOIN would trigger WARN-MISSING-JOIN-PREDICATE
+# the SQL is parseable and the comma join would trigger WARN-MISSING-JOIN-PREDICATE
 # if validate_query ran. Jinja sees {{ year_filter }} as undeclared, so
 # variable_dependencies is non-empty and the guard fires, skipping validation.
 # If the guard is removed, validate_query runs on parseable SQL and the
@@ -1474,7 +1474,7 @@ variables:
     default: 2024
 queries:
   revenue:
-    sql: "SELECT a, b FROM orders o CROSS JOIN items i /* {{ year_filter }} */"
+    sql: "SELECT a, b FROM orders o, items i /* {{ year_filter }} */"
     source: analytics
 charts:
   revenue_trend:
@@ -1492,7 +1492,7 @@ class TestValidateVariableOnlyJinja:
 
     SQL with {{ authored_var }} has non-empty variable_dependencies, so the
     guard at compiler.py fires and validate_query is never called. The SQL
-    has a CROSS JOIN that would produce WARN-MISSING-JOIN-PREDICATE if parsed
+    has a comma join that would produce WARN-MISSING-JOIN-PREDICATE if parsed
     — asserting that code is absent verifies the guard fired (not merely that
     WARN-PARSE-ERROR was filtered).
 
@@ -1535,12 +1535,12 @@ rows:
   - sales_trend
 """
 
-# Same BQ-syntax SQL + CROSS JOIN, but on a bigquery source so dialect='bigquery'
+# Same BQ-syntax SQL + comma join, but on a bigquery source so dialect='bigquery'
 # is used → sqlglot parses OK → structural lint runs → WARN-MISSING-JOIN-PREDICATE.
 _BIGQUERY_SOURCE_BOARD = """\
 queries:
   sales:
-    sql: "SELECT year FROM `project.dataset.orders` o CROSS JOIN items i"
+    sql: "SELECT year FROM `project.dataset.orders` o JOIN items i"
     source: bq
 charts:
   sales_trend:

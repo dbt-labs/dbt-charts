@@ -12,8 +12,11 @@ import math
 import re
 from collections.abc import Callable, Iterable, Sequence
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
+from dbt_charts.core.column_types import ColumnKind
+from dbt_charts.core.compile.column_match import match_column
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.template.daterange import (
@@ -139,6 +142,10 @@ _MultiselectRaw = _Coercible | list[_Coercible] | tuple[_Coercible, ...]
 # missing key onto this rather than the coercer widening its own domain.
 UNSET_MULTISELECT: tuple[_Coercible, ...] = ()
 
+# A choice option as authored or queried: a query's cells keep their declared
+# type, so a BOOL column's options are booleans and a NUMERIC one's decimals.
+OptionCell = _Coercible | Decimal
+
 
 def variable_value_is_absent(value: Any) -> bool:
     """Whether a variable holds no value, by the rule `required:` is checked with.
@@ -197,7 +204,7 @@ def coerce_variable_values(
             # Ahead of the None check below: an unset multiselect is [], not None.
             members = coerce_multiselect(UNSET_MULTISELECT if value is None else value)
             member_type = choice_member_type(var)
-            result[name] = [_coerce_member(name, m, member_type) for m in members]
+            result[name] = [coerce_choice_member(name, m, member_type) for m in members]
             continue
         if value is None:
             result[name] = value
@@ -209,7 +216,7 @@ def coerce_variable_values(
         ):
             result[name] = None  # empty scalar typed input = unset
         elif kind in _CHOICE_INPUTS:
-            result[name] = _coerce_member(name, value, choice_member_type(var))
+            result[name] = coerce_choice_member(name, value, choice_member_type(var))
         elif kind in _DATE_INPUTS:
             result[name] = _coerce_date(name, value)
         elif kind == "daterange":
@@ -249,23 +256,26 @@ def coerce_variable_values(
     return result
 
 
-def static_option_values(var: Variable) -> list[str]:
-    """A variable's authored ``options.static`` as strings; [] when it has none."""
+def static_option_values(var: Variable) -> list[OptionCell]:
+    """A variable's authored ``options.static``; [] when it has none."""
     static = var.options.static if var.options else None
-    return [str(option) for option in static] if static else []
+    return list(static) if static else []
 
 
-def _is_option(value: _Coercible, options: Sequence[str]) -> bool:
-    """Whether ``value`` is one of ``options``; a number matches by value, so
-    ``--var n=1.0`` selects the option ``1``."""
+def _is_option(value: _Coercible, options: Sequence[OptionCell]) -> bool:
+    """Whether ``value`` is one of ``options``, read as each option's type:
+    ``"true"`` selects the boolean ``True``, and ``--var n=1.0`` the number ``1``."""
     text = str(value)
-    if text in options:
-        return True
-    try:
-        number = float(text)
-    except ValueError:
-        return False
-    return any(_float_or_none(option) == number for option in options)
+    number = _float_or_none(text)
+    for option in options:
+        if isinstance(option, bool):
+            if _bool_or_none(value) is option:
+                return True
+        elif str(option) == text or (
+            number is not None and _float_or_none(str(option)) == number
+        ):
+            return True
+    return False
 
 
 def _float_or_none(text: str) -> float | None:
@@ -275,10 +285,22 @@ def _float_or_none(text: str) -> float | None:
         return None
 
 
+def _bool_or_none(value: _Coercible) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _BOOL_TRUE:
+            return True
+        if text in _BOOL_FALSE:
+            return False
+    return None
+
+
 def check_option_values(
     registry: dict[str, Variable],
     overrides: VariableValues,
-    options_of: Callable[[str, Variable], Sequence[str]],
+    options_of: Callable[[str, Variable], Sequence[OptionCell]],
 ) -> None:
     """Reject a choice-input value outside the variable's options.
 
@@ -309,7 +331,7 @@ def check_option_values(
                     ERR_VARIABLE_VALUE_NOT_IN_OPTIONS,
                     variable=name,
                     value=member,
-                    options=options,
+                    options=list(dict.fromkeys(str(option) for option in options)),
                 )
 
 
@@ -469,9 +491,10 @@ def choice_member_type(var: Variable) -> str | None:
 
     An explicit `data_type` wins; otherwise a static option list typed as
     numbers names it (the list is homogeneous by construction). A query-driven
-    option source with no `data_type` is a string: the option query's column
-    type is not known here, and guessing from the value's shape would turn an
-    id like "007" into 7.
+    option source with no `data_type` is a string here: its options column's
+    declared type is known only once that query has run, and execute types the
+    value from it then (`option_member_type`). Guessing from the value's shape
+    would turn an id like "007" into 7.
     """
     if var.data_type in ("number", "date", "boolean"):
         return var.data_type
@@ -483,7 +506,35 @@ def choice_member_type(var: Variable) -> str | None:
     return None
 
 
-def _coerce_member(name: str, value: _Coercible, member_type: str | None) -> _Coercible:
+def option_member_type(kind: ColumnKind) -> str | None:
+    """The member type a choice value takes from its options column's declared
+    `kind`, as `choice_member_type` names it; None keeps the value as sent."""
+    if kind == "boolean":
+        return "boolean"
+    if kind in ("integer", "float", "decimal"):
+        return "number"
+    if kind == "date":
+        return "date"
+    return None
+
+
+def option_value_column(columns: Sequence[str], query: str) -> str:
+    """The column an options query's values come from: 'value', 'label', 'name'
+    or 'id' if it has one (``match_column``), else the first column."""
+    return next(
+        (
+            found
+            for key in ("value", "label", "name", "id")
+            if (found := match_column(key, columns, f"options query {query!r}"))
+            is not None
+        ),
+        columns[0],
+    )
+
+
+def coerce_choice_member(
+    name: str, value: _Coercible, member_type: str | None
+) -> _Coercible:
     if member_type == "number":
         return _coerce_number(name, value)
     if member_type == "date":
@@ -557,14 +608,9 @@ def _require_finite(name: str, value: float) -> float:
 
 
 def _coerce_bool(name: str, value: _Coercible) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        text = value.strip().lower()
-        if text in _BOOL_TRUE:
-            return True
-        if text in _BOOL_FALSE:
-            return False
+    parsed = _bool_or_none(value)
+    if parsed is not None:
+        return parsed
     raise _invalid_value(name, f"checkbox value must be a boolean, got {value!r}")
 
 
@@ -574,6 +620,10 @@ __all__ = [
     "static_option_values",
     "UNSET_MULTISELECT",
     "choice_member_type",
+    "coerce_choice_member",
+    "option_member_type",
+    "option_value_column",
+    "OptionCell",
     "coerce_multiselect",
     "variables_from_query_pairs",
     "coerce_variable_values",

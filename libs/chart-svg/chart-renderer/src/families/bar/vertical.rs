@@ -35,7 +35,7 @@ use super::bind::zero_label;
 use super::ribbons::RibbonDraft;
 use super::domain::{CenterStack, RawX, SegmentSpan, SegmentSpans, bar_value_extent, base_series, build_cat_domain, build_data_map, Extras, cat_order, category_totals, collapsed_authored_domain, grouped_rail_anchors, grouped_spans, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_reach, stack_spans, stacked_rail_anchors, tallest_total, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
 use super::facet::color_1to1_with_cat;
-use super::labels::{FitHide, LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, label_fit_span, label_hang, mark_labels, plain_sites, step_band_of, value_label_layers};
+use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, label_hang, mark_labels, plain_sites, step_band_of, value_label_layers};
 use super::layout::{Drawn, XScale, clipped_if, warn_vertical_density};
 use super::legend::{LayeredBarLegend, authored_legend_order, bar_link_keys, grouped_legend_domain, numeric_legends_of, stacked_legend_entries};
 use super::marks::{BandColumns, ColumnSplit, Columns, RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, collapsed_bars, direction_layers, grouped_overlap_fraction, hover_band_for, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, strip_columns, unity_rule};
@@ -446,6 +446,7 @@ pub(crate) fn render_vertical_panel(
     let suppress_x_axis = facet.is_some_and(|f| f.suppress_x_axis);
     let view_w = if facet.is_some() { w } else { payload.view_width(crate::ViewScale::Discrete)? };
     let decision_w = facet.map_or(w, |f| f.decision_w);
+    let slot_w = payload.slot_width.unwrap_or(w);
     let paint_x_axis = !suppress_x_axis || facet.is_some_and(|f| f.cell_x_axis);
     let ghost_only = facet.is_some_and(|f| f.ghost_only);
     let paint_value_axis = facet.map_or(true, |f| f.paint_value_axis) && !ghost_only;
@@ -1278,8 +1279,8 @@ pub(crate) fn render_vertical_panel(
                 unit,
                 ax_x,
                 authored_time_format,
-                w * cadence_ratio(r)?,
-                w,
+                slot_w * cadence_ratio(r)?,
+                slot_w,
                 r.style.label_usable_ratio,
                 labels_expr.as_ref(),
                 fonts,
@@ -1311,9 +1312,9 @@ pub(crate) fn render_vertical_panel(
                 // Production lays the labels out at the card width less the endpoint
                 // rail's span (`reserved_width`).
                 let layout_w = if show_rail_v {
-                    w - (rail_pane_w + r.style.endpoint_labels.label_offset)
+                    slot_w - (rail_pane_w + r.style.endpoint_labels.label_offset)
                 } else {
-                    w
+                    slot_w
                 };
                 if let Some(overlap) = ax_x.labels.overlap.as_ref().filter(|o| o.tilt) {
                     let ratio = r.style.label_usable_ratio.ok_or(
@@ -1968,7 +1969,7 @@ pub(crate) fn render_vertical_panel(
         None => SegmentSpans::new(),
     };
     // Value labels in the fit: `autosize: fit` unions every text mark's
-    // bounds, a blanked one (`fit_hides_label`, the genuine-zero label's other
+    // bounds, a blanked one (a blank genuine-zero label's other
     // rows) as a zero-width box one line tall, so a label at the floor or past
     // the top of its column moves the margins the way an axis label does
     // (probed on `labels/05`: `above` labels at dy −40 lift the plot top 27px
@@ -2019,11 +2020,6 @@ pub(crate) fn render_vertical_panel(
     if time.as_ref().is_some_and(TimeX::bars_on_band) && !bar_layers.is_empty() {
         return Err(diagnostic::refuse!("bar: a bar layer over grouped value labels on a time x axis is not supported").into());
     }
-    // A step layer's xOffset is a point scale over its band edges and the base's
-    // series: it replaces a grouped base's offset band scale, so the base's bars
-    // keep their white stroke but lose their width, and sit on the point scale's
-    // first slots with the layer's edges on its last two.
-    let step_over_grouped = layer_band_step && is_grouped && !is_stacked;
     let columns_for = |band: &BandScale, pw: f64| match (&time, &time_axis) {
         (Some(t), Some(axis)) if !t.bars_on_band() => Columns::Timed(t.columns(axis, pw, column_split.as_ref())),
         (Some(t), Some(axis)) => Columns::Timed(t.band_columns(
@@ -2031,7 +2027,6 @@ pub(crate) fn render_vertical_panel(
             pw,
             column_split.as_ref().expect("a band on a time axis splits its columns"),
         )),
-        _ if step_over_grouped => Columns::Banded(BandColumns::point_slots(band.bandwidth(), layout_domain.len())),
         _ => Columns::Banded(BandColumns::new(band.bandwidth(), mark_band_width, r.style.mark.max_size, column_split.as_ref())),
     };
     let step_layers: Vec<(usize, &OverlayLineLayer, &[serde_json::Map<String, Value>], f64, f64)> =
@@ -2049,22 +2044,6 @@ pub(crate) fn render_vertical_panel(
         } else {
             Vec::new()
         };
-    // The fit test the draw loop blanks with (`fit_hides_label`): the span and
-    // font size, at each pass's own plot height.
-    let label_hide_cfg: Option<(f64, f64)> = match label_layers.first() {
-        Some(base) if (base.stacked || base.ranged) && !base.zero_only => {
-            label_fit_span(ax_y, &r.stack, stacked_domain_max)
-                .filter(|_| is_grouped || r.layers.is_empty())
-                .map(|span| {
-                    r.style
-                        .label_font_size
-                        .map(|fs| (span, fs))
-                        .ok_or("bar: style.label_font_size absent (resolved payload required)")
-                })
-                .transpose()?
-        }
-        _ => None,
-    };
     // A layer's value labels join the fit like any text mark:
     // `(value, shaped width, category)` per layer row, with the layer's own
     // label style, on the shared scale or the layer's own right axis (`dual`).
@@ -2077,19 +2056,26 @@ pub(crate) fn render_vertical_panel(
             .zip(&line_layer_at)
             .zip(&line_band_step)
             .filter_map(|(((l, rows), &at), &band_step)| {
-                l.visible_labels().map(|ml| (ml, l.x.as_deref().unwrap_or(cat_field), l.y.as_str(), l.label_is_house, at, *rows, band_step))
+                l.visible_labels().map(|ml| (ml, l.x.as_deref().unwrap_or(cat_field), l.y.as_str(), l.color.as_deref(), l.label_is_house, at, *rows, band_step))
             });
         let scatters = scatter_layers.iter().zip(&scatter_layer_rows).zip(&scatter_layer_at).filter_map(|((sl, rows), &at)| {
             let ml = &sl.point_mark.labels;
-            ml.visible.then(|| (ml, sl.x.as_deref().unwrap_or(cat_field), sl.y.as_str(), sl.label_is_house, at, *rows, false))
+            ml.visible.then(|| (ml, sl.x.as_deref().unwrap_or(cat_field), sl.y.as_str(), sl.color.as_deref(), sl.label_is_house, at, *rows, false))
         });
         lines
             .chain(scatters)
-            .map(|(ml, layer_x, y, is_house, layer, rows, band_step)| {
+            .map(|(ml, layer_x, y, color, is_house, layer, rows, band_step)| {
                 let style = crate::families::layers::LayerLabelStyle::new(ml, is_house, rows, payload.board_style.as_ref())?;
-                let items = ::bind::rows::valued_rows(rows.iter(), y)
+                let at_cat: Vec<_> = ::bind::rows::valued_rows(rows.iter(), y)
                     .into_iter()
-                    .map(|(row, val)| {
+                    .filter_map(|(row, val)| Some((row, cat_domain.iter().position(|cat| *cat == row_str(row, layer_x))? as f64, val)))
+                    .collect();
+                let printed = style.printed(color, &at_cat);
+                let items = at_cat
+                    .iter()
+                    .zip(printed)
+                    .filter(|(_, printed)| *printed)
+                    .map(|(&(row, _, val), _)| {
                         let cat = row_str(row, layer_x);
                         let band = band_step.then(|| (cat_domain.first() == Some(&cat), cat_domain.last() == Some(&cat)));
                         let caption = style.caption(row, val, band).map_err(|e| format!("bar: {e}"))?;
@@ -2334,7 +2320,7 @@ pub(crate) fn render_vertical_panel(
         // `box.width − resolve_endpoint_rail_span(...)` into the crowding
         // pass).
         let spacing = el.label_offset;
-        let cadence_w = w - rail_span;
+        let cadence_w = slot_w - rail_span;
         let folded_tilt = temporal_fold_tu.is_some() && temporal_tilt != 0.0;
         let (temporal_labels, x_ticks_restored) = match (detected_data_tu, label_unit) {
             (Some(_), Some(_)) if folded_tilt => (temporal_labels, x_ticks_restored),
@@ -2549,11 +2535,10 @@ pub(crate) fn render_vertical_panel(
             f(&LabelGeometry { band: &band, center: &center, linear: &linear });
         };
         let label_ink_at = |pw: f64, ph: f64| -> vega_fit::Bounds {
-            let hide = label_hide_cfg.map(|(span, font_size)| FitHide { plot_h: ph, span, font_size });
             let mut ink = vega_fit::Bounds::new(0.0, 0.0, pw, ph);
             on_label_geom(pw, ph, &mut |geom| {
                 for layer in &label_layers {
-                    layer.ink(geom, if layer.total { None } else { hide }, &mut ink);
+                    layer.ink(geom, &mut ink);
                 }
             });
             // The time axis's labels and ticks are pane ink too: one centered near an end reaches past it.
@@ -3463,9 +3448,8 @@ pub(crate) fn render_vertical_panel(
                         cols.label_center(band_x, slot.unwrap_or(0))
                     };
                     let geom = LabelGeometry { band: &band, center: &center, linear: &linear };
-                    let hide = label_hide_cfg.map(|(span, font_size)| FitHide { plot_h: ph, span, font_size });
                     for layer in &label_layers {
-                        layer.ink(&geom, if layer.total { None } else { hide }, b);
+                        layer.ink(&geom, b);
                     }
                 }
                 if let Some(ink) = &strip_ink {
@@ -4380,7 +4364,8 @@ pub(crate) fn render_vertical_panel(
                               scale: &Continuous,
                               rows: &[serde_json::Map<String, Value>],
                               series_color: &str,
-                              stacked: Option<&LayerStack>|
+                              stacked: Option<&LayerStack>,
+                              under: &[crate::annotation::DataMark]|
      -> Result<Vec<Node>, String> {
         let l = line_layers[line];
         // Past its own authored domain a layer's marks keep their position: cut off or overrunning, never flattened.
@@ -4419,10 +4404,10 @@ pub(crate) fn render_vertical_panel(
                 }))
             },
             line_band_step[line].then(|| step_band_of(&band, &cat_domain)),
-            if step_over_grouped { layout_domain.len() as f64 / (layout_domain.len() as f64 + 1.0) } else { 0.0 },
             stacked,
 crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
 crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line], fonts },
+under,
 )
         .map_err(|e| format!("bar: {e}"))
     };
@@ -4430,7 +4415,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
     // The line layer's marks: one line (+ points) per color value, each in the
     // color it claimed on the shared scale; an authored stroke is pinned on every
     // grouped line and an authored point color on every point (`pin_child_colors`).
-    let paint_layer_series = |line: usize, scale: &Continuous| -> Result<Vec<Node>, String> {
+    let paint_layer_series = |line: usize, scale: &Continuous, under: &[crate::annotation::DataMark]| -> Result<Vec<Node>, String> {
         let (l, l_rows) = (line_layers[line], line_layer_rows[line]);
         match l.color.as_deref() {
             Some(cf) => {
@@ -4443,13 +4428,13 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                 let mut series_nodes = Vec::new();
                 for (value, rows_for_value) in layer_color_groups(l_rows, cf) {
                     let slot = line_claims[line].group_color(&layer_scale, cf, value.as_deref(), &rows_for_value);
-                    series_nodes.extend(paint_layer_marks(line, scale, &rows_for_value, &slot, stack.as_ref())?);
+                    series_nodes.extend(paint_layer_marks(line, scale, &rows_for_value, &slot, stack.as_ref(), under)?);
                 }
                 Ok(series_nodes)
             }
             None => {
                 let fill = line_claims[line].fill.as_deref().expect("a colorless line layer claimed its fill");
-                paint_layer_marks(line, scale, l_rows, fill, None)
+                paint_layer_marks(line, scale, l_rows, fill, None, under)
             }
         }
     };
@@ -4498,7 +4483,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                               bl_x: &str,
                               bar_layer_rows: &[serde_json::Map<String, Value>],
                               linear: &Continuous,
-                              bar_width: &dyn Fn(&str) -> f64|
+                              bar_width: &dyn Fn(&str) -> f64,
+                              under: &[crate::annotation::DataMark]|
      -> Result<Vec<Node>, Diagnostic> {
         let Some(ml) = bl.bar_mark.labels.as_ref().filter(|ml| ml.visible) else { return Ok(Vec::new()) };
         let layer_value_title = crate::common::axis_title_text(&bl.y, bl.label.as_deref(), &r.field_labels)?;
@@ -4508,13 +4494,13 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
         let label_layer = LabelLayer::new(spec, sites, false, false, false, false, false, fonts, payload.board_style.as_ref())?;
         let center = |cat: &str, _: f64, _: Option<usize>| band.center(cat).expect("a labeled category is on the band scale");
         let geom = LabelGeometry { band: &band, center: &center, linear };
-        label_layer.warn_if_crowded(&r.id, Some(layer), &geom, None, Some(&|site| bar_width(&site.cat)));
-        let points = label_layer.points(&geom, None, &LabelDecors::new(), &crate::selected::Selection::default(), |site| {
+        label_layer.warn_if_crowded(&r.id, Some(layer), &geom, Some(&|site| bar_width(&site.cat)));
+        let points = label_layer.points(&geom, &LabelDecors::new(), &crate::selected::Selection::default(), |site| {
             Ok(tooltip_labels.then(|| {
                 crate::contract::native_label(&[(x_title, site.cat.to_string()), (layer_value_title.as_str(), site.value.to_string())])
             }))
         })?;
-        Ok(mark_labels(ml, false, false, true, &points, 0, payload.board_style.as_ref(), 0.0, 0.0, r.canvas.as_str(), r.link_open)?)
+        Ok(mark_labels(ml, false, false, true, &points, 0, payload.board_style.as_ref(), 0.0, 0.0, r.canvas.as_str(), under, r.link_open)?)
     };
     // A scale pinned away from the 0 baseline clips every bar layer and drops its radius.
     let layer_undercoat = std::cell::RefCell::new(Vec::new());
@@ -4602,7 +4588,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                 bars.extend(bar_passes(layer_mark(1 + bar_layer_at[bl_index], bl, row, datum), false, col_x, top, mark_w, h, &fill, None, bl.bar_mark.opacity, bl_stroke_color, bl_stroke_w, bl_corner_r, ends, true, None, aria.as_deref(), crate::href::anchor_for(bl_link, &href))?);
             }
             out.extend(knock(bars));
-            out.extend(paint_layer_labels((bar_layer_at[bl_index], bl), bl_x, bar_layer_rows, linear, &|cat| bar_extent(band.position(cat).expect("a labeled category is on the band scale"), cat).1)?);
+            let under = crate::annotation::DataMark::plot_marks(out);
+            out.extend(paint_layer_labels((bar_layer_at[bl_index], bl), bl_x, bar_layer_rows, linear, &|cat| bar_extent(band.position(cat).expect("a labeled category is on the band scale"), cat).1, &under)?);
             return Ok(());
         }
         if bl.color.is_some() {
@@ -4676,7 +4663,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                 }
             }
             out.extend(knock(bars));
-            out.extend(paint_layer_labels((bar_layer_at[bl_index], bl), bl_x, bar_layer_rows, linear, &|cat| bar_extent(band.position(cat).expect("a labeled category is on the band scale"), cat).1)?);
+            let under = crate::annotation::DataMark::plot_marks(out);
+            out.extend(paint_layer_labels((bar_layer_at[bl_index], bl), bl_x, bar_layer_rows, linear, &|cat| bar_extent(band.position(cat).expect("a labeled category is on the band scale"), cat).1, &under)?);
         } else {
             let bl_corner_r = layer_radius(bl);
             let bl_stroke_color = bl.bar_mark.border.color.as_deref().unwrap_or("none");
@@ -4703,7 +4691,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
             // The layer's OWN value labels (`_build_layer_label_specs` →
             // `_build_bar_text_layer`) paint right after its own bars, before
             // the zero rule — the base's own labels paint last (see below).
-            out.extend(paint_layer_labels((bar_layer_at[bl_index], bl), bl_x, bar_layer_rows, linear, &|cat| bar_extent(band.position(cat).expect("a labeled category is on the band scale"), cat).1)?);
+            let under = crate::annotation::DataMark::plot_marks(out);
+            out.extend(paint_layer_labels((bar_layer_at[bl_index], bl), bl_x, bar_layer_rows, linear, &|cat| bar_extent(band.position(cat).expect("a labeled category is on the band scale"), cat).1, &under)?);
         }
         Ok(())
     };
@@ -4713,7 +4702,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
     // `charts/extensibility_1`'s `lollipop` reference: base and layer both emit
     // the identical "header; series; value" label per category. A layer on its
     // own scale describes itself.
-    let paint_scatter_layer = |scatter: usize, scale: &Continuous| -> Result<Vec<Node>, String> {
+    let paint_scatter_layer = |scatter: usize, scale: &Continuous, under: &[crate::annotation::DataMark]| -> Result<Vec<Node>, String> {
         let (sl, sl_rows) = (scatter_layers[scatter], scatter_layer_rows[scatter]);
         let claim = &scatter_claims[scatter];
         let encoded = |row: &serde_json::Map<String, Value>| {
@@ -4767,6 +4756,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
             },
             crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), scatter_clip(sl, sl_rows).then_some(((plot_w, plot_h), &clips)),
             crate::families::layers::LabelCrowd { chart_id: &r.id, layer: scatter_layer_at[scatter], fonts },
+            under,
         )
         .map_err(|e| format!("bar: {e}"))
     };
@@ -4794,17 +4784,18 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
             *counter - 1
         })
         .collect();
-    let paint_layer = |out: &mut Vec<Node>, position: usize, scale: &Continuous| -> Result<(), Diagnostic> {
+    let paint_layer = |out: &mut Vec<Node>, position: usize, scale: &Continuous, under: &[crate::annotation::DataMark]| -> Result<(), Diagnostic> {
         let kind_index = layer_kind_index[position];
         match &layers[position] {
             OverlayLayer::Bar(_) => paint_bar_layer(out, kind_index, scale),
-            OverlayLayer::Line(_) => Ok(out.extend(paint_layer_series(kind_index, scale)?)),
-            OverlayLayer::Scatter(_) => Ok(out.extend(paint_scatter_layer(kind_index, scale)?)),
+            OverlayLayer::Line(_) => Ok(out.extend(paint_layer_series(kind_index, scale, under)?)),
+            OverlayLayer::Scatter(_) => Ok(out.extend(paint_scatter_layer(kind_index, scale, under)?)),
         }
     };
     if !independent_y {
         for position in 0..layers.len() {
-            paint_layer(&mut plot, position, &linear)?;
+            let under = crate::annotation::DataMark::plot_marks(&plot);
+            paint_layer(&mut plot, position, &linear, &under)?;
         }
     }
 
@@ -4938,7 +4929,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
         // A bar layer opens its own clip; every other mark is cut off as one group past its authored domain.
         let clipped = layer_axes[position].cut == DomainCut::Clip && !matches!(layers[position], OverlayLayer::Bar(_));
         let mut painted: Vec<Node> = Vec::new();
-        paint_layer(&mut painted, position, ll)?;
+        let under = crate::annotation::DataMark::plot_marks(&plot);
+        paint_layer(&mut painted, position, ll, &under)?;
         plot.extend(clipped_if(clipped, &clips, (plot_w, plot_h), painted));
         if let (Some(rule_width), Some(zl)) = (zero_rule, &grid.threshold) {
             let zc = zl.stroke();
@@ -4967,12 +4959,12 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
         columns.label_center(band_x, slot.unwrap_or(0))
     };
     let label_geom = LabelGeometry { band: &band, center: &label_center, linear: &linear };
-    let label_hide = label_hide_cfg.map(|(span, font_size)| FitHide { plot_h, span, font_size });
+    let under = crate::annotation::DataMark::plot_marks(&plot);
     for layer in &label_layers {
         if facet.is_some() {
             // A facet cell's bounds carry its labels' ink; the grid lays rows out around it.
             let mut label_ink = vega_fit::Bounds::empty_new();
-            layer.ink(&label_geom, if layer.total { None } else { label_hide }, &mut label_ink);
+            layer.ink(&label_geom, &mut label_ink);
             label_ink.translate(plot_left, plot_top);
             ink.union(&label_ink);
         }
@@ -4980,9 +4972,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
         // the bars and the base labels, so the group's ordinal is unknown
         // there: those labels stay bare.
         let ordinal_known = layer.total || scatter_layers.is_empty();
-        let hide = if layer.total { None } else { label_hide };
-        layer.warn_if_crowded(&r.id, None, &label_geom, hide, Some(&|site| cols.of(&site.cat).width));
-        let points = layer.points(&label_geom, hide, &label_decors, &r.selection, |site| {
+        layer.warn_if_crowded(&r.id, None, &label_geom, Some(&|site| cols.of(&site.cat).width));
+        let points = layer.points(&label_geom, &label_decors, &r.selection, |site| {
             if !ordinal_known {
                 return Ok(None);
             }
@@ -5006,7 +4997,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
             }
         })?;
         tail.extend(mark_labels(&layer.spec.ml, false, layer.stacked, !layer.total, &points, painted_layers,
-            payload.board_style.as_ref(), plot_left, plot_top, r.canvas.as_str(), r.link_open)?);
+            payload.board_style.as_ref(), plot_left, plot_top, r.canvas.as_str(), &under, r.link_open)?);
         if !layer.total {
             painted_layers += 1;
         }

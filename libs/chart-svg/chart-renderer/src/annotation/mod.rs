@@ -5,7 +5,7 @@
 
 pub mod axis_map;
 mod emit;
-mod rule_gray;
+pub(crate) mod rule_gray;
 pub mod model;
 mod place;
 mod text;

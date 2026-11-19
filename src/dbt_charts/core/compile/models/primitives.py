@@ -330,7 +330,7 @@ class FormatConfig(BaseModel):
     with custom prefix/suffix.
 
     Attributes:
-        spec: D3 format string, preset name, or Excel pattern
+        spec: D3 format string or preset name
         prefix: Custom prefix to prepend to formatted value
         suffix: Custom suffix to append to formatted value
 
@@ -345,7 +345,7 @@ class FormatConfig(BaseModel):
 
     spec: str | None = Field(
         default=None,
-        description="D3 format string (`,.0f`; `.2s` writes 1.2M), preset name (e.g., 'currency'), or Excel pattern. A format is this string alone, or a mapping with `spec`. A date also takes strftime (`%b '%y`).",
+        description="D3 format string (`,.0f`; `.2s` writes 1.2M), or preset name (e.g., 'currency'). A format is this string alone, or a mapping with `spec`. A date also takes strftime (`%b '%y`).",
     )
     prefix: str | None = Field(
         default=None,

@@ -1026,6 +1026,7 @@ pub(super) fn fit(
             Some((index, overlay, ml, is_house, *rows))
         })
         .map(|(index, overlay, ml, is_house, rows)| {
+            ml.refuse_anchors("scatter")?;
             let style = LayerLabelStyle::new(ml, is_house, rows, payload.board_style.as_ref())?;
             let items = ::bind::rows::valued_rows(rows.iter(), overlay.y())
                 .into_iter()
@@ -2402,6 +2403,7 @@ pub(super) fn fit(
         let label_caption = |row: &serde_json::Map<String, Value>, val: f64| describe_at(&r.x, x_axis_title.as_str(), row, val);
         match overlay {
             OverlayLayer::Line(l) => {
+                let under = crate::annotation::DataMark::plot_marks(&plot);
                 let stack = match (&l.area_mark, l.color.as_deref()) {
                     (Some(_), Some(cf)) => Some(
                         crate::families::layers::LayerStack::descending(rows, x_field, cf, &l.y)
@@ -2431,10 +2433,10 @@ pub(super) fn fit(
                         payload.board_style.as_ref(),
                         label_caption,
                         step_band(plot_w),
-                        0.0,
                         stack.as_ref(),
                         crate::families::layers::layer_link(datum_link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
                         crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
+                        &under,
                     )
                     .map_err(|e| format!("scatter: {e}"))
                 };
@@ -2451,6 +2453,7 @@ pub(super) fn fit(
                 let encoded = |row: &serde_json::Map<String, Value>| {
                     claim.row_color(&layered_legend.scale, sl.color.as_deref().expect("an encoded layer groups by color"), row)
                 };
+                let under = crate::annotation::DataMark::plot_marks(&plot);
                 plot.extend(
                     crate::families::layers::scatter_layer_marks(
                         sl,
@@ -2473,6 +2476,7 @@ pub(super) fn fit(
                         crate::families::layers::layer_link(datum_link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())),
                         crate::families::layers::layer_clip(overlay.layer_type(), overlay.y(), rows, ax_y, false, independent).then_some(((plot_w, plot_h), &clips)),
                         crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
+                        &under,
                     )
                     .map_err(|e| format!("scatter: {e}"))?,
                 );
@@ -2516,6 +2520,7 @@ pub(super) fn fit(
                 let mut bars = knocked.marks;
                 let (sited, label_centers) = bar_label_sites(bl, rows, marks, plot_w)?;
                 let label_marks: Vec<_> = sited.iter().map(|&i| marks[i]).collect();
+                let under = crate::annotation::DataMark::plot_marks(&bars);
                 bars.extend(crate::families::bar::marks::layer_bar_labels(
                     bl,
                     rows,
@@ -2525,7 +2530,7 @@ pub(super) fn fit(
                     plot_h,
                     |mark| label_caption(mark.row, mark.value).expect("a plotted date parsed at resolve"),
                     crate::families::layers::layer_link(datum_link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())),
-                    (payload.board_style.as_ref(), bg),
+                    (payload.board_style.as_ref(), bg, &under),
                     (
                         crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
                         &sited.iter().map(|&i| bar_widths[i]).collect::<Vec<_>>(),

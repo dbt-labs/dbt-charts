@@ -1,11 +1,13 @@
 //! Value labels: where they sit, the ink they take and whether they fit.
 
-use crate::common::{AxisStyle, LabelAnchor, MarkLabels, VALUE_AXIS_BREATHING_ROOM, format_mark_label};
+use crate::common::{LabelAnchor, MarkLabels, VALUE_AXIS_BREATHING_ROOM, format_mark_label};
 use ::bind::rows::{row_num, row_str};
 use crate::constants::bar::LABEL_FIT_LINE_HEIGHT_MULTIPLIER;
 use crate::families::cartesian::{BandScale};
 use d3rs::scale::Continuous;
 use crate::families::span::RangedBars;
+use crate::annotation::DataMark;
+use crate::placement::{EPS, Obstacle};
 use crate::vega_fit;
 
 use measure::FontBook;
@@ -65,10 +67,13 @@ pub(super) struct LabelPoint {
     /// inherits the outer color channel (a grouped bar's outside label): an
     /// unpinned text color is then the series color.
     pub(super) series_fill: Option<String>,
-    /// `_fit_hide_test` blanked the text: the mark stays, empty (Vega writes
+    /// The fit test blanked the text: the mark stays, empty (Vega writes
     /// a self-closed `<text/>`), so its aria-label still twins the datum.
     pub(super) blank: bool,
     pub(super) side: Option<LabelSide>,
+    /// The bar's drawn `(base, tip)` along the measure axis, in pixels clamped to the plot:
+    /// where a label blocked by a layer line can go past the bar's other end.
+    pub(super) ends: Option<(f64, f64)>,
     /// How a ranged bar's label reads its span; `None` on any other bar.
     pub(super) span: Option<SpanLabel>,
     /// The printed text (`LabelSpec::text`).
@@ -129,11 +134,30 @@ impl SpanLabel {
 /// The text a value label prints for `value` (a ranged bar's `span` reading
 /// leads a change with its sign).
 pub(super) fn label_text(ml: &MarkLabels, is_house: bool, value: f64, span: Option<SpanLabel>) -> Result<String, String> {
-    let magnitude = format_mark_label(ml.format.as_ref(), value, is_house).map_err(|e| format!("bar: {e}"))?;
+    let paint = |v: f64| format_mark_label(ml.format.as_ref(), v, is_house).map_err(|e| format!("bar: {e}"));
+    let magnitude = paint(value)?;
     Ok(match span {
         Some(SpanLabel::Change { rises }) => format!("{}{magnitude}", if rises { '+' } else { '\u{2212}' }),
+        _ if value != 0.0 && !has_nonzero_digit(&magnitude) => {
+            // Too small for the format's digits: the smallest step it can show as a bound, never a bare zero.
+            let first = value.abs().log10().ceil() as i32;
+            let mut step = None;
+            for k in first..first + 40 {
+                let text = paint(10_f64.powi(k).copysign(value))?;
+                if has_nonzero_digit(&text) {
+                    step = Some(text);
+                    break;
+                }
+            }
+            let step = step.ok_or_else(|| format!("bar: no step of the label format paints a nonzero digit for {value}"))?;
+            format!("{}{step}", if value > 0.0 { '<' } else { '>' })
+        }
         _ => magnitude,
     })
+}
+
+fn has_nonzero_digit(text: &str) -> bool {
+    text.chars().any(|c| ('1'..='9').contains(&c))
 }
 
 /// What turns a row into a value label (`_build_bar_text_layer`): the
@@ -256,8 +280,6 @@ pub(super) struct LabelDecor {
 
 pub(super) type LabelDecors = HashMap<(String, String), LabelDecor>;
 
-/// The ink a label takes before the ground it sits on moves it, when nothing authored or inherited names one.
-pub(super) const NEUTRAL_INK: &str = "#313233";
 /// The least contrast that neutral ink keeps against the canvas.
 pub(super) const OUTSIDE_INK_CONTRAST: f64 = 4.5;
 
@@ -275,8 +297,11 @@ pub(super) struct LabelSite {
     /// The row's own measure, which the datum's description names.
     pub(super) raw: f64,
     pub(super) span: Option<SpanLabel>,
-    /// A stacked segment's `(start, end)` in measure units, which its label must fit inside.
+    /// A stacked segment's or ranged span's `(base, tip)` in measure units: the drawn ends, nearer the
+    /// baseline first, which its label must fit inside.
     pub(super) segment: Option<(f64, f64)>,
+    /// The segment ends its stack in its own direction, so a label too big for it has an outside to flip to.
+    pub(super) outermost: bool,
     /// The measure value where the bar is drawn to in the value's direction, which a label too big
     /// for its bar flips just past. A bar from zero ends at its value; a centered one at its span's end.
     pub(super) tip: f64,
@@ -328,6 +353,7 @@ pub(super) fn plain_sites<'a>(
     label_sites(rows, fields, link, |row, cat, val| {
         let drawn = centered.and_then(|spans| spans.get(&(cat.to_string(), String::new())));
         let drawn_end = drawn.map(|seg| if val < 0.0 { seg.start } else { seg.end });
+        let mut span_ends = None;
         let (at, value, span) = match ranged {
             None => match drawn {
                 Some(seg) if spec.position == "middle" => ((seg.start + seg.end) / 2.0, val, None),
@@ -340,6 +366,7 @@ pub(super) fn plain_sites<'a>(
                 // A date span never starts at zero: its start is a date, and it prints its length.
                 let (magnitude, numeric) = SpanLabel::of(start, val);
                 let span = if rb.is_date() { SpanLabel::Change { rises: val >= start } } else { numeric };
+                span_ends = Some((start, val));
                 (span.anchor(&spec.position, start, val), magnitude, Some(span))
             }
         };
@@ -348,10 +375,11 @@ pub(super) fn plain_sites<'a>(
             let start = rb.starts[&(cat.to_string(), String::new())];
             text = rb.duration_text(start, val)?;
         }
-        let segment = centered
+        let funnel_segment = centered
             .filter(|_| spec.funnel.is_some())
             .and_then(|spans| spans.get(&(cat.to_string(), String::new())))
             .map(|seg| (seg.start, seg.end));
+        let segment = span_ends.or(funnel_segment);
         Ok(Some(LabelSite {
             cat: cat.to_string(),
             at,
@@ -360,6 +388,7 @@ pub(super) fn plain_sites<'a>(
             raw: val,
             span,
             segment,
+            outermost: false,
             tip: drawn_end.unwrap_or(val),
             text,
             blank,
@@ -393,17 +422,22 @@ pub(super) fn segment_sites(
             .collect(),
         None => rows.iter().collect(),
     };
-    label_sites(ordered, fields, link, |row, cat, row_value| {
+    let mut sites = label_sites(ordered, fields, link, |row, cat, row_value| {
         let key = (cat.to_string(), row_str(row, color_field));
         let Some(span) = spans.get(&key) else { return Ok(None) };
         let value = row_value;
+        // A stack stores a falling segment low end first; its tip is the end farther from zero.
+        // A ranged span runs from its start to its end, whichever way.
+        let (base, tip) = if ranged || span.end.abs() >= span.start.abs() { (span.start, span.end) } else { (span.end, span.start) };
         let (at, value, label_span) = if ranged {
             let (magnitude, label_span) = SpanLabel::of(span.start, span.end);
             (label_span.anchor(&spec.position, span.start, span.end), magnitude, Some(label_span))
         } else if spec.position == "middle" {
             ((span.start + span.end) / 2.0, value, None)
+        } else if spec.position == "bottom" {
+            (base, value, None)
         } else {
-            (spec.anchor(span.end), value, None)
+            (spec.anchor(tip), value, None)
         };
         let (text, blank) = spec.text(Some(row), value, label_span)?;
         Ok(Some(LabelSite {
@@ -413,15 +447,39 @@ pub(super) fn segment_sites(
             value,
             raw: row_value,
             span: label_span,
-            segment: (!ranged).then_some((span.start, span.end)),
-            tip: span.end,
+            segment: Some((base, tip)),
+            outermost: false,
+            tip,
             text,
             blank,
             key,
             href: None,
             off_chart: false,
         }))
-    })
+    })?;
+    // A segment is outermost when no other segment of its category reaches farther in the same
+    // direction; an empty segment is never a tip, except the last one of a stack that draws nothing,
+    // whose zero has no segment to sit on.
+    let mut tips: HashMap<(String, Option<usize>, bool), f64> = HashMap::new();
+    for site in &sites {
+        if let Some((base, tip)) = site.segment.filter(|(base, tip)| base != tip) {
+            let falls = tip < base;
+            tips.entry((site.cat.clone(), site.slot, falls))
+                .and_modify(|far| *far = if falls { far.min(tip) } else { far.max(tip) })
+                .or_insert(tip);
+        }
+    }
+    for site in &mut sites {
+        site.outermost = site.segment.is_some_and(|(base, tip)| base != tip && tips[&(site.cat.clone(), site.slot, tip < base)] == tip);
+    }
+    let draws = |cat: &str, slot| tips.contains_key(&(cat.to_string(), slot, false)) || tips.contains_key(&(cat.to_string(), slot, true));
+    let mut seen = std::collections::HashSet::new();
+    for site in sites.iter_mut().rev() {
+        if site.segment.is_some() && !draws(&site.cat, site.slot) && seen.insert((site.cat.clone(), site.slot)) {
+            site.outermost = true;
+        }
+    }
+    Ok(sites)
 }
 
 /// The stack-total label's sites (`_build_bar_total_label_layer`): a
@@ -453,7 +511,7 @@ pub(super) fn total_sites(
             .copied()
             .ok_or_else(|| format!("bar: internal error — no stacked total for category {cat:?}"))?;
         let (text, blank) = spec.text(Some(row), total, None)?;
-        Ok(Some(LabelSite { cat: cat.to_string(), at: total, slot: span.slot, value: total, raw: total, span: None, segment: None, tip: total, text, blank, key, href: None, off_chart: false }))
+        Ok(Some(LabelSite { cat: cat.to_string(), at: total, slot: span.slot, value: total, raw: total, span: None, segment: None, outermost: false, tip: total, text, blank, key, href: None, off_chart: false }))
     })
 }
 
@@ -464,15 +522,6 @@ pub(super) struct LabelGeometry<'a> {
     /// A site's category, its band's own start and its slot to the label's band-axis center.
     pub(super) center: &'a dyn Fn(&str, f64, Option<usize>) -> f64,
     pub(super) linear: &'a Continuous,
-}
-
-/// The fit test (`_fit_hide_test`) of a vertical `top`/`middle` label: its
-/// pass's plot height, the measure span and the label's font size.
-#[derive(Clone, Copy)]
-pub(super) struct FitHide {
-    pub(super) plot_h: f64,
-    pub(super) span: f64,
-    pub(super) font_size: f64,
 }
 
 /// What `value_label_layers` reads: the chart's rows, spans and label slots.
@@ -707,6 +756,7 @@ pub(super) struct LabelPlace {
     pub(super) extent: f64,
     pub(super) blank: bool,
     pub(super) side: Option<LabelSide>,
+    pub(super) ends: Option<(f64, f64)>,
 }
 
 /// The axis group's own half-pixel translate, which moves the category labels
@@ -761,7 +811,7 @@ pub(super) fn label_hang(layers: &[LabelLayer], geom: &LabelGeometry, ph: f64, e
     layers
         .iter()
         .filter(|layer| !layer.total)
-        .flat_map(|layer| layer.site_inks(geom, None))
+        .flat_map(|layer| layer.site_inks(geom))
         .map(|(_, ink)| match edge {
             crate::common::XEdge::Bottom => ink.y2 - ph,
             crate::common::XEdge::Top => -ink.y1,
@@ -806,6 +856,8 @@ pub(super) fn plain_label_place(
     // A horizontal scale reads left to right; a reversed one runs a positive bar leftward, so
     // that bar takes a negative bar's labels and a negative bar a positive one's.
     let negative = (value < 0.0) != (horizontal && upward < 0.0);
+    // A vertical `top`/`bottom` label sits `LABEL_FIT_PADDING` in from its end, so it needs that room too.
+    let need = if !horizontal && matches!(position, "top" | "bottom") { need + LABEL_FIT_PADDING } else { need };
     match position {
         "top" | "middle" | "bottom" if painted_extent(px, range, value) < need => {
             let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
@@ -846,30 +898,31 @@ impl LabelLayer {
     }
 
     /// Where a site's label sits, or `None` where its category has no band. A
-    /// plain bar follows `plain_label_place`; a stacked segment's `top` or
-    /// `middle` label blanks where the segment is drawn shorter than the room
-    /// the label needs, a ranged segment keeps the `hide` fit test (no flip), and
-    /// a stack total never hides.
-    pub(super) fn place(&self, site: &LabelSite, width: f64, geom: &LabelGeometry, hide: Option<FitHide>) -> Option<LabelPlace> {
+    /// plain bar, a ranged span and the outermost segment of a stack follow
+    /// `plain_label_place` measured on their own drawn extent, so a label too big
+    /// for it flips past its tip; an inner stacked segment has no outside, so
+    /// its label blanks where the segment is drawn shorter than the room the label
+    /// needs, and a stack total never hides.
+    pub(super) fn place(&self, site: &LabelSite, width: f64, geom: &LabelGeometry) -> Option<LabelPlace> {
         let band_x = geom.band.position(&site.cat)?;
         let center = (geom.center)(&site.cat, band_x, site.slot);
         let at = geom.linear.scale(site.at);
-        let blank_at = |blank| Some(LabelPlace { center, extent: at, blank, side: None });
+        let blank_at = |blank| Some(LabelPlace { center, extent: at, blank, side: None, ends: None });
         if site.blank {
             return blank_at(true);
         }
         if let (Some(funnel), Some((start, end)), "middle") = (&self.spec.funnel, site.segment, self.spec.position.as_str()) {
             return Some(self.funnel_place(funnel, (start, end), width, center, geom));
         }
-        let inside = matches!(self.spec.position.as_str(), "top" | "middle");
-        if let (true, Some((start, end))) = (self.stacked && !self.total && inside, site.segment) {
-            let drawn = (geom.linear.scale(end) - geom.linear.scale(start)).abs();
-            return blank_at(drawn < label_need(self.horizontal, width, self.font.size));
-        }
-        if self.stacked || self.ranged || self.total {
-            let hidden = self.ranged
-                && hide.is_some_and(|h| fit_hides_label(&self.spec.position, site.value, h.plot_h, h.span, h.font_size));
-            return blank_at(hidden);
+        let inner = self.stacked && !self.total && !site.outermost;
+        let inside = matches!(self.spec.position.as_str(), "top" | "middle" | "bottom");
+        let need = label_need(self.horizontal, width, self.font.size);
+        if let (true, Some((base, tip))) = (inner && inside, site.segment) {
+            if (geom.linear.scale(tip) - geom.linear.scale(base)).abs() < need {
+                return blank_at(true);
+            }
+        } else if inner || self.total {
+            return blank_at(false);
         }
         let linear = geom.linear;
         let px = |v: f64| linear.scale(v);
@@ -877,9 +930,28 @@ impl LabelLayer {
         if self.zero_only && zero_label_blank(&px, range, site.value) {
             return blank_at(true);
         }
-        let need = label_need(self.horizontal, width, self.font.size);
-        let (extent, side) = plain_label_place(&self.spec.position, site.value, at, &px, range, need, site.tip, self.horizontal);
-        Some(LabelPlace { center, extent, blank: false, side })
+        let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
+        let (extent, side, ends) = match site.segment.filter(|_| self.ranged || self.stacked) {
+            // A span or segment is measured from its own base, not from zero. An inner segment
+            // has already passed its fit test and has no outside to flip to: it only takes its side.
+            Some((base, tip)) => {
+                let from_base = |v: f64| px(base + v);
+                let need = if inner { 0.0 } else { need };
+                // A change row's `top` label is centered on its span (`SpanLabel::anchor`), so it needs no end padding.
+                let position = match (self.spec.position.as_str(), site.span) {
+                    ("top", Some(SpanLabel::Change { .. })) => "middle",
+                    (position, _) => position,
+                };
+                let (extent, side) = plain_label_place(position, tip - base, at, &from_base, range, need, tip - base, self.horizontal);
+                // A ranged label's own position (`span_spot`) decides every placement but the flip.
+                (extent, side.filter(|side| !self.ranged || matches!(side, LabelSide::Out(_))), (px(base).clamp(lo, hi), px(tip).clamp(lo, hi)))
+            }
+            None => {
+                let (extent, side) = plain_label_place(&self.spec.position, site.value, at, &px, range, need, site.tip, self.horizontal);
+                (extent, side, (px(0.0).clamp(lo, hi), px(site.tip).clamp(lo, hi)))
+            }
+        };
+        Some(LabelPlace { center, extent, blank: false, side, ends: Some(ends) })
     }
 
     /// A funnel label centers on its bar; one that does not fit the bar's drawn width or thickness
@@ -891,9 +963,9 @@ impl LabelLayer {
         let thickness = super::marks::capped_thickness((band * funnel.band_width).min(band), funnel.max_size);
         let fits = right - left >= label_need(true, width, self.font.size) && thickness >= LABEL_FIT_LINE_HEIGHT_MULTIPLIER * self.font.size;
         if fits {
-            LabelPlace { center, extent: (left + right) / 2.0, blank: false, side: None }
+            LabelPlace { center, extent: (left + right) / 2.0, blank: false, side: None, ends: None }
         } else {
-            LabelPlace { center, extent: right, blank: false, side: Some(LabelSide::Out(1.0)) }
+            LabelPlace { center, extent: right, blank: false, side: Some(LabelSide::Out(1.0)), ends: None }
         }
     }
 
@@ -902,17 +974,16 @@ impl LabelLayer {
     pub(super) fn points(
         &self,
         geom: &LabelGeometry,
-        hide: Option<FitHide>,
         decors: &LabelDecors,
         selection: &crate::selected::Selection,
         plain_aria: impl Fn(&LabelSite) -> Result<Option<String>, String>,
     ) -> Result<Vec<LabelPoint>, String> {
         let mut points = Vec::with_capacity(self.sites.len());
-        let silent = self.silent(geom, hide);
+        let silent = self.silent(geom);
         for (site, &width) in self.sites.iter().zip(&self.widths) {
-            let Some(place) = self.place(site, width, geom, hide) else { continue };
+            let Some(place) = self.place(site, width, geom) else { continue };
             let ink = (!silent && !site.off_chart).then(|| self.ink_of(site, width, &place));
-            let LabelPlace { center, extent, blank, side } = place;
+            let LabelPlace { center, extent, blank, side, ends } = place;
             let decor = decors.get(&site.key);
             let (aria, series_fill) = match decor {
                 Some(d) if !d.paint_only => (d.aria.clone(), d.fill.clone()),
@@ -926,6 +997,7 @@ impl LabelLayer {
                 series_fill,
                 blank,
                 side,
+                ends,
                 span: site.span,
                 text: site.text.clone(),
                 href: site.href.clone(),
@@ -944,20 +1016,19 @@ impl LabelLayer {
     fn placements<'a>(
         &'a self,
         geom: &'a LabelGeometry,
-        hide: Option<FitHide>,
     ) -> impl Iterator<Item = (&'a LabelSite, vega_fit::Bounds, Option<LabelSide>)> + 'a {
-        let silent = self.silent(geom, hide);
+        let silent = self.silent(geom);
         self.sites.iter().zip(&self.widths).filter_map(move |(site, &width)| {
             if silent || site.off_chart {
                 return None;
             }
-            let place = self.place(site, width, geom, hide)?;
+            let place = self.place(site, width, geom)?;
             Some((site, self.ink_of(site, width, &place), place.side))
         })
     }
 
-    fn silent(&self, geom: &LabelGeometry, hide: Option<FitHide>) -> bool {
-        self.zero_only && self.sites.iter().zip(&self.widths).all(|(site, &width)| self.place(site, width, geom, hide).is_none_or(|p| p.blank))
+    fn silent(&self, geom: &LabelGeometry) -> bool {
+        self.zero_only && self.sites.iter().zip(&self.widths).all(|(site, &width)| self.place(site, width, geom).is_none_or(|p| p.blank))
     }
 
     fn ink_of(&self, site: &LabelSite, width: f64, place: &LabelPlace) -> vega_fit::Bounds {
@@ -969,9 +1040,8 @@ impl LabelLayer {
     pub(super) fn site_inks<'a>(
         &'a self,
         geom: &'a LabelGeometry,
-        hide: Option<FitHide>,
     ) -> impl Iterator<Item = (&'a LabelSite, vega_fit::Bounds)> + 'a {
-        self.placements(geom, hide).map(|(site, ink, _)| (site, ink))
+        self.placements(geom).map(|(site, ink, _)| (site, ink))
     }
 
     /// `WARN-VALUE-LABELS-CROWD-WIDTH` over the labels this layer paints; `layer` is the authored
@@ -983,7 +1053,6 @@ impl LabelLayer {
         chart_id: &str,
         layer: Option<usize>,
         geom: &LabelGeometry,
-        hide: Option<FitHide>,
         bar_width: Option<&dyn Fn(&LabelSite) -> f64>,
     ) {
         if self.total || self.zero_only {
@@ -992,53 +1061,18 @@ impl LabelLayer {
         crate::common::warn_value_labels_crowd(
             chart_id,
             layer,
-            self.placements(geom, hide).map(|(site, ink, side)| {
+            self.placements(geom).map(|(site, ink, side)| {
                 let drawn_over_bar = self.style.inside_bar && !matches!(side, Some(LabelSide::Out(_)));
                 (ink, bar_width.filter(|_| drawn_over_bar).map(|width| width(site)))
             }),
         );
     }
 
-    pub(super) fn ink(&self, geom: &LabelGeometry, hide: Option<FitHide>, b: &mut vega_fit::Bounds) {
-        for (_, ink) in self.site_inks(geom, hide) {
+    pub(super) fn ink(&self, geom: &LabelGeometry, b: &mut vega_fit::Bounds) {
+        for (_, ink) in self.site_inks(geom) {
             b.union(&ink);
         }
     }
-}
-
-/// `_measure_span` (`features/value_labels.py`): the measure span the EMITTED
-/// scale pins — an authored domain pair, else `domainMax - domainMin` — read
-/// before Vega niceties move the drawn domain past it. `None` where no bound is pinned (Vega
-/// then derives the domain from the data, and the fit test stands down) and
-/// under `normalize`, whose segments are shares while the rows carry raw
-/// values.
-pub(super) fn label_fit_span(
-    ax_y: &AxisStyle,
-    stack: &str,
-    stacked_domain_max: Option<f64>,
-) -> Option<f64> {
-    if stack == "normalize" {
-        return None;
-    }
-    let span = match ax_y.authored_continuous_domain() {
-        Some((lo, hi)) => hi - lo,
-        None => {
-            let max = if matches!(stack, "zero" | "center") { stacked_domain_max } else { ax_y.domain_max }?;
-            let floor = if ax_y.is_zero_false() { ax_y.domain_min.unwrap_or(0.0) } else { 0.0 };
-            max - floor
-        }
-    };
-    (span > 0.0).then_some(span)
-}
-
-/// `_fit_hide_test` (`features/value_labels.py`) for a ranged vertical
-/// segment: a label whose span is shorter than one label line —
-/// `v * plot_h / span` pixels against `label_fit_line_height_multiplier` times
-/// the label's font size — is blanked, and Vega writes the empty mark as a
-/// self-closed `<text/>`. A span's extent is its change whichever way it runs,
-/// and a zero change has no room either; `above` sits in open space.
-pub(super) fn fit_hides_label(position: &str, value: f64, plot_h: f64, span: f64, font_size: f64) -> bool {
-    position != "above" && value.abs() * plot_h / span < LABEL_FIT_LINE_HEIGHT_MULTIPLIER * font_size
 }
 
 /// The band x's step geometry a layer's captions anchor against.
@@ -1077,16 +1111,23 @@ pub(crate) struct LabelFont {
     pub weight: String,
     /// `None` takes the position's own default ink.
     pub color: Option<String>,
+    /// The board's text color: the ink a label takes before the ground it sits on moves it,
+    /// when nothing authored or inherited names one.
+    pub ink: String,
 }
 
 pub(crate) fn label_font(ml: &MarkLabels, board_style: Option<&crate::BoardStyle>) -> Result<LabelFont, String> {
     let f = ml.font.as_ref();
     let (family, size) = crate::common::value_label_face(f, board_style)?;
+    let ink = board_style
+        .and_then(|b| b.font_color.clone())
+        .ok_or("value labels: the payload carries no board_style.font_color to ink them")?;
     Ok(LabelFont {
         family,
         size,
         weight: f.map(|f| f.weight_str()).unwrap_or_else(|| "400".into()),
         color: f.and_then(|f| f.color.clone()),
+        ink,
     })
 }
 
@@ -1239,6 +1280,10 @@ impl LabelStyle {
 /// aria-label prints a bare `<text>`, the same `tooltip_labels` gate the bars
 /// use.
 ///
+/// A label drawn over its bar takes the canvas color or the outside labels'
+/// ink, whichever contrasts more with what `under` (the plot's marks,
+/// plot-relative) paints at the label's center.
+///
 /// A blank label prints as a self-closing `<text/>`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn mark_labels(
@@ -1252,22 +1297,43 @@ pub(super) fn mark_labels(
     plot_left: f64,
     plot_top: f64,
     canvas: &str,
+    under: &[crate::annotation::DataMark],
     link_open: crate::href::LinkOpen,
 ) -> Result<Vec<Node>, String> {
     let style = LabelStyle::new(ml, horizontal, stacked, board_style)?;
     let stamped = points.iter().any(|p| p.aria.is_some());
     let mut labels = Vec::new();
     // A label outside its bar with no series color to take reads as the neutral ink, kept readable on the canvas.
-    let neutral_outside = dbt_charts_color::ensure_readable_ink(NEUTRAL_INK, canvas, OUTSIDE_INK_CONTRAST)?;
+    let neutral_outside = dbt_charts_color::ensure_readable_ink(&style.font.ink, canvas, OUTSIDE_INK_CONTRAST)?;
+    let lines: Vec<Obstacle> = under.iter().filter(|m| matches!(m, DataMark::Line { .. })).flat_map(Obstacle::of_mark).collect();
+    let bars: Vec<vega_fit::Bounds> = under
+        .iter()
+        .filter(|m| matches!(m, DataMark::Tinted(inner, ..) if matches!(**inner, DataMark::Box(_))))
+        .flat_map(DataMark::boxes)
+        .collect();
     for point in points {
-        let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, span, ref text, ref href, recede, ink, ref font_color, ref font_weight } = *point;
+        let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, ends, span, ref text, ref href, recede, ink, ref font_color, ref font_weight } = *point;
         let anchor = link_open.anchor(href.as_deref()).map(|anchor| crate::href::Anchor { recede, ..anchor });
-        let color = font_color.as_deref().or(style.font.color.as_deref()).unwrap_or(if style.inside_bar && !matches!(side, Some(LabelSide::Out(_) | LabelSide::Bare)) {
-            canvas
-        } else {
-            series_fill.as_deref().unwrap_or(&neutral_outside)
-        });
-        let spot = label_spot(ml, &style.position, style.horizontal_offset, center, extent, span, side);
+        let mut spot = label_spot(ml, &style.position, style.horizontal_offset, center, extent, span, side);
+        let mut over_bar = style.inside_bar && !matches!(side, Some(LabelSide::Out(_) | LabelSide::Bare));
+        let mut ink = ink;
+        if let (Some(at), None, false) = (ink, span, blank) {
+            if let Some((swapped, swapped_ink, now_over_bar)) = other_side_of_the_bar_end(ml, &style, &spot, over_bar, center, (extent, ends), at, &lines, &bars) {
+                (spot, ink, over_bar) = (swapped, Some(swapped_ink), now_over_bar);
+            }
+        }
+        let color = match font_color.as_deref().or(style.font.color.as_deref()) {
+            Some(color) => color.to_string(),
+            None if over_bar && !blank => {
+                let at = ink.map_or((spot.x, spot.y), |b| ((b.x1 + b.x2) / 2.0, (b.y1 + b.y2) / 2.0));
+                knockout_ink(canvas, &neutral_outside, under, at)?
+            }
+            None if over_bar => canvas.to_string(),
+            None => match series_fill {
+                Some(fill) => dbt_charts_color::label_ink(fill, canvas)?,
+                None => neutral_outside.clone(),
+            },
+        };
         let at = (plot_left + spot.x, plot_top + spot.y + measure::baseline_shift(spot.baseline, style.font.size));
         let attrs = Attrs::new()
             .set("text-anchor", spot.anchor)
@@ -1275,7 +1341,7 @@ pub(super) fn mark_labels(
             .num("font-size", style.font.size)
             .set("font-weight", font_weight.as_deref().unwrap_or(style.font.weight.as_str()))
             .set_if(style.font_style.is_some(), "font-style", style.font_style.clone().unwrap_or_default())
-            .set("fill", color)
+            .set("fill", color.as_str())
             .extend(::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?);
         let label = if blank { Node::empty_text(Role::Label, at, attrs) } else { Node::text(Role::Label, at, attrs, text.as_str()) };
         let label = match ink {
@@ -1295,9 +1361,74 @@ pub(super) fn mark_labels(
     }])
 }
 
+/// Where a label that sits on a layer line (`lines`) can go instead, with its ink and whether it
+/// is then over the bar. First the far side of the bar end it anchors at: inside the bar when the
+/// label is outside and fits wholly in a bar of `bars`, outside when it is inside and clear of
+/// every bar. Then outside just past the bar's other end (`ends`, `extent`'s end first), clear of
+/// every bar. `None` keeps the label where it is.
+#[allow(clippy::too_many_arguments)]
+fn other_side_of_the_bar_end(
+    ml: &MarkLabels,
+    style: &LabelStyle,
+    spot: &LabelSpot,
+    over_bar: bool,
+    center: f64,
+    (extent, ends): (f64, Option<(f64, f64)>),
+    ink: vega_fit::Bounds,
+    lines: &[Obstacle],
+    bars: &[vega_fit::Bounds],
+) -> Option<(LabelSpot, vega_fit::Bounds, bool)> {
+    let blocked = |b: &vega_fit::Bounds| lines.iter().any(|o| o.slack(b) < -EPS);
+    if !blocked(&ink) {
+        return None;
+    }
+    // The way the text runs from its anchor; a centered label has no side to leave.
+    let run = match (style.horizontal_offset.is_some(), spot.anchor, spot.baseline) {
+        (true, "start", _) | (false, _, "top") => 1.0,
+        (true, "end", _) | (false, _, "bottom") => -1.0,
+        _ => return None,
+    };
+    let far_end = ends.and_then(|(base, tip)| {
+        let (near, far) = if (base - extent).abs() <= (tip - extent).abs() { (base, tip) } else { (tip, base) };
+        (far != near).then(|| (far, LabelSide::Out((far - near).signum())))
+    });
+    let across = (extent, if over_bar { LabelSide::Out(-run) } else { LabelSide::In(run) }, !over_bar);
+    let candidates = std::iter::once(across).chain(far_end.map(|(far, side)| (far, side, false)));
+    for (anchor, side, over) in candidates {
+        let swapped = label_spot(ml, &style.position, style.horizontal_offset, center, anchor, None, Some(side));
+        let at = vega_fit::text_ink(swapped.x, swapped.y, ink.x2 - ink.x1, style.font.size, swapped.align(), swapped.baseline);
+        let settles = if over {
+            bars.iter().any(|b| b.x1 <= at.x1 && b.y1 <= at.y1 && at.x2 <= b.x2 && at.y2 <= b.y2)
+        } else {
+            !bars.iter().any(|b| crate::placement::intersection(&at, b) > 0.0)
+        };
+        if settles && !blocked(&at) {
+            return Some((swapped, at, over));
+        }
+    }
+    None
+}
+
+/// Of the canvas color and `ink`, the one that contrasts more with the color painted at `at`;
+/// the canvas on a tie.
+pub(crate) fn knockout_ink(canvas: &str, ink: &str, under: &[crate::annotation::DataMark], at: (f64, f64)) -> Result<String, String> {
+    let ground = ground_at(canvas, under, at)?;
+    let on_ground = |color: &str| dbt_charts_color::wcag_contrast(color, &ground);
+    Ok(if on_ground(ink)? > on_ground(canvas)? { ink } else { canvas }.to_string())
+}
+
+/// The color painted at `at`: the topmost mark of `under` there, else the canvas.
+pub(crate) fn ground_at(canvas: &str, under: &[crate::annotation::DataMark], at: (f64, f64)) -> Result<String, String> {
+    use ::layout::labels_expr::colors::Color;
+    let parsed = Color::parse(canvas).ok_or_else(|| format!("bar: canvas `{canvas}` is not a color"))?;
+    let ground = crate::annotation::rule_gray::color_under(under, parsed, at, 0.0).map_err(|e| e.to_string())?.unwrap_or(parsed);
+    let [r, g, b] = ground.c.map(|v| v.round().clamp(0.0, 255.0) as u8);
+    Ok(format!("#{r:02x}{g:02x}{b:02x}"))
+}
+
 #[cfg(test)]
 mod span_label_tests {
-    use super::{SpanLabel, fit_hides_label, label_spot, label_text};
+    use super::{SpanLabel, label_spot, label_text};
     use crate::common::MarkLabels;
 
     fn labels() -> MarkLabels {
@@ -1340,6 +1471,24 @@ mod span_label_tests {
         assert_eq!(spot(None).baseline, "top", "a plain bar's `top` label is unchanged");
     }
 
+    fn labels_in(format: &str) -> MarkLabels {
+        let mut ml = labels();
+        ml.format = serde_json::from_value(serde_json::json!({"spec": format, "prefix": "", "suffix": ""})).ok();
+        ml
+    }
+
+    #[test]
+    fn a_nonzero_value_that_prints_as_zero_prints_as_a_bound() {
+        let one_decimal = labels_in(",.1f");
+        let text = |ml: &MarkLabels, value, span| label_text(ml, false, value, span).unwrap();
+        assert_eq!(text(&one_decimal, 0.03, None), "<0.1");
+        assert_eq!(text(&one_decimal, 0.03, Some(SpanLabel::FromZero { rises: true })), "<0.1");
+        assert_eq!(text(&one_decimal, -0.03, None), format!(">{}", text(&one_decimal, -0.1, None)));
+        assert_eq!(text(&one_decimal, 0.0, None), "0.0");
+        assert_eq!(text(&one_decimal, 0.05, None), "0.1");
+        assert_eq!(text(&labels_in(",.0f"), 0.4, None), "<1");
+    }
+
     #[test]
     fn a_change_leads_its_size_with_its_sign() {
         let ml = labels();
@@ -1349,17 +1498,24 @@ mod span_label_tests {
         assert_eq!(text(120.0, Some(SpanLabel::FromZero { rises: true })), "$120");
         assert_eq!(text(120.0, None), "$120");
     }
+}
 
-    /// `_fit_hide_test` on a span measures `abs(end - start)` whichever way it
-    /// runs, and an empty change is no exception: a span's zero and negative
-    /// extents both blank.
+#[cfg(test)]
+mod plain_label_place_tests {
+    use super::{LABEL_FIT_PADDING, LabelSide, label_need, plain_label_place};
+
+    /// A column 13px tall under a 10px label: one line (11.5px) fits, but a `top` or
+    /// `bottom` label sits `LABEL_FIT_PADDING` in from its end and would overhang the bar.
     #[test]
-    fn a_span_is_fit_tested_by_the_size_of_its_change() {
-        // 340px over a 173.88 span: 12.65px is 6.5 units.
-        let hides = |value| fit_hides_label("top", value, 340.0, 173.88, 11.0);
-        assert!(hides(6.0) && !hides(7.0));
-        assert!(hides(0.0), "a zero change has no room");
-        assert!(hides(-6.0), "the size of a fall");
-        assert!(!fit_hides_label("above", 0.0, 340.0, 173.88, 11.0), "an `above` label sits in open space");
+    fn a_column_shorter_than_a_line_plus_its_inset_flips_an_end_label_outside() {
+        let px = |v: f64| 100.0 - v;
+        let need = label_need(false, 20.0, 10.0);
+        assert!(need < 13.0 && 13.0 < need + LABEL_FIT_PADDING);
+        for position in ["top", "bottom"] {
+            let (_, side) = plain_label_place(position, 13.0, px(13.0), &px, (100.0, 0.0), need, 13.0, false);
+            assert!(matches!(side, Some(LabelSide::Out(_))), "{position} flips outside");
+        }
+        let (_, side) = plain_label_place("middle", 13.0, px(6.5), &px, (100.0, 0.0), need, 13.0, false);
+        assert!(side.is_none(), "a middle label has no inset and stays");
     }
 }

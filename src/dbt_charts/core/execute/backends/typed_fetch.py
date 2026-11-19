@@ -830,6 +830,8 @@ def _fetch_databricks(
     """databricks-sql's ``cursor.description`` cannot tell TIMESTAMP from
     TIMESTAMP_NTZ or type a nested column, so the result is read as Arrow and
     typed by the same policy as every other Arrow driver."""
+    import pyarrow as pa  # noqa: PLC0415 — dbt-databricks installs it
+
     _, cursor = connections.add_query(
         connections._add_query_comment(sql),  # noqa: SLF001 — dbt's own hook
         auto_begin=False,
@@ -838,7 +840,12 @@ def _fetch_databricks(
     # cursor it wraps does.
     raw = cursor._cursor  # noqa: SLF001 — see above
     try:
-        chunks = fetch_chunks(raw.fetchmany_arrow, row_limit)
+        # Not a no-op: nanoarrow 0.9 misreads fixed-width columns (DECIMAL) of
+        # a sliced batch, and pa.Table.take copies the slice to fresh buffers.
+        chunks = (
+            chunk.take(pa.array(range(len(chunk)), pa.int64()))
+            for chunk in fetch_chunks(raw.fetchmany_arrow, row_limit)
+        )
         names, types, columns = arrow_columns(na.Array(next(chunks)))
         # Only the first chunk carries the schema; a later empty one is the
         # end of the result, whatever schema the driver gives it.

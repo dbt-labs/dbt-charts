@@ -1,8 +1,10 @@
-"""`labels.font.color: series` on a layer resolves to the layer's ink."""
+"""`labels.font.color: series` on a layer resolves to the layer's ink, kept readable."""
 
 from __future__ import annotations
 
 import re
+
+from dbt_charts.core.colors import ensure_readable_ink
 
 from ._svg_render import render_board_to_svg
 
@@ -37,4 +39,8 @@ rows:
 """)
     labels = re.findall(r'fill="([^"]+)"[^>]*>(?:37|49)</text>', svg)
     assert labels
-    assert set(labels) <= set(re.findall(r'<path[^>]*stroke="([^"]+)"', svg))
+    # The layer's own stroke, at the nearest lightness that reads 3:1 on the white canvas.
+    strokes = set(re.findall(r'<path[^>]*stroke="([^"]+)"', svg))
+    assert set(labels) <= {
+        ensure_readable_ink(s, "#ffffff", 3.0) for s in strokes if len(s) == 7
+    }

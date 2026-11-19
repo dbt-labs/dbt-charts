@@ -1,7 +1,9 @@
-"""Compile-time check for ``labels.visible`` anchors where no series exists.
+"""Compile-time check for ``labels.visible`` anchors where no ordered series exists.
 
 Anchors pick marks from each series, so they need a line, area or bar chart's
-own series: a scatter chart has no ordered series and a layer none of its own.
+own series, or a line, area or scatter layer over such a chart's x. A scatter
+chart has no ordered series, so neither it nor its layers take them; a bar
+layer's labels have no anchor path.
 """
 
 from __future__ import annotations
@@ -40,18 +42,20 @@ def _anchored_label_path(
 
 
 def validate_board_label_anchors(board: Board) -> None:
-    """Raise for ``labels.visible`` anchors on a scatter chart or on a layer."""
+    """Raise for ``labels.visible`` anchors on a scatter chart, its layers or a bar layer."""
     for chart_id, chart in board.charts.items():
-        targets = (
+        targets: list[tuple[str, str, BaseModel | None]] = (
             [(f"charts.{chart_id}.style", "a scatter chart", chart.style)]
             if isinstance(chart, ScatterChart)
             else []
         )
         if isinstance(chart, (AreaChart, BarChart, LineChart, ScatterChart)):
-            targets += [
-                (f"charts.{chart_id}.layers[{i}].style", "a layer", layer.style)
-                for i, layer in enumerate(chart.layers)
-            ]
+            for i, layer in enumerate(chart.layers):
+                if layer.type == "bar" or isinstance(chart, ScatterChart):
+                    where = "a bar layer" if layer.type == "bar" else "a layer"
+                    targets.append(
+                        (f"charts.{chart_id}.layers[{i}].style", where, layer.style)
+                    )
         for base, where, style in targets:
             if (suffix := _anchored_label_path(style)) is not None:
                 raise CompilationError.from_code(

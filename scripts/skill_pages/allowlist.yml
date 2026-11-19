@@ -91,6 +91,7 @@ objects:
     path: chart:bar.style.axis_y
     label: axis_y
     keys: [position]
+    detail: [position]
   s_grid:
     path: chart:bar.style.axis_x.grid
     label: axis_x.grid, axis_y.grid
@@ -136,10 +137,23 @@ objects:
     path: chart:area.style.marks.area
     label: marks.area
     keys: []
+  s_note:
+    path: chart:line.annotations=NoteAnnotation
+    label: annotations[type=note]
+    keys: [x, y, text, series, style]
+  s_note_text:
+    path: chart:line.annotations=NoteAnnotation.style.marks.text
+    label: annotations[type=note].style.marks.text
+    keys: [position]
+    detail: [position]
+  s_text:
+    path: AuthoredBoard.style.text
+    label: style.text
+    keys: [font, align, paragraph, heading, column, divider]
   s_legend:
     path: chart:bar.style.legend
     label: legend
-    keys: [visible, position, values]
+    keys: [visible, position, values, label]
   s_legend_position:
     path: chart:bar.style.legend.position
     label: legend.position

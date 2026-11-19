@@ -2,9 +2,9 @@
 
 Parses SQL and detects structural issues that indicate likely query bugs:
 
-- **WARN-MISSING-JOIN-PREDICATE**: Cross joins, comma-separated tables, or
-  joins on a constant (``ON TRUE``) between sources that can both return many
-  rows — usually an accidental cartesian product. A source that is one row by
+- **WARN-MISSING-JOIN-PREDICATE**: Comma-separated tables, a ``JOIN`` without
+  ``ON``, or joins on a constant (``ON TRUE``) between sources that can both return
+  many rows — usually an accidental cartesian product. A source that is one row by
   construction (an aggregate with no GROUP BY, ``LIMIT 1``) or a table
   function is not flagged.
 - **WARN-REAGGREGATION**: Outer query applies an aggregate whose result
@@ -237,9 +237,9 @@ def _unconstrained_join_label(join: exp.Join) -> str | None:
     method = join.args.get("method")
     if method is not None and method.upper() == "NATURAL":
         return None
-    # A bare JOIN (or a comma join) has no kind and is a cross join.
-    kind = join.args.get("kind")
-    return "CROSS JOIN" if kind is None or kind.upper() == "CROSS" else None
+    # An explicit CROSS JOIN is a deliberate cartesian product (a spine, a grid).
+    # A bare JOIN or a comma join has no kind: that is the forgotten-ON shape.
+    return "JOIN without ON" if join.args.get("kind") is None else None
 
 
 def _find_cross_joins(select: exp.Select) -> list[tuple[str, str, str]]:

@@ -2013,19 +2013,24 @@ pub(super) fn fit(
         .enumerate()
         .filter_map(|(layer, overlay)| match overlay {
             OverlayLayer::Line(l) => l.visible_labels().map(|ml| {
-                (layer, ml, l.x.as_deref(), &l.y, l.label_is_house, l.query_name.as_deref(), layer_band_step && l.curve_name() == Some("step"))
+                (layer, ml, l.x.as_deref(), &l.y, l.color.as_deref(), l.label_is_house, l.query_name.as_deref(), layer_band_step && l.curve_name() == Some("step"))
             }),
             OverlayLayer::Scatter(sl) => sl.point_mark.labels.visible.then(|| {
-                (layer, &sl.point_mark.labels, sl.x.as_deref(), &sl.y, sl.label_is_house, sl.query_name.as_deref(), false)
+                (layer, &sl.point_mark.labels, sl.x.as_deref(), &sl.y, sl.color.as_deref(), sl.label_is_house, sl.query_name.as_deref(), false)
             }),
             OverlayLayer::Bar(_) => None,
         })
-        .map(|(layer, ml, own_x, y, is_house, query, band_step)| {
+        .map(|(layer, ml, own_x, y, color, is_house, query, band_step)| {
             let rows = resolve_layer_rows(payload, query, r.query_name.as_deref(), "line")?;
             let style = crate::families::layers::LayerLabelStyle::new(ml, is_house, rows, payload.board_style.as_ref())?;
             let mut items = Vec::with_capacity(rows.len());
-            for (row, v) in ::bind::rows::valued_rows(rows.iter(), y) {
-                let Some(i) = domain_position(&x_domain, row, own_x.unwrap_or(x_field)) else { continue };
+            let at_domain: Vec<_> = ::bind::rows::valued_rows(rows.iter(), y)
+                .into_iter()
+                .filter_map(|(row, v)| Some((row, domain_position(&x_domain, row, own_x.unwrap_or(x_field))? as f64, v)))
+                .collect();
+            let printed = style.printed(color, &at_domain);
+            for (&(row, at, v), _) in at_domain.iter().zip(printed).filter(|(_, printed)| *printed) {
+                let i = at as usize;
                 let band = band_step.then(|| (i == 0, i + 1 == x_domain.len()));
                 let caption = style.caption(row, v, band).map_err(|e| format!("line: {e}"))?;
                 items.push((i, v, style.width(fonts, &caption.text)?, caption.spot));
@@ -6504,6 +6509,7 @@ pub(super) fn fit(
             let y_of = |val: f64| y_of(index, val);
             let own_clip = layer_axes.get(index).is_some_and(|la| la.cut == DomainCut::Clip) && !matches!(overlay, OverlayLayer::Bar(_));
             let mut layer_nodes: Vec<Node> = Vec::new();
+            let under = crate::annotation::DataMark::plot_marks(&plot);
             match overlay {
                 OverlayLayer::Line(l) => {
                     let layer_rows =
@@ -6560,10 +6566,10 @@ pub(super) fn fit(
                                 first: fit_x_at(0),
                                 last: fit_x_at(x_domain.len() - 1),
                             }),
-                            0.0,
                             stack.as_ref(),
                             crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
                             crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
+                            &under,
                         )
                         .map_err(|e| format!("line: {e}"))
                     };
@@ -6619,6 +6625,7 @@ pub(super) fn fit(
                     marks_start += undercoat.len();
                     plot.splice(under_annotations..under_annotations, undercoat);
                     layer_nodes.extend(knocked.marks);
+                    let under = crate::annotation::DataMark::plot_marks(&layer_nodes);
                     layer_nodes.extend(
                         crate::families::bar::marks::layer_bar_labels(
                             bl,
@@ -6636,7 +6643,7 @@ pub(super) fn fit(
                                 })
                             },
                             crate::families::layers::layer_link(link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())),
-                            (label_board_style, canvas),
+                            (label_board_style, canvas, &under),
                             (crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts }, &bar_widths),
                         )
                         .map_err(|e| format!("line: {e}"))?,
@@ -6675,6 +6682,7 @@ pub(super) fn fit(
                             crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())),
                             overlay_clips[index].then_some(((plot_w, plot_h), &clips)),
                             crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
+                            &under,
                         )
                         .map_err(|e| format!("line: {e}"))?,
                     );

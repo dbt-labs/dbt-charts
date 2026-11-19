@@ -374,6 +374,29 @@ def test_databricks_reads_every_chunk_of_a_result_under_the_budget() -> None:
     assert cursor.fetchmany_sizes == [FETCH_CHUNK_ROWS] * 4
 
 
+def test_databricks_decimals_in_a_later_chunk_keep_their_own_rows() -> None:
+    """The driver hands later chunks as slices of a larger batch."""
+    handle = pytest.importorskip("dbt.adapters.databricks.handle")
+    total = FETCH_CHUNK_ROWS + 3
+    hours = [decimal.Decimal(n) / 4 for n in range(total)]
+    cursor = _ArrowCursor(
+        pa.table(
+            {
+                "n": pa.array(range(total), pa.int64()),
+                "hours": pa.array(hours, pa.decimal128(38, 6)),
+            }
+        )
+    )
+    typed = fetch_typed(
+        _adapter(handle.CursorWrapper(cursor), []),
+        get_dialect("databricks"),
+        "SELECT 1",
+        time_zone="UTC",
+        row_limit=ROW_LIMIT,
+    )
+    assert typed.rows == list(zip(range(total), hours, strict=True))
+
+
 def test_a_databricks_fetch_stops_reading_once_past_the_byte_budget() -> None:
     handle = pytest.importorskip("dbt.adapters.databricks.handle")
     cursor = _ArrowCursor(pa.table({"s": pa.array(["x" * 90] * 10_000)}))

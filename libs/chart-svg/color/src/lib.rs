@@ -552,8 +552,8 @@ pub fn is_light_canvas(canvas: &str) -> Result<bool, String> {
 
 /// `ensure_readable_ink`: the closest-to-original OKLCH lightness (hue and
 /// chroma held) that clears `min_ratio` against `background`, searching
-/// toward whichever of black/white has more contrast. `Err` is Python's
-/// `ValueError` when neither pole clears the floor.
+/// toward each of black and white that clears it and keeping the nearer
+/// result. `Err` is Python's `ValueError` when neither pole clears the floor.
 pub fn ensure_readable_ink(
     color: &str,
     background: &str,
@@ -572,20 +572,30 @@ pub fn ensure_readable_ink(
         ));
     }
     let (l, c, h) = hex_to_oklch(color)?;
-    let (mut pass_l, mut fail_l) = if is_light_canvas(background)? {
-        (0.0, l)
-    } else {
-        (1.0, l)
+    let toward = |pole: f64| -> Result<f64, String> {
+        let (mut pass_l, mut fail_l) = (pole, l);
+        for _ in 0..30 {
+            let mid = (pass_l + fail_l) / 2.0;
+            if wcag_contrast(&oklch_to_hex(mid, c, h)?, background)? >= min_ratio {
+                pass_l = mid;
+            } else {
+                fail_l = mid;
+            }
+        }
+        Ok(pass_l)
     };
-    for _ in 0..30 {
-        let mid = (pass_l + fail_l) / 2.0;
-        if wcag_contrast(&oklch_to_hex(mid, c, h)?, background)? >= min_ratio {
-            pass_l = mid;
-        } else {
-            fail_l = mid;
+    // Only a pole that clears the floor is searched; when both do, the nearer lightness wins,
+    // and the higher-contrast pole on a tie.
+    let higher = if is_light_canvas(background)? { 0.0 } else { 1.0 };
+    let mut best_l = toward(higher)?;
+    let other = 1.0 - higher;
+    if black_contrast.min(white_contrast) >= min_ratio {
+        let other_l = toward(other)?;
+        if (other_l - l).abs() < (best_l - l).abs() {
+            best_l = other_l;
         }
     }
-    oklch_to_hex(pass_l, c, h)
+    oklch_to_hex(best_l, c, h)
 }
 
 /// `label_ink`: ink for text painted on `canvas` about a mark of `color` —
@@ -853,6 +863,16 @@ mod tests {
         assert!(ensure_readable_ink("#777777", "#808080", 6.0)
             .unwrap_err()
             .starts_with("no ink clears 6:1 contrast"));
+    }
+
+    #[test]
+    fn ensure_readable_ink_takes_the_nearer_lightness_when_both_poles_clear_the_floor() {
+        // Black contrasts more with this blue, but the orange is nearer 3:1 lightening.
+        let bg = "#0073ff";
+        assert!(wcag_contrast("#000000", bg).unwrap() > wcag_contrast("#ffffff", bg).unwrap());
+        let ink = ensure_readable_ink("#fe6703", bg, 3.0).unwrap();
+        assert!(wcag_contrast(&ink, bg).unwrap() >= 3.0);
+        assert!(hex_to_oklch(&ink).unwrap().0 > hex_to_oklch("#fe6703").unwrap().0, "{ink}");
     }
 
     #[test]

@@ -432,11 +432,24 @@ def _is_tag(annotation: Any) -> bool:  # type-state: explicit_any — a typing a
     )
 
 
+def _inherited(
+    below: Any,  # type-state: explicit_any — the layers below, as a patch, dict or nothing
+    key: str,
+) -> Any:  # type-state: explicit_any — whatever the layers below set at *key*
+    """What the layers below set at *key*, or ``None`` when none does."""
+    if isinstance(below, BaseModel):
+        return getattr(below, key) if key in below.model_fields_set else None
+    if isinstance(below, dict):
+        return below.get(key)
+    return None
+
+
 def schema_default_restated(
     node: Any,  # type-state: explicit_any — any authored model, list or dict
     raw: Any,  # type-state: explicit_any — the YAML the node was parsed from
     path: tuple[str, ...] = (),
     html_policy: str = "none",
+    below: Any = None,  # type-state: explicit_any — meta and extends layers under the board
 ) -> list[Diagnostic]:
     """Warn for every authored field equal to its model's declared default.
 
@@ -446,6 +459,8 @@ def schema_default_restated(
     it is compared with the inference instead (variables, above). An inline
     nested board inherits ``html_policy`` from the board above it, so that key
     is judged against *html_policy*, the enclosing board's, not the schema.
+    A key that sets back the default over a different value *below* (meta.yml,
+    extends) is an override, not a restatement: deleting it would undo it.
     """
     warnings: list[Diagnostic] = []
     if isinstance(node, BaseModel) and isinstance(raw, dict):
@@ -458,11 +473,12 @@ def schema_default_restated(
                 continue
             value = getattr(node, name)
             here = (*path, key)
+            lower = _inherited(below, name)
             restated = (
                 value == inherited
                 if name == "html_policy" and isinstance(node, AuthoredBoard)
                 else _equals_declared_default(field, value)
-            )
+            ) and (lower is None or lower == value)
             if restated:
                 warnings.append(
                     restated_diagnostic(
@@ -474,14 +490,18 @@ def schema_default_restated(
                     )
                 )
             else:
-                warnings += schema_default_restated(value, raw[key], here, html_policy)
+                warnings += schema_default_restated(
+                    value, raw[key], here, html_policy, lower
+                )
     elif isinstance(node, dict) and isinstance(raw, dict):
         for key, value in node.items():
             if key in raw:
                 here = (*path, str(key))
                 if isinstance(value, Variable) and isinstance(raw[key], dict):
                     warnings += variable_restated(value, raw[key], ".".join(here))
-                warnings += schema_default_restated(value, raw[key], here, html_policy)
+                warnings += schema_default_restated(
+                    value, raw[key], here, html_policy, _inherited(below, key)
+                )
     elif isinstance(node, list) and isinstance(raw, list) and len(node) == len(raw):
         for index, (value, item) in enumerate(zip(node, raw, strict=True)):
             warnings += schema_default_restated(

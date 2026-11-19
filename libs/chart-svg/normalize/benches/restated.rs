@@ -4,6 +4,8 @@
 //! chart authors a style at all (the pass is gated out before any lookup).
 //! `board_*` boards author their own `style:` beside none, for the board-level check.
 //! `*_axis_format` boards put the same y-axis label format against the query's `formats:` entry.
+//! `variables_*` boards write each variable's `visible` equal to, or other than, its declared
+//! default, over a `meta.yml` that sets it back or leaves it alone.
 //! `cargo bench -p normalize --bench restated`
 
 use criterion::{criterion_group, criterion_main, Criterion};
@@ -109,5 +111,37 @@ fn bench_query_formats(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench, bench_board_level, bench_query_formats);
+/// Variables whose `visible` restates its declared default, overrides a `meta.yml` value with it,
+/// or differs from it: only a restated key folds the layers below.
+fn bench_declared_defaults(c: &mut Criterion) {
+    let path = ProjectPath::try_from("b.yaml").expect("a path");
+    let meta = ProjectPath::try_from("meta.yml").expect("a path");
+    let host = host_inputs();
+    for (name, visible, below) in [
+        ("variables_restate_default", "true", "true"),
+        ("variables_override_meta", "true", "false"),
+        ("variables_differ_from_default", "false", "true"),
+    ] {
+        let mut text = String::from("source: db\ntext: hi\nvariables:\n");
+        let mut layer = String::from("variables:\n");
+        for i in 0..100 {
+            let _ = write!(text, "  v{i}:\n    default: a\n    visible: {visible}\n");
+            let _ = write!(layer, "  v{i}:\n    visible: {below}\n");
+        }
+        let mut files = MemoryFiles::default();
+        files.insert(path.clone(), text);
+        files.insert(meta.clone(), layer);
+        c.bench_function(&format!("compile/{name}/100_variables"), |b| {
+            b.iter(|| compile(black_box(&files), &path, &host).expect("compiles"))
+        });
+    }
+}
+
+criterion_group!(
+    benches,
+    bench,
+    bench_board_level,
+    bench_query_formats,
+    bench_declared_defaults
+);
 criterion_main!(benches);

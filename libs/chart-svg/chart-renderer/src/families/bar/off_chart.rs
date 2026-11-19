@@ -7,7 +7,7 @@ use measure::FontBook;
 use scene::{Attrs, Node, Role, Shape, Transform};
 
 use super::BarResolved;
-use super::labels::{LabelLayer, NEUTRAL_INK, OUTSIDE_INK_CONTRAST, label_font, label_text};
+use super::labels::{LabelLayer, OUTSIDE_INK_CONTRAST, label_font, label_text};
 use super::torn_outlier::retrace;
 
 /// How far inside the plot's top a dropped label's arrow sits.
@@ -83,7 +83,7 @@ impl OffChart {
         let size = font.size;
         let normal_ink = match &font.color {
             Some(color) => color.clone(),
-            None => dbt_charts_color::ensure_readable_ink(NEUTRAL_INK, &r.canvas, OUTSIDE_INK_CONTRAST)?,
+            None => dbt_charts_color::ensure_readable_ink(&font.ink, &r.canvas, OUTSIDE_INK_CONTRAST)?,
         };
         let face = Face { family: &font.family, size };
         let mut nodes = Vec::new();

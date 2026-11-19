@@ -127,6 +127,7 @@ tabs:
             {},
             800.0,
             600.0,
+            0.0,
             tab_titles=[],
             active_tab=0,
             tab_position="top",

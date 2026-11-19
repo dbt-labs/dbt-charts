@@ -8,11 +8,11 @@ WARN_MISSING_JOIN_PREDICATE = REGISTRY.register(
     WarningCode(
         code="WARN-MISSING-JOIN-PREDICATE",
         domain="query",
-        title="Join is missing a predicate and may produce a cross join",
+        title="Join is missing a predicate and may produce a cartesian product",
         message_template="Query {query_name!r}: {message}",
-        fix_template="Add an ON clause that relates the tables, or join a source that returns one row (an aggregate with no GROUP BY, or LIMIT 1). Intentional? Silence it with `ignore: [WARN-MISSING-JOIN-PREDICATE]` on the query.",
-        doc="Fires when query validation detects a CROSS JOIN, a comma join, or a join on a constant (`ON TRUE`, `ON 1 = 1`) between two sources that can each return many rows. That multiplies every row of one by every row of the other; it almost always means a missing ON clause.\n\nA source that returns one row by construction never multiplies rows, so a join against it stays quiet: a subquery or CTE that aggregates with no `GROUP BY`, a `SELECT` with no `FROM`, or a `LIMIT 1`. So does a table function such as `generate_series`. A filter that merely happens to match one row does not count. Emitted by `validate_compiled_queries` via the query validator.",
-        summary="A CROSS JOIN or constant-predicate join between two many-row sources.",
+        fix_template="Add an ON clause that relates the tables, or write `CROSS JOIN` if the cartesian product is intended. Intentional on a constant predicate? Silence it with `ignore: [WARN-MISSING-JOIN-PREDICATE]` on the query.",
+        doc="Fires when query validation detects a comma join, a `JOIN` with no `ON`, or a join on a constant (`ON TRUE`, `ON 1 = 1`) between two sources that can each return many rows. That multiplies every row of one by every row of the other; it almost always means a missing ON clause.\n\nAn explicit `CROSS JOIN` is read as intended (a date spine, a year × category grid) and stays quiet. BigQuery's parser reads a comma join (`FROM a, b`) as a cross join, so on BigQuery a comma join stays quiet too.\n\nA source that returns one row by construction never multiplies rows, so a join against it stays quiet: a subquery or CTE that aggregates with no `GROUP BY`, a `SELECT` with no `FROM`, or a `LIMIT 1`. So does a table function such as `generate_series`. A filter that merely happens to match one row does not count. Emitted by `validate_compiled_queries` via the query validator.",
+        summary="A comma join, a JOIN without ON, or a constant-predicate join between two many-row sources.",
         docs_topic="queries",
     )
 )

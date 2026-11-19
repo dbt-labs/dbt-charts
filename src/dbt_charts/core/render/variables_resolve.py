@@ -20,7 +20,6 @@ import datetime
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from dbt_charts.core.compile.column_match import match_column
 from dbt_charts.core.compile.models.chart.normalized import CalloutChart
 from dbt_charts.core.compile.models.variable.authored import VariableInputType
 from dbt_charts.core.compile.normalize.variable_input_refinement import (
@@ -39,6 +38,7 @@ from dbt_charts.core.compile.template.variables import (
     UNSET_MULTISELECT,
     coerce_multiselect,
     color_link_variable,
+    option_value_column,
     variable_value_is_absent,
 )
 from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
@@ -586,23 +586,8 @@ def _option_cells(
 ) -> list[Any]:  # type-state: explicit_any — raw query cells
     if not rows:
         return []
-    value_key = _option_value_key(rows, query)
+    value_key = option_value_column(list(rows[0]), query)
     return [row[value_key] for row in rows if row.get(value_key) is not None]
-
-
-def _option_value_key(rows: CacheRows, query: str) -> str:
-    """The column an options query's values come from: 'value', 'label', 'name'
-    or 'id' if the rows have one (``match_column``), else the first column."""
-    columns = rows[0].keys()
-    return next(
-        (
-            found
-            for key in ("value", "label", "name", "id")
-            if (found := match_column(key, columns, f"options query {query!r}"))
-            is not None
-        ),
-        next(iter(rows[0])),
-    )
 
 
 def resolve_options(
@@ -625,7 +610,7 @@ def resolve_options(
     values = list(dict.fromkeys(str(cell) for cell in _option_cells(rows, query)))
     if not rows or OPTION_COUNT_COLUMN not in rows[0]:
         return values, ()
-    value_key = _option_value_key(rows, query)
+    value_key = option_value_column(list(rows[0]), query)
     counts = {
         str(row[value_key]): int(row[OPTION_COUNT_COLUMN])
         for row in rows

@@ -395,7 +395,7 @@ pub(crate) fn layer_bar_labels(
     plot_h: f64,
     aria: impl Fn(&BarLayerMark) -> Option<String>,
     link: Option<&crate::href::DatumLink>,
-    (board_style, canvas): (Option<&crate::BoardStyle>, &str),
+    (board_style, canvas, under): (Option<&crate::BoardStyle>, &str, &[crate::annotation::DataMark]),
     (crowd, bar_widths): (crate::families::layers::LabelCrowd, &[f64]),
 ) -> Result<Vec<Node>, String> {
     let Some(ml) = bl.bar_mark.labels.as_ref().filter(|ml| ml.visible) else { return Ok(Vec::new()) };
@@ -414,6 +414,7 @@ pub(crate) fn layer_bar_labels(
                 series_fill: None,
                 blank,
                 side,
+                ends: None,
                 span: None,
                 text,
                 href: link.map(|link| link.href(mark.row)).transpose()?,
@@ -430,7 +431,7 @@ pub(crate) fn layer_bar_labels(
         Some(crowd.layer),
         boxes.into_iter().zip(bar_widths).map(|((ink, over_bar), &bar_width)| (ink, over_bar.then_some(bar_width))),
     );
-    mark_labels(ml, false, false, true, &points, 0, board_style, 0.0, 0.0, canvas, link.map(|link| link.open).unwrap_or_default())
+    mark_labels(ml, false, false, true, &points, 0, board_style, 0.0, 0.0, canvas, under, link.map(|link| link.open).unwrap_or_default())
 }
 
 /// A bar layer's label anchor and side: `plain_label_place` on the layer's own
@@ -997,14 +998,6 @@ impl BandColumns {
         let step = 0.8 * reference / (split.n_series + split.lead) as f64;
         let width = split.width_steps * step;
         Self { step, lead: split.lead, width, pad: 0.1 * reference + (step - width) / 2.0, anchor: step / 2.0, split: true, coincident: false }.touched(split)
-    }
-
-    /// The columns of a grouped base whose xOffset a step layer turned into a
-    /// point scale over `n_series` series and the layer's two edges: zero-width
-    /// columns on the first slots, `band_w / (n_series + 1)` apart.
-    pub(super) fn point_slots(band_w: f64, n_series: usize) -> Self {
-        let step = band_w / (n_series as f64 + 1.0);
-        Self { step, lead: 0, width: 0.0, pad: 0.0, anchor: step / 2.0, split: true, coincident: false }
     }
 
     /// These columns closed up to touch: each as wide as the spacing, the group keeping its footprint

@@ -1083,6 +1083,7 @@ style:
         color: category[1]
         height: 24
         last_visible: true
+        # value: { visible: true, position: right }   # bar | bar-normalize | column: the cell's value beside the mark
       width: 120                         # int (px) or string
       glyph: "!"
       glyph_color: warning.solid

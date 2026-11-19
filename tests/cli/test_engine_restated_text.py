@@ -56,6 +56,8 @@ text: hello
 
 _THEME = "source: db\nextends: clarity\ntext: hello\n"
 
+_DEFAULT = "source: db\ncard_gap: false\ntext: hello\n"
+
 
 class _Files:
     def __init__(self, text: str) -> None:
@@ -93,6 +95,7 @@ def _restated(board: str) -> list[Diagnostic]:
         (_TABLE, "WARN-RESTATED-FORMAT", "query format"),
         (_VARIABLE, "WARN-RESTATED-INFERRED", "inferred"),
         (_THEME, "WARN-RESTATED-STYLE", "default theme"),
+        (_DEFAULT, "WARN-RESTATED-INFERRED", "default"),
     ],
 )
 def test_an_engine_restated_warning_renders_as_text(

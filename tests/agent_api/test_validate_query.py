@@ -24,6 +24,12 @@ def test_validate_query_returns_typed_diagnostics_and_honors_suppress() -> None:
     assert "WARN-MISSING-JOIN-PREDICATE" not in {f.code for f in suppressed}
 
 
+def test_explicit_cross_join_is_intentional_but_bare_joins_still_warn() -> None:
+    assert validate_query("SELECT a.x, b.y FROM t1 a CROSS JOIN t2 b") == []
+    codes = {f.code for f in validate_query("SELECT a.x, b.y FROM t1 a JOIN t2 b")}
+    assert codes == {"WARN-MISSING-JOIN-PREDICATE"}
+
+
 def test_missing_join_predicate_prints_the_registered_fix_naming_ignore() -> None:
     """The validator leaves `recommendation` unset, so the registry's
     `fix_template` is what prints; it must name the exact suppression."""

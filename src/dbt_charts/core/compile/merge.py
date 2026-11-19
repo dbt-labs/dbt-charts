@@ -1168,6 +1168,7 @@ def merged_patch(
     boards_root: ProjectDirectory,
     theme_sink: list[str] | None = None,
     warning_sink: list[Diagnostic] | None = None,
+    lower_sink: list[BaseModel] | None = None,
 ) -> BaseModel:
     """Compute the fully-merged patch for a board: metas folded under board.
 
@@ -1190,6 +1191,8 @@ def merged_patch(
             the theme exactly once via get_theme_style(). When None (theme-build
             lane), theme YAMLs are loaded directly as style fragments.
         warning_sink: When not None, merge-time warnings are appended here.
+        lower_sink: When not None, the meta and extends layers folded without
+            the board's own fields are appended here.
     """
     # Base: merge of all meta files root→leaf
     layers: list[tuple[str, BaseModel]] = []
@@ -1211,6 +1214,8 @@ def merged_patch(
                 )
             )
     # fold: base < extends < own
+    if lower_sink is not None:
+        lower_sink.append(merge_patches(base, extends_patch))
     board_contribution = merge_patches(extends_patch, own_patch)
     return merge_patches(base, board_contribution)
 

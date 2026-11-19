@@ -672,6 +672,9 @@ style:
             radius: 0.0
         area:
           fill_opacity: 0.3
+        value:
+          position: right
+          gap: 6.0
       # Universal default: header rule only. No header fill, no row
       # striping — those compete with cell-background value encoding
       # (heatmap fills, threshold alerts). The rule is the single

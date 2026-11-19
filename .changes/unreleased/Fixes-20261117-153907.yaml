@@ -1,0 +1,3 @@
+kind: Fixes
+body: A value label inside a bar now reads against that bar, and a label too big for a short bar moves outside it.
+time: 2026-11-17T15:39:07.875718-08:00

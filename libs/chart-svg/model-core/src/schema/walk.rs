@@ -1,12 +1,17 @@
-use super::{Body, Flat, Schema, Ty};
+use super::{Body, Flat, Prop, Schema, SchemaModel, Ty};
+use std::collections::HashMap;
+use std::rc::Rc;
 use yaml::{Kind, Node};
 
 /// Every struct-valued node of an authored document, with the struct's flat field table.
 pub struct Visit<'a, 'n> {
     /// The authored path of the node: keys and list indexes, dot-joined.
     pub path: String,
+    /// Whether a list holds the node, at any depth.
+    pub listed: bool,
     pub model: &'a str,
-    pub flat: Flat<'a>,
+    /// Shared by every visit of the same model in one walk.
+    pub flat: Rc<Flat<'a>>,
     pub node: &'n Node,
 }
 
@@ -15,56 +20,86 @@ impl Schema {
     /// holds, outermost first. A node the schema does not type that way (a scalar where a struct
     /// is, a key no field names) is left to the parse that refuses it.
     pub fn structs<'a, 'n>(&'a self, node: &'n Node) -> Vec<Visit<'a, 'n>> {
-        let mut out = Vec::new();
-        self.descend(&self.root_ty, node, "", &mut out);
-        out
+        self.structs_where(node, &|_, _| true)
     }
 
-    fn descend<'a, 'n>(
+    /// [`Self::structs`], entering a struct's field only where `enter(model, prop)` holds. Each
+    /// model's flat table is built once per walk.
+    pub fn structs_where<'a, 'n>(
         &'a self,
-        ty: &'a Ty,
         node: &'n Node,
-        at: &str,
-        out: &mut Vec<Visit<'a, 'n>>,
-    ) {
+        enter: &dyn Fn(&str, &Prop<'a>) -> bool,
+    ) -> Vec<Visit<'a, 'n>> {
+        let mut walk = Walk {
+            schema: self,
+            enter,
+            flats: HashMap::new(),
+            out: Vec::new(),
+        };
+        walk.descend(&self.root_ty, node, "", false);
+        walk.out
+    }
+}
+
+struct Walk<'a, 'n, 'e> {
+    schema: &'a Schema,
+    enter: &'e dyn Fn(&str, &Prop<'a>) -> bool,
+    flats: HashMap<&'a str, Rc<Flat<'a>>>,
+    out: Vec<Visit<'a, 'n>>,
+}
+
+impl<'a, 'n> Walk<'a, 'n, '_> {
+    fn flat(&mut self, model: &'a SchemaModel) -> Rc<Flat<'a>> {
+        let schema = self.schema;
+        self.flats
+            .entry(model.name)
+            .or_insert_with(|| Rc::new(schema.flat(model)))
+            .clone()
+    }
+
+    fn descend(&mut self, ty: &'a Ty, node: &'n Node, at: &str, listed: bool) {
         match (ty, &node.kind) {
             (Ty::Option(t, _) | Ty::Patch(t) | Ty::Keyed(_, t) | Ty::Engine(t, _), _) => {
-                self.descend(t, node, at, out);
+                self.descend(t, node, at, listed);
             }
             (Ty::Accept(a, b), _) => {
-                let first = if self.fits(a, node) { a } else { b };
-                self.descend(first, node, at, out);
+                let first = if self.schema.fits_by(a, node, &mut |m| self.flat(m)) {
+                    a
+                } else {
+                    b
+                };
+                self.descend(first, node, at, listed);
             }
             (Ty::List(item), Kind::Seq(items)) => {
                 for (i, n) in items.iter().enumerate() {
-                    self.descend(item, n, &join(at, &i.to_string()), out);
+                    self.descend(item, n, &join(at, &i.to_string()), true);
                 }
             }
             (Ty::Map(item), Kind::Map(entries)) => {
                 for (k, e) in entries {
-                    self.descend(item, &e.value, &join(at, k), out);
+                    self.descend(item, &e.value, &join(at, k), listed);
                 }
             }
             (Ty::Ref(name), Kind::Map(entries)) => {
-                let Some(model) = self.models.get(name) else {
+                let Some(model) = self.schema.models.get(name) else {
                     return;
                 };
                 match &model.body {
                     Body::Struct { .. } => {
                         let flat = self.flat(model);
-                        let props: Vec<_> = flat
-                            .props
-                            .iter()
-                            .filter_map(|p| entries.get(p.key).map(|e| (p.ty, p.key, &e.value)))
-                            .collect();
-                        out.push(Visit {
+                        self.out.push(Visit {
                             path: at.to_string(),
+                            listed,
                             model: model.name,
-                            flat,
+                            flat: flat.clone(),
                             node,
                         });
-                        for (ty, key, child) in props {
-                            self.descend(ty, child, &join(at, key), out);
+                        for p in &flat.props {
+                            if let Some(e) = entries.get(p.key) {
+                                if (self.enter)(model.name, p) {
+                                    self.descend(p.ty, &e.value, &join(at, p.key), listed);
+                                }
+                            }
                         }
                     }
                     Body::Tagged { tag, variants, .. } => {
@@ -74,7 +109,7 @@ impl Schema {
                             return;
                         };
                         if let Some((_, variant)) = variants.iter().find(|(n, _)| n == name) {
-                            self.descend(variant, node, at, out);
+                            self.descend(variant, node, at, listed);
                         }
                     }
                 }
@@ -150,11 +185,21 @@ impl Schema {
     /// Whether a type reads this node: the arm `accept` takes it by. A struct reads a mapping
     /// whose every key it names, a tagged enum one whose tag it knows, and a map any mapping.
     fn fits(&self, ty: &Ty, node: &Node) -> bool {
+        self.fits_by(ty, node, &mut |m| Rc::new(self.flat(m)))
+    }
+
+    /// [`Self::fits`], reading a struct's flat table through `flat`.
+    fn fits_by<'a>(
+        &'a self,
+        ty: &Ty,
+        node: &Node,
+        flat: &mut dyn FnMut(&'a SchemaModel) -> Rc<Flat<'a>>,
+    ) -> bool {
         match (ty.bare(), &node.kind) {
             (Ty::Ref(name), Kind::Map(entries)) => match self.models.get(name) {
                 Some(model) => match &model.body {
                     Body::Struct { .. } => {
-                        let known = self.flat(model);
+                        let known = flat(model);
                         entries
                             .keys()
                             .all(|k| known.props.iter().any(|p| p.key == k))
@@ -168,7 +213,7 @@ impl Schema {
             },
             (Ty::Map(_) | Ty::Engine(..), Kind::Map(_)) => true,
             (Ty::List(_) | Ty::Tuple(_), Kind::Seq(_)) => true,
-            (Ty::Accept(a, b), _) => self.fits(a, node) || self.fits(b, node),
+            (Ty::Accept(a, b), _) => self.fits_by(a, node, flat) || self.fits_by(b, node, flat),
             (Ty::Ref(_) | Ty::List(_) | Ty::Map(_), _) => false,
             (_, Kind::Scalar(_)) => true,
             _ => false,

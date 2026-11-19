@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import sqlglot
 import yaml
-from pydantic import ValidationError as PydanticValidationError
+from pydantic import BaseModel, ValidationError as PydanticValidationError
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
@@ -821,6 +821,7 @@ def _compile_with_text(
     host_default_source: str | None = None,
     file: str | None = None,
     merge_warnings: Sequence[Diagnostic] = (),
+    below: BaseModel | None = None,
 ) -> CompileResult:
     """Run the shared compile pipeline for an already-parsed board.
 
@@ -835,7 +836,7 @@ def _compile_with_text(
         board.source if isinstance(board.source, str) else None,
     )
     authoring_warnings += schema_default_restated(
-        board, yaml.load(yaml_content, Loader=YAML_LOADER)
+        board, yaml.load(yaml_content, Loader=YAML_LOADER), below=below
     )
     result = compile_authored_board(
         board,
@@ -1196,6 +1197,7 @@ def _compile_file(
     # meta chain so it still reaches result.meta_lint.
     meta_lint: MetaLintConfig | None = None
     merge_warnings: list[Diagnostic] = []
+    lower: list[BaseModel] = []
     try:
         board_data = load_yaml_mapping(yaml_content)
         from dbt_charts.core.compile.migrations import prepare_board_mapping
@@ -1227,6 +1229,7 @@ def _compile_file(
                 project.directory("."),
                 theme_sink,
                 merge_warnings,
+                lower,
             )
             merged_board_data = merged.model_dump(exclude_unset=True)
             # See CachePatch._serialize_as_authored: its dump does not re-validate.
@@ -1305,6 +1308,7 @@ def _compile_file(
         meta_lint=meta_lint,
         file=relpath,
         merge_warnings=merge_warnings,
+        below=lower[0] if lower else None,
     )
     if board_path.is_markdown:
         result.warnings = _without_markdown_section_headings(result)

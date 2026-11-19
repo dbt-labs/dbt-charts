@@ -34,6 +34,7 @@ def _bar(
         variables={},
         available_width=800.0,
         available_height=300.0,
+        card_gap=0.0,
         tab_titles=titles,
         tab_slugs=[f"t{i}" for i in range(len(titles))],
         tab_variable=tab_variable,

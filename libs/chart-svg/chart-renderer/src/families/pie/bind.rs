@@ -693,6 +693,7 @@ fn bind_table(
         board_composed: false,
         authored_height: None,
         placement: payload.placement,
+        slot_width: None,
     };
     crate::families::table::bind::bind(&table_payload)
 }

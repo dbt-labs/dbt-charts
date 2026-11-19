@@ -165,10 +165,38 @@ _SPARK_RENAMED_AWAY: dict[str, str] = {
 }
 
 
-class SparkConfig(BaseModel):
+class SparkValueConfig(BaseModel):
+    """The cell's value drawn in its own lane beside a spark bar or column."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    visible: bool = Field(
+        default=False, description="Draw the cell's value beside the spark mark."
+    )
+    position: Literal["left", "right"] | None = Field(
+        default=None,
+        description="Which side of the spark mark the value sits on.",
+    )
+    gap: float | None = Field(
+        default=None,
+        ge=0,
+        description="Gap in pixels between the value and the spark mark.",
+    )
+
+
+class SparkConfig(ConstrainedModel):
     """Configuration for spark charts (inline sparklines) in table columns."""
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        Forbids(
+            ("value",),
+            "SparkConfig: 'value' needs a single-number spark type (bar, "
+            "bar-normalize or column); line, area and columns draw a series.",
+            when=(ValueIn("type", ("line", "area", "columns", None)),),
+        ),
+    )
 
     type: SparkTypeLiteral = Field(
         default="line",
@@ -182,6 +210,13 @@ class SparkConfig(BaseModel):
     )
     width: int | None = Field(
         default=None, gt=0, description="Spark chart width in pixels."
+    )
+    value: SparkValueConfig | None = Field(
+        default=None,
+        description=(
+            "Draw the cell's value in its own lane beside the mark "
+            "(bar, bar-normalize, column)."
+        ),
     )
 
     # Line/area specific
@@ -216,7 +251,8 @@ class SparkConfig(BaseModel):
         ),
     )
     background: str | None = Field(
-        default=None, description="Background track color for bar-normalize chart."
+        default=None,
+        description="Track color behind the bar. Turns the track on for bar; overrides the theme track for bar-normalize.",
     )
     border_radius: float | None = Field(
         default=None,

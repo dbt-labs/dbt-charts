@@ -22,6 +22,7 @@ SQL is authored, and a reverse index has no execute-time second chance.
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeVar
 
@@ -31,7 +32,7 @@ import sqlglot.expressions as exp
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.qualify_columns import validate_qualify_columns
 from sqlglot.optimizer.scope import Scope, traverse_scope
-from sqlglot.tokens import TokenType
+from sqlglot.tokens import Token, TokenType
 
 from dbt_charts.core.compile.models.query.normalized import is_sql_query
 from dbt_charts.core.compile.sql_guard import (
@@ -190,13 +191,65 @@ def parse_sql_statements(
     statements = [
         s for s in parsed if s is not None and not isinstance(s, exp.Semicolon)
     ]
+    tokens = sqlglot.tokenize(skeleton, read=dialect)
     # sqlglot unwraps `WITH a AS (...) (WITH a AS (...) SELECT ...)` by
     # overwriting the inner WITH with the outer one: the tree then binds names
     # to the wrong CTE. A CTE-opening WITH with no WITH node is that loss.
     with_nodes = sum(len(list(s.find_all(exp.With))) for s in statements)
-    if _cte_with_keywords(skeleton, dialect) > with_nodes:
+    if _cte_with_keywords(tokens) > with_nodes:
         return "SQL cannot be analyzed: the parser dropped a WITH clause"
+    unset_unwritten_cross_kind(statements, tokens)
     return statements, via_dbt
+
+
+def _first_token(
+    target: exp.Expr, tokens: list[Token], starts: list[int]
+) -> int | None:
+    """Index of the token opening a join's table or aliased subquery."""
+    if isinstance(target, exp.Table):
+        named = target
+    elif isinstance(target, exp.Subquery) and target.args.get("alias"):
+        named = target.args["alias"]
+    else:
+        return None
+    anchors = [i.meta["start"] for i in named.find_all(exp.Identifier) if i.meta]
+    if not anchors:
+        return None
+    index = bisect_right(starts, min(anchors)) - 1
+    if isinstance(target, exp.Table):
+        return index
+    close = index - 1 - (tokens[index - 1].token_type == TokenType.ALIAS)
+    depth = 0
+    for i in range(close, -1, -1):
+        if tokens[i].token_type == TokenType.R_PAREN:
+            depth += 1
+        elif tokens[i].token_type == TokenType.L_PAREN:
+            depth -= 1
+        if depth == 0:
+            return i
+    return None
+
+
+def unset_unwritten_cross_kind(statements: list[exp.Expr], tokens: list[Token]) -> None:
+    """Clear ``kind`` on a CROSS join whose SQL never says CROSS.
+
+    sqlglot reads a bare JOIN (and a BigQuery comma join) as CROSS; readers tell
+    a deliberate CROSS JOIN from a forgotten ON by ``kind`` alone.
+    """
+    starts = [t.start for t in tokens]
+    for statement in statements:
+        for join in statement.find_all(exp.Join):
+            if join.args.get("kind") != "CROSS":
+                continue
+            first = _first_token(join.this, tokens, starts)
+            if first is None or first < 2:
+                continue
+            introducer = tokens[first - 1].token_type
+            written = tokens[first - 2].token_type == TokenType.CROSS
+            if introducer == TokenType.COMMA or (
+                introducer == TokenType.JOIN and not written
+            ):
+                join.set("kind", None)
 
 
 _TreeT = TypeVar("_TreeT", bound=exp.Expr)
@@ -239,13 +292,12 @@ def fold_relation_names(tree: _TreeT) -> _TreeT:
     return tree
 
 
-def _cte_with_keywords(sql: str, dialect: str | None) -> int:
+def _cte_with_keywords(tokens: list[Token]) -> int:
     """WITH tokens opening `[RECURSIVE] name [(cols)] AS [NOT] [MATERIALIZED] (`.
 
     Counts a lower bound: other WITHs (`WITH ORDINALITY AS t`, ClickHouse
     `WITH 1 AS x`) never match, so only a lost CTE list exceeds the tree.
     """
-    tokens = sqlglot.tokenize(sql, read=dialect)
     texts = [t.text.upper() for t in tokens]
     count = 0
     for i, token in enumerate(tokens):

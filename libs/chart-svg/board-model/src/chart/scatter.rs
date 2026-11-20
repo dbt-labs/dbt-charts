@@ -13,11 +13,11 @@ use model_derive::Model;
     constraint(forbids(support_table,
         message = "chart.support_table is not supported for chart type {type!r} in v1. Supported chart types: area, bar, line."
     )),
-    constraint(forbids(tooltip, when(set(layers)),
-        message = "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query."
-    )),
     constraint(forbids(tooltip, when(list(y)),
         message = "tooltip is not supported with a multi-measure y: list: a wide scatter draws no structured hover card."
+    )),
+    constraint(requires(size, when(set("style.size")),
+        message = "style.size configures the size channel, but this {type} chart has no size: field."
     ))
 )]
 #[allow(clippy::duplicated_attributes)]

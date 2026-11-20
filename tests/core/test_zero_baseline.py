@@ -1,6 +1,6 @@
 """Zero-baseline rule mark for bar / area / line charts.
 
-Vega renders axis guides (grid lines) BELOW marks, so area/bar fills cover the
+Vega renders axis guides (gridlines) BELOW marks, so area/bar fills cover the
 bold zero baseline produced by the conditional ``gridColor`` encoding. A rule
 mark layer at the top of the layer stack renders above all fills and restores
 the baseline.

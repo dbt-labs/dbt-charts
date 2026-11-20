@@ -47,6 +47,8 @@
   "controls.next_month": "Volgende maand",
   "controls.no": "Nee",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.rows_cut_by_row_limit": "afgekapt door rijlimiet",
+  "controls.rows_cut_by_byte_limit": "afgekapt door groottelimiet",
   "controls.preset_before_previous": "Vóór de vorige {duration}",
   "controls.preset_last": "Laatste {duration}",
   "controls.preset_previous": "Vorige {duration}",

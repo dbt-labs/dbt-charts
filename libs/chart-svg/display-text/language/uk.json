@@ -47,6 +47,8 @@
   "controls.next_month": "Наступний місяць",
   "controls.no": "Ні",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.rows_cut_by_row_limit": "обрізано за лімітом рядків",
+  "controls.rows_cut_by_byte_limit": "обрізано за лімітом розміру",
   "controls.preset_before_previous": "Перед попередніми {duration}",
   "controls.preset_last": "Останні {duration}",
   "controls.preset_previous": "Попередні {duration}",

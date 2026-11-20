@@ -733,13 +733,13 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
     let mut anchor_point = None;
     let pad = if style.text.frame.visible { style.text.frame.padding } else { 0.0 };
     let cap = style.text.max_share.map_or(f64::INFINITY, |share| share * ctx.plot.w);
-    // A band's label wraps to the band's own width; the style key wraps frame notes and trends only.
+    // A band's label wraps to the band's own width unless the style key sets one.
     let band = (ann.kind == Kind::Band).then(|| band_shape(ann, ctx, b_map, &site)).transpose()?;
     let band_width = match &band {
         Some(Some((_, Some(Geom::Rect { x0, x1, .. })))) => Some(x1 - x0 - 2.0 * pad),
         _ => None,
     };
-    let limit = band_width.or_else(|| style.text.max_width.map(|px| px.min(ctx.plot.w - 2.0 * (pad + GAP)).min(cap)));
+    let limit = style.text.max_width.map(|px| px.min(ctx.plot.w - 2.0 * (pad + GAP)).min(cap)).or(band_width);
     let block = ann.text.as_ref().map(|text| text::measure_block(ctx.fonts, text, &style.text, limit)).transpose()?;
     let leader = match &block {
         Some(b) if ann.connector == ConnectorKind::None => leader_needed(ann, ctx, &site, (b.w + 2.0 * pad, b.h + 2.0 * pad))?,
@@ -1361,7 +1361,7 @@ mod tests {
         assert_eq!(frame_box(LONG, None, pos(Edge::Top, Align::Start, true)).lines, [LONG]);
         let mut point = contract()[7].clone();
         point.style.text.max_width = Some(60.0);
-        assert!(point.validate("c").unwrap_err().params["reason"].as_str().unwrap().contains("only a frame note or a trend wraps"));
+        assert!(point.validate("c").unwrap_err().params["reason"].as_str().unwrap().contains("only a frame note, a band or a trend sets its wrap width"));
     }
 
     #[test]
@@ -1605,6 +1605,23 @@ mod tests {
         assert!(t.lines.iter().all(|l| band_line_width(l) <= x1 - x0 + 1e-9), "{:?} in {}", t.lines, x1 - x0);
         assert_eq!(t.anchor, TextAnchor::Middle);
         assert!(close(t.x + t.w / 2.0, (x0 + x1) / 2.0), "{t:?}");
+    }
+
+    #[test]
+    fn a_band_label_wraps_to_its_max_width_in_place_of_the_band() {
+        let band = |max_width: Option<f64>| {
+            let anns = copies(3, &[&|a| {
+                a.x = Some(Anchor::Range { from: date_value("2024-03-01"), to: date_value("2024-03-20") });
+                a.y = None;
+                a.text = Some("Current month".into());
+                a.style.text.max_width = max_width;
+                a.style.text.position = Position { edge: Edge::Top, align: Align::Center, overlay: true, auto_edge: false, auto_align: false };
+            }]);
+            anns[0].validate("c").expect("a band takes a max_width");
+            text_of(&resolved(anns, Reach::default())[0]).clone()
+        };
+        assert_eq!(band(None).lines, ["Current", "month"]);
+        assert_eq!(band(Some(150.0)).lines, ["Current month"]);
     }
 
     #[test]

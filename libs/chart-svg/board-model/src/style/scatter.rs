@@ -10,6 +10,7 @@ use crate::style::bar::misplaced_defaults;
 use crate::style::marks::{
     PointMarkStyle, PointMarkStyleConditional, TextMarkStyle, TextMarkStyleConditional,
 };
+use crate::primitives::SizeScaleStyle;
 use diagnostic::Diagnostic;
 use indexmap::IndexMap;
 use model_core::{Authored, Tri};
@@ -83,6 +84,8 @@ pub struct ScatterChartStyle {
     /// Scatter-family mark overrides.
     #[model(inherit_slot = "Style.charts.marks")]
     pub marks: ScatterChartMarksStyle,
+    /// Area range and scale type of the `size:` channel.
+    pub size: SizeScaleStyle,
     /// Rules that restyle a point by its row's value, keyed by column name. Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, is_null, or default) plus the style it applies: marks.point color, fill, filled, size, shape, opacity and stroke_width, and marks.text font color and weight. A rule size or shape overrides a `size:` or `shape:` channel for the points it matches; the legend is unchanged. Every matching rule applies; where two set the same key the later one wins, so list the more specific rule last. A `default: true` rule applies only when no other rule matched. Two columns cannot patch the same property. Rules style the base layer, not `layers:`.
     #[model(fill = fill_empty)]
     pub conditional: IndexMap<String, Vec<ScatterChartStyleConditional>>,

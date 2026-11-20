@@ -80,11 +80,6 @@ class BarChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
         ),
         Forbids(
             ("tooltip",),
-            "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query.",
-            when=(IsSet("layers"),),
-        ),
-        Forbids(
-            ("tooltip",),
             "tooltip is not supported on type: histogram: a bar there is a "
             "bin of rows, not one row, so a column has no single value to show.",
             when=(ValueIn("type", ("histogram",)),),

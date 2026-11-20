@@ -1142,6 +1142,11 @@ style:
     # build_patch_model_ext-based types: TYPE_CHECKING stub shows required fields from
     # _ChartStyleBase, so pyright can't verify zero-arg construction. These stay required.
     scatter:
+      # Mark-area range (px²) of the `size:` channel; 4 px² keeps the smallest
+      # dot visible, 361 px² is a 19 px-wide dot.
+      size:
+        range: [4, 361]
+        type: linear
       # Scatter always breaks at missing buckets (honest dots). Pinned here so a
       # future THEME change to the global style.charts.axis_x.fill does not connect
       # gaps on point marks. This guards theme edits, not authoring: an explicit
@@ -1224,6 +1229,10 @@ style:
     # Point map (scatter over geography) — renamed from 'geoshape'.
     point_map:
       aspect_ratio: 1.2
+      # Mark-area range (px²) of the `size:` channel; zero maps to no mark.
+      size:
+        range: [0, 1000]
+        type: linear
       marks:
         point:
           # Global marks.point.size is unset (a line's points are density-

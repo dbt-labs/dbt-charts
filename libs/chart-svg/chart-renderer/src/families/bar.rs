@@ -1024,7 +1024,7 @@ mod tests {
     /// The ink a value label over a bar of `fill` takes on `canvas`: the canvas or the outside
     /// labels' ink, whichever contrasts more with the bar.
     fn knockout_ink_on(canvas: &str, fill: &str) -> String {
-        let ink = dbt_charts_color::ensure_readable_ink("#313233", canvas, super::labels::OUTSIDE_INK_CONTRAST).unwrap();
+        let ink = dbt_charts_color::ensure_readable_ink("#313233", canvas, crate::common::OUTSIDE_INK_CONTRAST).unwrap();
         let on = |c: &str| dbt_charts_color::wcag_contrast(c, fill).unwrap();
         if on(&ink) > on(canvas) { ink } else { canvas.to_string() }
     }
@@ -18080,6 +18080,25 @@ mod tests {
             assert!(!svg.contains("<a href="), "no href expected with no link spec:\n{svg}");
         }
 
+        /// A placeholder naming no channel reads the bar's row: a column the chart does not plot
+        /// still fills the link, percent-encoded like a channel's value.
+        #[test]
+        fn a_link_reads_a_column_the_chart_does_not_plot() {
+            let mut payload_json = make_vertical_payload(&[("Widget", 10.0), ("Gadget", 20.0)], false);
+            payload_json["rows"][0]["sku"] = json!("W 1");
+            payload_json["rows"][1]["sku"] = json!("G-2");
+            payload_json["resolved"]["link"] = json!("/products/detail?sku={{ sku }}&name={{ x }}");
+            let svg = render(&make_payload(payload_json), &test_fonts()).unwrap();
+            assert!(svg.contains("<a href=\"/products/detail?sku=W%201&amp;name=Widget\">"), "{svg}");
+            assert!(svg.contains("<a href=\"/products/detail?sku=G-2&amp;name=Gadget\">"), "{svg}");
+        }
+
+        #[test]
+        fn a_link_naming_a_column_the_rows_lack_is_refused() {
+            let err = render(&linked_payload(&[("Widget", 10.0)], "/p?sku={{ sku }}"), &test_fonts()).unwrap_err();
+            assert!(err.to_string().contains("'{{ sku }}'"), "{err}");
+        }
+
         /// `_vega_encode_field`'s own replace() chain: a category value with
         /// a space and an `&` percent-encodes safely into the query string —
         /// matching `test_bar_chart_two_plain_text_dims_produces_encoded_
@@ -18281,7 +18300,7 @@ mod tests {
                 ("/a/{{ {{ x }}", "/a/{{ q"),
                 ("/a/{{{ x }}", "/a/{q"),
                 ("/a/{{x}}{{\tx\n}}", "/a/qq"),
-                ("/a/{{ X }}{{ xy }}{{ category }}", "/a/{{ X }}{{ xy }}{{ category }}"),
+                ("/a/{{ a b }}{{ a-b }}", "/a/{{ a b }}{{ a-b }}"),
             ] {
                 let svg = render(&make_payload(linked_json(&[("q", 1000.0)], template)), &test_fonts())
                     .expect("renders");

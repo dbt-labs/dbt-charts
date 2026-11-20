@@ -1527,6 +1527,7 @@ struct Drawn {
     variables: serde_json::Map<String, Value>,
     filter_variables: Vec<String>,
     interactive_controls: bool,
+    truncation: Option<crate::Truncation>,
     link_context: Option<crate::href::LinkContext>,
     title_shift: TitleShift,
     pagination_control_height: f64,
@@ -3130,6 +3131,87 @@ pub(crate) mod tests {
         let svg = render(&leading_total_payload(), &test_fonts()).expect("renders");
         assert!(svg.contains("1\u{2013}2 / 7<"), "{svg}");
         assert!(!svg.contains(" / 8<"), "{svg}");
+    }
+
+    fn cut_payload(interactive: bool, reason: crate::TruncationReason) -> Payload {
+        let mut payload = pool_payload("t1", 7, 3, interactive, false);
+        payload.truncation = Some(crate::Truncation { reason });
+        payload
+    }
+
+    #[test]
+    fn a_table_cut_by_the_row_limit_reads_the_total_with_a_plus_and_says_why() {
+        let svg = render(&cut_payload(false, crate::TruncationReason::MaxRows), &test_fonts()).expect("renders");
+        assert!(svg.contains("1\u{2013}3 / 7+ \u{b7} truncated by row limit<"), "{svg}");
+    }
+
+    #[test]
+    fn a_table_cut_by_the_byte_limit_names_the_size_limit() {
+        let svg = render(&cut_payload(false, crate::TruncationReason::MaxResultBytes), &test_fonts()).expect("renders");
+        assert!(svg.contains("1\u{2013}3 / 7+ \u{b7} truncated by size limit<"), "{svg}");
+    }
+
+    #[test]
+    fn an_uncut_table_reads_its_total_without_a_plus() {
+        let svg = render(&pool_payload("t1", 7, 3, false, false), &test_fonts()).expect("renders");
+        assert!(svg.contains("1\u{2013}3 / 7<"), "{svg}");
+        assert!(!svg.contains("7+") && !svg.contains("hit the"), "{svg}");
+    }
+
+    #[test]
+    fn the_pool_and_scroll_pagers_carry_the_plus_and_the_note_in_their_template() {
+        let pool = render(&cut_payload(true, crate::TruncationReason::MaxRows), &test_fonts()).expect("renders");
+        let words = pool_words(&pool);
+        assert_eq!(
+            words["page_range"],
+            "{first}\u{2013}{last} / {total}+ \u{b7} truncated by row limit",
+            "{words}"
+        );
+        let mut scroll = scroll_payload(7);
+        scroll.truncation = Some(crate::Truncation { reason: crate::TruncationReason::MaxRows });
+        let svg = render(&scroll, &test_fonts()).expect("renders");
+        assert!(
+            svg.contains("data-template=\"{first}\u{2013}{last} / {total}+ \u{b7} truncated by row limit\""),
+            "{svg}"
+        );
+    }
+
+    #[test]
+    fn a_pager_whose_note_does_not_fit_keeps_the_plus_and_drops_the_note_from_every_template() {
+        let reason = crate::TruncationReason::MaxRows;
+        let mut pool = cut_payload(true, reason);
+        pool.width = 260.0;
+        let words = pool_words(&render(&pool, &test_fonts()).expect("renders"));
+        assert_eq!(words["page_range"], "{first}\u{2013}{last} / {total}+", "{words}");
+        let mut scroll = scroll_payload(7);
+        scroll.width = 260.0;
+        scroll.truncation = Some(crate::Truncation { reason });
+        let svg = render(&scroll, &test_fonts()).expect("renders");
+        assert!(svg.contains("data-template=\"{first}\u{2013}{last} / {total}+\""), "{svg}");
+        assert!(!svg.contains("truncated by"), "{svg}");
+    }
+
+    #[test]
+    fn a_scrolling_pager_measures_its_note_against_the_pages_it_draws() {
+        let mut scroll = scroll_payload(60);
+        // Wide enough for the note beside a one-page pager, not beside twenty pages.
+        scroll.width = 328.0;
+        scroll.truncation = Some(crate::Truncation { reason: crate::TruncationReason::MaxRows });
+        let svg = render(&scroll, &test_fonts()).expect("renders");
+        assert!(svg.contains("data-template=\"{first}\u{2013}{last} / {total}+\""), "{svg}");
+        assert!(!svg.contains("truncated by"), "{svg}");
+    }
+
+    #[test]
+    fn a_pager_past_the_page_cap_measures_its_note_against_the_compact_pager() {
+        let mut pool = pool_payload("t1", 153, 3, true, false);
+        // Wide enough for the note beside the compact pager, not beside a numbered window.
+        pool.width = 300.0;
+        pool.truncation = Some(crate::Truncation { reason: crate::TruncationReason::MaxRows });
+        let svg = render(&pool, &test_fonts()).expect("renders");
+        let words = pool_words(&svg);
+        assert_eq!(words["page_range"], "{first}\u{2013}{last} / {total}+ \u{b7} truncated by row limit", "{words}");
+        assert!(svg.contains("1\u{2013}3 / 153+ \u{b7} truncated by row limit<"), "{svg}");
     }
 
     fn scroll_payload(rows: usize) -> Payload {
@@ -7593,17 +7675,10 @@ pub(crate) mod tests {
         );
     }
 
-    /// Regression: `row_text_baseline` used `row_heights[ri] - 8.0`, which only equals the real
-    /// formula (`per_row_height / 2 + text_baseline_offset`) at the shipped `row.height: 24.0` /
-    /// `text_baseline_offset: 4.0` combination — the first thing that breaks it is a wrap-grown
-    /// row. Single row, one company cell forced to wrap onto 2 lines: with `font_size: 12.0` and
-    /// `text_baseline_offset: 4.0`, `this_row_h` grows to `2*16 - 4 + 16 = 44.0`. The wrapped cell
-    /// centers itself correctly via its own (unrelated) `first_y` formula; the numeric lane in the
-    /// SAME row must land at the SAME vertical center — production baseline is `44/2 + 4 = 26` from
-    /// row top, `first_y + 8` in terms of the wrapped block's own first line. The old formula put
-    /// it at `44 - 8 = 36` from row top (`first_y + 18`), 10px low.
+    /// Body cells top-align: in a row grown by a wrapped cell, a one-line cell sits on the
+    /// wrapped cell's first baseline, not at the row's vertical middle.
     #[test]
-    fn wrap_grown_row_centers_non_wrapped_cells_at_the_correct_baseline() {
+    fn wrap_grown_row_sets_one_line_cells_on_the_wrapped_cells_first_baseline() {
         let rows = vec![json!({"company": "Apex Technologies", "revenue": 5.0})];
         let columns = json!({
             "company": {"label": "Company"},
@@ -7658,12 +7733,9 @@ pub(crate) mod tests {
             .and_then(|s| s.parse().ok())
             .expect("numeric cell y parses");
 
-        let expected = first_y + 8.0;
-        let old_buggy = first_y + 18.0;
         assert!(
-            (number_y - expected).abs() < 0.15,
-            "numeric lane must center on the grown row (expected {expected}, got {number_y}, \
-             old broken formula would give {old_buggy}):\n{svg}"
+            (number_y - first_y).abs() < 0.01,
+            "the numeric cell shares the wrapped cell's first baseline ({first_y}), got {number_y}:\n{svg}"
         );
     }
 
@@ -8149,27 +8221,28 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn spark_cell_centers_on_the_grown_row_height_not_the_nominal_one() {
-        // Distinct from the previous test's unwrapped row (where
-        // `this_row_h == row_h`, so a `row_h`-centering mutant is inert): a
-        // wrapped text cell in the SAME row grows `this_row_h` past the
-        // nominal `row_h`, and the spark mark must center on the grown band.
-        let rows = vec![json!({"c": "Alpha Beta Gamma Delta", "v": 42})];
-        let columns = json!({
-            "c": {"label": "C", "width": 80},
-            "v": {"label": "V", "spark": {"type": "bar", "max": 100.0}},
-        });
-        let payload = make_payload(columns, rows, None, 20);
-        let svg = render(&payload, &test_fonts()).expect("renders");
-        let marker = "<g transform=\"translate(";
-        let g_start = svg.find(marker).expect("spark g emitted");
-        let rest = &svg[g_start + marker.len()..];
-        let coords = rest.split(')').next().expect("closing paren");
-        let y: f64 = coords.split(',').nth(1).unwrap().trim().parse().unwrap();
-        // Nominal row_h (base_table_theme) is 32; header ends around y=62,
-        // so an unwrapped row would center near y=75 (see the previous
-        // test). A wrapped row's true center sits measurably lower.
-        assert!(y > 80.0, "spark must center on the row's own grown height, not the nominal one: y={y}\n{svg}");
+    fn spark_cell_centers_on_the_first_line_of_a_wrapped_row() {
+        // Top alignment: a wrapped text cell grows the row, and the spark sits
+        // where it would in a one-line row, relative to the shared first baseline.
+        let spark_y_minus_text_y = |text: &str, text_marker: &str| -> f64 {
+            let rows = vec![json!({"c": text, "v": 42})];
+            let columns = json!({
+                "c": {"label": "C", "width": 80},
+                "v": {"label": "V", "spark": {"type": "bar", "max": 100.0}},
+            });
+            let svg = render(&make_payload(columns, rows, None, 20), &test_fonts()).expect("renders");
+            let marker = "<g transform=\"translate(";
+            let rest = &svg[svg.find(marker).expect("spark g emitted") + marker.len()..];
+            let spark_y: f64 =
+                rest.split(')').next().unwrap().split(',').nth(1).unwrap().trim().parse().unwrap();
+            let head = svg.split(text_marker).next().expect("first text line found");
+            let text_y: f64 =
+                head.rsplit(" y=\"").next().unwrap().split('"').next().unwrap().parse().unwrap();
+            spark_y - text_y
+        };
+        let one_line = spark_y_minus_text_y("Alpha", ">Alpha<");
+        let wrapped = spark_y_minus_text_y("Alpha Beta Gamma Delta", ">Alpha");
+        assert!((wrapped - one_line).abs() < 0.01, "one-line {one_line}, wrapped {wrapped}");
     }
 
     #[test]

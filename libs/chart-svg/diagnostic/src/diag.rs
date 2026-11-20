@@ -806,6 +806,10 @@ pub fn err_log_scale_requires_positive_x_data(chart_id: impl Into<Value>, x_fiel
     Diagnostic::new(&codes::ERR_LOG_SCALE_REQUIRES_POSITIVE_X_DATA, [("chart_id", chart_id.into()), ("x_field", x_field.into())])
 }
 
+pub fn err_log_size_scale_requires_positive_data(chart_id: impl Into<Value>, size_field: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_LOG_SIZE_SCALE_REQUIRES_POSITIVE_DATA, [("chart_id", chart_id.into()), ("size_field", size_field.into())])
+}
+
 pub fn err_map_lookup_key_mismatch(chart_id: impl Into<Value>, lookup_field: impl Into<Value>, geo_source: impl Into<Value>, geo_key: impl Into<Value>, expected_format: impl Into<Value>, expected_samples: impl Into<Value>, query_samples: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_MAP_LOOKUP_KEY_MISMATCH, [("chart_id", chart_id.into()), ("lookup_field", lookup_field.into()), ("geo_source", geo_source.into()), ("geo_key", geo_key.into()), ("expected_format", expected_format.into()), ("expected_samples", expected_samples.into()), ("query_samples", query_samples.into())])
 }

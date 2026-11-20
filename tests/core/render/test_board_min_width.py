@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -47,11 +48,15 @@ _QUIET = "style:\n  footer:\n    visible: false\n  timestamp:\n    visible: fals
 _TITLE_TEXT = "A rather long board title that outgrows its tiny table"
 
 
-def _executor(board: Board, project: Project) -> Run:
-    return Run(
-        board,
-        env=build_exec_env(project),
-    )
+# Every render here reads this instant, so a footer row's width never depends on
+# when the suite runs.
+_RENDERED_AT = datetime(2026, 12, 28, 22, 22, tzinfo=UTC)
+
+
+def _executor(
+    board: Board, project: Project, rendered_at: datetime = _RENDERED_AT
+) -> Run:
+    return Run(board, env=build_exec_env(project), clock=lambda: rendered_at)
 
 
 def _compiled(yaml: str) -> Board:
@@ -68,9 +73,14 @@ def _resolved(yaml: str, local_project: Callable[..., Project]) -> ResolvedBoard
     return resolved
 
 
-def _svg(yaml: str, local_project: Callable[..., Project]) -> str:
+def _svg(
+    yaml: str,
+    local_project: Callable[..., Project],
+    rendered_at: datetime = _RENDERED_AT,
+) -> str:
     board = _compiled(yaml)
-    out = render_run(board, _executor(board, local_project(Path.cwd())), format="svg")
+    executor = _executor(board, local_project(Path.cwd()), rendered_at)
+    out = render_run(board, executor, format="svg")
     assert out.board_error is None, out.board_error
     return out.output
 
@@ -145,7 +155,8 @@ def _footer_row_width(resolved: ResolvedBoard, *, timestamp: bool) -> float:
     style = resolved.style
     width = footer_text_width(style.footer, str(style.font.family))
     if timestamp:
-        sample = "Data as of 12:00 UTC on 28 Dec 2026"
+        # Inter's widest digit and month under the default format.
+        sample = "Data as of 44:44 UTC on 44 May 4444"
         width += style.timestamp.gap
         width += get_font_measurer(str(style.font.family)).measure(
             sample, float(style.timestamp.font.size)
@@ -312,10 +323,26 @@ def test_a_footer_too_wide_for_an_authored_width_wraps_right_aligned(
     assert abs(narrow_h - single_h - line_step) < 0.01
 
 
+@pytest.mark.parametrize(
+    ("regional", "rendered_at"),
+    [
+        ("", datetime(2026, 12, 28, 22, 22, tzinfo=UTC)),
+        # Proportional digits: "00:09 ... 20 Nov" outmeasures "22:22 ... 28 Dec".
+        ("", datetime(2026, 11, 20, 0, 9, tzinfo=UTC)),
+        # The stamp shows the board's zone: "CEST" outmeasures "UTC".
+        (
+            "regional:\n  time_zone: Europe/Berlin\n",
+            datetime(2026, 5, 19, 22, 9, tzinfo=UTC),
+        ),
+    ],
+    ids=["dec", "nov", "berlin-summer"],
+)
 def test_an_unauthored_board_at_its_footer_floor_keeps_the_footer_on_one_line(
-    local_project,
+    local_project, regional: str, rendered_at: datetime
 ) -> None:
-    """The floor is sized from the widest sample timestamp, so a board hugged to
-    it never wraps the footer row."""
-    stamp, credit = _footer_texts(_svg(_QUERY + _TABLE + _ROWS, local_project))
+    """The floor is sized from the widest timestamp the format can produce in the
+    board's zone, so a board hugged to it never wraps the footer row, whenever
+    it renders."""
+    svg = _svg(regional + _QUERY + _TABLE + _ROWS, local_project, rendered_at)
+    stamp, credit = _footer_texts(svg)
     assert stamp["y"] == credit[0]["y"]

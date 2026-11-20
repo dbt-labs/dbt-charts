@@ -28,7 +28,7 @@ pub(crate) fn setter(template: &str) -> Option<(&str, &str)> {
     let (name, rest) = template.strip_prefix('?')?.split_once('=')?;
     let channel = rest.strip_prefix("{{")?.strip_suffix("}}")?.trim();
     let named = !name.is_empty() && !name.contains(['=', '&', '#', '{', '}']);
-    (named && matches!(channel, "x" | "y" | "color" | "theta")).then_some((name, channel))
+    (named && ::bind::links::MARK_CHANNELS.contains(&channel)).then_some((name, channel))
 }
 
 /// How far a receded mark's ink moves toward the canvas: until its WCAG contrast against it

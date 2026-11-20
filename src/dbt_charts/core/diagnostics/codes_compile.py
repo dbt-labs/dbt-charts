@@ -661,7 +661,7 @@ ERR_AXIS_COLOR_AUTO_NO_INK = REGISTRY.register(
         domain="compile",
         title="Axis color 'auto' has no single series color to take",
         message_template="{field_path} is 'auto', but {reason}, so there is no one color for the axis to take. Name a color instead, or give the axis one series.",
-        doc="`color: auto` on a y axis paints its grid lines, tick labels and title in the color of the one series drawn against it. An axis that holds several series, or a series colored by a field, has no single color.",
+        doc="`color: auto` on a y axis paints its gridlines, tick labels and title in the color of the one series drawn against it. An axis that holds several series, or a series colored by a field, has no single color.",
         summary="Axis `color: auto` on an axis without exactly one series color.",
         docs_topic="charts",
     )
@@ -867,6 +867,18 @@ ERR_LOG_SCALE_REQUIRES_POSITIVE_X_DATA = REGISTRY.register(
         message_template="Chart {chart_id!r}: column {x_field!r} has a value <= 0, but axis_x.scale.type: log requires strictly positive data; a log domain is undefined at and below zero. Filter out the non-positive rows, or drop the log scale.",
         doc="Fired when `axis_x.scale.type: log` is used but the x column contains a value ≤ 0. A log domain is undefined at and below zero. Filter out the non-positive rows, or drop the log scale.",
         summary="Fired when a log x-axis scale is used but the data contains a value at or below zero.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LOG_SIZE_SCALE_REQUIRES_POSITIVE_DATA = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LOG-SIZE-SCALE-REQUIRES-POSITIVE-DATA",
+        domain="compile",
+        title="Log size scale requires strictly positive data",
+        message_template="Chart {chart_id!r}: size column {size_field!r} has a value <= 0, but style.size.type: log requires strictly positive data; a log domain is undefined at and below zero. Filter out the non-positive rows, or use type: sqrt.",
+        doc="Fired when `style.size.type: log` is used but the `size:` column contains a value ≤ 0. A log domain is undefined at and below zero. Filter out the non-positive rows, or use `type: sqrt`.",
+        summary="Fired when a log size scale is used but the size column contains a value at or below zero.",
         docs_topic="charts",
     )
 )

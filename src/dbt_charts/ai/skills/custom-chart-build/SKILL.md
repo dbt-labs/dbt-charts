@@ -177,9 +177,11 @@ text.
 
 Set `link:` on the chart like any other chart:
 
-- A link with no `{{ channel }}` placeholder wraps the whole drawing in one
+- A link with no `{{ name }}` placeholder wraps the whole drawing in one
   anchor; the template draws nothing extra.
-- A link with placeholders (`/boards/stage/{{ x }}`) is per row: the template
+- A link with placeholders (`/boards/stage/{{ x }}`) is per row: a channel
+  name reads the column that channel binds, any other name the row's column
+  of that name. The template
   wraps the marks it wants clickable in `<a href="{{ href(r) }}">...</a>`. A
   template that never calls `href` under such a link fails the chart.
   Board paths resolve against the host; `http`, `https` and `mailto` pass

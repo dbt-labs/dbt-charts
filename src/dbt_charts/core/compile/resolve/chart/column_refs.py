@@ -33,7 +33,7 @@ _Value = Any  # type-state: explicit_any — a field value of any model
 _M = TypeVar("_M", bound=BaseModel)
 
 # The leading name of a `{{ name }}` / `{{ name | filter }}` placeholder.
-_PLACEHOLDER = re.compile(r"(\{\{\s*)([A-Za-z_][A-Za-z0-9_]*)")
+_PLACEHOLDER = re.compile(r"(\{\{\s*)(\w+)")
 
 
 def match_column_refs(chart: _C, columns: Mapping[str, Sequence[str]]) -> _C:
@@ -47,7 +47,7 @@ def match_column_refs(chart: _C, columns: Mapping[str, Sequence[str]]) -> _C:
     if chart.query_name is None:
         return chart
     walk = _Walk(columns, f"chart {chart.id!r}")
-    return walk.model(chart, chart.query_name, "", False)
+    return walk.model(chart, chart.query_name, "", None)
 
 
 class _Walk:
@@ -55,7 +55,9 @@ class _Walk:
         self.columns = columns
         self.chart = chart
 
-    def model(self, model: _M, scope: str, path: str, template: bool) -> _M:
+    def model(
+        self, model: _M, scope: str, path: str, template: ResultColumn | None
+    ) -> _M:
         fields = _ref_fields(type(model))
         if not fields:
             return model
@@ -77,7 +79,7 @@ class _Walk:
         tp: _TypeForm,
         scope: str,
         path: str,
-        template: bool,
+        template: ResultColumn | None,
     ) -> _Value:
         if value is None:
             return value
@@ -86,7 +88,7 @@ class _Walk:
             base, *meta = typing.get_args(tp)
             marker = next((m for m in meta if isinstance(m, ResultColumn)), None)
             if marker is not None:
-                template = template or marker.template
+                template = template or (marker if marker.template else None)
                 if isinstance(value, str):
                     return self.rename(value, scope, path, template)
             return self.value(value, base, scope, path, template)
@@ -98,7 +100,7 @@ class _Walk:
         if isinstance(value, BaseModel):
             return self.model(value, scope, f"{path}.", template)
         if isinstance(value, str):
-            return self.rename(value, scope, path, True) if template else value
+            return self.rename(value, scope, path, template) if template else value
         if isinstance(value, list | tuple) and typing.get_args(tp):
             item_tp = typing.get_args(tp)[0]
             items = [
@@ -118,7 +120,7 @@ class _Walk:
         tp: _TypeForm,
         scope: str,
         path: str,
-        template: bool,
+        template: ResultColumn | None,
     ) -> dict[_Value, _Value]:
         key_tp, item_tp = typing.get_args(tp)
         scoped = _carries(key_tp, ResultQuery)
@@ -142,19 +144,25 @@ class _Walk:
             changed |= new_key is not key or new_item is not item
         return out if changed else value
 
-    def rename(self, ref: str, scope: str, path: str, template: bool) -> str:
+    def rename(
+        self, ref: str, scope: str, path: str, template: ResultColumn | None
+    ) -> str:
         available = self.columns.get(scope)
         if not available:
             return ref
         where = f"{self.chart} {path}"
         if template:
-            return _PLACEHOLDER.sub(
-                lambda m: (
-                    m.group(1)
-                    + (match_column(m.group(2), available, where) or m.group(2))
-                ),
-                ref,
-            )
+            channels = template.channels
+
+            def placeholder(m: re.Match[str]) -> str:
+                name = m.group(2)
+                matched = (
+                    None if name in channels else match_column(name, available, where)
+                )
+                # A column spelled like a channel would turn into that channel.
+                return m.group(1) + (name if matched in channels else matched or name)
+
+            return _PLACEHOLDER.sub(placeholder, ref)
         return match_column(ref, available, where) or ref
 
 

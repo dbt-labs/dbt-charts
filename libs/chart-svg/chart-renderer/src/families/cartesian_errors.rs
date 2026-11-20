@@ -231,14 +231,16 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
     let facts = Facts::deserialize(&payload.resolved).map_err(|e| format!("{chart_type} payload: {e}"))?;
     if let (Some(template), "bar" | "line" | "area" | "scatter") = (&facts.link, chart_type) {
         let mut missing = None;
-        // The walk only finds the first placeholder naming a channel the chart does not encode.
+        // The walk finds the first placeholder naming a channel the chart does not encode.
         let _ = crate::href::resolve_channel_href(template, |channel| {
             let encoded = match channel {
                 "x" => facts.x.is_some(),
                 "y" => facts.y.as_ref().is_some_and(|y| !y.is_null()),
                 "color" => facts.color.is_some(),
                 // `theta` is a pie channel; these families never encode it.
-                _ => false,
+                "theta" => false,
+                // Any other name reads the row's column, checked where the row is.
+                _ => true,
             };
             if encoded {
                 return Ok(String::new());

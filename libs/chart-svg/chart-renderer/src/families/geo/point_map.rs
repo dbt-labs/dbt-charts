@@ -43,7 +43,7 @@ use crate::common::{
 use crate::contract;
 use diagnostic::{warn, Diagnostic};
 use crate::families::color_scale::{ContinuousColor, GradientAt};
-use crate::families::legend::{color_channel_title, legend_fit_bounds, legend_origin, stack_legends, symbol_legend, vega_default_legend, vega_legend, LegendConfig, LegendEntry, LegendSymbol, SizeLegend, SizePaint, SizeRows, VEGA_LEGEND_SYMBOL_LIMIT};
+use crate::families::legend::{color_channel_title, legend_fit_bounds, legend_origin, stack_legends, symbol_legend, vega_default_legend, vega_legend, LegendConfig, LegendEntry, LegendSymbol, SizeLegend, SizePaint, SizeRows, SizeScale, SizeScaleType, VEGA_LEGEND_SYMBOL_LIMIT};
 use ::bind::legend::{fold_symbol_limit};
 use crate::families::heatmap::date_cell_day;
 use ::bind::temporal::{infer_vega_type, VegaType};
@@ -65,8 +65,6 @@ const ALBERS_USA_REGIONS: [(f64, f64, f64, f64); 3] = [
     (18.0, -162.0, 23.0, -154.0),
 ];
 
-/// The size scale's range top: mark area is proportional to the value (`_AREA_PROPORTIONAL_SIZE_RANGE_MAX`).
-const AREA_RANGE_MAX: f64 = 1000.0;
 /// The tooltip list's length cap (`build_point_tooltip_fields`).
 const MAX_TOOLTIP_FIELDS: usize = 6;
 /// Vega's default `labelOffset`: a symbol's cell to its label.
@@ -126,7 +124,7 @@ struct ColorChannel {
 #[derive(Deserialize)]
 struct Style {
     point_mark: PointMark,
-    point_map: Option<PointMapSlot>,
+    point_map: PointMapSlot,
     single_series_fill: String,
     tooltip_format: FormatSlot,
     title_font: Option<Font>,
@@ -135,6 +133,8 @@ struct Style {
 /// The family style the cascade merged; the chart's `style.conditional` rides on it.
 #[derive(Deserialize)]
 struct PointMapSlot {
+    /// `style.size`: the size channel's mark-area range and scale law.
+    size: SizeScale,
     #[serde(default)]
     conditional: Option<std::collections::BTreeMap<String, Vec<crate::point_conditional::PointRule>>>,
 }
@@ -200,6 +200,8 @@ pub struct Bound {
     basemap: Option<Vec<GeoJson>>,
     coloring: Option<Coloring>,
     size_entries: Option<SizeEntries>,
+    /// The board's muted ink, the size legend's scale footnote.
+    secondary_color: Option<String>,
     fit: bool,
 }
 
@@ -324,19 +326,28 @@ fn count_ladder(max: f64) -> Vec<f64> {
     values
 }
 
-/// The legend of a size scale over `[0, max]`: the ticks that draw a circle, with their text.
-fn size_ladder(max: f64, collapse: bool) -> Result<(Vec<f64>, Vec<String>), String> {
+/// The size scale's domain: zero to the largest value, as the area is proportional to the
+/// value. A `log` scale cannot include zero, so it spans the smallest value to the largest; a
+/// collapsed count starts at one.
+fn size_domain(scale: SizeScale, values: &[f64], collapse: bool) -> (f64, f64) {
+    let max = values.iter().copied().fold(0.0_f64, f64::max);
+    match (scale.r#type, collapse) {
+        (SizeScaleType::Log, true) => (1.0, max),
+        (SizeScaleType::Log, false) => (values.iter().copied().fold(f64::INFINITY, f64::min), max),
+        (SizeScaleType::Linear | SizeScaleType::Sqrt, _) => (0.0, max),
+    }
+}
+
+/// The legend of a size scale over `domain`: the ticks that draw a circle, with their text.
+fn size_ladder(scale: SizeScale, domain: (f64, f64), collapse: bool) -> Result<(Vec<f64>, Vec<String>), String> {
     if collapse {
-        let values = count_ladder(max);
+        let values = count_ladder(domain.1);
         let labels = values.iter().map(|&v| ::bind::formats::locale::d3_format("d", v)).collect::<Result<_, _>>()?;
         return Ok((values, labels));
     }
     // A zero tick would draw a circle of no area, unless a zero domain gives every value the middle of the range.
-    crate::families::legend::size_legend_ticks((0.0, max), max > 0.0)
-}
-
-fn area_of(value: f64, max: f64) -> f64 {
-    crate::families::legend::unit_position(value, 0.0, max) * AREA_RANGE_MAX
+    let drop_zero = domain.1 > 0.0 && scale.area(domain, 0.0) == 0.0;
+    crate::families::legend::size_legend_ticks(scale, domain, drop_zero)
 }
 
 /// Read the chart's rows into circles. Warns of the rows production drops.
@@ -386,7 +397,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let Marks { coloring, size_entries, points, fit_points } = bind_marks(payload, &r, &rows)?;
     let basemap = bind_basemap(payload, &r)?;
     let fit = projection::is_fit(r.geo_projection_params.as_ref());
-    Ok(Bound { resolved: r, points, fit_points, basemap, coloring, size_entries, fit })
+    Ok(Bound { resolved: r, points, fit_points, basemap, coloring, size_entries, secondary_color: payload.board_style.as_ref().and_then(|b| b.secondary_color.clone()), fit })
 }
 
 fn bind_basemap(payload: &Payload, r: &Resolved) -> Result<Option<Vec<GeoJson>>, Diagnostic> {
@@ -497,7 +508,8 @@ fn bind_marks(
         None if r.collapse => groups.iter().map(|g| g.count as f64).collect(),
         None => Vec::new(),
     };
-    let size_max = size_values.iter().copied().fold(0.0_f64, f64::max);
+    let size_scale = r.style.point_map.size;
+    let size_domain = size_domain(size_scale, &size_values, r.collapse);
     let size_entries = if r.size.is_some() || r.collapse {
         let title = match r.size.as_deref() {
             Some(field) => color_channel_title(field, &r.legend, &r.field_labels)?,
@@ -505,8 +517,8 @@ fn bind_marks(
         };
         // No drawn row leaves the scale's domain empty: the legend keeps its title alone.
         let (values, labels) =
-            if size_values.is_empty() { (Vec::new(), Vec::new()) } else { size_ladder(size_max, r.collapse)? };
-        let areas = values.iter().map(|&v| area_of(v, size_max)).collect();
+            if size_values.is_empty() { (Vec::new(), Vec::new()) } else { size_ladder(size_scale, size_domain, r.collapse)? };
+        let areas = values.iter().map(|&v| size_scale.area(size_domain, v)).collect();
         Some(SizeEntries { title, labels, areas })
     } else {
         None
@@ -574,7 +586,7 @@ fn bind_marks(
             let href = if layered { None } else { href_of(payload, r, None, None)? };
             points.push(Point {
                 at: *at,
-                area: area_of(*count as f64, size_max),
+                area: size_scale.area(size_domain, *count as f64),
                 fill: Some(r.style.single_series_fill.clone()),
                 label: describe(described),
                 href,
@@ -627,7 +639,7 @@ fn bind_marks(
             _ => row.get(field).map(|cell| list_text(cell, affixed)).ok_or_else(|| format!("point_map: a row lacks the field {field:?}")),
         }
     };
-    let rules = r.style.point_map.as_ref().and_then(|slot| slot.conditional.as_ref());
+    let rules = r.style.point_map.conditional.as_ref();
     let patch_of = |row: &Map<String, Value>| crate::point_conditional::patch_of(rules, row, &[]);
     for (i, row) in rows.iter().enumerate() {
         let at = coords[i];
@@ -651,7 +663,7 @@ fn bind_marks(
             }
             let label = rows_described.into_iter().map(|(title, value)| format!("{title}: {value}")).collect::<Vec<_>>().join("; ");
             let href = if layered { None } else { href_of(payload, r, Some(row), color_field)? };
-            let area = if r.size.is_some() { area_of(size_values[i], size_max) } else { default_area };
+            let area = if r.size.is_some() { size_scale.area(size_domain, size_values[i]) } else { default_area };
             points.push(Point { at, area, fill: fills[i].clone(), label, href, patch: patch_of(row)? });
             continue;
         }
@@ -680,7 +692,7 @@ fn bind_marks(
             rows_described.push((field_title(r, field)?, other_text(row, field, *kind)?));
         }
         let href = if layered { None } else { href_of(payload, r, Some(row), color_field)? };
-        let area = if r.size.is_some() { area_of(size_values[i], size_max) } else { default_area };
+        let area = if r.size.is_some() { size_scale.area(size_domain, size_values[i]) } else { default_area };
         points.push(Point { at, area, fill: fills[i].clone(), label: describe(rows_described), href, patch: patch_of(row)? });
     }
     let fit_points = match fields {
@@ -717,7 +729,8 @@ fn fits_projection(row: &Map<String, Value>, fields: Option<(&str, &str)>) -> bo
     })
 }
 
-/// The circle's link: `link` with its `{{ color }}` placeholder read from the row.
+/// The circle's link: `link` with its `{{ color }}` placeholder, and any other `{{ name }}` that
+/// is no channel, read from the row.
 fn href_of(
     payload: &Payload,
     r: &Resolved,
@@ -725,9 +738,15 @@ fn href_of(
     color_field: Option<&str>,
 ) -> Result<Option<String>, Diagnostic> {
     let Some(template) = r.link.as_deref() else { return Ok(None) };
+    if row.is_none() {
+        crate::href::refuse_row_columns(template, "a counted point")?;
+    }
     let href = crate::href::resolve_channel_href(template, |channel| {
         let value = match (channel, row, color_field) {
             ("color", Some(row), Some(field)) => row.get(field),
+            (column, Some(row), _) if !::bind::links::MARK_CHANNELS.contains(&column) => {
+                return crate::href::row_column(row, column)
+            }
             _ => {
                 return Err(format!(
                     "link template references channel '{{{{ {channel} }}}}' but chart has no '{channel}' encoding assigned"
@@ -881,7 +900,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
                 .collect();
             let rows = SizeRows { labels: s.labels.clone(), glyphs, areas: s.areas.clone(), label_ws };
             let glyph = crate::families::scatter_shape::half_extents("circle", 1.0);
-            SizeLegend::new(&s.title, rows, (SYMBOL_LABEL_OFFSET, false), glyph, &legend_cfg, fonts)
+            SizeLegend::new(&s.title, rows, (SYMBOL_LABEL_OFFSET, false), glyph, r.style.point_map.size.r#type.footnote_inked(bound.secondary_color.as_deref())?, &legend_cfg, fonts)
         })
         .transpose()?;
     let gradient_at = |pw: f64, ph: f64| -> Result<Option<GradientAt>, String> {
@@ -1137,8 +1156,11 @@ mod tests {
         assert_eq!(count_ladder(1700.0), vec![500.0, 1000.0, 1500.0]);
     }
 
+    const DEFAULT_SCALE: SizeScale = SizeScale { range: (0.0, 1000.0), r#type: SizeScaleType::Linear };
+
     #[test]
     fn a_size_ladder_skips_the_zero_tick_and_groups_thousands() {
+        let size_ladder = |max: f64, collapse: bool| size_ladder(DEFAULT_SCALE, (0.0, max), collapse);
         let (values, labels) = size_ladder(35.0, false).unwrap();
         assert_eq!(values, vec![5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0]);
         assert_eq!(labels.last().unwrap(), "35");
@@ -1152,9 +1174,29 @@ mod tests {
 
     #[test]
     fn area_is_proportional_to_the_value() {
-        assert_eq!(area_of(0.0, 8.0), 0.0);
-        assert_eq!(area_of(4.0, 8.0), 500.0);
-        assert_eq!(area_of(8.0, 8.0), 1000.0);
+        let area_of = |v: f64| DEFAULT_SCALE.area((0.0, 8.0), v);
+        assert_eq!(area_of(0.0), 0.0);
+        assert_eq!(area_of(4.0), 500.0);
+        assert_eq!(area_of(8.0), 1000.0);
+    }
+
+    #[test]
+    fn the_domain_is_zero_anchored_except_under_log() {
+        let sqrt = SizeScale { range: (0.0, 1000.0), r#type: SizeScaleType::Sqrt };
+        let log = SizeScale { range: (16.0, 1600.0), r#type: SizeScaleType::Log };
+        assert_eq!(size_domain(DEFAULT_SCALE, &[3.0, 8.0], false), (0.0, 8.0));
+        assert_eq!(size_domain(sqrt, &[3.0, 8.0], false), (0.0, 8.0));
+        assert_eq!(size_domain(log, &[3.0, 8.0], false), (3.0, 8.0));
+        assert_eq!(size_domain(log, &[3.0, 8.0], true), (1.0, 8.0));
+    }
+
+    #[test]
+    fn a_range_that_starts_above_zero_keeps_the_zero_tick() {
+        let raised = SizeScale { range: (9.0, 1000.0), r#type: SizeScaleType::Linear };
+        let (values, _) = size_ladder(raised, (0.0, 35.0), false).unwrap();
+        assert_eq!(values[0], 0.0);
+        let (values, _) = size_ladder(DEFAULT_SCALE, (0.0, 35.0), false).unwrap();
+        assert_eq!(values[0], 5.0);
     }
 
     #[test]

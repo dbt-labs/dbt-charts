@@ -11,9 +11,12 @@ warning sinks the Python renderers write for a warning. An engine refusal
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict
-from typing import Literal
+from types import MappingProxyType
+from typing import Literal, NamedTuple
 
 from dbt_charts import _engine
 from dbt_charts.core.compile.format import (
@@ -62,7 +65,7 @@ from dbt_charts.core.diagnostics import REGISTRY, Diagnostic, display_message
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_CUSTOM_RENDER
 from dbt_charts.core.diagnostics.registry import ErrorCode, build_doc_url
-from dbt_charts.core.execute.cache_backend import ResultRows
+from dbt_charts.core.execute.cache_backend import ResultRows, TruncationInfo
 from dbt_charts.core.execute.rows_wire import (
     JsonDict,
     encode_cells,
@@ -363,6 +366,30 @@ def engine_datasets(
     return {name: result.datetimes_as_text for name, result in datasets.items()}
 
 
+_QUERY_TRUNCATIONS: ContextVar[Mapping[str, TruncationInfo]] = ContextVar(
+    "dct_query_truncations", default=MappingProxyType({})
+)
+
+
+@contextmanager
+def query_truncations(truncations: Mapping[str, TruncationInfo]) -> Generator[None]:
+    """Scope the queries the row or byte limit cut, for one render: a chart drawn
+    from one says so on the page. Outside a render nothing is cut."""
+    token = _QUERY_TRUNCATIONS.set(MappingProxyType(dict(truncations)))
+    try:
+        yield
+    finally:
+        _QUERY_TRUNCATIONS.reset(token)
+
+
+def chart_truncation(chart: ResolvedChart) -> JsonDict | None:
+    """The cut of the chart's own query, as the engine payload carries it."""
+    cut = _QUERY_TRUNCATIONS.get().get(chart.query_name) if chart.query_name else None
+    if cut is None:
+        return None
+    return {"reason": cut.reason}
+
+
 def build_chart_layout(
     chart: ResolvedChart,
     *,
@@ -444,6 +471,7 @@ def build_chart_layout(
         "measuring": measuring,
         "authored_height": authored_height,
         "placement": placement,
+        "truncation": chart_truncation(chart),
         # A custom chart's template draws on the board's one output budget:
         # the engine gets what is left, and the render charges what it emits.
         "max_template_output_bytes": (
@@ -910,23 +938,81 @@ def _render_payload(
     """Render `layout` over `result` and `datasets`; `authored` maps a callout
     field to its text as written, which a truncation warning reports in place of
     the resolved image URLs."""
-    try:
-        svg, warnings, natural_height = _engine.render_chart(
-            result.engine_rows,
-            _dataset_handles(datasets),
-            dumps_layout(layout),
-        )
-    except _engine.RenderDiagnosticError as exc:
-        raise chart_data_error(exc) from exc
+    drawn = _drawn(layout, result, datasets, measuring=measuring)
     record_engine_warnings(
         layout["resolved"]["id"],
         layout["width"],
-        warnings,
+        drawn.warnings,
         authored,
         record_warnings=record_warnings,
         measuring=measuring,
     )
-    return svg, natural_height
+    return drawn.svg, drawn.natural_height
+
+
+class _Drawn(NamedTuple):
+    svg: str
+    warnings: list[_engine.RenderDiagnostic]
+    natural_height: float | None
+    # Held so no `id()` in the memo's keys is reused while the memo lives.
+    inputs: tuple[ResultRows, dict[str | None, ResultRows]]
+
+
+_DrawKey = tuple[str, int, tuple[tuple[str | None, int], ...]]
+_draws: ContextVar[dict[_DrawKey, _Drawn] | None] = ContextVar("_draws", default=None)
+
+
+@contextmanager
+def engine_draws() -> Generator[None]:
+    """For the rest of a board render, identical engine requests draw once, and a
+    table painted at the natural height its sizing probe measured is that probe."""
+    token = _draws.set({})
+    try:
+        yield
+    finally:
+        _draws.reset(token)
+
+
+def _draw_key(
+    layout: JsonDict, result: ResultRows, datasets: dict[str | None, ResultRows]
+) -> _DrawKey:
+    return (
+        dumps_layout(layout),
+        id(result),
+        tuple((name, id(rows)) for name, rows in datasets.items()),
+    )
+
+
+def _drawn(
+    layout: JsonDict,
+    result: ResultRows,
+    datasets: dict[str | None, ResultRows],
+    *,
+    measuring: bool,
+) -> _Drawn:
+    draws = _draws.get()
+    key = _draw_key(layout, result, datasets)
+    if draws is not None:
+        if key in draws:
+            return draws[key]
+        # A table painted at its natural height draws what its height-0 probe drew
+        # (`test_table_rendered_once.py` pins it for a paged table, whose bounded
+        # and unbounded layouts are separate engine paths).
+        if layout["resolved"]["chart_type"] == "table" and layout["height"] > 0:
+            probe = draws.get(_draw_key({**layout, "height": 0.0}, result, datasets))
+            if probe is not None and probe.natural_height == layout["height"]:
+                return probe
+    try:
+        svg, warnings, natural_height = _engine.render_chart(
+            result.engine_rows, _dataset_handles(datasets), key[0]
+        )
+    except _engine.RenderDiagnosticError as exc:
+        raise chart_data_error(exc) from exc
+    drawn = _Drawn(svg, warnings, natural_height, (result, datasets))
+    # A `measuring` probe never matches a paint; holding it only costs memory.
+    if draws is not None and not measuring:
+        draws[key] = drawn
+    return drawn
 
 
 def authored_texts(chart: ResolvedChart) -> dict[str, str | None] | None:

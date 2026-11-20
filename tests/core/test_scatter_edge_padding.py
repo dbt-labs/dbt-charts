@@ -116,3 +116,26 @@ def test_authored_domain_stays_verbatim() -> None:
     dots = _dot_xs(svg)
     assert min(dots) == 0.0
     assert _plot_width(svg) == max(dots)
+
+
+def test_the_edge_pad_follows_the_size_ranges_largest_mark() -> None:
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "scatter",
+            "x": "x",
+            "y": "y",
+            "size": "n",
+            "style": {"size": {"range": [16, 784], "type": "sqrt"}},
+        }
+    )
+    rows = [
+        {"x": x, "y": y, "n": n}
+        for x, y, n in zip(_YEARS, _Y, [5, 50, 500, 5000, 50000, 600000], strict=True)
+    ]
+
+    dots = _dot_xs(render_chart_svg(chart, rows))
+
+    # The pad is the largest dot's radius (sqrt(784) / 2) plus the gap, so the
+    # first dot, which is small, still starts that far in.
+    assert min(dots) == pytest.approx(14.0 + _GAP, abs=0.05)

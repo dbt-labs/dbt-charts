@@ -16,6 +16,7 @@ from dbt_charts.core.compile.models.markers import (
     InheritSlot,
     SkipInheritSlots,  # noqa: F401  # pyright: ignore[reportUnusedImport] — required in module globals for model_rebuild() to resolve inherited base-class annotations
 )
+from dbt_charts.core.compile.models.primitives import SizeScaleStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _GeoChartStyle,
 )
@@ -45,6 +46,9 @@ class _PointMapChartStyleBase(_GeoChartStyle):
     ] = Field(
         default_factory=PointMapChartMarksStyle,
         description="Point-map-family mark overrides.",
+    )
+    size: SizeScaleStyle = Field(
+        description="Area range and scale type of the `size:` channel.",
     )
 
 

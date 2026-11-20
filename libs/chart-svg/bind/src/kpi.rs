@@ -215,7 +215,7 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, placed: &Placed, board: &Board, 
     let glyph = cased(&glyph, if drawn_by_good { kpi.value.glyph.arrow.font.case } else { kpi.value.glyph.slot.font.case })?;
     let (prefix, suffix) = (cased(&prefix, kpi.value.affix.font.case)?, cased(&suffix, kpi.value.affix.font.case)?);
     let number = cased(&number, kpi.value.font.case)?;
-    let (link, link_open) = match (link(chart, placed.public_id, board, run)?, &text_format) {
+    let (link, link_open) = match (link(chart, placed.public_id, board, run, Some(row))?, &text_format) {
         (Some((href, open)), _) => (Some(href), open),
         (None, Some(name)) => match text_format_link(name, cell, id) {
             Ok(Some(href)) => (Some(Href::new(&href)?), LinkOpen::Page),
@@ -452,10 +452,19 @@ fn text_format_link(format: &str, cell: &Value, id: &ChartId) -> Result<Option<S
     Ok(Some(text.to_string()))
 }
 
-/// The card's `link`, its href the template as authored.
-fn link(chart: &KpiChart, public_id: &str, board: &Board, run: &RunResult) -> Result<Option<(Href, LinkOpen)>, Diagnostic> {
+/// The card's `link`, each `{{ column }}` filled from the card's one row. With no row, a link that
+/// names a column leaves the card unlinked.
+fn link(chart: &KpiChart, public_id: &str, board: &Board, run: &RunResult, row: Option<&serde_json::Map<String, Value>>) -> Result<Option<(Href, LinkOpen)>, Diagnostic> {
     let Some((template, open)) = links::chart_link(chart.base.link.as_ref(), links::automatic(run, public_id), board)? else { return Ok(None) };
-    Ok(Some((links::resolve(template, run)?, open)))
+    let mut named = false;
+    let href = links::expand_channels(template, |column| {
+        named = true;
+        row.map_or(Ok(String::new()), |row| links::row_column(row, column))
+    })?;
+    if named && row.is_none() {
+        return Ok(None);
+    }
+    Ok(Some((links::resolve(&href, run)?, open)))
 }
 
 /// `SlotFont::cased`: `text` under a slot's letter-case transform.
@@ -480,7 +489,7 @@ fn empty_card(chart: &KpiChart, placed: &Placed, painted: Painted, patch: CardPa
         Engine::Value(color) if !color.as_str().is_empty() => color.as_str().to_string(),
         _ => secondary.clone(),
     };
-    let link = link(chart, placed.public_id, board, run)?;
+    let link = link(chart, placed.public_id, board, run, None)?;
     let support = KpiSupport {
         glyph: String::new(),
         value: cased(&no_results_line(placed.public_id, run)?, kpi.support.font.case)?,

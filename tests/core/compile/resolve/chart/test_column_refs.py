@@ -117,6 +117,18 @@ def test_query_formats_keys_take_the_result_spelling(
     assert bound.query.formats == {"MAU Seat Util %": "percent"}
 
 
+def test_a_chart_link_takes_the_result_spelling_but_keeps_its_channels(
+    make_chart: Callable[..., normalized.Chart],
+) -> None:
+    chart = make_chart(
+        "bar", x="month", y="revenue", link="/o?id={{ order_id }}&m={{ x }}"
+    )
+    bound = bind_channels(chart, ["MONTH", "REVENUE", "ORDER_ID", "X"])
+    assert bound.link == "/o?id={{ ORDER_ID }}&m={{ x }}"
+    shadow = make_chart("bar", x="month", y="revenue", link="/o?v={{ X }}")
+    assert bind_channels(shadow, ["month", "revenue", "x"]).link == "/o?v={{ X }}"
+
+
 def test_table_column_keys_and_link_templates_take_the_result_spelling(
     make_chart: Callable[..., normalized.Chart],
 ) -> None:

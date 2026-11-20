@@ -613,6 +613,64 @@ pub(crate) fn unit_position(value: f64, min: f64, max: f64) -> f64 {
     }
 }
 
+/// How a size channel's value maps onto its mark-area range: d3's `scaleLinear`, `scaleSqrt`
+/// (`Pow(0.5)`, signed) or `scaleLog`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum SizeScaleType {
+    Linear,
+    Sqrt,
+    Log,
+}
+
+impl SizeScaleType {
+    /// The legend footnote naming a scale whose circles are not proportional to the value;
+    /// `linear` reads as its numbers and needs none.
+    pub fn footnote(self) -> Option<&'static str> {
+        match self {
+            Self::Linear => None,
+            Self::Sqrt => Some("Square-root scale"),
+            Self::Log => Some("Log scale"),
+        }
+    }
+
+    /// [`Self::footnote`] with its ink, the board's muted `secondary_color`; a footnote
+    /// with no ink to paint is an error, not a guess.
+    pub fn footnote_inked(self, secondary_color: Option<&str>) -> Result<Option<(&'static str, &str)>, String> {
+        let Some(text) = self.footnote() else { return Ok(None) };
+        let ink = secondary_color.ok_or(
+            "size legend: payload carries no board_style.secondary_color (the scale footnote's ink)",
+        )?;
+        Ok(Some((text, ink)))
+    }
+}
+
+/// A size channel's resolved scale (`style.size`): the mark-area range in px² and the law.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub struct SizeScale {
+    pub range: (f64, f64),
+    pub r#type: SizeScaleType,
+}
+
+impl SizeScale {
+    fn transform(self) -> d3rs::scale::Transform {
+        match self.r#type {
+            SizeScaleType::Linear => d3rs::scale::Transform::Identity,
+            SizeScaleType::Sqrt => d3rs::scale::Transform::Pow(0.5),
+            SizeScaleType::Log => d3rs::scale::Transform::Log { base: 10.0 },
+        }
+    }
+
+    /// The drawn mark AREA for `v` over `domain`: the value's place in the transformed domain,
+    /// then linear onto the range. A zero-width domain maps to the range's middle
+    /// ([`unit_position`]). The engine's `layout::plot::points::size_area` ports this law.
+    pub fn area(self, (lo, hi): (f64, f64), v: f64) -> f64 {
+        let transform = self.transform();
+        let at = |x: f64| transform.apply(false, x);
+        self.range.0 + unit_position(at(v), at(lo), at(hi)) * (self.range.1 - self.range.0)
+    }
+}
+
 /// A vertical gradient legend's bar length beside a plot `plot_h` tall.
 pub(crate) fn gradient_length(plot_h: f64) -> f64 {
     plot_h.clamp(VEGA_GRADIENT_LENGTH_MIN, VEGA_GRADIENT_LENGTH_MAX)
@@ -1399,11 +1457,27 @@ const SIZE_LEGEND_TICK_COUNT: usize = 5;
 
 /// A size scale's legend ticks over `domain` and their text: d3's five ticks, comma-grouped
 /// at the precision the tick step implies. `drop_zero` omits a zero tick, whose circle has
-/// no area (Vega-Lite lists none when the range starts at 0).
-pub fn size_legend_ticks(domain: (f64, f64), drop_zero: bool) -> Result<(Vec<f64>, Vec<String>), String> {
-    let ticks = d3rs::ticks::d3_ticks(domain.0, domain.1, SIZE_LEGEND_TICK_COUNT);
-    let step = ticks.get(1).map_or(1.0, |&v| v - ticks[0]);
-    let spec = ::bind::formats::locale::vega_tick_spec(step);
+/// no area (Vega-Lite lists none when the range starts at 0). A log scale takes d3's `scaleLog`
+/// ticks instead, the ones a log axis shows.
+pub fn size_legend_ticks(
+    scale: SizeScale,
+    domain: (f64, f64),
+    drop_zero: bool,
+) -> Result<(Vec<f64>, Vec<String>), String> {
+    let ticks = match scale.r#type {
+        SizeScaleType::Log => {
+            let log = d3rs::scale::Continuous::log([domain.0, domain.1], [0.0, 1.0]);
+            let visible = log.log_tick_visible(SIZE_LEGEND_TICK_COUNT);
+            log.ticks(SIZE_LEGEND_TICK_COUNT).into_iter().filter(|&v| visible(v)).collect()
+        }
+        SizeScaleType::Linear | SizeScaleType::Sqrt => d3rs::ticks::d3_ticks(domain.0, domain.1, SIZE_LEGEND_TICK_COUNT),
+    };
+    // Log ticks are uneven; the smallest gap is the precision every label needs.
+    let step = match scale.r#type {
+        SizeScaleType::Log => ticks.windows(2).map(|w| w[1] - w[0]).fold(f64::INFINITY, f64::min),
+        SizeScaleType::Linear | SizeScaleType::Sqrt => ticks.get(1).map_or(1.0, |&v| v - ticks[0]),
+    };
+    let spec = ::bind::formats::locale::vega_tick_spec(if step.is_finite() { step } else { 1.0 });
     let values: Vec<f64> = ticks.into_iter().filter(|&v| !(drop_zero && v == 0.0)).collect();
     let labels = values.iter().map(|&v| ::bind::formats::locale::d3_format(&spec, v)).collect::<Result<_, _>>()?;
     Ok((values, labels))
@@ -1447,18 +1521,25 @@ pub struct SizeLegend {
     glyphs: Vec<PathData>,
     cells: Vec<SizeCell>,
     title_band: f64,
+    /// The scale footnote under the entries, with the y it starts at (below the title band).
+    footnote: Option<(String, String, f64)>,
     pub w: f64,
     pub h: f64,
 }
 
+/// The gap between a size legend's last circle row and its scale footnote.
+pub const SIZE_LEGEND_FOOTNOTE_GAP: f64 = 6.0;
+
 impl SizeLegend {
     /// `label_offset` is the gap from a symbol's cell to its label; `glyph` the circle's
-    /// bounds. `cfg` is the legend's own text style.
+    /// bounds. `footnote` names a non-proportional scale under the entries, in the labels' font and the given (text, ink).
+    /// `cfg` is the legend's own text style.
     pub fn new(
         title: &str,
         rows: SizeRows,
         (label_offset, horizontal): (f64, bool),
         glyph: crate::families::scatter_shape::Bounds,
+        footnote: Option<(&str, &str)>,
         cfg: &LegendConfig,
         fonts: &FontBook,
     ) -> Result<Self, String> {
@@ -1476,14 +1557,20 @@ impl SizeLegend {
         };
         let title_band = if title.is_empty() { 0.0 } else { title_size + VEGA_LEGEND_TITLE_PADDING };
         let title_w = fonts.measure_shaped(title, title_family, title_size)?;
+        let note_w = match footnote {
+            Some((text, _)) => fonts.measure_shaped(text, cfg.label.font.family_or("sans-serif"), label_size)?,
+            None => 0.0,
+        };
+        let note_band = if footnote.is_some() { SIZE_LEGEND_FOOTNOTE_GAP + label_size } else { 0.0 };
         Ok(Self {
             title: title.to_string(),
             labels: rows.labels,
             glyphs: rows.glyphs,
             cells,
             title_band,
-            w: title_w.max(box_w).ceil(),
-            h: title_band + box_h,
+            footnote: footnote.map(|(text, ink)| (text.to_string(), ink.to_string(), title_band + box_h + SIZE_LEGEND_FOOTNOTE_GAP)),
+            w: title_w.max(box_w).max(note_w).ceil(),
+            h: title_band + box_h + note_band,
         })
     }
 
@@ -1528,6 +1615,9 @@ impl SizeLegend {
             );
             let text = Node::text(Role::Legend, (x + cell.label_x, row_y + cell.c + baseline_shift("middle", label_size)), Attrs::new().vega("font-family", lf.family_or("sans-serif")).num("font-size", label_size).quick_some("font-style", lf.style.as_deref()).set("font-weight", lf.weight_str()).set("fill", lf.color.as_deref().unwrap_or("#626366")), label.as_str());
             nodes.push(Node::group(Role::Legend, ::layout::contract::legend_label_attrs(None, false), vec![text]));
+        }
+        if let Some((text, ink, top)) = &self.footnote {
+            nodes.push(Node::text(Role::Legend, (x, y + top + baseline_shift("top", label_size)), Attrs::new().vega("font-family", lf.family_or("sans-serif")).num("font-size", label_size).quick_some("font-style", lf.style.as_deref()).set("font-weight", lf.weight_str()).set("fill", ink.as_str()), text.as_str()));
         }
         nodes
     }
@@ -1621,6 +1711,33 @@ pub fn color_channel_title(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_size_scale_maps_the_shared_cases() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!("../../../fixtures/size-scale/cases.json")).unwrap();
+        for case in cases["cases"].as_array().unwrap() {
+            let num = |v: &serde_json::Value| v.as_f64().unwrap();
+            let range = case["range"].as_array().unwrap();
+            let domain = case["domain"].as_array().unwrap();
+            let scale = SizeScale {
+                range: (num(&range[0]), num(&range[1])),
+                r#type: serde_json::from_value(case["type"].clone()).unwrap(),
+            };
+            let area = scale.area((num(&domain[0]), num(&domain[1])), num(&case["value"]));
+            assert!((area - num(&case["area"])).abs() < 1e-9, "{case}: drew {area}");
+        }
+    }
+
+    #[test]
+    fn log_legend_ticks_are_a_log_axis_s_and_linear_ones_are_d3s_five() {
+        let log = SizeScale { range: (16.0, 1600.0), r#type: SizeScaleType::Log };
+        let (values, labels) = size_legend_ticks(log, (1.0, 1000.0), false).unwrap();
+        assert_eq!(values, vec![1.0, 10.0, 100.0, 1000.0]);
+        assert_eq!(labels, vec!["1", "10", "100", "1,000"]);
+        let linear = SizeScale { range: (4.0, 361.0), r#type: SizeScaleType::Linear };
+        let (values, _) = size_legend_ticks(linear, (0.0, 100.0), true).unwrap();
+        assert_eq!(values, vec![20.0, 40.0, 60.0, 80.0, 100.0]);
+    }
+
     #[test]
     fn legends_stack_a_margin_apart_along_their_axis() {
         let blocks = [(30.0, 10.0), (20.0, 40.0), (50.0, 5.0)];
@@ -2019,6 +2136,39 @@ mod tests {
             "title": {"font": {"family": TEST_FONT}, "visible": false},
         }))
         .unwrap()
+    }
+
+    fn size_legend_with(footnote: Option<(&str, &str)>, horizontal: bool) -> SizeLegend {
+        let fonts = test_fonts();
+        let cfg = legend_cfg(if horizontal { "horizontal" } else { "vertical" }, None);
+        let areas = vec![16.0, 400.0, 1600.0];
+        let labels: Vec<String> = ["1", "10", "100"].map(String::from).to_vec();
+        let label_ws = size_label_widths(&labels, &cfg, &fonts).unwrap();
+        let glyphs = areas.iter().map(|a| crate::families::scatter_shape::path("circle", (a / std::f64::consts::PI).sqrt()).unwrap()).collect();
+        let glyph = crate::families::scatter_shape::half_extents("circle", 1.0);
+        let rows = SizeRows { labels, glyphs, areas, label_ws };
+        SizeLegend::new("Deals", rows, (8.0, horizontal), glyph, footnote, &cfg, &fonts).unwrap()
+    }
+
+    #[test]
+    fn a_size_legend_footnote_adds_one_label_row_below_the_circles() {
+        for horizontal in [false, true] {
+            let (plain, noted) = (size_legend_with(None, horizontal), size_legend_with(Some(("Log scale", "#abcdef")), horizontal));
+            assert_eq!(noted.h - plain.h, SIZE_LEGEND_FOOTNOTE_GAP + 11.0, "horizontal {horizontal}");
+            assert!(noted.w >= plain.w);
+            let cfg = legend_cfg("vertical", None);
+            let ink = |l: &SizeLegend| l.nodes(&cfg, SizePaint::Field, 0.0, 0.0);
+            assert_eq!(ink(&noted).len(), ink(&plain).len() + 1, "one text node more");
+            let printed = print::print(&ink(&noted));
+            assert!(printed.contains(">Log scale</text>") && printed.contains("fill=\"#abcdef\""), "{printed}");
+        }
+    }
+
+    #[test]
+    fn only_a_non_proportional_size_scale_has_a_footnote() {
+        assert_eq!(SizeScaleType::Linear.footnote(), None);
+        assert_eq!(SizeScaleType::Sqrt.footnote(), Some("Square-root scale"));
+        assert_eq!(SizeScaleType::Log.footnote(), Some("Log scale"));
     }
 
     /// A set column count too wide for the room drops columns before it cuts a

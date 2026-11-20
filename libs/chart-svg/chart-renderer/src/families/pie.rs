@@ -1953,21 +1953,25 @@ mod tests {
         assert!(err.to_string().contains("javascript"), "{err}");
     }
 
-    /// `_HREF_PLACEHOLDER` matches only `x|y|color|theta`, so an authored
-    /// `{{ category }}` passes through verbatim (`charts/sector-charts_2`):
-    /// one `<a>` per wedge, opening right inside the arc's `.role-mark` group
-    /// and closing before it does.
+    /// A `{{ category }}` that names no channel reads the row's column: one `<a>` per wedge,
+    /// opening right inside the arc's `.role-mark` group and closing before it does.
     #[test]
     fn a_link_paints_one_anchor_per_wedge_inside_its_mark_group() {
         let p = linked_pie_payload("/category/{{ category }}");
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
-        assert_eq!(hrefs(&svg), ["/category/{{ category }}"; 3], "{svg}");
+        assert_eq!(hrefs(&svg), ["/category/Electronics", "/category/Accessories", "/category/Tools"], "{svg}");
         for (i, _) in svg.match_indices("<g class=\"mark-arc role-mark layer_0_marks\"") {
             let open_end = i + svg[i..].find('>').unwrap() + 1;
             assert!(svg[open_end..].starts_with("<a href=\""), "anchor opens the group: {svg}");
             let group_end = open_end + svg[open_end..].find("</g>").unwrap();
             assert!(svg[open_end..group_end].ends_with("</a>"), "anchor closes the group: {svg}");
         }
+    }
+
+    #[test]
+    fn a_link_naming_a_column_the_rows_lack_is_refused() {
+        let err = render(&make_payload(linked_pie_payload("/c/{{ ghost }}")), &test_fonts()).expect_err("refused");
+        assert!(err.to_string().contains("'{{ ghost }}'"), "{err}");
     }
 
     /// A modal link stamps every wedge anchor; page and missing stamp nothing.

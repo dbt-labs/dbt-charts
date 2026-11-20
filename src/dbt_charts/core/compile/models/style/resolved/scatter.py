@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import ConfigDict, Field
 
+from dbt_charts.core.compile.models.primitives import SizeScaleStyle
 from dbt_charts.core.compile.models.style.theme.scatter import ScatterConditionalRule
 
 from ._cartesian import _CartesianResolvedStyle
@@ -20,6 +21,9 @@ class ResolvedScatterStyle(_CartesianResolvedStyle):
 
     point_mark: ResolvedPointMarkStyle = Field(
         description="Cascade-merged point mark geometry."
+    )
+    size: SizeScaleStyle = Field(
+        description="Area range and scale type of the `size:` channel."
     )
     conditional: dict[str, list[ScatterConditionalRule]] | None = Field(
         default=None,

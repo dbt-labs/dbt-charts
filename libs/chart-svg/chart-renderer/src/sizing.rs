@@ -519,6 +519,7 @@ fn rendered_vega_height(
     let payload = crate::Payload {
         cell_text: Default::default(),
         max_template_output_bytes: None,
+        truncation: None,
         resolved: chart_json.clone(),
         rows: rows.clone(),
         width,
@@ -604,6 +605,7 @@ fn spark_bar_natural_height(
     let payload = crate::Payload {
         cell_text: Default::default(),
         max_template_output_bytes: None,
+        truncation: None,
         resolved: chart_json.clone(),
         rows: dataset.rows.clone(),
         width,
@@ -733,6 +735,7 @@ fn get_table_height_from_data(
     let payload = crate::Payload {
         cell_text: Default::default(),
         max_template_output_bytes: None,
+        truncation: None,
         resolved: chart_json.clone(),
         rows: dataset.rows.clone(),
         width: (width - padding.left - padding.right).max(0.0),
@@ -903,6 +906,7 @@ pub fn sized_pie_mode(
     let payload = crate::Payload {
         cell_text: Default::default(),
         max_template_output_bytes: None,
+        truncation: None,
         resolved: chart_json.clone(),
         rows: dataset.rows.clone(),
         width,
@@ -969,6 +973,7 @@ pub fn resolve_chart_item_height(
         let payload = crate::Payload {
             cell_text: Default::default(),
             max_template_output_bytes: None,
+            truncation: None,
             resolved: chart_json.clone(),
             rows: Default::default(),
             width,

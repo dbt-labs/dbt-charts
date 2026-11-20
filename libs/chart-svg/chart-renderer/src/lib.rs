@@ -391,6 +391,19 @@ pub struct VariableOptions {
     pub multiple: bool,
 }
 
+/// What cut a query result short: the limit that stopped it.
+#[derive(Deserialize, Clone, Debug)]
+pub struct Truncation {
+    pub reason: TruncationReason,
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TruncationReason {
+    MaxRows,
+    MaxResultBytes,
+}
+
 #[derive(Deserialize, Clone)]
 #[serde(remote = "Self")]
 pub struct Payload {
@@ -516,6 +529,10 @@ pub struct Payload {
     /// template may emit for one render. Only the custom family reads it.
     #[serde(default)]
     pub max_template_output_bytes: Option<u64>,
+    /// The chart's own query result was cut by `execution.max_rows` or
+    /// `execution.max_result_bytes`; only the table's pager reads it.
+    #[serde(default)]
+    pub truncation: Option<Truncation>,
     /// The `str()` text of each cell the wire tagged (a Decimal, a non-finite
     /// value) in `rows`, by row and column; filled when the payload is parsed.
     #[serde(skip)]
@@ -537,7 +554,7 @@ impl Payload {
     /// This payload over `resolved` and `rows`, without copying the ones it replaces.
     pub(crate) fn with_inputs(&self, resolved: Value, rows: impl Into<SharedRows>) -> Payload {
         let rows = rows.into();
-        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, variable_options, filter_variables, empty_filters, interactive_controls, link_context, datasets, schema, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, placement, slot_width, max_template_output_bytes, cell_text } = self;
+        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, variable_options, filter_variables, empty_filters, interactive_controls, link_context, datasets, schema, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, placement, slot_width, max_template_output_bytes, truncation, cell_text } = self;
         Payload {
             resolved,
             rows,
@@ -566,6 +583,7 @@ impl Payload {
             placement: *placement,
             slot_width: *slot_width,
             max_template_output_bytes: *max_template_output_bytes,
+            truncation: truncation.clone(),
             cell_text: cell_text.clone(),
         }
     }

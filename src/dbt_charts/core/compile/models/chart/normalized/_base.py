@@ -28,7 +28,13 @@ from dbt_charts.core.compile.models.chart.authored import (
     MultiplesConfig,
     TooltipField,
 )
-from dbt_charts.core.compile.models.markers import ColumnRef, ResultQuery, Url
+from dbt_charts.core.compile.models.markers import (
+    LINK_CHANNELS,
+    ColumnRef,
+    ResultColumn,
+    ResultQuery,
+    Url,
+)
 from dbt_charts.core.compile.models.primitives import LinkOpen, VariableDependencies
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.vega_lite.contracts import (
@@ -90,7 +96,11 @@ class _BaseChartFields(BaseModel):
     )
     # False is the authored per-chart `links.auto` opt-out; resolve clears it to
     # None at the resolved boundary, so ResolvedChart.link stays str | None.
-    link: Annotated[str | Literal[False] | None, Url()] = Field(
+    link: Annotated[
+        str | Literal[False] | None,
+        Url(),
+        ResultColumn(template=True, channels=LINK_CHANNELS),
+    ] = Field(
         default=None,
         description="Click-through URL template, or false to stay unlinked.",
     )

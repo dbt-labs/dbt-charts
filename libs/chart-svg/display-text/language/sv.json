@@ -47,6 +47,8 @@
   "controls.next_month": "Nästa månad",
   "controls.no": "Nej",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.rows_cut_by_row_limit": "avkortat av radgränsen",
+  "controls.rows_cut_by_byte_limit": "avkortat av storleksgränsen",
   "controls.preset_before_previous": "Före föregående {duration}",
   "controls.preset_last": "Senaste {duration}",
   "controls.preset_previous": "Föregående {duration}",

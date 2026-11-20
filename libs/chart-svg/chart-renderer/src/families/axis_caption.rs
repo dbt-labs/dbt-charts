@@ -89,7 +89,7 @@ impl AxisCaption {
     }
 
     /// Marks the caption bare when `axis` draws no tick, label, domain line or
-    /// title; its grid lines are a separate Vega axis with no description.
+    /// title; its gridlines are a separate Vega axis with no description.
     pub fn bare_if_undrawn(mut self, axis: &AxisStyle) -> AxisCaption {
         self.bare = self.title.is_none()
             && !axis.ticks.visible.unwrap_or(true)

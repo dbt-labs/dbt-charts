@@ -506,7 +506,7 @@ class TestRowRuleZOrderAndFillAlignment:
 
         With a 1px row rule, each fill should be row_height-1 so the rule
         band at the bottom of each row stays clear and the fill can't bleed
-        past the grid line.
+        past the gridline.
         """
         import re
 

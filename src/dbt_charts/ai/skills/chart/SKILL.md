@@ -139,11 +139,12 @@ For a shape no built-in type draws, read the custom-chart-build skill.
 - `style` ({marks: {}}): Only `marks`: a line layer's color is `marks: {line: {stroke: {color: '#hex'}}}`, a scatter's `marks: {point: {color: '#hex'}}`
 Also exist: `axis_y`, `legend`, `y_start`.
 Layer types: `bar`, `line`, `area`, `scatter`.
+Several measures with the same mark on one axis are one `y:` list (`y: [a, b]`), each a series of the base chart. A layer is an overlay, named in the legend: use one for a different mark, another query, a reference such as a target, or a second axis.
 
 - y_start sets each bar's start, so it can't be stacked; remove style.stack or y_start.
 - A bar `x` reads up to 50 values: draw 120 months as a `line`, or roll them up in SQL.
 
-Derived series (rolling averages, running totals, YoY) are window functions or extra columns, plotted as another `y` or a `layers:` entry. The delivered page is static: never caption anything as available "on hover".
+Derived series (rolling averages, running totals, YoY) are window functions or extra columns, plotted as another column in the `y:` list. The delivered page is static: never caption anything as available "on hover".
 
 `annotations:` (bar, line, area, scatter) are `type: rule` (a line at `y: 25`, `y: avg()`, `x: <date>`), `band` (`from`/`to`), `note` (at `x` and `y`) or `trend` (`fit: linear()`), each with `text`. One target value is a rule; a target per bar or period is the targets recipe. Peak note: `y: max()`, no `x`; never paste a result.
 

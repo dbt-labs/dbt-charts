@@ -261,6 +261,18 @@ class BandTextMarkStyle(AnnotationTextMarkStyle):
         default_factory=BandPositionStyle,
         description="Which side of the band the text sits on, and where along it.",
     )
+    max_width: Annotated[
+        Annotated[float, Field(gt=0)] | Literal["auto"] | None,
+        SkipInheritSlots(),
+        Absent("wraps to the band"),
+    ] = Field(
+        default=None,
+        description=(
+            "Width in pixels a band's text wraps to, in place of the band's own "
+            "width; `auto` is a readable measure of about 28 characters, kept "
+            "inside the plot."
+        ),
+    )
 
 
 class RuleTextMarkStyle(AnnotationTextMarkStyle):

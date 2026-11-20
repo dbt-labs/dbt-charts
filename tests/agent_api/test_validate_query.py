@@ -30,6 +30,20 @@ def test_explicit_cross_join_is_intentional_but_bare_joins_still_warn() -> None:
     assert codes == {"WARN-MISSING-JOIN-PREDICATE"}
 
 
+@pytest.mark.parametrize(
+    ("sql", "dialect"),
+    [
+        ("SELECT a.x FROM t1 a JOIN (SELECT 1, 2 FROM t2 CROSS JOIN t3) b", None),
+        ("SELECT a.x FROM t1 a, t2 b", "bigquery"),
+    ],
+)
+def test_join_the_parser_reads_as_cross_still_warns(
+    sql: str, dialect: str | None
+) -> None:
+    codes = [f.code for f in validate_query(sql, dialect=dialect)]
+    assert codes == ["WARN-MISSING-JOIN-PREDICATE"]
+
+
 def test_missing_join_predicate_prints_the_registered_fix_naming_ignore() -> None:
     """The validator leaves `recommendation` unset, so the registry's
     `fix_template` is what prints; it must name the exact suppression."""

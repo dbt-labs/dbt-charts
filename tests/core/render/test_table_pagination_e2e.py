@@ -153,11 +153,11 @@ def test_paginator_label_is_inert_to_selection() -> None:
         r'<text [^>]*class="dbt-paginator-label"[^>]*>1–5 / 105</text>', static
     )
     assert "user-select" not in live and "user-select" not in static
+    stylesheet = controls_stylesheet()
     assert re.search(
-        r"\.dbt-chart \.dbt-paginator text,\s*"
-        r"\.dbt-chart text\.dbt-paginator-label \{\s*user-select: none;\s*\}",
-        controls_stylesheet(),
+        r"\.dbt-chart \.dbt-paginator text \{\s*user-select: none;\s*\}", stylesheet
     )
+    assert "dbt-paginator-label {" not in stylesheet
 
 
 def test_a_live_table_with_a_few_wrapping_rows_keeps_its_page_size() -> None:

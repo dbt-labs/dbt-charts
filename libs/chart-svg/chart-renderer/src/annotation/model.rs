@@ -278,7 +278,8 @@ pub struct TextStyle {
     pub position: Position,
     pub dx: f64,
     pub dy: f64,
-    /// Wrap width of a frame note's or trend's text, px, kept inside the plot; `None` keeps the text on one line.
+    /// Wrap width of a frame note's, band's or trend's text, px, kept inside the plot; `None` keeps a note's or
+    /// trend's text on one line and wraps a band's to the band.
     pub max_width: Option<f64>,
     /// A trend's text takes at most this share of the plot's width beside the
     /// plot; the wrap measure shrinks to fit. `None` caps nothing.
@@ -376,8 +377,8 @@ impl Annotation {
             return fail("text is single-line; it holds a line break");
         }
         let frame_note = self.kind == Kind::Note && self.x.is_none();
-        if self.style.text.max_width.is_some() && !(frame_note || self.kind == Kind::Trend) {
-            return fail("only a frame note or a trend wraps its text");
+        if self.style.text.max_width.is_some() && !(frame_note || matches!(self.kind, Kind::Trend | Kind::Band)) {
+            return fail("only a frame note, a band or a trend sets its wrap width");
         }
         if self.style.text.max_share.is_some() && self.kind != Kind::Trend {
             return fail("only a trend caps its text by a share of the plot");

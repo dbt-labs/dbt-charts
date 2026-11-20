@@ -143,11 +143,50 @@ const POOL_RUNTIME_WORDS: [&str; 18] = [
     "page_range",
 ];
 
-fn pool_runtime_words() -> Result<String, String> {
+/// A result cut by a limit, and whether the note naming the limit fits beside
+/// the page sequence of every pager the table draws.
+#[derive(Clone, Copy)]
+pub(super) struct PagerCut<'a> {
+    truncation: &'a crate::Truncation,
+    note_fits: bool,
+}
+
+/// The pager's range text. A result cut by a limit reads its total with a
+/// trailing `+`, and carries the note naming the limit when `with_note`. Every
+/// pager label and the templates the runtimes fill come through here, so the
+/// static label, the scroll template and the pool word agree.
+fn page_range_text(
+    first: &str,
+    last: &str,
+    total: &str,
+    cut: Option<PagerCut>,
+    with_note: bool,
+) -> Result<String, String> {
+    let Some(PagerCut { truncation: cut, .. }) = cut else {
+        return display_text::language::tr("controls.page_range", None, &[("first", first), ("last", last), ("total", total)]);
+    };
+    let total = format!("{total}+");
+    let range = display_text::language::tr("controls.page_range", None, &[("first", first), ("last", last), ("total", &total)])?;
+    if !with_note {
+        return Ok(range);
+    }
+    let note_id = match cut.reason {
+        crate::TruncationReason::MaxRows => "controls.rows_cut_by_row_limit",
+        crate::TruncationReason::MaxResultBytes => "controls.rows_cut_by_byte_limit",
+    };
+    let note = display_text::language::tr(note_id, None, &[])?;
+    Ok(format!("{range} \u{b7} {note}"))
+}
+
+fn pool_runtime_words(cut: Option<PagerCut>) -> Result<String, String> {
     let mut words = serde_json::Map::new();
     for word in POOL_RUNTIME_WORDS {
+        if word == "page_range" {
+            let text = page_range_text("{first}", "{last}", "{total}", cut, cut.is_some_and(|c| c.note_fits))?;
+            words.insert(word.to_string(), serde_json::Value::String(text));
+            continue;
+        }
         let args: &[(&str, &str)] = match word {
-            "page_range" => &[("first", "{first}"), ("last", "{last}"), ("total", "{total}")],
             "calendar_header" => &[("month", "{month}"), ("year", "{year}")],
             "calendar_day" => &[
                 ("weekday", "{weekday}"),
@@ -1271,6 +1310,7 @@ fn emit_scroll_pagers(
     page_rows: usize,
     row_ends: &[f64],
     interactive: bool,
+    cut: Option<PagerCut>,
     fonts: &FontBook,
 ) -> Result<(), String> {
     let total = row_ends.len();
@@ -1279,11 +1319,7 @@ fn emit_scroll_pagers(
     }
     let pages = total.div_ceil(page_rows);
     let per_page = pages <= POOL_PAGER_MAX_PAGES;
-    let template = display_text::language::tr(
-        "controls.page_range",
-        None,
-        &[("first", "{first}"), ("last", "{last}"), ("total", "{total}")],
-    )?;
+    let template = page_range_text("{first}", "{last}", "{total}", cut, cut.is_some_and(|c| c.note_fits))?;
     let ends: Vec<String> = row_ends.iter().map(|end| num_full(*end)).collect();
     let page_var_name = format!("{chart_id}_page");
     tree.open(
@@ -1320,6 +1356,7 @@ fn emit_scroll_pagers(
             padding,
             false,
             compact,
+            cut,
             fonts,
         )?;
         tree.close(Open::Group);
@@ -1333,6 +1370,62 @@ fn emit_scroll_pagers(
     }
     tree.close(Open::Group);
     Ok(())
+}
+
+/// The widths of a pager's slots: prev, the window's items, next.
+fn pager_slot_widths(
+    theme: &PaginatorTheme,
+    body_family: &str,
+    window: &[PageItem],
+    fonts: &FontBook,
+) -> Result<Vec<f64>, String> {
+    let aux_slot_w = theme.item_width * PAGINATOR_AUX_SLOT_RATIO;
+    let font_size = theme.font.size_or(11.0) as i64 as f64;
+    let mut widths = vec![aux_slot_w];
+    for item in window {
+        widths.push(match item {
+            PageItem::Ellipsis => aux_slot_w,
+            PageItem::Page(p) => Measure { fonts }.page_slot(
+                &p.to_string(),
+                measure::stand_in_family(body_family),
+                font_size,
+                theme.item_width,
+            )?,
+        });
+    }
+    widths.push(aux_slot_w);
+    Ok(widths)
+}
+
+/// Whether the cut note fits beside the page sequence of every pager: the
+/// widest range text the table shows, its last page against the full total,
+/// measured against the widest sequence, one decision for every label and
+/// template.
+fn pager_cut<'a>(
+    truncation: Option<&'a crate::Truncation>,
+    theme: &PaginatorTheme,
+    body_family: &str,
+    table_width: f64,
+    padding: f64,
+    total_pages: usize,
+    page_rows: usize,
+    total_rows: usize,
+    windowed: bool,
+    fonts: &FontBook,
+) -> Result<Option<PagerCut<'a>>, String> {
+    let Some(truncation) = truncation else {
+        return Ok(None);
+    };
+    let mut widest_sequence: f64 = pager_slot_widths(theme, body_family, &[], fonts)?.iter().sum();
+    for page in (1..=total_pages).filter(|_| windowed) {
+        let window = paginator_window(page as i64, total_pages as i64);
+        widest_sequence = widest_sequence.max(pager_slot_widths(theme, body_family, &window, fonts)?.iter().sum());
+    }
+    let first = ((total_pages - 1) * page_rows + 1).min(total_rows).to_string();
+    let widest = PagerCut { truncation, note_fits: true };
+    let text = page_range_text(&first, &total_rows.to_string(), &total_rows.to_string(), Some(widest), true)?;
+    let width = fonts.measure(&text, measure::stand_in_family(body_family), theme.font.size_or(11.0) as i64 as f64)?;
+    Ok(Some(PagerCut { truncation, note_fits: padding + width <= table_width - widest_sequence }))
 }
 
 /// Static-export pagination control bar: right-anchored chevrons + windowed
@@ -1355,6 +1448,7 @@ pub(super) fn render_pagination_controls(
     padding: f64,
     interactive: bool,
     compact: bool,
+    cut: Option<PagerCut>,
     fonts: &FontBook,
 ) -> Result<(), String> {
     let window = if compact { Vec::new() } else { paginator_window(page, total_pages) };
@@ -1387,7 +1481,7 @@ pub(super) fn render_pagination_controls(
 
     let mut sequence: Vec<(Slot, String, String)> =
         vec![(Slot::Prev, PAGINATOR_PREV_CHEVRON.to_string(), prev_target)];
-    for item in window {
+    for item in &window {
         match item {
             PageItem::Ellipsis => {
                 sequence.push((Slot::Ellipsis, PAGINATOR_ELLIPSIS.to_string(), "0".to_string()))
@@ -1395,7 +1489,7 @@ pub(super) fn render_pagination_controls(
             PageItem::Page(p) => sequence.push((
                 Slot::Page,
                 p.to_string(),
-                (if p <= last_enabled_page { p } else { 0 }).to_string(),
+                (if *p <= last_enabled_page { *p } else { 0 }).to_string(),
             )),
         }
     }
@@ -1412,20 +1506,8 @@ pub(super) fn render_pagination_controls(
     let rect_w = font_size as f64 + 6.0;
     let rect_h = (font_size as f64 * 1.8).max(18.0);
     let rect_y = y + 4.0;
-    let aux_slot_w = theme.item_width * PAGINATOR_AUX_SLOT_RATIO;
 
-    let slot_widths = sequence
-        .iter()
-        .map(|(role, glyph, _)| match role {
-            Slot::Prev | Slot::Next | Slot::Ellipsis => Ok(aux_slot_w),
-            Slot::Page => Measure { fonts }.page_slot(
-                glyph,
-                measure::stand_in_family(body_family),
-                font_size as f64,
-                theme.item_width,
-            ),
-        })
-        .collect::<Result<Vec<f64>, String>>()?;
+    let slot_widths = pager_slot_widths(theme, body_family, &window, fonts)?;
     let total_width: f64 = slot_widths.iter().sum();
     let sequence_left = table_width - total_width;
 
@@ -1456,19 +1538,21 @@ pub(super) fn render_pagination_controls(
     // would collide with the right-anchored sequence — production gates on
     // the sequence's own left edge.
     // A page holding only total rows reads as its last data row.
-    let label_text = display_text::language::tr(
-        "controls.page_range",
-        None,
-        &[("first", &row_start.min(row_end).to_string()), ("last", &row_end.to_string()), ("total", &total_rows.to_string())],
-    )?;
+    let (first, last, total) = (row_start.min(row_end).to_string(), row_end.to_string(), total_rows.to_string());
     // `get_font_measurer(font_family)`: every non-serif
-    // family measures as Inter, whatever the label paints in.
-    let label_w = fonts.measure(
-        &label_text,
-        measure::stand_in_family(body_family),
-        font_size as f64,
-    )?;
-    if padding + label_w <= sequence_left {
+    // family measures as Inter, whatever the label paints in. Range and note,
+    // else the range alone, else nothing.
+    let mut fitting_label = None;
+    let note_fits = cut.is_some_and(|c| c.note_fits);
+    for with_note in [note_fits, false] {
+        let text = page_range_text(&first, &last, &total, cut, with_note)?;
+        let width = fonts.measure(&text, measure::stand_in_family(body_family), font_size as f64)?;
+        if padding + width <= sequence_left {
+            fitting_label = Some(text);
+            break;
+        }
+    }
+    if let Some(label_text) = fitting_label {
         tree.text_el(
             Role::Label,
             (padding, text_y),
@@ -2349,7 +2433,24 @@ impl TableBody<'_> {
         } = *self;
         // A row's height with its lists shut: where its one-line cells sit, open or not.
         let shut_h = |ri: usize| if lists_shut { row_heights[ri] } else { row_heights[ri] - list_extra[ri] };
-        let row_text_baseline = |ri: usize| shut_h(ri) / 2.0 + th.text_baseline_offset;
+        // Body cells top-align: every cell's first line sits on the first baseline of the
+        // row's tallest wrapped block, which stays centered in the row. A row with no
+        // wrapped block keeps its one-line baseline.
+        let line_height = font_size + th.text_baseline_offset;
+        let row_text_baseline = |ri: usize| {
+            let block_lines = cols
+                .iter()
+                .enumerate()
+                .filter(|(_, col)| !is_list(col))
+                .filter_map(|(ci, _)| wrapped_lines[ci][ri].as_ref().map(Vec::len))
+                .max();
+            match block_lines {
+                Some(n) => (shut_h(ri) - n as f64 * line_height) / 2.0 + font_size,
+                None => shut_h(ri) / 2.0 + th.text_baseline_offset,
+            }
+        };
+        // The vertical middle of a row's first line, where a swatch or spark centers.
+        let first_line_mid = |ri: usize| row_text_baseline(ri) - th.text_baseline_offset;
         let all_data_columns: Vec<String> = rows
             .get(page_offset)
             .map(|r| r.keys().cloned().collect())
@@ -2734,7 +2835,7 @@ impl TableBody<'_> {
                         ));
                     };
                     let swatch_x = python_round(cx + 4.0);
-                    let swatch_y = row_y + (this_row_h - SWATCH_SIZE) / 2.0;
+                    let swatch_y = row_y + first_line_mid(ri) - SWATCH_SIZE / 2.0;
                     tree.open_at(
                         Open::Group,
                         Role::Chrome,
@@ -2755,14 +2856,9 @@ impl TableBody<'_> {
                 // `None`/absent cell value falls through to the ordinary cell
                 // paint below; empty spark content (a zero-length `bar`/`column`)
                 // draws an empty cell. `spark_x = px(cell_x
-                // + 4)`; `spark_y = row_y + (this_row_h -
-                // spark_height) / 2` centers the mark in the row's own
-                // (possibly grown) band — `this_row_h` is production's
-                // `per_row_height`. Only the SIZING call below reads the NOMINAL row
-                // height (`row_h`, not `this_row_h`): the mark's visual size
-                // stays pinned to it so a wrapped row growing taller doesn't
-                // grow its spark, but the mark still centers in the row's
-                // actual (grown) band.
+                // + 4)`; the mark centers on the row's first line. The SIZING
+                // call below reads the NOMINAL row height (`row_h`), so a
+                // wrapped row growing taller doesn't grow its spark.
                 if let (Some(spark), false) = (&col.cfg.spark, is_summary) {
                     let spark_lane = spark_lanes[ci];
                     let value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
@@ -2808,7 +2904,7 @@ impl TableBody<'_> {
                                 } else {
                                     python_round(lane_x)
                                 };
-                                let spark_y = row_y + (this_row_h - spark_h) / 2.0;
+                                let spark_y = row_y + first_line_mid(ri) - spark_h / 2.0;
                                 tree.open_at(
                                     Open::Group,
                                     Role::Chrome,
@@ -3132,7 +3228,6 @@ impl TableBody<'_> {
                             // baseline, so shutting it moves nothing else in the row.
                             // A live table hides the lists of a row it can open, for
                             // the runtime to show; a one-value list always shows.
-                            let line_height = font_size + th.text_baseline_offset;
                             let first_y = row_y + row_text_baseline(ri);
                             let hides = lists_shut && list_extra[ri] > 0.0;
                             tree.open_text(
@@ -3163,12 +3258,7 @@ impl TableBody<'_> {
                             tree.close(Open::Text);
                         }
                         Some(lines) => {
-                            // Vertically center the wrapped block in the row with
-                            // its lists shut: `first_y = row_y + (per_row_height
-                            // - total_text_h) / 2 + font_size`.
-                            let line_height = font_size + th.text_baseline_offset;
-                            let total_text_h = lines.len() as f64 * line_height;
-                            let first_y = row_y + (shut_h(ri) - total_text_h) / 2.0 + font_size;
+                            let first_y = row_y + row_text_baseline(ri);
                             tree.open_text(
                                 Role::Label,
                                 (tx, first_y),
@@ -5378,6 +5468,28 @@ pub(crate) fn lay_out(
             }
     };
     let svg_w = width;
+    // A scrolling table draws one pager per viewport of data rows; a summary
+    // row in the pane takes no number.
+    let scroll_page_rows = (0..n_shown).filter(|&i| !is_summary_role(row_roles[i])).count();
+    let (pager_pages, pager_page_rows) = if scroll_y {
+        let data_rows = (0..scroll_drawn).filter(|&i| !is_summary_role(row_roles[i])).count();
+        (data_rows.div_ceil(scroll_page_rows.max(1)).max(1), scroll_page_rows)
+    } else {
+        (true_total_pages, n_shown)
+    };
+    let cut_note = pager_cut(
+        drawn.truncation.as_ref(),
+        &th.paginator,
+        &body_family,
+        svg_w,
+        outer,
+        pager_pages,
+        pager_page_rows,
+        data_rank[n_rows],
+        // A live pool or scroll body past the page cap draws only the compact pager.
+        !(pool_page_rows.is_some() || scroll_y) || pager_pages <= POOL_PAGER_MAX_PAGES,
+        fonts,
+    )?;
     let rows_slack = (svg_h
         - (pool_rows_end
             + th.bottom_padding
@@ -5455,7 +5567,7 @@ pub(crate) fn lay_out(
                 )
                 .set_if(page_overflow, "data-dbt-rows-end-max", (rows_start_y + canvas_rows_h + canvas_gap).to_string())
                 .quick("data-dbt-summary-gap", summary_gap_unit.to_string())
-                .quick("data-dbt-language", pool_runtime_words()?)
+                .quick("data-dbt-language", pool_runtime_words(cut_note)?)
                 .quick_some(
                     "data-dbt-time-locale",
                     cols.iter()
@@ -5839,6 +5951,7 @@ pub(crate) fn lay_out(
                 outer,
                 false,
                 false,
+                cut_note,
                 fonts,
             )?;
             if scrolling {
@@ -5917,6 +6030,7 @@ pub(crate) fn lay_out(
                     outer,
                     false,
                     false,
+                    cut_note,
                     fonts,
                 )?;
                 tail.close(Open::Group);
@@ -5946,6 +6060,7 @@ pub(crate) fn lay_out(
                 outer,
                 false,
                 true,
+                cut_note,
                 fonts,
             )?;
             tail.close(Open::Group);
@@ -5992,6 +6107,7 @@ pub(crate) fn lay_out(
                     outer,
                     drawn.interactive_controls,
                     false,
+                    cut_note,
                     fonts,
                 )?;
             } else {
@@ -6060,10 +6176,10 @@ pub(crate) fn lay_out(
             indicator_y,
             outer,
             viewport_h,
-            // A page counts data rows: a summary row in the pane takes no number.
-            (0..n_shown).filter(|&i| !is_summary_role(row_roles[i])).count(),
+            scroll_page_rows,
             &ends,
             drawn.interactive_controls,
+            cut_note,
             fonts,
         )?;
     }

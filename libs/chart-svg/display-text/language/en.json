@@ -47,6 +47,8 @@
   "controls.next_month": "Next month",
   "controls.no": "No",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.rows_cut_by_row_limit": "truncated by row limit",
+  "controls.rows_cut_by_byte_limit": "truncated by size limit",
   "controls.preset_before_previous": "Before previous {duration}",
   "controls.preset_last": "Last {duration}",
   "controls.preset_previous": "Previous {duration}",

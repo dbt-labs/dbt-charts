@@ -472,6 +472,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let color_field = resolved.resolved_channels.get("color").and_then(|c| c.get("data_field")).and_then(Value::as_str);
     let href = match &resolved.link {
         Some(template) => {
+            crate::href::refuse_row_columns(template, "a geoshape's link")?;
             let href = crate::href::resolve_channel_href(template, |channel| match (channel, color_field) {
                 ("color", Some(_)) if choropleth.is_some() => Ok(String::new()),
                 _ => Err(format!("link template references channel '{{{{ {channel} }}}}' but a geoshape has no '{channel}' encoding")),

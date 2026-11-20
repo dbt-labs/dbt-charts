@@ -123,6 +123,9 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         .zip(&row_series)
         .map(|(row, series)| (row_num(row, &r.x).expect("filtered to numeric x"), *series))
         .collect();
+    if let Some(template) = r.link.as_deref() {
+        crate::href::refuse_row_columns(template, "a histogram bin")?;
+    }
     let link = r.link.as_deref().map(|template| crate::href::DatumLink {
         template,
         open: r.link_open,

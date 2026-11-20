@@ -145,6 +145,7 @@ from dbt_charts.core.render.controls import (
     page_runtime,
 )
 from dbt_charts.core.render.converters import to_html, to_pdf, to_png
+from dbt_charts.core.render.engine import engine_draws, query_truncations
 from dbt_charts.core.render.engine_cell import EngineBoard, engine_board
 from dbt_charts.core.render.errors import (
     FormatError,
@@ -432,14 +433,14 @@ def _collect_render_warnings(
 
     # chart id → truncation record, for every chart whose query was cut by
     # execution.max_rows/max_result_bytes this render.
-    query_truncations = results.truncations
+    truncations_by_query = results.truncations
     chart_query_names = {
         chart.query_name for chart in board.charts.values() if chart.query_name
     }
     chart_truncations = {
-        chart_id: query_truncations[chart.query_name]
+        chart_id: truncations_by_query[chart.query_name]
         for chart_id, chart in board.charts.items()
-        if chart.query_name is not None and chart.query_name in query_truncations
+        if chart.query_name is not None and chart.query_name in truncations_by_query
     }
     # Truncations for queries not owned by any chart (e.g. upstream queries
     # demand-executed by cache-ref composition — only the composed query is
@@ -448,7 +449,7 @@ def _collect_render_warnings(
     # id maps to the affected query.
     unattributed_truncations = {
         name: info
-        for name, info in query_truncations.items()
+        for name, info in truncations_by_query.items()
         if name not in chart_query_names
     }
 
@@ -818,6 +819,7 @@ def _render(
     _link_context = options.get("link_context")
     _set_link_context(_link_context)
     render_sinks = contextlib.ExitStack()
+    render_sinks.enter_context(engine_draws())
     render_sinks.enter_context(
         engine_board(
             EngineBoard(
@@ -834,6 +836,7 @@ def _render(
             )
         )
     )
+    render_sinks.enter_context(query_truncations(results.truncations))
     _filter_var_names = (
         frozenset(variable_registry) if variable_registry else frozenset()
     )

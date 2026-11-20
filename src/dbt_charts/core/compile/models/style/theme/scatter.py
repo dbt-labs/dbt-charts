@@ -15,6 +15,7 @@ from dbt_charts.core.compile.models.markers import (
     InheritSlot,
     SkipInheritSlots,  # noqa: F401  # pyright: ignore[reportUnusedImport] — required in module globals for model_rebuild() to resolve inherited base-class annotations
 )
+from dbt_charts.core.compile.models.primitives import SizeScaleStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
@@ -70,6 +71,9 @@ class _ScatterChartStyleBase(
     ] = Field(
         default_factory=ScatterChartMarksStyle,
         description="Scatter-family mark overrides.",
+    )
+    size: SizeScaleStyle = Field(
+        description="Area range and scale type of the `size:` channel.",
     )
 
 

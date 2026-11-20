@@ -329,16 +329,16 @@ pub fn bind_pie(
     Ok(Ok(Family::Pie(Box::new(Pie { canvas, ground, background, title, subtitle, hole, slices, link_open, total, center, legend, table_position: table_position(placed, style), labeled, full, excess_categories, empty: None }))))
 }
 
-/// `row_href` over `pie_link_value` (`click_interactivity.py`'s `_channel_field` for a pie): the
-/// link's `{{ color }}` is the slice's name and `{{ theta }}` its value, as the row holds them; a pie
-/// has no `x` or `y`, which production refuses with its own words. An authored href resolves in the
-/// host's link context, as a bar's and a table cell's do (`href::hosted`); the host's automatic link
+/// `row_href` over `pie_link_value`: the link's `{{ color }}` is the slice's name, `{{ theta }}` its
+/// value, and any other name the row's column of that name; a pie has no `x` or `y`. An authored
+/// href resolves in the host's link context, as a bar's and a table cell's do (`href::hosted`); the host's automatic link
 /// is drawn as given (production applies no `resolve_href` to it). Either has its scheme checked.
 fn slice_href(template: &str, automatic: bool, row: &Map<String, Value>, theta: &str, color: &str, run: &RunResult) -> Result<Href, Diagnostic> {
     let raw = crate::links::expand_channels(template, |channel| match channel {
         "color" => crate::links::js_string(row.get(color)),
         "theta" => crate::links::js_string(row.get(theta)),
-        other => Err(Diagnostic::refused(format!("link template references channel '{{{{ {other} }}}}' but chart has no '{other}' encoding assigned"))),
+        "x" | "y" => Err(Diagnostic::refused(format!("link template references channel '{{{{ {channel} }}}}' but chart has no '{channel}' encoding assigned"))),
+        column => crate::links::row_column(row, column),
     })?;
     if automatic { Href::new(&raw) } else { crate::links::resolve(&raw, run) }
 }

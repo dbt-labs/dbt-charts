@@ -371,6 +371,7 @@ pub struct AnnotationTextMarkStyle {
 
 /// A band's text, whose position may follow the band's direction.
 #[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(range(max_width, gt = 0)))]
 pub struct BandTextMarkStyle {
     #[flatten]
     pub rest: TextMarkRest,
@@ -380,6 +381,11 @@ pub struct BandTextMarkStyle {
     /// Which side of the band the text sits on, and where along it.
     #[model(local)]
     pub position: BandPositionStyle,
+    /// Width in pixels a band's text wraps to, in place of the band's own
+    /// width; `auto` is a readable measure of about 28 characters, kept inside
+    /// the plot.
+    #[model(local, absent = "wraps to the band")]
+    pub max_width: Option<Engine<f64, Auto>>,
 }
 
 /// A rule's text.

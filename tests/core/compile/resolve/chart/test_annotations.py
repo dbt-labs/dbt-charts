@@ -36,6 +36,7 @@ from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatte
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.theme.annotations import (
+    BandTextMarkStyle,
     NoteTextMarkStyle,
     TrendLabelStyle,
 )
@@ -618,6 +619,21 @@ def test_an_authored_width_wins_for_a_trend() -> None:
     assert trend.style.text.max_share == 0.3
     auto = _wrapped({"type": "trend", "fit": "linear()", "text": "Long"}, "auto")
     assert auto.style.text.max_width == _auto_measure(auto)
+
+
+def test_a_band_wraps_to_the_band_unless_a_width_is_authored() -> None:
+    band = {
+        "type": "band",
+        "x": {"from": "2024-02-01", "to": "2024-04-01"},
+        "text": "Promo",
+    }
+    assert _one(band).style.text.max_width is None
+    assert _wrapped(band, 120).style.text.max_width == 120
+    auto = _wrapped(band, "auto")
+    assert auto.style.text.max_width == _auto_measure(auto)
+    for bad in ("wide", 0, -5):
+        with pytest.raises(ValidationError):
+            BandTextMarkStyle(max_width=bad)
 
 
 def test_a_point_note_rejects_a_wrap_width() -> None:

@@ -11,7 +11,16 @@ import dataclasses
 import re
 from datetime import date, datetime
 from functools import cached_property
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeGuard, TypeVar, get_args
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    Self,
+    TypeGuard,
+    TypeVar,
+    get_args,
+)
 from zoneinfo import ZoneInfo
 
 from pydantic import (
@@ -1727,6 +1736,79 @@ class ColorStyle(GradientColorStyle):
     categorical: CategoricalColorStyle | None = Field(
         default=None,
         description="Palettes used when color encodes distinct categories, or a lone series.",
+    )
+
+
+class SizeScaleRangeValidationMixin(BaseModel):
+    """Authored-input rule for ``style.size.range``.
+
+    Inherited by ``SizeScaleStyle`` and its generated Patch so a chart's own
+    ``style.size`` fails at the compile boundary; ``build_patch_model_ext`` does
+    not copy class validators (mirrors ``ScaleDomainValidationMixin``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("range", check_fields=False)
+    @classmethod
+    def _validate_range(
+        cls, value: tuple[float, float] | None
+    ) -> tuple[float, float] | None:
+        if value is None:
+            return value
+        low, high = value
+        if low >= high:
+            raise ValueError(
+                f"style.size.range: low ({low:g}) must be below high ({high:g})."
+            )
+        return value
+
+
+class SizeScaleStyle(SizeScaleRangeValidationMixin):
+    """Size-channel scale config: the mark-area range and the scale law."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    range: tuple[Annotated[float, Field(ge=0)], Annotated[float, Field(ge=0)]] = Field(
+        description=(
+            "Mark area in px² for the smallest and largest value, as [low, high] "
+            "with 0 <= low < high (same unit as `style.marks.point.size`)."
+        ),
+    )
+    type: Literal["linear", "sqrt", "log"] = Field(
+        description=(
+            "How a value maps onto the area range. `linear` is zero-anchored; "
+            "`sqrt` compresses a long tail while keeping zero; `log` spans the "
+            "data extent and needs every size value to be above zero."
+        ),
+    )
+
+    # Cross-field, so it sits on the whole model: it fires on the merged theme +
+    # chart style, where a chart authoring only `type: log` meets a theme range
+    # starting at 0. The generated Patch does not copy it.
+    @model_validator(mode="after")
+    def _log_range_starts_above_zero(self) -> Self:
+        if self.type == "log" and self.range[0] == 0:
+            raise ValueError(
+                "style.size.type: log needs a range starting above 0; the smallest "
+                "value would draw with no area. Set style.size.range, e.g. [9, 2500]."
+            )
+        return self
+
+
+if TYPE_CHECKING:
+
+    class SizeScaleStylePatch(SizeScaleStyle):
+        pass
+
+else:
+
+    class _SizeScaleStylePatchBase(_PatchBase, SizeScaleRangeValidationMixin):
+        """Base for SizeScaleStylePatch: extra="forbid" from _PatchBase plus the
+        range rule from SizeScaleRangeValidationMixin."""
+
+    SizeScaleStylePatch = register_patch(SizeScaleStyle)(
+        build_patch_model_ext(SizeScaleStyle, base_cls=_SizeScaleStylePatchBase)
     )
 
 

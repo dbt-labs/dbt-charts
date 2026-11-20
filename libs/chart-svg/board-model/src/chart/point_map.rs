@@ -14,6 +14,9 @@ use model_derive::Model;
     )),
     constraint(forbids(color, when(is_in(collapse, true)),
         message = "{type}: `collapse: true` and `color: <column>` cannot be combined — VL's size:{{aggregate: count}} groups by every other non-aggregated encoded field, so an authored `color` reintroduces the exact pile `collapse` exists to remove. Drop `color` to keep collapsed counts, or drop `collapse` and aggregate per-category counts in SQL (`GROUP BY <lat>, <lon>, <category>` producing a count column), then use `bubble_map` with `size: <count column>, color: <category column>`."
+    )),
+    constraint(forbids("style.size", when(is_in(size, null), is_in(collapse, null, false)),
+        message = "style.size configures the size channel, but this {type} chart has no size: field. Add `size: <column>` or `collapse: true`."
     ))
 )]
 #[allow(clippy::duplicated_attributes)]

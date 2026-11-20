@@ -47,6 +47,8 @@
   "controls.next_month": "Следующий месяц",
   "controls.no": "Нет",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.rows_cut_by_row_limit": "обрезано по лимиту строк",
+  "controls.rows_cut_by_byte_limit": "обрезано по лимиту размера",
   "controls.preset_before_previous": "До предыдущих {duration}",
   "controls.preset_last": "Последние {duration}",
   "controls.preset_previous": "Предыдущие {duration}",

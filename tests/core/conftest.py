@@ -236,11 +236,13 @@ def area_style() -> ResolvedAreaStyle:
 @pytest.fixture
 def scatter_style() -> ResolvedScatterStyle:
     """Minimal valid ResolvedScatterStyle for test injection."""
+    from dbt_charts.core.compile.models.primitives import SizeScaleStyle
     from dbt_charts.core.compile.models.style.resolved import ResolvedPointMarkStyle
 
     ax, ay = _bake_axes("scatter", "quantitative", "quantitative")
     return ResolvedScatterStyle(
         point_mark=ResolvedPointMarkStyle(),
+        size=SizeScaleStyle(range=(4, 361), type="linear"),
         single_series_fill=SINGLE_SERIES_FILL,
         tooltip_format=ResolvedFormat(spec=""),
         label_usable_ratio=0.8,

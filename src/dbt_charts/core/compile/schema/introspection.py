@@ -90,6 +90,8 @@ class SchemaField:
     # tuple[int, float] -> ("int", "float")); None for every other shape,
     # including a variadic tuple[X, ...] (which is list-shaped, not fixed).
     tuple_item_reprs: tuple[str, ...] | None = None
+    # Numeric bounds per position of that tuple, keyed like `bounds`.
+    tuple_item_bounds: tuple[dict[str, int | float], ...] = ()
     # Numeric bounds Pydantic enforces, keyed gt, ge, lt, le.
     bounds: dict[str, int | float] = dataclasses.field(default_factory=dict)
     # Other value constraints: min_length, max_length, pattern.
@@ -504,6 +506,28 @@ def _get_container(annotation: Any) -> str | None:
         if len(non_none) == 1:
             return _get_container(non_none[0])
     return None
+
+
+def _tuple_item_bounds(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _tuple_item_reprs
+) -> tuple[dict[str, int | float], ...]:
+    """Numeric bounds per position of a FIXED-length tuple field, parallel to
+    `_tuple_item_reprs`; empty for every other shape."""
+    annotation = _unwrap_annotated(annotation)
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin is tuple:
+        if not args or (len(args) == 2 and args[1] is Ellipsis):
+            return ()
+        return tuple(
+            _value_bounds(a.__metadata__) if get_origin(a) is Annotated else {}
+            for a in args
+        )
+    if args:
+        non_none = [a for a in args if a is not type(None)]
+        if len(non_none) == 1:
+            return _tuple_item_bounds(non_none[0])
+    return ()
 
 
 def _tuple_item_reprs(
@@ -1005,6 +1029,7 @@ def _build_schema_field(
         container_mapping_models=_container_mapping_models(annotation),
         container_list_models=_container_list_models(annotation),
         tuple_item_reprs=_tuple_item_reprs(annotation),
+        tuple_item_bounds=_tuple_item_bounds(annotation),
         bounds=_field_bounds(name, field_info, annotation),
         constraints=_value_constraints(field_info.metadata),
         arm_length_constraints=_arm_length_constraints(name, annotation),

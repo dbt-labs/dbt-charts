@@ -6,6 +6,8 @@
 //! interior, sized by the point mark or by a size scale, so anything else reaching the painter is an engine bug.
 
 use bind::bound::{self, Datum, Mark, MarkLayer, Paint, Pos, Scale, ScaleKind, Shape, SizeScale, Unfilled, ValueAxis};
+use board_model::primitives::SizeScaleType;
+use d3rs::scale::Transform;
 use d3rs::vega_symbol::VegaSymbol;
 use diagnostic::{diag, Diagnostic};
 use scene::{Attrs, Node, Role};
@@ -27,16 +29,20 @@ pub(crate) fn linear<'a>(scale: &'a Scale, axis: &str) -> Result<&'a ValueAxis, 
     }
 }
 
-/// Vega-Lite's default point-mark size range, the drawn area at the size domain's two ends
-/// (`SIZE_SCALE_RANGE` in chart-renderer's scatter).
-const SIZE_RANGE: (f64, f64) = (4.0, 361.0);
-
-/// The area a sized point of value `v` draws: the linear scale over the domain, a zero-width domain
-/// mapping every value to the middle of the range as d3's `normalize` does.
+/// The area a sized point of value `v` draws: its place in the transformed domain, then linear onto the
+/// `style.size` range (the law of chart-renderer's `legend::SizeScale::area`). A zero-width domain maps
+/// every value to the middle of the range, as d3's `normalize` does.
 fn size_area(size: &SizeScale, v: f64) -> f64 {
     let (lo, hi) = size.domain;
-    let unit = if hi == lo { 0.5 } else { (v - lo) / (hi - lo) };
-    SIZE_RANGE.0 + unit * (SIZE_RANGE.1 - SIZE_RANGE.0)
+    let transform = match size.style.r#type {
+        SizeScaleType::Linear => Transform::Identity,
+        SizeScaleType::Sqrt => Transform::Pow(0.5),
+        SizeScaleType::Log => Transform::Log { base: 10.0 },
+    };
+    let at = |x: f64| transform.apply(false, x);
+    let unit = if hi == lo { 0.5 } else { (at(v) - at(lo)) / (at(hi) - at(lo)) };
+    let range = size.style.range;
+    range.low + unit * (range.high - range.low)
 }
 
 /// The plot's point mark; [`bound::Plane::new`] holds that a plot with a point layer carries one.
@@ -163,4 +169,33 @@ pub fn points(plot: &bound::Plane, layer: usize, marks: &MarkLayer, datums: &[Da
 /// default of 4 would bevel it, which only the wedge's tip is (`scatter_shape.rs`: `miter_limit`).
 pub(crate) fn miter_limit(symbol: VegaSymbol) -> Option<&'static str> {
     (symbol == VegaSymbol::Wedge).then_some("10")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use board_model::primitives::{AreaRange, SizeScaleStyle};
+
+    /// The cases chart-renderer's `legend::SizeScale::area` is pinned to: the engine copy draws the same areas.
+    #[test]
+    fn size_area_maps_the_shared_cases() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!("../../../fixtures/size-scale/cases.json")).unwrap();
+        for case in cases["cases"].as_array().unwrap() {
+            let num = |v: &serde_json::Value| v.as_f64().unwrap();
+            let range = case["range"].as_array().unwrap();
+            let domain = case["domain"].as_array().unwrap();
+            let r#type = match case["type"].as_str().unwrap() {
+                "linear" => SizeScaleType::Linear,
+                "sqrt" => SizeScaleType::Sqrt,
+                _ => SizeScaleType::Log,
+            };
+            let size = SizeScale {
+                domain: (num(&domain[0]), num(&domain[1])),
+                style: SizeScaleStyle { range: AreaRange { low: num(&range[0]), high: num(&range[1]) }, r#type },
+                by_row: Vec::new(),
+            };
+            let area = size_area(&size, num(&case["value"]));
+            assert!((area - num(&case["area"])).abs() < 1e-9, "{case}: drew {area}");
+        }
+    }
 }

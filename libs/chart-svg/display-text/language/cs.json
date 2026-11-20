@@ -47,6 +47,8 @@
   "controls.next_month": "Další měsíc",
   "controls.no": "Ne",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.rows_cut_by_row_limit": "zkráceno limitem řádků",
+  "controls.rows_cut_by_byte_limit": "zkráceno limitem velikosti",
   "controls.preset_before_previous": "Před předchozími {duration}",
   "controls.preset_last": "Posledních {duration}",
   "controls.preset_previous": "Předchozích {duration}",

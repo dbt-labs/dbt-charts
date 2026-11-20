@@ -6974,7 +6974,8 @@ pub(super) fn fit(
         let f = value_labels.and_then(|ml| ml.font.as_ref());
         // `series` is the unset color: the label takes its series' fill.
         let authored_color = f.and_then(|f| f.color.as_deref()).filter(|c| *c != crate::common::SERIES_INK);
-        let color = authored_color.unwrap_or("#313233");
+        let neutral = crate::common::canvas_label_ink(payload.board_style.as_ref(), canvas)?;
+        let color = authored_color.unwrap_or(&neutral);
         let weight = f.map(|f| f.weight_str()).unwrap_or_else(|| "400".into());
         let font_style = f.and_then(|f| f.style.as_deref());
         let mut labels = Vec::new();

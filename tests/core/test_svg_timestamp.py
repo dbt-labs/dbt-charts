@@ -14,6 +14,10 @@ from dbt_charts.core.font_measure import get_font_measurer
 
 from ._svg_render import render_board_to_svg as _render_svg
 
+# A footer-row timestamp's width depends on the instant it shows; pinned so the
+# footer layout these tests measure never depends on when the suite runs.
+_RENDERED_AT = datetime(2026, 11, 20, 0, 9, tzinfo=UTC)
+
 
 def _render_timestamp_element(svg: str) -> ElementTree.Element:
     root = ElementTree.fromstring(svg)
@@ -317,6 +321,7 @@ style:
             Run(
                 result.board,
                 env=build_exec_env(local_project(Path.cwd())),
+                clock=lambda: _RENDERED_AT,
             ),
             format="svg",
         )
@@ -358,6 +363,7 @@ style:
             Run(
                 result.board,
                 env=build_exec_env(local_project(Path.cwd())),
+                clock=lambda: _RENDERED_AT,
             ),
             format="svg",
         )

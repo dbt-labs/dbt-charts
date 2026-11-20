@@ -801,7 +801,7 @@ class AreaMarkStyle(BaseModel):
     )
     # Opaque background-color backdrop painted behind the (possibly
     # translucent) fill so its tint reads consistently regardless of what's
-    # behind it (grid lines, an overlapping series). A plain on/off switch —
+    # behind it (gridlines, an overlapping series). A plain on/off switch —
     # unlike a stroke, a fill has no "width" dimension to scale, so this is
     # NOT the same knob as marks.line.halo_multiplier (which sizes the edge
     # line's own halo and has no effect on this backdrop).

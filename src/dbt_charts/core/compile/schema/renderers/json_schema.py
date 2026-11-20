@@ -74,15 +74,22 @@ def _schema_for_token(
 
 def _tuple_schema(
     item_reprs: Sequence[str],
+    item_bounds: Sequence[dict[str, int | float]] = (),
 ) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
-    """A fixed-length tuple: prefixItems, one type_repr per position.
+    """A fixed-length tuple: prefixItems, one type_repr (plus its bounds) per
+    position.
 
     prefixItems is the one shape neither field.container nor field.enum_values
     models (both assume every position shares one type).
     """
+    bounds = item_bounds or [{}] * len(item_reprs)
     return {
         "type": "array",
-        "prefixItems": [_map_type_repr(r, {}) for r in item_reprs],
+        "prefixItems": [
+            _map_type_repr(r, {})
+            | {_BOUND_KEYWORDS[name]: value for name, value in b.items()}
+            for r, b in zip(item_reprs, bounds, strict=True)
+        ],
         "minItems": len(item_reprs),
         "maxItems": len(item_reprs),
     }
@@ -188,7 +195,7 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
     ]
 
     if field.tuple_item_reprs is not None:
-        tuple_schema = _tuple_schema(field.tuple_item_reprs)
+        tuple_schema = _tuple_schema(field.tuple_item_reprs, field.tuple_item_bounds)
         return {"anyOf": [tuple_schema, {"type": "null"}]} if nullable else tuple_schema
 
     if field.enum_values is not None:

@@ -184,6 +184,11 @@ it, and say why in the chart's `notes:`. "The source does it" is not a reason.
   a reader compares their shapes, not their values. Several noisy series on two
   scales become an index chart (each series over its own period-average
   baseline, one axis) or small multiples.
+- Several series on one axis with the same mark are one `y:` list
+  (`y: [a, b]`), even when the source configures each series on its own. A
+  `layers:` entry draws an overlay, with a legend and no end-label value, so
+  it is only for a different mark (bars plus a line), another query, or a
+  reference such as a target.
 - Precision: keep a source format only when its precision means something
   (a rate to one decimal); otherwise use the built-in name for the kind
   (`currency_compact`, `integer`, `percent`). A KPI tile is the exception:

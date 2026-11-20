@@ -8,7 +8,7 @@ use measure::Measure;
 use scene::{Attrs, Node, PathData, Role};
 
 use super::bind::Bound;
-use super::{BarX, LogX, NominalRound, PlainXPaint, FacetX, LayeredLegend, LegendStack, LinearX, LogAxis, NO_EXTENT, PlainXAxis, PointDatum, RULE_POINT_SIZE, RuleFires, ScatterPanelOpts, XFrame, XLayers, YScale, category_text, color_legend_glyph_names, color_legend_layout, column_extent, date_axis, finite_frac, kept_reading, legend_entry_order, legend_gradient_id, linear_x_scale, log_x_axis, x_edge_pad, needs_band, plain_x_axis, point_glyph, point_scale_domain, point_x_padding, point_x_scale, quantitative_color, reads_chart_rows, rows_at, rule_aria, rule_point, shape_legend_fill, shape_merges_into_color, shape_scale_domain, size_area, size_legend, size_legend_nodes, unfilled_stroke, visible_tick_labels, x_has_nan_years, y_when_x_invalid};
+use super::{BarX, LogX, NominalRound, PlainXPaint, FacetX, LayeredLegend, LegendStack, LinearX, LogAxis, NO_EXTENT, PlainXAxis, PointDatum, RULE_POINT_SIZE, RuleFires, ScatterPanelOpts, XFrame, XLayers, YScale, category_text, color_legend_glyph_names, color_legend_layout, column_extent, date_axis, finite_frac, kept_reading, legend_entry_order, legend_gradient_id, linear_x_scale, log_x_axis, x_edge_pad, needs_band, plain_x_axis, point_glyph, point_scale_domain, point_x_padding, point_x_scale, quantitative_color, reads_chart_rows, rows_at, rule_aria, rule_point, shape_legend_fill, shape_merges_into_color, shape_scale_domain, size_legend, size_legend_nodes, unfilled_stroke, visible_tick_labels, x_has_nan_years, y_when_x_invalid};
 use crate::{Padding, Payload};
 use crate::common::{AxisStyle, format_y_label, symbol_radius};
 use ::bind::rows::{row_num, row_str};
@@ -599,7 +599,7 @@ pub(super) fn fit(
     // `kept`/`kept_size`), else the mark's own constant literal size — same
     // `symbol_radius` (√size/2) convention either way.
     let mark_radii: Vec<f64> = if let Some(domain) = size_domain {
-        kept_size.iter().map(|&sv| symbol_radius(size_area(domain, sv))).collect()
+        kept_size.iter().map(|&sv| symbol_radius(r.style.size.area(domain, sv))).collect()
     } else {
         vec![symbol_radius(r.style.point_mark.size); kept.len()]
     };
@@ -1167,7 +1167,7 @@ pub(super) fn fit(
     // channel owns the mark's glyph.
     let size_legend_shown = panel.is_none() && r.size.is_some() && r.legend.visible;
     let size_legend = match size_domain.filter(|_| size_legend_shown) {
-        Some(domain) => Some(size_legend(r, fonts, domain, mark_symbol.unwrap_or("circle"))?),
+        Some(domain) => Some(size_legend(r, fonts, domain, mark_symbol.unwrap_or("circle"), payload.board_style.as_ref())?),
         None => None,
     };
     let (size_legend_w, size_legend_h) = size_legend.as_ref().map_or((0.0, 0.0), |sl| (sl.w, sl.h));
@@ -2050,7 +2050,12 @@ pub(super) fn fit(
     let mut ghost_points: Vec<(String, f64, f64, String, Option<String>)> = Vec::new();
     // With a shape channel the ghost rule layer carries a small point per datum beside its rule.
     let mut ghost_symbols: Vec<(PathData, f64, f64, String, String, Option<String>)> = Vec::new();
-    let value_label_ink = value_label_font.and_then(|f| f.color.as_deref()).unwrap_or("#313233");
+    // Only an unauthored value label reads the board's text ink.
+    let value_label_ink = match (value_labels, value_label_font.and_then(|f| f.color.clone())) {
+        (_, Some(color)) => color,
+        (Some(_), None) => crate::common::canvas_label_ink(payload.board_style.as_ref(), &r.canvas)?,
+        (None, None) => String::new(),
+    };
     let mut value_label_marks: Vec<(f64, f64, Option<String>, String, Option<String>, Option<String>, f64)> = Vec::new();
     for (datum, (x_frac, y_frac, series, mark_r, row)) in points_data.iter().enumerate() {
         let (cx, cy) = (x_pos(*x_frac), y_pos(*y_frac));

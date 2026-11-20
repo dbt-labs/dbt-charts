@@ -17,7 +17,7 @@ from dbt_charts.core.compile.models.chart.authored._layer import (
 )
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.chart.resolved._layer import layers_share_date_axis
-from dbt_charts.core.compile.models.primitives import ResolvedFormat
+from dbt_charts.core.compile.models.primitives import ResolvedFormat, SizeScaleStyle
 from dbt_charts.core.compile.models.style.theme import (
     AxisXStyle,
     AxisYStyle,
@@ -54,6 +54,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LAYER_Y_KIND_MISMATCH,
     ERR_LOG_SCALE_REQUIRES_POSITIVE_DATA,
     ERR_LOG_SCALE_REQUIRES_POSITIVE_X_DATA,
+    ERR_LOG_SIZE_SCALE_REQUIRES_POSITIVE_DATA,
     ERR_TICKS_COUNT_REQUIRES_NON_LOG_SCALE,
 )
 from dbt_charts.core.numeric import ladder_step, nice_tick_values
@@ -245,6 +246,27 @@ def _reject_non_positive_log_scale_data(
                 chart_id=chart_id,
                 y_field=field,
             )
+
+
+def reject_non_positive_log_size(
+    chart_id: str,
+    size_field: str | None,
+    size: SizeScaleStyle,
+    data: ChartRows,
+) -> None:
+    """Raise when a log size scale's data contains a value ``<= 0``.
+
+    A log domain is undefined there, so the mark area of such a row would be
+    NaN or infinite.
+    """
+    if size.type != "log" or size_field is None:
+        return
+    if any(v <= 0 for v in numeric_column_values(data, size_field)):
+        raise CompilationError.from_code(
+            ERR_LOG_SIZE_SCALE_REQUIRES_POSITIVE_DATA,
+            chart_id=chart_id,
+            size_field=size_field,
+        )
 
 
 def _reject_non_positive_log_x_data(

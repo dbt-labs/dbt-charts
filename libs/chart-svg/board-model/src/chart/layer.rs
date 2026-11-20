@@ -41,19 +41,19 @@ pub struct LayerAxisYTicks {
 /// Per-layer y-axis grid patch.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct LayerAxisYGrid {
-    /// Whether to show grid lines on this layer's y axis.
+    /// Whether to show gridlines on this layer's y axis.
     #[model(absent = "the theme's grid visibility")]
     pub visible: Option<bool>,
-    /// Grid line color on this layer's y axis.
+    /// Gridline color on this layer's y axis.
     #[model(absent = "the axis color")]
     pub color: Option<Color>,
-    /// Grid line width on this layer's y axis, in pixels.
+    /// Gridline width on this layer's y axis, in pixels.
     #[model(absent = "the theme's grid width")]
     pub width: Option<f64>,
-    /// Grid line dash pattern on this layer's y axis; [] is solid.
+    /// Gridline dash pattern on this layer's y axis; [] is solid.
     #[model(absent = "the theme's grid dash")]
     pub dash: Option<Vec<f64>>,
-    /// Grid line opacity on this layer's y axis, 0 to 1.
+    /// Gridline opacity on this layer's y axis, 0 to 1.
     #[model(absent = "the theme's grid opacity")]
     pub opacity: Option<f64>,
 }
@@ -75,7 +75,7 @@ pub struct LayerAxisYStyle {
     /// Title on this layer's own y axis; defaults to the layer's label.
     #[model(absent = "the layer's label")]
     pub title: Option<DisplayText>,
-    /// Color of this axis's grid lines, tick labels and title; 'auto' uses the layer's color.
+    /// Color of this axis's gridlines, tick labels and title; 'auto' uses the layer's color.
     #[model(absent = "the theme's axis color")]
     pub color: Option<Engine<Color, Auto>>,
     /// Scale options for this layer's y axis, holding the [min, max] domain.

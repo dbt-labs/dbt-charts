@@ -436,22 +436,22 @@ pub struct AxisGridTornBaselineStyle {
     pub amplitude: f64,
 }
 
-/// Grid line style for every axis variant.
+/// Gridline style for every axis variant.
 ///
 /// `threshold` styles the heavy rule at a quantitative axis's crossing point and
 /// has no visible effect on a categorical or band axis.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct BaseAxisGridStyle {
-    /// Show grid lines.
+    /// Show gridlines.
     pub visible: bool,
-    /// Grid line opacity.
+    /// Gridline opacity.
     #[model(fill = 1.0)]
     pub opacity: f64,
-    /// Grid line width in pixels.
+    /// Gridline width in pixels.
     pub width: f64,
-    /// Grid line color.
+    /// Gridline color.
     pub color: Color,
-    /// Dash pattern for grid lines. Each axis variant owns its dash.
+    /// Dash pattern for gridlines. Each axis variant owns its dash.
     #[model(absent = "solid line", local)]
     pub dash: Option<Vec<f64>>,
     /// Threshold-rule gridline style.
@@ -886,7 +886,7 @@ pub struct AxisMirrorStyle {
 /// their own and the scale-type slots have none.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct BaseAxisStyle {
-    /// Grid line style for this axis.
+    /// Gridline style for this axis.
     pub grid: BaseAxisGridStyle,
     /// Domain line style for this axis.
     pub line: AxisLineStyle,
@@ -909,7 +909,7 @@ pub struct BaseAxisStyle {
 #[derive(Debug, Clone, PartialEq, Model)]
 #[model(constraint(range(fiscal_year_start_month, ge = 1, le = 12)))]
 pub struct AxisXStyle {
-    /// Grid line style for this axis.
+    /// Gridline style for this axis.
     pub grid: BaseAxisGridStyle,
     /// Domain line style for this axis.
     pub line: AxisLineStyle,
@@ -950,7 +950,7 @@ pub struct AxisXStyle {
 /// Adds the measure-only fields; the x-only fields are structurally absent.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct AxisYStyle {
-    /// Grid line style for this axis.
+    /// Gridline style for this axis.
     pub grid: BaseAxisGridStyle,
     /// Domain line style for this axis.
     pub line: AxisLineStyle,
@@ -966,7 +966,7 @@ pub struct AxisYStyle {
     /// Y-axis position; 'auto' flips when endpoint labels sit on the right.
     #[model(local)]
     pub position: Engine<YAxisPosition, Auto>,
-    /// Color of the grid lines, tick labels and title; 'auto' uses the series
+    /// Color of the gridlines, tick labels and title; 'auto' uses the series
     /// color. Never cascaded: resolve paints it into grid, labels and title.
     #[model(absent = "the axis keeps its own colors", local)]
     pub color: Option<Engine<Color, Auto>>,

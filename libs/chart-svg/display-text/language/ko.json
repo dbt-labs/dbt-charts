@@ -47,6 +47,8 @@
   "controls.next_month": "다음 달",
   "controls.no": "아니요",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.rows_cut_by_row_limit": "행 제한으로 잘림",
+  "controls.rows_cut_by_byte_limit": "크기 제한으로 잘림",
   "controls.preset_before_previous": "이전 {duration} 이전",
   "controls.preset_last": "최근 {duration}",
   "controls.preset_previous": "이전 {duration}",

@@ -42,6 +42,12 @@ class PointMapChart(_GeoChartFields):
             "with `size: <count column>, color: <category column>`.",
             when=(ValueIn("collapse", (True,)),),
         ),
+        Forbids(
+            ("style.size",),
+            "style.size configures the size channel, but this {type} chart has no "
+            "size: field. Add `size: <column>` or `collapse: true`.",
+            when=(ValueIn("size", (None,)), ValueIn("collapse", (None, False))),
+        ),
     )
 
     type: Annotated[

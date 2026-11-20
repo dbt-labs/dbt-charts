@@ -469,6 +469,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                 "field_labels": {},
                 "style": {
                     "point_mark": {},
+                    "size": {"range": [4, 361], "type": "linear"},
                     "single_series_fill": "#4C72B0",
                     "tooltip_format": "",
                     "label_usable_ratio": 0.8,

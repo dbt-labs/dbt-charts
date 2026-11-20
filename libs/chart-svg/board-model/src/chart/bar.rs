@@ -36,9 +36,6 @@ use model_derive::Model;
     constraint(forbids(annotations, when(is_in(type, "histogram")), nonempty(annotations),
         message = "annotations are not supported on type: histogram: a histogram bins x, so an anchor has no category or date slot to name."
     )),
-    constraint(forbids(tooltip, when(set(layers)),
-        message = "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query."
-    )),
     constraint(forbids(tooltip, when(is_in(type, "histogram")),
         message = "tooltip is not supported on type: histogram: a bar there is a bin of rows, not one row, so a column has no single value to show."
     )),

@@ -573,7 +573,7 @@
   title: Axis color 'auto' has no single series color to take
   template: '{field_path} is ''auto'', but {reason}, so there is no one color for the axis
     to take. Name a color instead, or give the axis one series.'
-  doc: '`color: auto` on a y axis paints its grid lines, tick labels and title in the color
+  doc: '`color: auto` on a y axis paints its gridlines, tick labels and title in the color
     of the one series drawn against it. An axis that holds several series, or a series colored
     by a field, has no single color.'
   summary: 'Axis `color: auto` on an axis without exactly one series color.'
@@ -778,6 +778,18 @@
     the log scale.'
   summary: Fired when a log x-axis scale is used but the data contains a value at or below
     zero.
+  docs_topic: charts
+- code: ERR-LOG-SIZE-SCALE-REQUIRES-POSITIVE-DATA
+  level: error
+  title: Log size scale requires strictly positive data
+  template: 'Chart {chart_id!r}: size column {size_field!r} has a value <= 0, but style.size.type:
+    log requires strictly positive data; a log domain is undefined at and below zero. Filter
+    out the non-positive rows, or use type: sqrt.'
+  doc: 'Fired when `style.size.type: log` is used but the `size:` column contains a value
+    ≤ 0. A log domain is undefined at and below zero. Filter out the non-positive rows,
+    or use `type: sqrt`.'
+  summary: Fired when a log size scale is used but the size column contains a value at or
+    below zero.
   docs_topic: charts
 - code: ERR-MULTIPLES-FIELD-NOT-FOUND
   level: error

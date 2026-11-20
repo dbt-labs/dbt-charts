@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use board_model::board::{items, Board as SourceBoard, BoardBody, LayoutItem};
 use board_model::facet::FontWeightValue;
-use board_model::primitives::LinkOpen;
+use board_model::primitives::{LinkOpen, SizeScaleStyle, SizeScaleType};
 use board_model::rule::Auto;
 use board_model::style::axis::TextAlign;
 use model_core::Engine;
@@ -68,7 +68,7 @@ pub enum Invalid {
     },
     /// A sized point layer whose size scale has no value for a datum's row.
     SizeRow { layer: usize, row: usize },
-    /// A sized point layer whose size domain does not hold 0.
+    /// A sized point layer whose size domain breaks its scale type: zero-anchored for linear and sqrt, positive and ordered for log.
     SizeDomain { layer: usize },
     /// A shaped point layer whose shape scale has no category for a datum's row.
     ShapeRow { layer: usize, row: usize },
@@ -879,7 +879,12 @@ impl Plane {
         }
         for (layer, drawn) in layers.iter().enumerate() {
             let Mark::Points { size: Some(size), .. } = &drawn.mark else { continue };
-            if !(size.domain.0 <= 0.0 && 0.0 <= size.domain.1) {
+            let (lo, hi) = size.domain;
+            let held = match size.style.r#type {
+                SizeScaleType::Log => 0.0 < lo && lo <= hi,
+                SizeScaleType::Linear | SizeScaleType::Sqrt => lo <= 0.0 && 0.0 <= hi,
+            };
+            if !held {
                 return Err(Invalid::SizeDomain { layer });
             }
             if let Some(datum) = drawn.panels.iter().flatten().find(|datum| datum.row.0 >= size.by_row.len()) {
@@ -1059,12 +1064,14 @@ impl ShapeScale {
     }
 }
 
-/// A point mark's size channel: Vega-Lite's linear scale from the `domain` of the rows that draw a point
-/// (zero-anchored: it always holds 0) onto the point mark's fixed area range. `by_row` is each dataset row's
-/// value, indexed by [`RowRef`]; a null size is refused at bind, so every row has one.
+/// A point mark's size channel: its `style.size` scale over the `domain` of the rows that draw a point,
+/// onto the mark-area range. The domain is zero-anchored for `linear` and `sqrt` (it always holds 0) and
+/// the extent of the values for `log`. `by_row` is each dataset row's value, indexed by [`RowRef`]; a null
+/// size is refused at bind, so every row has one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SizeScale {
     pub domain: (f64, f64),
+    pub style: SizeScaleStyle,
     pub by_row: Vec<f64>,
 }
 

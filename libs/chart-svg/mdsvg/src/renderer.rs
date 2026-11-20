@@ -1512,7 +1512,7 @@ impl SVGRenderer {
 
     /// `renderer.py::_heading_lines`: a heading's laid-out lines, the shift
     /// that moves them down inside their block, and the block's text extent.
-    /// With `heading_grid_px` the block is a whole number of grid lines and the
+    /// With `heading_grid_px` the block is a whole number of gridlines and the
     /// last baseline sits where body text's baseline sits in the last of them.
     fn heading_lines(&self, heading: &Heading, width: f64) -> Result<(Vec<Line>, f64, f64), String> {
         let style = &self.style;

@@ -47,6 +47,8 @@
   "controls.next_month": "翌月",
   "controls.no": "いいえ",
   "controls.page_range": "{first}～{last} / {total}",
+  "controls.rows_cut_by_row_limit": "行数の上限で切り捨て",
+  "controls.rows_cut_by_byte_limit": "サイズの上限で切り捨て",
   "controls.preset_before_previous": "前の {duration} より前",
   "controls.preset_last": "過去 {duration}",
   "controls.preset_previous": "前の {duration}",

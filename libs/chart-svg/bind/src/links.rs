@@ -197,22 +197,22 @@ mod tests {
     }
 }
 
-/// `_HREF_PLACEHOLDER`'s channels (`\{\{\s*(x|y|color|theta)\s*\}\}`): what a Vega-family mark's link
-/// fills from its row.
+/// The channels a mark's link placeholder reads before the row's own columns, and the one shape
+/// (`?name={{ channel }}`) that sets a board variable.
 pub const MARK_CHANNELS: &[&str] = &["x", "y", "color", "theta"];
 
-/// `_build_href_calc_expr`'s template law: each placeholder naming one of `MARK_CHANNELS` becomes
-/// `value(channel)` percent-encoded (`_vega_encode_field`); every other byte, a `{{` that opens no
-/// placeholder and any other `{{ name }}` included, stays literal. `re.split` retries a failed
-/// opener one character later, so `{{ {{ x }}` still fills its inner placeholder.
+/// A link template's law: each `{{ name }}` placeholder becomes `value(name)` percent-encoded
+/// (`_vega_encode_field`); a `{{` that opens no placeholder stays literal and is retried one
+/// character later, so `{{ {{ x }}` still fills its inner placeholder. `value` decides what a name
+/// reads: a channel, else the row's column of that name.
 pub fn expand_channels(template: &str, mut value: impl FnMut(&str) -> Result<String, Diagnostic>) -> Result<String, Diagnostic> {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(open) = rest.find("{{") {
         match placeholder_at(&rest[open..]) {
-            Some((channel, len)) => {
+            Some((name, len)) => {
                 out.push_str(&rest[..open]);
-                out.push_str(&vega_encode_field(&value(channel)?));
+                out.push_str(&vega_encode_field(&value(name)?));
                 rest = &rest[open + len..];
             }
             None => {
@@ -225,12 +225,26 @@ pub fn expand_channels(template: &str, mut value: impl FnMut(&str) -> Result<Str
     Ok(out)
 }
 
-/// A placeholder naming one of `MARK_CHANNELS` at the start of `s`: the channel and the match's length.
-fn placeholder_at(s: &str) -> Option<(&'static str, usize)> {
+/// `\{\{\s*(\w+)\s*\}\}` anchored at the start of `s`, `\w` and `\s` per Python's `re`: the name
+/// and the match's byte length.
+pub fn placeholder_at(s: &str) -> Option<(&str, usize)> {
     let inner = s.strip_prefix("{{")?.trim_start_matches(d3rs::py_str::is_py_space);
-    let channel = MARK_CHANNELS.iter().copied().find(|c| inner.starts_with(c))?;
-    let tail = inner[channel.len()..].trim_start_matches(d3rs::py_str::is_py_space).strip_prefix("}}")?;
-    Some((channel, s.len() - tail.len()))
+    let end = inner.find(|c: char| !d3rs::py_str::is_py_word(c)).unwrap_or(inner.len());
+    let tail = inner[end..].trim_start_matches(d3rs::py_str::is_py_space).strip_prefix("}}")?;
+    (end > 0).then(|| (&inner[..end], s.len() - tail.len()))
+}
+
+/// The row's `column` as a link prints it; a column the row lacks is refused, never left as text.
+pub fn row_column(row: &serde_json::Map<String, serde_json::Value>, column: &str) -> Result<String, Diagnostic> {
+    match row.get(column) {
+        Some(value) => js_string(Some(value)),
+        None => Err(Diagnostic::refused(unknown_placeholder(column))),
+    }
+}
+
+/// The refusal for a placeholder naming neither a channel the chart encodes nor a column of its row.
+pub fn unknown_placeholder(name: &str) -> String {
+    format!("link placeholder '{{{{ {name} }}}}' names no channel the chart encodes and no column of its query")
 }
 
 /// `_vega_encode_field`'s replace chain (`click_interactivity.py`): the ASCII delimiters that corrupt
@@ -289,9 +303,15 @@ mod channel_tests {
     }
 
     #[test]
-    fn a_placeholder_naming_no_channel_stays_literal() {
-        assert_eq!(expand("/a/{{ label }}?v={{theta}}"), "/a/{{ label }}?v=<theta%20%26%20co>");
-        assert_eq!(expand("/a/{{ label }}"), "/a/{{ label }}");
+    fn a_placeholder_naming_any_word_is_filled() {
+        assert_eq!(expand("/a/{{ label }}?v={{theta}}"), "/a/<label%20%26%20co>?v=<theta%20%26%20co>");
+    }
+
+    #[test]
+    fn a_span_naming_no_word_stays_literal() {
+        for template in ["{{ a b }}", "{{ a-b }}", "{{ }}", "{{ x", "{ x }"] {
+            assert_eq!(expand(template), template);
+        }
     }
 
     #[test]

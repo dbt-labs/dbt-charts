@@ -59,6 +59,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _resolve_cartesian_ticks,
     _shared_y_values,
     _zero_anchor_floats,
+    reject_non_positive_log_size,
     resolve_y_zero,
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
@@ -235,6 +236,7 @@ def _resolve_scatter(
     _reject_non_positive_log_x_data(
         normalized.id, plan.axes.x.style, normalized.x, data
     )
+    reject_non_positive_log_size(normalized.id, normalized.size, scatter.size, data)
     # Scatter's tooltip_format tracks an explicit chart-authored measure format
     # (axis_y labels.format or the y column's declared format) — falls back to
     # the board default tooltip.format when the author didn't override it, same
@@ -478,6 +480,7 @@ def _resolve_scatter(
         shape=normalized.shape,
         style=ResolvedScatterStyle(
             point_mark=scatter_point_mark,
+            size=scatter.size,
             conditional=scatter_conditional,
             single_series_fill=single_series_fill,
             title_font=_tf,
@@ -495,7 +498,7 @@ def _resolve_scatter(
                 ring=unfilled_ring(scatter_point_mark),
                 size_channel=None
                 if normalized.size is None
-                else [row.get(normalized.size) for row in data],
+                else ([row.get(normalized.size) for row in data], scatter.size),
             ),
         ),
         annotation_gaps=annotations.gaps,

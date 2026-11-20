@@ -2233,6 +2233,7 @@ fn render_error_card_svg(
     let placard = crate::Payload {
         cell_text: Default::default(),
         max_template_output_bytes: None,
+        truncation: None,
         resolved,
         rows: Default::default(),
         width,
@@ -2542,6 +2543,7 @@ fn render_chart_item(
         cell_text: Default::default(),
         // The composer sizes no custom chart (`sizing`), so no template runs here.
         max_template_output_bytes: None,
+        truncation: None,
         resolved: chart_json.clone(),
         rows: rows.into(),
         width: slot_w,

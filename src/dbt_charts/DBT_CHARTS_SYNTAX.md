@@ -718,7 +718,7 @@ Set `type:` to one of:
 
 **Geographic** -- `geoshape`, `map`, `point_map`, `bubble_map`.
 
-**Overlays** -- `bar`, `line`, `area`, and `scatter` accept a `layers:` field for mixed-mark or dual-axis charts (see [Combo charts](#combo-charts-barlinearea-with-layers) and [Composition](#composition)).
+**Overlays** -- `bar`, `line`, `area`, and `scatter` accept a `layers:` field for mixed-mark or dual-axis charts (see [Combo charts](#combo-charts-barlinearea-with-layers) and [Composition](#composition)). Several measures with the same mark on one axis are a `y:` list (`y: [a, b]`), not layers: a layer draws an overlay, named in the legend.
 
 **Sparklines** -- `spark_bar` (compact horizontal bars used in profiler cards).
 
@@ -787,7 +787,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `style.inner_radius` | float 0–1 | Donut hole ratio (hole/outer disk; pie/donut only); `type: donut` sets it to `0.6` automatically |
 | `total` | object | `{label}` — center total for donut; format lives at `style.total.value.format` |
 | `style.marks.slice.labels` | object | `{template, where}` — per-row Jinja annotations near slice callouts |
-| `tooltip` | list[string \| object] | bar/line/area/scatter/pie: query columns added to the hover card after the chart's own rows. Entry: a column name or `{column, label?, format?}`; label defaults to `field_labels`, then the derived label; format to the query's `formats:`. Not with `layers:` or `y_start:` |
+| `tooltip` | list[string \| object] | bar/line/area/scatter/pie: query columns added to the hover card after the chart's own rows. Entry: a column name or `{column, label?, format?}`; label defaults to `field_labels`, then the derived label; format to the query's `formats:`. With `layers:`, base marks only. Not with `y_start:` |
 | `x_label` | string | X-axis title override |
 | `y_label` | string | Y-axis title override |
 | `message` | string | Static text for `type: callout` |
@@ -800,7 +800,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `longitude` | string | Longitude field (point/bubble map) |
 | `background` | string \| object | Background channel — color, `{value}`, `{field, scale/when}`, or map layer |
 | `sort` | object | `{by, order}` — categorical sort. Horizontal bar charts default to value-descending order when omitted. |
-| `link` | string \| false | Click-through URL template for drill-down links; `false` suppresses the chart's automatic link when the board sets `links.auto: true` (table column links are unaffected). A board link is the target board's slug (`/orders?id={{ id }}`); validation warns about a link to a board that does not exist |
+| `link` | string \| false | Click-through URL template for drill-down links: `{{ x }}`, `{{ y }}`, `{{ color }}`, `{{ theta }}` read the plotted channel, any other `{{ name }}` the clicked row's column; `false` suppresses the chart's automatic link when the board sets `links.auto: true` (table column links are unaffected). A board link is the target board's slug (`/orders?id={{ id }}`); validation warns about a link to a board that does not exist |
 | `multiples` | object | Partition into small multiples: `{rows, columns, scale}` — cartesian charts (`bar`/`line`/`area`/`scatter`/`heatmap`) only (see [Small multiples](#small-multiples-multiples)) |
 | `warnings_ignore` | list[string] | Render-warning codes to suppress for this chart only (e.g. `[WARN-AXIS-TITLE-TRUNCATED]`; unknown codes are rejected — every code is listed at https://docs.dbtcharts.com/reference/warnings/) |
 | `layers` | list | Overlay layers on cartesian charts (`bar`/`line`/`area`/`scatter`) — see [Combo charts](#combo-charts-barlinearea-with-layers) |
@@ -1236,8 +1236,8 @@ snake_case), filter
 `format` (a d3-format spec, or `format(column=channels.y)` for the format the board resolved for that column, numbers only), and the helpers `text_width(text, size, weight)`, `color_for(value, column=None)` (board
 pin for that column's value, else the categorical palette in first-call order),
 `label_ink(color)` (text ink for a hex color on the chart's background), `variant(color, kind)`
-(`light`, `dark`, `pale` or `deep` tier of a hex color), `href(row)` (the chart's `link:` with its `{{ channel }}` placeholders filled from
-the row; a `link:` with no placeholder wraps the whole drawing instead),
+(`light`, `dark`, `pale` or `deep` tier of a hex color), `href(row)` (the chart's `link:` with its `{{ name }}` placeholders filled from
+the row, a channel from the column it binds; a `link:` with no placeholder wraps the whole drawing instead),
 `raise_error(message)`. Names are strict: a misspelling fails the chart. The
 engine renders the minijinja dialect: filters, not Python methods (`text | split(",")`,
 `d[k] if k in d else 0`, `math.ceil(x)`). Output is autoescaped and validated
@@ -1326,7 +1326,7 @@ Common fields: `text` (one line; `{{ value | format }}` prints the anchor, `{{ s
 - **`fit`:** `linear()`, `polynomial(<order >= 2>)`, `exponential()`, `log()`, `power()`. **`interval`:** `confidence(<pct>)`, `prediction(<pct>)`. A categorical x cannot be fitted. The mark that draws the trend's column gates it: line and scatter fit; a bar (or a stacked bar's `series: total`) fits with `WARN-TREND-ON-BARS`; an area is an error (draw the column as a line or scatter layer and set `y_column`). Chart `type:` alone never decides.
 - **`series`:** required on a computed annotation (aggregate or trend) when the chart has `color`: `each`, a list of names, or `total` (pooled; the per-x sum when stacked). Error on a literal-only annotation. Only `total` on a stacked chart.
 - **`y_column`:** names the y column (picks its axis and rows). Required for a computed y anchor, trend, or derived note on a chart with several y columns or `layers:`.
-- **Position:** an annotation's text mark (`style:` > `marks:` > `text:` > `position:`) takes `edge` (`top|bottom|left|right`), `align` (`start|center|end`), `overlay` (`true|false`); `dx`/`dy` nudge. Text moves off the chart's marks, value labels and other text: it slides along its edge, and an `auto` edge or align (rules, bands, notes; the default) may also change. Text also takes `font`, `halo`, `halo_opacity`, `box`, and `max_width` (frame notes and trends).
+- **Position:** an annotation's text mark (`style:` > `marks:` > `text:` > `position:`) takes `edge` (`top|bottom|left|right`), `align` (`start|center|end`), `overlay` (`true|false`); `dx`/`dy` nudge. Text moves off the chart's marks, value labels and other text: it slides along its edge, and an `auto` edge or align (rules, bands, notes; the default) may also change. Text also takes `font`, `halo`, `halo_opacity`, `box`, and `max_width` (frame notes, bands and trends; a band with none wraps to its own width).
 - **Theme:** `style.annotations.<rule|band|note|trend>.marks.*` on the board or a chart; an annotation's own `style:` wins.
 - **Not accepted** on pie, donut, map, table, or KPI charts.
 - **Errors:** `ERR-ANNOTATION-INVALID`, `ERR-ANNOTATION-UNSUPPORTED`, `ERR-ANNOTATION-MARGIN-UNSUPPORTED`; warnings `WARN-ANNOTATION-NOTHING-DRAWN`, `WARN-ANNOTATION-NOTE-MOVED`, `WARN-TREND-ON-BARS`.

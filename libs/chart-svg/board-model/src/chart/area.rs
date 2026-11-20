@@ -8,12 +8,6 @@ use model_derive::Model;
 
 /// Area chart.
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(
-    constraint(forbids(tooltip, when(set(layers)),
-        message = "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query."
-    ))
-)]
-#[allow(clippy::duplicated_attributes)]
 pub struct AreaChart {
     #[flatten]
     pub tooltip: TooltipFields,

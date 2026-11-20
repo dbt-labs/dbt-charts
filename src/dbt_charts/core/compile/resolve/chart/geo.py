@@ -50,6 +50,9 @@ from dbt_charts.core.compile.resolve.chart._channels import (
 from dbt_charts.core.compile.resolve.chart._conditional import (
     resolve_mark_conditional,
 )
+from dbt_charts.core.compile.resolve.chart._domain import (
+    reject_non_positive_log_size,
+)
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
@@ -436,6 +439,7 @@ def _resolve_point_map(
     point_map = point_map.model_copy(
         update={"conditional": resolve_mark_conditional(point_map.conditional, data)}
     )
+    reject_non_positive_log_size(normalized.id, normalized.size, point_map.size, data)
     channels = _channels_for(normalized, data)
     # The point tooltip formats only size_field with tooltip_format -- the
     # color entry gets no format at all, so voting on color would drag an

@@ -2681,6 +2681,7 @@ pub(super) fn bind_drawn(chart: &Chart, payload: &Payload) -> Result<Drawn, Diag
         variables: payload.variables.clone(),
         filter_variables: payload.filter_variables.clone(),
         interactive_controls: payload.interactive_controls,
+        truncation: payload.truncation.clone(),
         link_context: payload.link_context.clone(),
         title_shift: payload.title_shift,
         pagination_control_height,

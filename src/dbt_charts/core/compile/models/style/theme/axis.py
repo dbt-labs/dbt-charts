@@ -156,7 +156,7 @@ class AxisGridTornBaselineStyle(BaseModel):
 # whether x classifies categorical or quantitative, and that classification
 # is only known later, at resolve time.
 class BaseAxisGridStyle(BaseModel):
-    """Grid line style for all axis variants.
+    """Gridline style for all axis variants.
 
     ``threshold`` styles the heavy rule at a quantitative axis's meaningful
     crossing point — zero on most quantitative axes, 1.0 on a ratio/percent
@@ -169,23 +169,23 @@ class BaseAxisGridStyle(BaseModel):
     # All fields are nullable so the cascade can fill missing values from parent
     # `axis` into `axis_x` / `axis_y` / `axis_quantitative`.
     visible: bool | None = Field(
-        default=None, description="Show grid lines; None inherits from parent axis."
+        default=None, description="Show gridlines; None inherits from parent axis."
     )
     opacity: float | None = Field(
-        default=None, description="Grid line opacity; None uses Vega-Lite's default."
+        default=None, description="Gridline opacity; None uses Vega-Lite's default."
     )
     width: float | None = Field(
         default=None,
-        description="Grid line width in pixels; None uses Vega-Lite's default.",
+        description="Gridline width in pixels; None uses Vega-Lite's default.",
     )
     color: Annotated[str | None, Color()] = Field(
-        default=None, description="Grid line color; None uses Vega-Lite's default."
+        default=None, description="Gridline color; None uses Vega-Lite's default."
     )
     # SkipInheritSlots: dash is not inherited — axis family variants each own their dash independently.
     dash: Annotated[list[float] | None, SkipInheritSlots(), Absent("solid line")] = (
         Field(
             default=None,
-            description="Dash pattern for grid lines; None renders a solid line.",
+            description="Dash pattern for gridlines; None renders a solid line.",
         )
     )
     # Threshold sub-block. None means "no override at this level"; the
@@ -1088,7 +1088,7 @@ class BaseAxisStyle(BaseModel):
 
     grid: BaseAxisGridStyle = Field(
         default_factory=BaseAxisGridStyle,
-        description="Grid line style for this axis.",
+        description="Gridline style for this axis.",
     )
     line: AxisLineStyle = Field(
         default_factory=AxisLineStyle, description="Domain line style for this axis."
@@ -1241,7 +1241,7 @@ class AxisYStyle(BaseAxisStyle):
     # y-axis only, never cascaded: resolve paints it into grid/labels/title.
     color: Annotated[str | None, Color(keywords=(AUTO,)), SkipInheritSlots()] = Field(
         default=None,
-        description="Color of the grid lines, tick labels and title; 'auto' uses the series color.",
+        description="Color of the gridlines, tick labels and title; 'auto' uses the series color.",
     )
     # y-axis only: draw the y-scale on both edges.
     mirror: Annotated[bool | AxisMirrorStyle | None, SkipInheritSlots()] = Field(

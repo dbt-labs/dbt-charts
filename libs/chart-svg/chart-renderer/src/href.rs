@@ -4,7 +4,6 @@
 //! its marks. Vega evaluates that expression per datum, so each substitution
 //! below is JS `'' + datum[field]` followed by `_vega_encode_field`'s chain.
 
-use d3rs::py_str::is_py_space;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -182,7 +181,8 @@ impl DatumLink<'_> {
                 "x" => Some(self.x),
                 "y" => self.y,
                 "color" => self.color,
-                _ => None,
+                "theta" => None,
+                column => return row_column(row, column),
             }
             .ok_or_else(|| format!("link template references channel '{{{{ {channel} }}}}' but chart has no '{channel}' encoding assigned"))?;
             // A date x floored to its time bucket still links the date it carried.
@@ -212,43 +212,21 @@ impl DatumLink<'_> {
     }
 }
 
-/// `_HREF_PLACEHOLDER` (`\{\{\s*(x|y|color|theta)\s*\}\}`) anchored at the start
-/// of `s`, over `channels`: the channel and the match's byte length.
-fn placeholder_at<'c>(s: &str, channels: &[&'c str]) -> Option<(&'c str, usize)> {
-    let inner = s.strip_prefix("{{")?.trim_start_matches(is_py_space);
-    let channel = channels.iter().copied().find(|c| inner.starts_with(c))?;
-    let tail = inner[channel.len()..].trim_start_matches(is_py_space).strip_prefix("}}")?;
-    Some((channel, s.len() - tail.len()))
-}
-
-/// The Vega-Lite families' placeholder set.
-const VEGA_LINK_CHANNELS: &[&str] = &["x", "y", "color", "theta"];
-
-/// `_build_href_calc_expr`'s template law: every `_HREF_PLACEHOLDER` match is
-/// replaced by `channel_value(channel)` percent-encoded; every other byte,
-/// including a `{{` that opens no match and any non-channel `{{ name }}`, is
-/// literal. `re.split` retries a failed opener one character later, so
-/// `{{ {{ x }}` still substitutes its inner placeholder.
+/// A link template's law (`::bind::links::expand_channels`): each `{{ name }}` placeholder is
+/// replaced by `value(name)` percent-encoded; every other byte, including a `{{` that opens no
+/// placeholder, is literal. A failed opener is retried one character later, so `{{ {{ x }}` still
+/// substitutes its inner placeholder. `value` reads a channel, else the row's column of that name.
 pub(crate) fn resolve_channel_href(
     template: &str,
-    channel_value: impl FnMut(&str) -> Result<String, String>,
-) -> Result<String, String> {
-    resolve_channel_href_in(template, VEGA_LINK_CHANNELS, channel_value)
-}
-
-/// `resolve_channel_href` over a family's own placeholder set.
-pub(crate) fn resolve_channel_href_in(
-    template: &str,
-    channels: &[&str],
-    mut channel_value: impl FnMut(&str) -> Result<String, String>,
+    mut value: impl FnMut(&str) -> Result<String, String>,
 ) -> Result<String, String> {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(open) = rest.find("{{") {
-        match placeholder_at(&rest[open..], channels) {
-            Some((channel, len)) => {
+        match ::bind::links::placeholder_at(&rest[open..]) {
+            Some((name, len)) => {
                 out.push_str(&rest[..open]);
-                out.push_str(&vega_encode_field(&channel_value(channel)?));
+                out.push_str(&vega_encode_field(&value(name)?));
                 rest = &rest[open + len..];
             }
             None => {
@@ -259,6 +237,28 @@ pub(crate) fn resolve_channel_href_in(
     }
     out.push_str(rest);
     Ok(out)
+}
+
+/// The row's `column` as a link prints it (JS `'' + datum[column]`); a column the row lacks is
+/// refused, never left as text.
+pub(crate) fn row_column(row: &serde_json::Map<String, Value>, column: &str) -> Result<String, String> {
+    match row.get(column) {
+        Some(value) => js_string(Some(value)),
+        None => Err(::bind::links::unknown_placeholder(column)),
+    }
+}
+
+/// Refuses a placeholder naming a column on a mark that stands for several rows (`mark`): no one
+/// row holds the value.
+pub(crate) fn refuse_row_columns(template: &str, mark: &str) -> Result<(), String> {
+    resolve_channel_href(template, |name| {
+        if ::bind::links::MARK_CHANNELS.contains(&name) {
+            Ok(String::new())
+        } else {
+            Err(format!("link placeholder '{{{{ {name} }}}}' reads a row's column, but {mark} stands for several rows"))
+        }
+    })
+    .map(drop)
 }
 
 /// An expanded mark href as the host serves it: resolved in its link context, and refused when a row
@@ -511,10 +511,22 @@ mod tests {
     }
 
     #[test]
-    fn a_span_that_matches_no_channel_is_literal() {
-        for template in ["{{ X }}", "{{ xy }}", "{{ category }}", "{{ x", "{{", "}}", "{ x }", "{{ x } }"] {
+    fn a_placeholder_names_any_word() {
+        assert_eq!(resolve("{{ X }}{{ xy }}{{ category }}{{ café }}"), "<X><xy><category><café>");
+    }
+
+    #[test]
+    fn a_span_that_names_no_word_is_literal() {
+        for template in ["{{ a b }}", "{{ a-b }}", "{{ }}", "{{ x", "{{", "}}", "{ x }", "{{ x } }"] {
             assert_eq!(resolve(template), template);
         }
+    }
+
+    #[test]
+    fn a_row_column_prints_its_value_and_a_missing_one_is_refused() {
+        let row = serde_json::Map::from_iter([("id".to_string(), json!(7))]);
+        assert_eq!(row_column(&row, "id").unwrap(), "7");
+        assert!(row_column(&row, "ghost").unwrap_err().contains("'{{ ghost }}'"));
     }
 
     #[test]

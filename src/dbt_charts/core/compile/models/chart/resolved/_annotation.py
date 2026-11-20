@@ -180,7 +180,7 @@ class ResolvedAnnotationText(_Frozen):
     dx: float = Field(description="Horizontal nudge in pixels.")
     dy: float = Field(description="Vertical nudge in pixels.")
     max_width: float | None = Field(
-        description="Wrap width in pixels, kept inside the plot by the engine; set only on a frame note or a trend."
+        description="Wrap width in pixels, kept inside the plot by the engine; set only on a frame note, a band or a trend. A band with none wraps to its own width."
     )
     max_share: float | None = Field(
         description="Most of the plot's width the text may take beside the plot; set only on a trend."

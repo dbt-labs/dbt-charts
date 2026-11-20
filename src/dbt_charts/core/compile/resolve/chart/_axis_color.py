@@ -2,7 +2,7 @@
 
 An axis `color` (a color, or `auto` for its series' ink) fills the axis's grid
 lines, tick labels and title. A slot the chart authors on its own (`grid.color`,
-`labels.font.color`, `title.font.color`) keeps its value. Grid lines keep the
+`labels.font.color`, `title.font.color`) keeps its value. Gridlines keep the
 theme grid's contrast against the canvas, so a colored ladder reads as quietly
 as a gray one; an authored `grid.opacity` wins. The engine payload carries
 colors only, never `auto`.

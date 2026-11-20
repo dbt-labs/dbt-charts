@@ -3,9 +3,11 @@ a column the query lacks fails the chart."""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -23,11 +25,11 @@ _ROWS = [
 ]
 
 
-def _svg(chart: dict[str, Any]) -> str:
+def _svg(chart: dict[str, Any], rows: list[dict[str, Any]] = _ROWS) -> str:
     board = yaml.safe_dump(
         {
             "title": "T",
-            "queries": {"q": {"type": "values", "rows": _ROWS}},
+            "queries": {"q": {"type": "values", "rows": rows}},
             "charts": {"c": {"query": "q", **chart}},
             "rows": ["c"],
         },
@@ -59,6 +61,29 @@ def test_authored_rows_follow_the_value_row_and_use_the_resolved_label_and_forma
     )
     assert f"{EXTRA}Ok: yes; {EXTRA}% of budget: 25.0%" in svg
     assert f"{EXTRA}Ok: —" in svg
+
+
+@pytest.mark.parametrize("family", ["bar", "line", "area", "scatter"])
+def test_with_layers_the_rows_reach_the_base_marks_only(family: str) -> None:
+    rows = [
+        {"month": "2024-01-01", "cost": 10, "plan": 12, "ok": "yes"},
+        {"month": "2024-02-01", "cost": 30, "plan": 25, "ok": "no"},
+    ]
+    svg = _svg(
+        {
+            "type": family,
+            "x": "month",
+            "y": "cost",
+            "tooltip": ["ok"],
+            "layers": [{"type": "line", "y": "plan", "label": "Plan"}],
+        },
+        rows,
+    )
+    labels = re.findall(r'aria-label="([^"]*)"', svg)
+    assert any(f"{EXTRA}Ok: yes" in label for label in labels), labels
+    plan = [label for label in labels if "Plan" in label]
+    assert plan, labels
+    assert not any(EXTRA in label for label in plan), plan
 
 
 def test_a_missing_tooltip_column_fails_the_chart_naming_it() -> None:

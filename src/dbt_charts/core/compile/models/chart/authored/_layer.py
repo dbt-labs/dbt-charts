@@ -62,20 +62,20 @@ class LayerAxisYGrid(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     visible: bool | None = Field(
-        default=None, description="Whether to show grid lines on this layer's y axis."
+        default=None, description="Whether to show gridlines on this layer's y axis."
     )
     color: Annotated[str | None, Color()] = Field(
-        default=None, description="Grid line color on this layer's y axis."
+        default=None, description="Gridline color on this layer's y axis."
     )
     width: float | None = Field(
-        default=None, description="Grid line width on this layer's y axis, in pixels."
+        default=None, description="Gridline width on this layer's y axis, in pixels."
     )
     dash: list[float] | None = Field(
         default=None,
-        description="Grid line dash pattern on this layer's y axis; [] is solid.",
+        description="Gridline dash pattern on this layer's y axis; [] is solid.",
     )
     opacity: float | None = Field(
-        default=None, description="Grid line opacity on this layer's y axis, 0 to 1."
+        default=None, description="Gridline opacity on this layer's y axis, 0 to 1."
     )
 
 
@@ -104,7 +104,7 @@ class LayerAxisYStyle(BaseModel):
     )
     color: Annotated[str | None, Color(keywords=(AUTO,))] = Field(
         default=None,
-        description="Color of this axis's grid lines, tick labels and title; 'auto' uses the layer's color.",
+        description="Color of this axis's gridlines, tick labels and title; 'auto' uses the layer's color.",
     )
     scale: LayerAxisYScale | None = Field(
         default=None,

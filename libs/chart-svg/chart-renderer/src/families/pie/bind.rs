@@ -226,8 +226,8 @@ fn palette_slot(r: &Resolved, rows: &[serde_json::Map<String, Value>], color_fie
 }
 
 /// The link of row 0 the visible center total carries. A pie over no rows has no row to fill
-/// a channel placeholder, so a link that names one leaves the total unlinked; the channel is
-/// still checked against the chart's encodings.
+/// a placeholder, so a link that names one leaves the total unlinked; a channel is still checked
+/// against the chart's encodings.
 pub(super) fn center_href(r: &Resolved, rows: &[serde_json::Map<String, Value>]) -> Result<Option<String>, String> {
     match &r.total {
         Some(total_cfg) if total_cfg.visible && !rows.is_empty() => row_href(r, rows, 0),
@@ -237,9 +237,13 @@ pub(super) fn center_href(r: &Resolved, rows: &[serde_json::Map<String, Value>])
                 .link
                 .as_deref()
                 .map(|template| {
-                    crate::href::resolve_channel_href(template, |channel| {
+                    crate::href::resolve_channel_href(template, |name| {
                         names_channel = true;
-                        pie_link_value(r, &serde_json::Map::new(), channel)
+                        if ::bind::links::MARK_CHANNELS.contains(&name) {
+                            pie_link_value(r, &serde_json::Map::new(), name)
+                        } else {
+                            Ok(String::new())
+                        }
                     })
                 })
                 .transpose()?;
@@ -362,9 +366,8 @@ fn row_href(
 }
 
 
-/// `_channel_field` for a pie (`click_interactivity.py:20-58`): `color` is the color
-/// channel's `data_field`, `theta` the measure. A pie has no `x`/`y` encoding, where
-/// production raises the same error at spec build.
+/// A pie link placeholder's value: `color` the color channel's `data_field`, `theta` the
+/// measure, any other name the row's column of that name. A pie has no `x`/`y` encoding.
 fn pie_link_value(
     r: &Resolved,
     row: &serde_json::Map<String, Value>,
@@ -373,7 +376,8 @@ fn pie_link_value(
     let field = match channel {
         "color" => r.resolved_channels.get("color").and_then(|c| c.data_field.as_deref()),
         "theta" => Some(r.theta.as_str()),
-        _ => None,
+        "x" | "y" => None,
+        column => return crate::href::row_column(row, column),
     };
     let field = field.ok_or_else(|| {
         format!(
@@ -667,6 +671,7 @@ fn bind_table(
     let table_payload = Payload {
         cell_text: Default::default(),
         max_template_output_bytes: None,
+        truncation: None,
         resolved: attached.clone(),
         rows: table_rows.into(),
         width: table_width,

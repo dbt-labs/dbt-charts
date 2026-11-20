@@ -426,15 +426,22 @@ fn check_columns(r: &Resolved, columns: &[String]) -> Result<(), String> {
 }
 
 /// The chart's `link` for one row: every `{{ channel }}` placeholder replaced
-/// by the row's value in the column that channel binds, then resolved against
-/// the host like every other chart link.
+/// by the row's value in the column that channel binds, any other `{{ name }}`
+/// by the row's column of that name, then resolved against the host like every
+/// other chart link.
 fn row_href(
     template: &str,
     channels: &Map<String, Json>,
     row: &Json,
     link_context: Option<&href::LinkContext>,
 ) -> Result<String, String> {
-    let resolved = href::resolve_channel_href_in(template, LINK_CHANNELS, |channel| {
+    let resolved = href::resolve_channel_href(template, |channel| {
+        if !LINK_CHANNELS.contains(&channel) {
+            return match row.get(channel) {
+                Some(value) => href::js_string(Some(value)),
+                None => Err(format!("href(): {}", ::bind::links::unknown_placeholder(channel))),
+            };
+        }
         let column = match channels.get(channel) {
             Some(Json::String(column)) => column.as_str(),
             Some(Json::Array(_)) => {
@@ -462,26 +469,33 @@ fn row_href(
 
 fn unknown_placeholder(site: &str, template: &str) -> String {
     format!(
-        "{site}: link {template:?} keeps a {{{{ ... }}}} that names no channel; a placeholder names \
-         one of {}",
+        "{site}: link {template:?} keeps a {{{{ ... }}}} that names no channel or column; a \
+         placeholder names a column or one of {}",
         LINK_CHANNELS.join(", ")
     )
 }
 
-/// The chart-root `link` wrapped around the whole body when it names no
-/// channel: a per-row link is the template's to draw with `href(row)`, and a
-/// `{{ ... }}` that names no channel refuses rather than shipping as text.
-/// A per-row link opens only as a page.
+/// The chart-root `link` wrapped around the whole body when it has no
+/// placeholder: a per-row link is the template's to draw with `href(row)`, and a
+/// `{{ ... }}` that is no placeholder, or names a column the rows lack, refuses
+/// rather than shipping as text. A per-row link opens only as a page.
 fn chart_anchor(r: &Resolved, payload: &Payload) -> Result<Option<String>, Diagnostic> {
     let Some(link) = r.link.as_deref() else {
         return Ok(None);
     };
     if link.contains("{{") {
         let mut named = false;
-        href::resolve_channel_href_in(link, LINK_CHANNELS, |_| {
+        let first = payload.rows.first();
+        href::resolve_channel_href(link, |name| {
             named = true;
-            Ok(String::new())
-        })?;
+            match first {
+                Some(row) if !LINK_CHANNELS.contains(&name) && !row.contains_key(name) => {
+                    Err(::bind::links::unknown_placeholder(name))
+                }
+                _ => Ok(String::new()),
+            }
+        })
+        .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_RENDER, &r.id, reason))?;
         if !named {
             return Err(diagnostic(
                 &codes::ERR_CUSTOM_RENDER,
@@ -2220,6 +2234,9 @@ mod tests {
             svg.contains("<a href=\"https://x.test/v/1.5\">") && svg.contains("/v/2\">"),
             "{svg}"
         );
+
+        let svg = render(&payload(template, |r| r["link"] = json!("https://x.test/n/{{ n }}")), &test_fonts()).unwrap();
+        assert!(svg.contains("<a href=\"https://x.test/n/1.5\">"), "a column no channel binds: {svg}");
 
         let err = render(
             &payload(template, |r| {

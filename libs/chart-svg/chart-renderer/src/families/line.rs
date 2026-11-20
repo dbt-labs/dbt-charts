@@ -6387,6 +6387,12 @@ mod tests {
         p["resolved"]["style"]["line_mark"]["labels"]["font"]["family"] = json!("sans-serif");
         p["rows"][0]["signups"] = json!(0.0);
         p["rows"][2]["signups"] = json!(0.0);
+        p["board_style"] = json!({
+            "font_color": "#313233",
+            "text_mark_font": {"family": "sans-serif", "size": 11.0},
+            "format_locale": ::bind::formats::locale::en_us_wire(),
+            "time_locale": ::bind::time_locale::en_us_wire(),
+        });
         let svg = render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
         assert!(!svg.contains("NaN"), "no NaN share in aria, no NaN caption position: {svg}");
     }
@@ -9646,7 +9652,7 @@ mod tests {
         let grid_xs: Vec<f64> = svg
             .match_indices("y1=\"0.5\" x2=")
             .map(|(idx, _)| {
-                let tag_start = svg[..idx].rfind("<line").expect("grid line");
+                let tag_start = svg[..idx].rfind("<line").expect("gridline");
                 tag_attr(&svg[tag_start..idx], "x1")
             })
             .collect();
@@ -10810,8 +10816,9 @@ mod tests {
     /// strokeWidth, since Vega's `boundStroke` expands a bound by the whole
     /// width — and Vega anchors the title at `padding + ceil(chrome) − chrome`.
     ///
-    /// Oracle: the ten right-orient-y corpus rows (grid_line ×3, the cadence
-    /// ladders, the time-unit matrix) all land title x = 16 + ceil(6.80833) −
+    /// Oracle: the ten right-orient-y corpus rows (the vertical-grid fixture's
+    /// line charts, the cadence ladders, the time-unit matrix) all land title
+    /// x = 16 + ceil(6.80833) −
     /// 6.80833 = 16.19167 at size 46.24, halo_multiplier 2. d3's radius with a
     /// half-stroke expansion gives 16.5745 instead.
     #[test]
@@ -12898,7 +12905,7 @@ mod tests {
         // A y-gridline spans the whole plot width (`x1 = 0.5`, `x2 = plot_w
         // + 0.5`) — distinct from the x-axis's own leftmost vertical
         // category tick, which also sits at `x1 = 0.5` but has `x2 == x1`.
-        let grid_lines = |svg: &str| -> usize {
+        let gridlines = |svg: &str| -> usize {
             svg.match_indices("<line")
                 .filter(|&(i, _)| {
                     let end = svg[i..].find("/>").map(|e| i + e).unwrap_or(svg.len());
@@ -12909,16 +12916,16 @@ mod tests {
         };
         let baseline: Payload = serde::Deserialize::deserialize(&p).unwrap();
         let baseline_svg = render(&baseline, &test_fonts()).expect("baseline renders");
-        let baseline_grid = grid_lines(&baseline_svg);
+        let baseline_grid = gridlines(&baseline_svg);
         assert!(baseline_grid > 0, "fixture actually draws a grid: {baseline_svg}");
 
         p["resolved"]["style"]["axis_y"]["mirror"] = json!(true);
         let mirrored: Payload = serde_json::from_value(p).unwrap();
         let mirrored_svg = render(&mirrored, &test_fonts()).expect("mirror renders");
         assert_eq!(
-            grid_lines(&mirrored_svg),
+            gridlines(&mirrored_svg),
             baseline_grid,
-            "the ghost adds no grid lines of its own: {mirrored_svg}"
+            "the ghost adds no gridlines of its own: {mirrored_svg}"
         );
         assert_eq!(
             mirrored_svg.matches(">Signups<").count(),
@@ -13102,6 +13109,7 @@ mod tests {
         p["resolved"]["style"]["axis_y"]["mirror"] = serde_json::json!(true);
         set_value_labels(&mut p, ",.20f");
         p["board_style"] = serde_json::json!({
+            "font_color": "#313233",
             "text_mark_font": {"family": "sans-serif", "size": 11.0},
             "format_locale": ::bind::formats::locale::en_us_wire(),
             "time_locale": ::bind::time_locale::en_us_wire(),
@@ -15080,7 +15088,7 @@ mod tests {
     /// with an explicit `labels.format` (so d3's own minor-mantissa
     /// `tickFormat` blanking never fires — every rung gets real text) and
     /// `ticks.visible: false` (so no tick-mark line shares the grid's
-    /// stroke color, keeping the grid-line count countable).
+    /// stroke color, keeping the gridline count countable).
     fn make_log_line_payload() -> serde_json::Value {
         let mut p = make_line_payload(true, false);
         p["rows"] = serde_json::json!([
@@ -16255,8 +16263,8 @@ mod tests {
             .expect("renders");
 
         let grid_color = "#D0D3D9";
-        let grid_lines = svg.matches(&format!("stroke=\"{grid_color}\" stroke-width=\"1\"")).count();
-        assert_eq!(grid_lines, 19, "one gridline per decade multiple in [1e8, 1e10]: {svg}");
+        let gridlines = svg.matches(&format!("stroke=\"{grid_color}\" stroke-width=\"1\"")).count();
+        assert_eq!(gridlines, 19, "one gridline per decade multiple in [1e8, 1e10]: {svg}");
 
         // `greedy_visible` always keeps the FIRST candidate (the domain
         // floor) — never the last, which is only kept when it clears
@@ -17027,7 +17035,7 @@ mod tests {
             assert!(!svg_facet.contains(">Signups<"), "facet panel drops the y title: {svg_facet}");
         }
 
-        // ── Small multiples: columns-only and grid line/area facets ────────
+        // ── Small multiples: columns-only and grid-shaped line/area facets ────────
 
         /// A columns-only line facet payload — 2 column panels (East/West),
         /// same query shape as `make_facet_line_payload("shared")` with

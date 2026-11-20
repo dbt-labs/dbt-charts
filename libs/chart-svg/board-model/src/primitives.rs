@@ -5,7 +5,8 @@ use crate::facet::{facet, BorderColor, Color, Facet, FormatName, Palette, Scheme
 use crate::rule::Auto;
 use crate::string_enum;
 use crate::unit::Px;
-use model_core::{Cx, Engine, FromNode, Leaf, Merge, Node, ReadScalar, Scalar, Spell, TypeExpr};
+use diagnostic::{diag, Diagnostic};
+use model_core::{Bounds, Cx, Engine, FromNode, Keywords, Leaf, Merge, Node, ReadScalar, Scalar, Spell, TypeExpr};
 use model_derive::Model;
 use regex::Regex;
 use serde_json::Value;
@@ -507,6 +508,104 @@ pub struct ColorStyle {
     /// Palettes used when color encodes distinct categories, or a lone series.
     #[model(absent = "the chart's own palette")]
     pub categorical: Option<CategoricalColorStyle>,
+}
+
+string_enum!(
+    /// How a size-channel value maps onto the mark-area range.
+    SizeScaleType { Linear = "linear", Sqrt = "sqrt", Log = "log" }
+);
+
+/// A mark-area range `[low, high]` in px², `0 <= low < high`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AreaRange {
+    pub low: f64,
+    pub high: f64,
+}
+
+const AREA: TypeExpr = TypeExpr::Keyed(
+    &Keywords::bounded(Bounds { ge: Some(0.0), ..Bounds::NONE }),
+    &TypeExpr::Scalar(Scalar::Float),
+);
+
+impl ReadScalar for AreaRange {
+    fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
+        let Value::Array(items) = node.to_json() else {
+            cx.mismatch(node, "a list of two numbers");
+            return None;
+        };
+        let [low_node, high_node] = items.as_slice() else {
+            let side = if items.len() < 2 { "at least" } else { "at most" };
+            cx.invalid(
+                node.span,
+                format!("Tuple should have {side} 2 items after validation, not {}", items.len()),
+            );
+            return None;
+        };
+        let (Some(low), Some(high)) = (low_node.as_f64(), high_node.as_f64()) else {
+            cx.mismatch(node, "two numbers");
+            return None;
+        };
+        if low < 0.0 || high < 0.0 {
+            cx.invalid(node.span, "Input should be greater than or equal to 0".to_string());
+            return None;
+        }
+        if low >= high {
+            cx.invalid(
+                node.span,
+                format!("Value error, style.size.range: low ({low}) must be below high ({high})."),
+            );
+            return None;
+        }
+        Some(Self { low, high })
+    }
+}
+impl Spell for AreaRange {
+    fn spell(&self) -> Value {
+        Value::Array(vec![self.low.spell(), self.high.spell()])
+    }
+}
+impl FromNode for AreaRange {
+    fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
+        Self::read(node, cx)
+    }
+    fn patch(node: &Node, cx: &mut Cx) -> Self::Patch {
+        Self::read(node, cx)
+    }
+    fn whole(node: &Node, cx: &mut Cx) -> Option<Self::Whole> {
+        Self::read(node, cx)
+    }
+}
+impl Leaf for AreaRange {
+    type Whole = AreaRange;
+    type Authored = Option<AreaRange>;
+    type Patch = Option<AreaRange>;
+    const MERGE: Merge = Merge::Override;
+    const EXPR: TypeExpr = TypeExpr::Tuple(&[&AREA, &AREA]);
+}
+model_core::build_leaf!(AreaRange);
+
+/// Size-channel scale config: the mark-area range and the scale law.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct SizeScaleStyle {
+    /// Mark area in px² for the smallest and largest value, as [low, high] with 0 <= low < high (same unit as `style.marks.point.size`).
+    pub range: AreaRange,
+    /// How a value maps onto the area range. `linear` is zero-anchored; `sqrt` compresses a long tail while keeping zero; `log` spans the data extent and needs every size value to be above zero.
+    pub r#type: SizeScaleType,
+}
+
+impl SizeScaleStyle {
+    /// Python's `SizeScaleStyle` rule on the merged style: log maps the smallest value to
+    /// `range.low`, so a range starting at 0 draws that mark with no area. Hand-written because
+    /// it reads two fields, which no `constraint` kind does.
+    pub fn log_range_starts_above_zero(&self) -> Vec<Diagnostic> {
+        if self.r#type != SizeScaleType::Log || self.range.low != 0.0 {
+            return Vec::new();
+        }
+        vec![diag::err_validation_field(
+            "style.size",
+            "Value error, style.size.type: log needs a range starting above 0; the smallest value would draw with no area. Set style.size.range, e.g. [9, 2500].".to_string(),
+        )]
+    }
 }
 
 /// `style.pattern`: how a chart's `pattern:` channel paints its fills.

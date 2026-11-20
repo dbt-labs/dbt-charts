@@ -48,6 +48,7 @@ use board_model::board::Board;
 use board_model::facet::FontFamily;
 use board_model::chart::{ColorColumn, Columns, MultiplesConfig, MultiplesScale, ScatterChart};
 use board_model::ids::ChartId;
+use board_model::primitives::{SizeScaleStyle, SizeScaleType};
 use board_model::style::marks::labels_drawn;
 use d3rs::vega_symbol::VegaSymbol;
 use color::Rgba;
@@ -519,7 +520,7 @@ pub fn bind(
         return Err(unsupported(refuse!("a scatter `color:` with a row that draws no point is not supported")));
     }
 
-    let size = chart.size.as_ref().map(|channel| size_scale(channel.as_str(), dataset, &decoded, &drawn)).transpose()?;
+    let size = chart.size.as_ref().map(|channel| size_scale(placed.public_id, channel.as_str(), &chart.style.size, dataset, &decoded, &drawn)).transpose()?;
     for (scale, side, field, values) in [(p.y_scale, Side::Y, y_field, &y_values), (p.x_scale, Side::X, x_field, &x_values)] {
         if scale.is_log() {
             domain::require_positive(placed.public_id, side, field, values)?;
@@ -574,6 +575,11 @@ pub fn bind(
 
     let derived = placed.derive()?;
     let frame = Some(derived.frame.clone());
+    if chart.size.is_some() {
+        if let Some(refusal) = chart.style.size.log_range_starts_above_zero().into_iter().next() {
+            return Err(refusal);
+        }
+    }
     if chart.size.is_some() && derived.legend.base.visible != Engine::Value(false) {
         return Err(unsupported(refuse!("a scatter `size:` with a visible legend is not supported")));
     }
@@ -709,8 +715,16 @@ pub fn bind(
 
 /// The size channel `field`: its values must all be declared numbers. The scale's domain is zero-anchored
 /// over the rows that draw a point, as production folds it from `(0, 0)` over the rows it keeps; a row
-/// with no x draws none and does not widen it.
-fn size_scale(field: &str, dataset: &Dataset, decoded: &Decoded, drawn: &[(usize, XCell<'_>, YCell<'_>)]) -> Result<SizeScale, Diagnostic> {
+/// with no x draws none and does not widen it. A `log` scale spans the extent of those rows' values
+/// instead, which must all be above zero.
+fn size_scale(
+    chart_id: &str,
+    field: &str,
+    style: &SizeScaleStyle,
+    dataset: &Dataset,
+    decoded: &Decoded,
+    drawn: &[(usize, XCell<'_>, YCell<'_>)],
+) -> Result<SizeScale, Diagnostic> {
     if !dataset.schema.get(field).map_err(Diagnostic::refused)?.is_number() {
         return Err(unsupported(refuse!("a scatter `size:` on a column that is not a declared number is not supported")));
     }
@@ -719,8 +733,18 @@ fn size_scale(field: &str, dataset: &Dataset, decoded: &Decoded, drawn: &[(usize
         .iter()
         .map(|key| value(key)?.ok_or_else(|| unsupported(refuse!("a scatter `size:` with a null value is not supported"))))
         .collect::<Result<Vec<_>, Diagnostic>>()?;
-    let domain = drawn.iter().map(|(row, ..)| by_row[*row]).fold((0.0_f64, 0.0_f64), |(lo, hi), v| (lo.min(v), hi.max(v)));
-    Ok(SizeScale { domain, by_row })
+    let drawn_values: Vec<f64> = drawn.iter().map(|(row, ..)| by_row[*row]).collect();
+    // Mirrors `size_scale_domain` in chart-renderer/src/families/scatter.rs.
+    let domain = match style.r#type {
+        SizeScaleType::Log => {
+            domain::require_positive_size(chart_id, field, &by_row)?;
+            drawn_values.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(*v), hi.max(*v)))
+        }
+        SizeScaleType::Linear | SizeScaleType::Sqrt => {
+            drawn_values.iter().fold((0.0_f64, 0.0_f64), |(lo, hi), v| (lo.min(*v), hi.max(*v)))
+        }
+    };
+    Ok(SizeScale { domain, style: style.clone(), by_row })
 }
 
 /// The shape channel `field`: a column of text over rows that all draw a point, whose categories in

@@ -180,22 +180,6 @@ def test_an_entry_rejects_unknown_keys() -> None:
         )
 
 
-_LAYER = {"type": "line", "y": "cost"}
-
-
-@pytest.mark.parametrize("family", ["bar", "line", "area", "scatter"])
-def test_tooltip_with_layers_is_rejected(family: str) -> None:
-    with pytest.raises(ValidationError, match="layers"):
-        _authored(
-            {
-                **_FAMILY_CHARTS[family],
-                "query": "q",
-                "tooltip": ["approved"],
-                "layers": [_LAYER],
-            }
-        )
-
-
 def test_tooltip_with_a_ranged_bar_is_rejected() -> None:
     with pytest.raises(ValidationError, match="y_start"):
         _authored(

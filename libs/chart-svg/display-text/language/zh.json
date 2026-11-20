@@ -47,6 +47,8 @@
   "controls.next_month": "下个月",
   "controls.no": "否",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.rows_cut_by_row_limit": "因行数上限被截断",
+  "controls.rows_cut_by_byte_limit": "因大小上限被截断",
   "controls.preset_before_previous": "早于前 {duration}",
   "controls.preset_last": "最近 {duration}",
   "controls.preset_previous": "之前 {duration}",

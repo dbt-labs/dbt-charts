@@ -3351,6 +3351,23 @@ pub fn title_truncations(
 /// A value label's `font.color` that stands for its mark's series color.
 pub const SERIES_INK: &str = "series";
 
+/// The least contrast a label's ink keeps against the canvas it sits on.
+pub const OUTSIDE_INK_CONTRAST: f64 = 4.5;
+
+/// The board's text color: the ink a value label takes before the ground it sits on moves it,
+/// when nothing authored or inherited names one.
+pub(crate) fn board_text_ink(board: Option<&crate::BoardStyle>) -> Result<String, String> {
+    board
+        .and_then(|b| b.font_color.clone())
+        .ok_or_else(|| "value labels: the payload carries no board_style.font_color to ink them".into())
+}
+
+/// An unauthored value label's ink on `canvas`: the board's text color, lifted until it keeps
+/// [`OUTSIDE_INK_CONTRAST`] against a canvas it would vanish into.
+pub(crate) fn canvas_label_ink(board: Option<&crate::BoardStyle>, canvas: &str) -> Result<String, String> {
+    dbt_charts_color::ensure_readable_ink(&board_text_ink(board)?, canvas, OUTSIDE_INK_CONTRAST)
+}
+
 /// The face a value label paints in: its own font, else the theme's text-mark
 /// font, per field. Errors when the payload carries neither, rather than
 /// painting in a guessed face.

@@ -1,0 +1,3 @@
+kind: Features
+body: A band's label takes `style.marks.text.max_width` (pixels or `auto`) to set its wrap width in place of the band's own width.
+time: 2026-11-19T11:45:00.977191-08:00

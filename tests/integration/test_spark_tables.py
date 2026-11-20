@@ -1023,10 +1023,9 @@ def _spark_translate_ys(svg: str) -> list[float]:
 
 
 class TestSparkVerticalCentering:
-    """Spark mark vertical position must center against the row's effective
-    height — including rows whose height has grown to accommodate wrapped
-    text in another column. The mark stays a fixed visual size; only its
-    y offset moves to keep top and bottom gaps equal within the band.
+    """Spark mark vertical position centers on the row's first line, so a row
+    grown by wrapped text in another column keeps its spark beside that text's
+    first line. The mark stays a fixed visual size.
     """
 
     # Long, distinctive value chosen so a narrow text column wraps to 3+
@@ -1048,12 +1047,9 @@ class TestSparkVerticalCentering:
             },
         )
 
-    def test_wrapped_row_spark_drops_to_stay_centered(self) -> None:
-        """Row 1 wraps to multiple lines; its spark must move further down
-        than row 0's spark by more than the nominal row height — i.e. the
-        spark picks up half of the wrapped row's growth so top/bottom gaps
-        stay equal. The buggy implementation pinned both spark y values to
-        `row_y + 2`, leaving the difference equal to the nominal row height.
+    def test_wrapped_row_spark_sits_on_its_first_line(self) -> None:
+        """Row 1 wraps to several lines. Its spark keeps the same offset from
+        the row's first text baseline as row 0's one-line spark does.
         """
         chart = self._chart()
         data = [
@@ -1066,24 +1062,13 @@ class TestSparkVerticalCentering:
             width=320,
             board_style=resolve_style(get_theme_style()),
         )
-        ys = _spark_translate_ys(svg)
-        assert len(ys) == 2, f"expected 2 spark groups, got {ys!r}"
-
-        spark_y_short, spark_y_wrap = ys
-        # Row 0 has only one line, so its y_top == y_top_of_band + (nominal -
-        # spark)/2. Row 1 wraps and is taller; with centering, its spark sits
-        # further down by (grown - nominal) / 2 on top of the nominal step.
-        # Reference table heights for assertion floor are deliberately loose:
-        # any positive contribution from the wrap growth breaks the bug.
-        diff = spark_y_wrap - spark_y_short
-        # The wrapped text spans 3+ lines at this width, so the row grows by
-        # at least ~2 line heights (~28+ px at default 14px font). Half of
-        # that is ~14, well above any single-pixel rounding.
-        assert diff > 36, (
-            f"spark in wrapped row must drop more than nominal row height; "
-            f"got spark_y_short={spark_y_short}, spark_y_wrap={spark_y_wrap}, "
-            f"diff={diff} (bug pins diff == nominal row_height)"
-        )
+        spark_ys = _spark_translate_ys(svg)
+        text_ys = [float(y) for y in re.findall(r'y="([\d.]+)"[^>]*>Acme[< ]', svg)]
+        assert len(spark_ys) == 2, f"expected 2 spark groups, got {spark_ys!r}"
+        assert len(text_ys) == 2, f"expected 2 first lines, got {text_ys!r}"
+        one_line = spark_ys[0] - text_ys[0]
+        wrapped = spark_ys[1] - text_ys[1]
+        assert wrapped == pytest.approx(one_line, abs=0.01)
 
     def test_unwrapped_rows_spark_step_equals_row_height(self) -> None:
         """Sanity check: when no row wraps, successive spark y values step

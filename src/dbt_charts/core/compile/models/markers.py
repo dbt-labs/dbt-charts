@@ -285,9 +285,11 @@ class ResultColumn:
     names: a field holding a column name carries this marker or is missed.
     ``template``: the string is a link template whose ``{{ name }}``
     placeholders name columns, rather than a column name itself.
+    ``channels``: placeholder names that read a chart channel, never a column.
     """
 
     template: bool = False
+    channels: frozenset[str] = frozenset()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -298,6 +300,9 @@ class ResultQuery:
 
 
 ColumnRef = Annotated[str, ResultColumn()]
+
+LINK_CHANNELS = frozenset({"x", "y", "color", "theta"})
+"""The channels a chart ``link:`` placeholder reads before the row's columns."""
 
 
 @dataclasses.dataclass(frozen=True)

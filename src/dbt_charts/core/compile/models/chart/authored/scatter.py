@@ -11,6 +11,7 @@ from dbt_charts.core.compile.models.constraints import (
     Forbids,
     IsList,
     IsSet,
+    Requires,
 )
 from dbt_charts.core.compile.models.markers import Channel
 from dbt_charts.core.compile.models.style.authored import ScatterChartStylePatch
@@ -30,13 +31,13 @@ class ScatterChart(_CartesianChartFields, _TooltipFields):
         SUPPORT_TABLE_TYPE_RULE,
         Forbids(
             ("tooltip",),
-            "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query.",
-            when=(IsSet("layers"),),
-        ),
-        Forbids(
-            ("tooltip",),
             "tooltip is not supported with a multi-measure y: list: a wide scatter draws no structured hover card.",
             when=(IsList("y"),),
+        ),
+        Requires(
+            ("size",),
+            "style.size configures the size channel, but this {type} chart has no size: field.",
+            when=(IsSet("style.size"),),
         ),
     )
 

@@ -47,6 +47,8 @@
   "controls.next_month": "Seuraava kuukausi",
   "controls.no": "Ei",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.rows_cut_by_row_limit": "katkaistu rivirajan vuoksi",
+  "controls.rows_cut_by_byte_limit": "katkaistu kokorajan vuoksi",
   "controls.preset_before_previous": "Ennen edellisiä {duration}",
   "controls.preset_last": "Viimeiset {duration}",
   "controls.preset_previous": "Edelliset {duration}",

@@ -47,6 +47,8 @@
   "controls.next_month": "Mese successivo",
   "controls.no": "No",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.rows_cut_by_row_limit": "troncato dal limite di righe",
+  "controls.rows_cut_by_byte_limit": "troncato dal limite di dimensione",
   "controls.preset_before_previous": "Prima dei {duration} precedenti",
   "controls.preset_last": "Ultimo: {duration}",
   "controls.preset_previous": "Precedente: {duration}",

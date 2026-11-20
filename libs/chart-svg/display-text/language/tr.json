@@ -47,6 +47,8 @@
   "controls.next_month": "Sonraki ay",
   "controls.no": "Hayır",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.rows_cut_by_row_limit": "satır sınırı nedeniyle kesildi",
+  "controls.rows_cut_by_byte_limit": "boyut sınırı nedeniyle kesildi",
   "controls.preset_before_previous": "Önceki {duration} öncesi",
   "controls.preset_last": "Son {duration}",
   "controls.preset_previous": "Önceki {duration}",

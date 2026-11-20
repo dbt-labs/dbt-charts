@@ -984,8 +984,7 @@
   cursor: pointer;
 }
 
-.dbt-chart .dbt-paginator text,
-.dbt-chart text.dbt-paginator-label {
+.dbt-chart .dbt-paginator text {
   user-select: none;
 }
 

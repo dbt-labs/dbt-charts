@@ -280,9 +280,6 @@ pub(super) struct LabelDecor {
 
 pub(super) type LabelDecors = HashMap<(String, String), LabelDecor>;
 
-/// The least contrast that neutral ink keeps against the canvas.
-pub(super) const OUTSIDE_INK_CONTRAST: f64 = 4.5;
-
 /// One value label before any geometry: where it anchors on the measure axis
 /// and what it prints.
 pub(super) struct LabelSite {
@@ -1119,9 +1116,7 @@ pub(crate) struct LabelFont {
 pub(crate) fn label_font(ml: &MarkLabels, board_style: Option<&crate::BoardStyle>) -> Result<LabelFont, String> {
     let f = ml.font.as_ref();
     let (family, size) = crate::common::value_label_face(f, board_style)?;
-    let ink = board_style
-        .and_then(|b| b.font_color.clone())
-        .ok_or("value labels: the payload carries no board_style.font_color to ink them")?;
+    let ink = crate::common::board_text_ink(board_style)?;
     Ok(LabelFont {
         family,
         size,
@@ -1304,7 +1299,7 @@ pub(super) fn mark_labels(
     let stamped = points.iter().any(|p| p.aria.is_some());
     let mut labels = Vec::new();
     // A label outside its bar with no series color to take reads as the neutral ink, kept readable on the canvas.
-    let neutral_outside = dbt_charts_color::ensure_readable_ink(&style.font.ink, canvas, OUTSIDE_INK_CONTRAST)?;
+    let neutral_outside = dbt_charts_color::ensure_readable_ink(&style.font.ink, canvas, crate::common::OUTSIDE_INK_CONTRAST)?;
     let lines: Vec<Obstacle> = under.iter().filter(|m| matches!(m, DataMark::Line { .. })).flat_map(Obstacle::of_mark).collect();
     let bars: Vec<vega_fit::Bounds> = under
         .iter()

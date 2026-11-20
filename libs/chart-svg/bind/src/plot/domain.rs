@@ -351,6 +351,14 @@ pub fn require_positive(chart_id: &str, side: Side, field: &str, values: &[f64])
     })
 }
 
+/// Any size value `<= 0` under `style.size.type: log` refuses; a log domain is undefined there.
+pub fn require_positive_size(chart_id: &str, field: &str, values: &[f64]) -> Result<(), Diagnostic> {
+    if values.iter().all(|v| *v > 0.0 || v.is_nan()) {
+        return Ok(());
+    }
+    Err(diag::err_log_size_scale_requires_positive_data(chart_id, field))
+}
+
 /// Whether `error` is one of the compile errors production raises for an axis scale (`require_positive`,
 /// `refuse_log`, `cartesian::refuse_scale`): the chart's own error card, which the rest of the board
 /// draws beside.
@@ -358,6 +366,7 @@ pub fn is_scale_error(error: &Diagnostic) -> bool {
     [
         diagnostic::codes::ERR_LOG_SCALE_REQUIRES_POSITIVE_DATA.id,
         diagnostic::codes::ERR_LOG_SCALE_REQUIRES_POSITIVE_X_DATA.id,
+        diagnostic::codes::ERR_LOG_SIZE_SCALE_REQUIRES_POSITIVE_DATA.id,
         diagnostic::codes::ERR_BAR_LOG_SCALE_NOT_SUPPORTED.id,
         diagnostic::codes::ERR_SCALE_TYPE_SCATTER_ONLY.id,
         diagnostic::codes::ERR_AREA_STACKED_LOG_SCALE_NOT_SUPPORTED.id,

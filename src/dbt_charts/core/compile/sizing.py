@@ -209,10 +209,17 @@ class WidthMeasurer:
         return combine_max(*parts)
 
 
-# A fixed instant, so the floor never depends on when the board renders. The
-# timestamp is drawn with tabular digits, so only the format's words (month,
-# zone) vary in width; late December is among the widest.
-_SAMPLE_TIMESTAMP = datetime(2026, 12, 28, 22, 22, tzinfo=UTC)
+# Fixed instants, so the floor never depends on when the board renders: every
+# month (so both sides of any DST switch), a run of days covering every
+# weekday, and two hours 12 apart (one AM, one PM in any zone). Render shows
+# them in the board's zone, so its abbreviation is measured too. Digits are
+# proportional, so each is swapped for the widest digit before measuring.
+_SAMPLE_TIMESTAMPS = tuple(
+    datetime(2026, month, day, hour, 22, tzinfo=UTC)
+    for month in range(1, 13)
+    for day in range(22, 29)
+    for hour in (10, 22)
+)
 
 
 # ASCII neighbors only: a translated footer may run the brand into non-Latin
@@ -258,10 +265,16 @@ def _footer_row_width(board: Board) -> float:
     stamp = style.timestamp
     if stamp.visible and stamp.position == "footer":
         assert stamp.font.size is not None, "TimestampStyle guarantees font.size"
-        width += stamp.gap
-        width += get_font_measurer(family).measure(
-            portable_strftime(_SAMPLE_TIMESTAMP, stamp.format), float(stamp.font.size)
+        size = float(stamp.font.size)
+        measure = get_font_measurer(family).measure
+        digit = max("0123456789", key=lambda d: measure(d, size))
+        zone = board.regional.zone
+        stamps = (
+            portable_strftime(t.astimezone(zone), stamp.format)
+            for t in _SAMPLE_TIMESTAMPS
         )
+        width += stamp.gap
+        width += max(measure(re.sub(r"\d", digit, s), size) for s in stamps)
     return width
 
 

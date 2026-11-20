@@ -70,7 +70,7 @@ from dbt_charts.core.compile.models.chart.resolved._annotation import (
     ResolvedValueAnchor,
 )
 from dbt_charts.core.compile.models.markers import AUTO
-from dbt_charts.core.compile.models.primitives import ResolvedFormat
+from dbt_charts.core.compile.models.primitives import ResolvedFormat, SizeScaleStyle
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedAxisStyle,
@@ -156,9 +156,6 @@ _MIN_AUTO_RADIUS = 6.0
 _AUTO_WRAP_CHARS = 28
 # An `auto` halo's width, px; it draws only on text over a data mark.
 _AUTO_HALO = 3.0
-# The area range, px squared, a scatter's size channel scales its marks over
-# (`SIZE_SCALE_RANGE` in the engine's scatter family).
-_SIZE_SCALE_RANGE = (4.0, 361.0)
 
 
 def unfilled_ring(point_mark: ResolvedPointMarkStyle) -> float:
@@ -171,30 +168,58 @@ def unfilled_ring(point_mark: ResolvedPointMarkStyle) -> float:
 def point_radius(
     size: float | None,
     ring: float = 0.0,
-    size_channel: Sequence[
-        Any  # type-state: explicit_any — a query cell
+    size_channel: tuple[
+        Sequence[
+            Any  # type-state: explicit_any — a query cell
+        ],
+        SizeScaleStyle,
     ]
     | None = None,
 ) -> float | None:
     """The outer radius of a chart's drawn point marks; None when it draws none.
 
     ``size`` is a mark's area in px squared and ``ring`` the extra ink of an
-    unfilled symbol's stroke. A ``size_channel`` (the size column's cells) scales
-    the marks linearly over the area range from 0 to the largest cell; the
-    biggest mark sets the radius.
+    unfilled symbol's stroke. A ``size_channel`` (the size column's cells and its
+    ``style.size``) scales the marks over the area range; the biggest mark sets
+    the radius, so only the largest cell's place in the domain is read.
     """
     if size_channel is not None:
-        cells = [v for v in map(coerce_numeric_cell, size_channel) if v is not None]
-        if not cells:
+        cells, scale = size_channel
+        values = [v for v in map(coerce_numeric_cell, cells) if v is not None]
+        if not values:
             return None
-        low, high = min(0.0, *cells), max(0.0, *cells)
-        unit = 0.5 if high == low else (max(cells) - low) / (high - low)
-        size = _SIZE_SCALE_RANGE[0] + unit * (
-            _SIZE_SCALE_RANGE[1] - _SIZE_SCALE_RANGE[0]
-        )
+        size = _largest_mark_area(values, scale)
     if size is None or size <= 0:
         return None
     return math.sqrt(size) / 2 + ring
+
+
+def _largest_mark_area(values: list[float], scale: SizeScaleStyle) -> float:
+    """The area of the largest value's mark: the range's top, or its middle when
+    the domain has no width. ``linear`` and ``sqrt`` anchor the domain at zero, so
+    a column with no positive value sits below the top. ``log`` has only positive
+    values (resolve refuses the rest) and spans their extent."""
+    low, high = (
+        (min(values), max(values))
+        if scale.type == "log"
+        else (min(0.0, *values), max(0.0, *values))
+    )
+    if high == low:
+        unit = 0.5
+    elif max(values) == high:
+        unit = 1.0
+    else:
+        # Only a zero-anchored column with no positive value gets here.
+        transform = _signed_sqrt if scale.type == "sqrt" else float
+        unit = (transform(max(values)) - transform(low)) / (
+            transform(high) - transform(low)
+        )
+    area_low, area_high = scale.range
+    return area_low + unit * (area_high - area_low)
+
+
+def _signed_sqrt(value: float) -> float:
+    return math.copysign(math.sqrt(abs(value)), value)
 
 
 # Every color slot a series color fills when the author did not set one; box
@@ -1714,12 +1739,14 @@ def _auto_dash(width: float) -> str:
 def _wrap(
     annotation: Annotation, marks: _Marks, theme: _TypeDefaults
 ) -> tuple[float | Literal["auto"] | None, float | None]:
-    """The wrap a text takes: a frame note's measure, or a trend's measure and share."""
+    """The wrap a text takes: a frame note's or band's measure, or a trend's measure and share."""
     if isinstance(marks, TrendAnnotationMarksStyle) and isinstance(
         theme, TrendAnnotationThemeStyle
     ):
         return marks.text.max_width, theme.label.max_share
     if isinstance(marks, NoteAnnotationMarksStyle) and _is_frame_note(annotation):
+        return marks.text.max_width, None
+    if isinstance(marks, BandAnnotationMarksStyle):
         return marks.text.max_width, None
     return None, None
 

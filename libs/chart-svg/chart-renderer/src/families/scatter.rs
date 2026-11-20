@@ -309,6 +309,8 @@ struct ScatterResolved {
 
 #[derive(Deserialize)]
 struct ScatterStyle {
+    /// `style.size`: the size channel's mark-area range and scale law.
+    size: legend::SizeScale,
     axis_x: AxisStyle,
     axis_y: AxisStyle,
     point_mark: PointMark,
@@ -421,7 +423,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     Ok(print(&laid_out.nodes))
 }
 
-/// The size scale's domain over the rows Vega keeps: zero-anchored.
+/// The size scale's domain over the rows Vega keeps: zero-anchored for `linear` and `sqrt`, the
+/// extent of the positive values for `log`, whose domain cannot include zero (resolve refuses a
+/// non-positive size value under `log`).
 fn size_scale_domain(
     r: &ScatterResolved,
     drawn: &[&serde_json::Map<String, Value>],
@@ -430,19 +434,18 @@ fn size_scale_domain(
     if r.size.is_none() {
         return Ok(None);
     }
-    let (lo, hi) = drawn
-        .iter()
-        .filter_map(|row| kept_reading(row, r, x_nominal, x_dates, y_nominal)?.2)
-        .fold((0.0_f64, 0.0_f64), |(lo, hi), sv| (lo.min(sv), hi.max(sv)));
-    Ok(Some((lo, hi)))
-}
-
-/// Vega-Lite's linear size scale over its fixed default point-mark range:
-/// the drawn AREA for `v`; a zero-width domain maps everything to the middle of
-/// the range, as d3's `normalize` does.
-fn size_area((lo, hi): (f64, f64), v: f64) -> f64 {
-    let (r_lo, r_hi) = SIZE_SCALE_RANGE;
-    r_lo + crate::families::legend::unit_position(v, lo, hi) * (r_hi - r_lo)
+    let sizes = drawn.iter().filter_map(|row| kept_reading(row, r, x_nominal, x_dates, y_nominal)?.2);
+    let domain = match r.style.size.r#type {
+        legend::SizeScaleType::Log => {
+            let (lo, hi) = sizes.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), sv| (lo.min(sv), hi.max(sv)));
+            // No drawn row: a degenerate domain, as the zero-anchored one is.
+            if lo > hi { (1.0, 1.0) } else { (lo, hi) }
+        }
+        legend::SizeScaleType::Linear | legend::SizeScaleType::Sqrt => {
+            sizes.fold((0.0_f64, 0.0_f64), |(lo, hi), sv| (lo.min(sv), hi.max(sv)))
+        }
+    };
+    Ok(Some(domain))
 }
 
 /// A size channel's symbol legend (`legend::SizeLegend`), laid out once and painted
@@ -453,11 +456,12 @@ fn size_legend(
     fonts: &FontBook,
     domain: (f64, f64),
     symbol: &str,
+    board_style: Option<&crate::BoardStyle>,
 ) -> Result<legend::SizeLegend, String> {
     let size_field = r.size.as_deref().expect("a size legend needs a size channel");
     let title = legend::legend_title_text(size_field, &r.legend, &r.field_labels)?;
-    let (ticks, labels) = legend::size_legend_ticks(domain, false)?;
-    let areas: Vec<f64> = ticks.iter().map(|&v| size_area(domain, v)).collect();
+    let (ticks, labels) = legend::size_legend_ticks(r.style.size, domain, false)?;
+    let areas: Vec<f64> = ticks.iter().map(|&v| r.style.size.area(domain, v)).collect();
     let label_ws = legend::size_label_widths(&labels, &r.legend, fonts)?;
     let glyphs = areas
         .iter()
@@ -468,6 +472,7 @@ fn size_legend(
         legend::SizeRows { labels, glyphs, areas, label_ws },
         (SIZE_LEGEND_LABEL_OFFSET, r.legend.direction == "horizontal"),
         crate::families::scatter_shape::half_extents(symbol, 1.0),
+        r.style.size.r#type.footnote_inked(board_style.and_then(|b| b.secondary_color.as_deref()))?,
         &r.legend,
         fonts,
     )
@@ -877,11 +882,6 @@ fn point_scale_domain(
     ::bind::rows::min_ranked_domain(domain, &source, |row| category_text(row, field), sort).map_err(|e| format!("scatter: {e}"))
 }
 
-/// The point mark's size scale range — Vega-Lite's own fixed default for a
-/// quantitative size channel on a `point` mark, probe-confirmed independent
-/// of `mark.size`, `mark.type`-implied config, and plot geometry (varied
-/// width/height/mark.size, range never moved).
-const SIZE_SCALE_RANGE: (f64, f64) = (4.0, 361.0);
 /// `legend.label.padding` (VL's `labelOffset`) as production always
 /// compiles it, the size legend's gap from its per-row symbol cell
 /// (`size_legend_grid`) to the label.
@@ -1058,7 +1058,7 @@ fn log_x_axis(ax_x: &AxisStyle, x_min: f64, x_max: f64, pw: f64) -> Result<(LogA
 /// The x edge pad of a scatter: the largest dot it draws. With a size channel that is the
 /// scale's largest (the domain's top), an upper bound on the dot at either end.
 fn x_edge_pad(r: &ScatterResolved, size_domain: Option<(f64, f64)>) -> f64 {
-    let area = size_domain.map_or(r.style.point_mark.size, |domain| size_area(domain, domain.1));
+    let area = size_domain.map_or(r.style.point_mark.size, |domain| r.style.size.area(domain, domain.1));
     crate::common::x_edge_pad(area)
 }
 
@@ -2441,7 +2441,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
     let size_legend = match size_domain.filter(|_| r.legend.visible) {
         Some(domain) => {
             let symbol = r.style.point_mark.shape.as_ref().and_then(Value::as_str).filter(|_| r.shape.is_none());
-            Some(size_legend(r, fonts, domain, symbol.unwrap_or("circle"))?)
+            Some(size_legend(r, fonts, domain, symbol.unwrap_or("circle"), payload.board_style.as_ref())?)
         }
         None => None,
     };
@@ -2693,6 +2693,7 @@ mod tests {
                 "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
                 "axis_x": axis_json(None),
                 "axis_y": ay,
+                "size": {"range": [4.0, 361.0], "type": "linear"},
                 "point_mark": {"size": 60.0, "opacity": 1.0, "stroke_width": 2.5},
                 "single_series_fill": "#23467f"
             }
@@ -3918,6 +3919,11 @@ mod tests {
     #[test]
     fn point_value_labels_on_a_categorical_y_draw_nothing() {
         let mut json = make_dot_plot_payload(dot_rows("Charlie"));
+        json["board_style"] = serde_json::json!({
+            "font_color": "#313233", "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "secondary_color": null, "tones": null,
+            "title_case": null, "continuous_height": null,
+            "format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire()
+        });
         json["resolved"]["style"]["point_mark"]["labels"] =
             serde_json::json!({"visible": true, "font": {"family": TEST_FONT}});
         let svg = render_json(json);
@@ -4423,11 +4429,81 @@ mod tests {
     #[test]
     fn degenerate_size_domain_draws_the_middle_of_the_range() {
         let svg = render_json(make_scatter_payload_with_size_values(&[0.0, 0.0, 0.0]));
-        let (r_lo, r_hi) = super::SIZE_SCALE_RANGE;
-        let radius = super::symbol_radius((r_lo + r_hi) / 2.0);
+        let radius = super::symbol_radius((4.0 + 361.0) / 2.0);
         let expected = format!("d=\"M{},0A", print::geometry(radius));
         // Three marks and the legend's one entry.
         assert_eq!(svg.matches(&expected).count(), 4, "{svg}");
+    }
+
+    fn sized_payload(deals: &[f64], range: [f64; 2], kind: &str, secondary_color: serde_json::Value) -> serde_json::Value {
+        let mut json = make_scatter_payload_with_size_values(deals);
+        json["resolved"]["style"]["size"] = serde_json::json!({"range": range, "type": kind});
+        json["board_style"] = serde_json::json!({
+            "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "secondary_color": secondary_color, "tones": null,
+            "title_case": null, "continuous_height": null,
+            "format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire()
+        });
+        json
+    }
+
+    fn render_sized(deals: &[f64], range: [f64; 2], kind: &str) -> String {
+        render_json(sized_payload(deals, range, kind, serde_json::json!("#abcdef")))
+    }
+
+    fn arc_of(area: f64) -> String {
+        format!("d=\"M{},0A", print::geometry(super::symbol_radius(area)))
+    }
+
+    /// A custom range scales marks and legend circles alike; the legend's own ticks fall on 0, 20, ... 100.
+    #[test]
+    fn a_custom_size_range_sets_the_mark_and_legend_areas() {
+        let svg = render_sized(&[0.0, 50.0, 100.0], [16.0, 1600.0], "linear");
+        for area in [16.0, 808.0, 1600.0, 16.0 + 0.2 * 1584.0] {
+            assert!(svg.contains(&arc_of(area)), "area {area} missing: {svg}");
+        }
+    }
+
+    /// `sqrt` puts a quarter of the domain at half the range.
+    #[test]
+    fn a_sqrt_size_scale_maps_a_quarter_of_the_domain_to_the_middle() {
+        let svg = render_sized(&[0.0, 25.0, 100.0], [16.0, 1600.0], "sqrt");
+        assert!(svg.contains(&arc_of(808.0)), "{svg}");
+    }
+
+    /// `log` spans the smallest to the largest value; each decade is a third of the range, and the legend lists d3's log ticks.
+    #[test]
+    fn a_log_size_scale_spans_the_data_extent_and_lists_log_ticks() {
+        let svg = render_sized(&[1.0, 10.0, 1000.0], [16.0, 1600.0], "log");
+        for area in [16.0, 16.0 + 1584.0 / 3.0, 1600.0] {
+            assert_eq!(svg.matches(&arc_of(area)).count(), 2, "area {area} (a mark and its legend entry): {svg}");
+        }
+        // The 100 tick has no mark, only its legend entry.
+        assert_eq!(svg.matches(&arc_of(16.0 + 2.0 * 1584.0 / 3.0)).count(), 1, "{svg}");
+    }
+
+    /// A log or sqrt scale says so under its legend circles; a linear one adds nothing, and the legend
+    /// box grows by the footnote's row.
+    #[test]
+    fn a_non_proportional_size_scale_footnotes_its_legend() {
+        let legend_text = |kind: &str| {
+            let svg = render_sized(&[1.0, 10.0, 1000.0], [16.0, 900.0], kind);
+            svg[svg.rfind(">Deals</text>").unwrap()..].to_string()
+        };
+        assert!(legend_text("log").contains(">Log scale</text>"));
+        assert!(legend_text("sqrt").contains(">Square-root scale</text>"));
+        let linear = legend_text("linear");
+        assert!(!linear.contains("scale</text>"), "{linear}");
+        let svg = render_sized(&[1.0, 10.0, 1000.0], [16.0, 900.0], "log");
+        assert!(text_xy(&svg, "Log scale").1 - text_xy(&svg, "1,000").1 > 0.0, "the footnote sits below the last circle row");
+        let note = svg.split("<text ").find(|t| t.contains(">Log scale</text>")).unwrap();
+        assert!(note.contains("fill=\"#abcdef\""), "the footnote takes the board's secondary_color: {note}");
+    }
+
+    #[test]
+    fn a_size_scale_footnote_without_a_board_secondary_color_is_an_error() {
+        let payload: Payload = serde_json::from_value(sized_payload(&[1.0, 10.0, 1000.0], [16.0, 900.0], "sqrt", serde_json::Value::Null)).unwrap();
+        let err = render(&payload, &test_fonts()).unwrap_err().to_string();
+        assert!(err.contains("board_style.secondary_color"), "{err}");
     }
 
     /// A nominal x over a measure with no baked ladder (the dot plot
@@ -4994,6 +5070,11 @@ mod tests {
     #[test]
     fn wide_measures_with_point_labels_paint_one_label_per_point() {
         let mut json = make_wide_dot_band_payload();
+        json["board_style"] = serde_json::json!({
+            "font_color": "#313233", "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "secondary_color": null, "tones": null,
+            "title_case": null, "continuous_height": null,
+            "format_locale": ::bind::formats::locale::en_us_wire(), "time_locale": ::bind::time_locale::en_us_wire()
+        });
         json["resolved"]["style"]["point_mark"]["labels"] = serde_json::json!({"visible": true, "font": {"family": TEST_FONT}});
         let svg = render_json(json);
         for value in ["10", "30", "50", "70"] {

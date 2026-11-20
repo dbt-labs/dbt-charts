@@ -451,7 +451,8 @@ def _get_table_height_from_data(
             data,
             width=max(effective_width - padding["left"] - padding["right"], 0.0),
             height=0.0,
-            padding=None,
+            # The paint's padding, so the paint at this height is this draw.
+            padding=padding,
             board_style=board_style,
             record_warnings=False,
         )

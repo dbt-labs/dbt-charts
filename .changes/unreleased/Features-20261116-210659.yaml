@@ -1,0 +1,5 @@
+kind: Features
+body: Set a size channel's mark-area range and scale type with style.size on scatter and bubble map charts.
+time: 2026-11-16T21:06:59.011387987Z
+custom:
+    DbtChartsIssue: "98"

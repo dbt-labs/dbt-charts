@@ -1515,7 +1515,7 @@ fn promote_column_query(
         return Err(source_required(&query_name));
     }
     let mut query = sql_query(&format!(
-        "SELECT {name}, COUNT(*) AS dbt_option_count FROM {table} GROUP BY {name} ORDER BY {name}"
+        "SELECT DISTINCT {name} FROM {table} ORDER BY {name}"
     ))?;
     stamp(&mut query, found.scope.as_ref());
     found.synthetic.insert(query_name.clone());

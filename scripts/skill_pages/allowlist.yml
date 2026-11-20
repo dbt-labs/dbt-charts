@@ -46,7 +46,7 @@ objects:
   variable_options:
     path: Variable.options
     label: options
-    keys: [static, query, column, label_column]
+    keys: [static, query, column]
   grid:
     path: AuthoredBoard.grid
     label: grid
@@ -81,7 +81,7 @@ objects:
   s_family:
     path: chart:bar.style
     label: style.charts.bar, a bar chart's style
-    keys: [background, padding, aspect_ratio, color, axis_x, axis_y, legend, marks, stack, orientation, endpoint_labels]
+    keys: [background, padding, aspect_ratio, color, axis_x, axis_y, key, marks, stack, orientation]
     detail: [axis_x, axis_y]
   s_axis_x:
     path: chart:bar.style.axis_x
@@ -150,13 +150,17 @@ objects:
     path: AuthoredBoard.style.text
     label: style.text
     keys: [font, align, paragraph, heading, column, divider]
+  s_key:
+    path: chart:bar.style.key
+    label: key
+    keys: [visible, type, legend, direct]
   s_legend:
-    path: chart:bar.style.legend
-    label: legend
-    keys: [visible, position, values, label]
+    path: chart:bar.style.key.legend
+    label: key.legend
+    keys: [position, values, label]
   s_legend_position:
-    path: chart:bar.style.legend.position
-    label: legend.position
+    path: chart:bar.style.key.legend.position
+    label: key.legend.position
     keys: [edge, align]
   s_color:
     path: chart:bar.style.color

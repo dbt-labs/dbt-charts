@@ -94,7 +94,7 @@ def test_scalar_axis_title_keeps_its_allowed_keys_guidance() -> None:
 def test_legend_title_does_not_get_the_axis_hint() -> None:
     """`style.legend.title` is a different model that shares the key name;
     its text comes from the color column, not from x_label/y_label."""
-    hint = _hints(_board("      legend:\n        title: Region"))
+    hint = _hints(_board("      key:\n        legend:\n          title: Region"))
 
     assert "x_label" not in hint
     assert "Available keys" in hint

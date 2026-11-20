@@ -580,7 +580,7 @@ pub fn bind(
             return Err(refusal);
         }
     }
-    if chart.size.is_some() && derived.legend.base.visible != Engine::Value(false) {
+    if chart.size.is_some() && derived.key_visible {
         return Err(unsupported(refuse!("a scatter `size:` with a visible legend is not supported")));
     }
     if chart.size.is_some() && chart.cartesian.multiples.is_some() {
@@ -700,7 +700,7 @@ pub fn bind(
             rail: None,
             entries: Vec::new(),
             asks_top_strip: false,
-            authored: AuthoredLegend::Side(derived.legend.clone()),
+            authored: AuthoredLegend { style: derived.legend.clone(), visible: derived.key_visible },
         },
         legends,
         support: None,

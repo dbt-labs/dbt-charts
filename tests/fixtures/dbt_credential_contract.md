@@ -104,7 +104,7 @@ Aliases:
 
 ## redshift
 
-dbt-redshift 1.11.1
+dbt-redshift 1.11.2
 
 ### `dbt.adapters.redshift.connections.RedshiftCredentials`
 
@@ -153,7 +153,7 @@ Aliases:
 
 ## snowflake
 
-dbt-snowflake 1.12.4
+dbt-snowflake 1.12.5
 
 ### `dbt.adapters.snowflake.connections.SnowflakeCredentials`
 

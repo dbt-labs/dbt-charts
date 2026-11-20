@@ -2521,7 +2521,7 @@ mod tests {
         ]);
         let at = |needle: &str| svg.find(needle).unwrap_or_else(|| panic!("{needle} missing: {svg}"));
         let halo = at("layer_1_marks");
-        let tint = at("<rect x=\"309.51\"");
+        let tint = at("<rect x=\"138.45\"");
         let rule = at("<line x1=\"0\" y1=\"66.2\"");
         let main = at("layer_3_marks");
         let text = at("annotations-text\"><g data");

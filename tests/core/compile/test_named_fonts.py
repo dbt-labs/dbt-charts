@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -16,6 +17,7 @@ from dbt_charts.core.compile.models.primitives import (
     FontStyle,
     NamedFont,
     ResolvedFontStyle,
+    WidthTier,
 )
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.theme import RootFontStyle
@@ -272,6 +274,51 @@ def test_a_size_on_a_ramp_font_reports_the_registry_code_and_the_fix() -> None:
     assert error.hint is None
 
 
+_CHART_TITLE_FONT_BOARD = (
+    "style:\n  charts:\n    title:\n      font: {font}\n"
+    "charts:\n  c1:\n    type: bar\n    title: Hi\n"
+    "    query:\n      columns: [a, b]\n      values: [[1, 2]]\n"
+    "    x: a\n    y: b\nrows: [c1]\n"
+)
+
+
+def _chart_title_fonts(font: str) -> Mapping[WidthTier, ResolvedFontStyle]:
+    result = compile(_CHART_TITLE_FONT_BOARD.format(font=font))
+    assert result.board is not None, [e.message for e in result.errors]
+    return result.board.resolved_style.chart_defaults.title_fonts
+
+
+@pytest.mark.parametrize("name", ["heading", "section"])
+def test_a_ramp_font_on_the_chart_title_keeps_the_card_width_size(name: str) -> None:
+    named = _chart_title_fonts(name)
+    sized = _chart_title_fonts(f"{{extends: {name}, size: auto}}")
+
+    assert named == sized
+
+
+def test_a_ramp_font_on_a_family_s_chart_title_compiles() -> None:
+    result = compile(
+        "style:\n  charts:\n    bar:\n      title:\n        font: heading\n"
+        "charts:\n  c1:\n    type: bar\n    title: Hi\n"
+        "    query:\n      columns: [a, b]\n      values: [[1, 2]]\n"
+        "    x: a\n    y: b\nrows: [c1]\n"
+    )
+
+    assert result.success, [e.message for e in result.errors]
+
+
+def test_a_ramp_font_on_one_chart_s_title_still_renders() -> None:
+    from .._svg_render import render_board_svg_result
+
+    board = (
+        "charts:\n  c1:\n    type: bar\n    title: Hi\n"
+        "    query:\n      columns: [a, b]\n      values: [[1, 2]]\n"
+        "    x: a\n    y: b\n"
+        "    style:\n      title:\n        font: heading\nrows: [c1]\n"
+    )
+    assert render_board_svg_result(board).chart_errors == []
+
+
 @pytest.mark.parametrize(
     ("name", "levels"), [("heading", "H1–H6"), ("section", "H2–H6")]
 )
@@ -462,18 +509,24 @@ def test_shipped_schema_root_font_takes_no_name() -> None:
 
 def test_synthesized_font_patch_accepts_a_bare_name() -> None:
     style = _pre_style(
-        {"fonts": {"mine": {"size": 23}}, "charts": {"series_label": {"font": "mine"}}}
+        {
+            "fonts": {"mine": {"size": 23}},
+            "charts": {"key": {"direct": {"font": "mine"}}},
+        }
     )
-    assert style.charts.series_label.font.size == 23
+    assert style.charts.key.direct.font.size == 23
 
 
 def test_extends_replaces_a_subclass_slot_and_keeps_its_required_fields() -> None:
     style = _pre_style(
-        {"fonts": {"mine": {"size": 23}}, "charts": {"series_label": {"font": "mine"}}}
+        {
+            "fonts": {"mine": {"size": 23}},
+            "charts": {"key": {"direct": {"font": "mine"}}},
+        }
     )
-    font = style.charts.series_label.font
+    font = style.charts.key.direct.font
     assert font.size == 23
-    assert font.compact_size == get_theme_style().charts.series_label.font.compact_size
+    assert font.compact_size == get_theme_style().charts.key.direct.font.compact_size
 
 
 def test_fragment_slot_fields_lose_to_a_later_named_font() -> None:
@@ -643,8 +696,10 @@ def test_merge_patches_slot_naming_a_font_drops_lower_font_fields_keeps_slot_onl
     lower = StylePatch.model_validate(
         {
             "charts": {
-                "series_label": {
-                    "font": {"color": "#00ff00", "size": 30, "compact_size": 7}
+                "key": {
+                    "direct": {
+                        "font": {"color": "#00ff00", "size": 30, "compact_size": 7}
+                    }
                 }
             }
         }
@@ -652,11 +707,11 @@ def test_merge_patches_slot_naming_a_font_drops_lower_font_fields_keeps_slot_onl
     upper = StylePatch.model_validate(
         {
             "fonts": {"mine": {"color": "#ff0000"}},
-            "charts": {"series_label": {"font": "mine"}},
+            "charts": {"key": {"direct": {"font": "mine"}}},
         }
     )
     merged = merge_patches(lower, upper).model_dump(exclude_unset=True)
-    assert merged["charts"]["series_label"]["font"] == {
+    assert merged["charts"]["key"]["direct"]["font"] == {
         "extends": "mine",
         "compact_size": 7,
     }

@@ -66,6 +66,7 @@ from dbt_charts.core.compile.models.style.theme import (
     BarChartStyle,
     BaseAxisStyle,
     CalloutChartStyle,
+    ChartsKeyStyle,
     ChartsStyle,
     ChartTitleStyle,
     GeoshapeChartStyle,
@@ -81,7 +82,6 @@ from dbt_charts.core.compile.models.style.theme import (
     PointMapChartStyle,
     QuantitativeAxisStyle,
     ScatterChartStyle,
-    SeriesLabelStyle,
     SparkBarChartStyle,
     SparkStyle,
     Style,
@@ -131,9 +131,9 @@ class ChartStyleContext:
     # Theme default ink palette for non-layered, single-encoding marks.
     single_series_palette: list[str]
     # Set when `palette`/`single_series_palette` was authored as a known
-    # WARN-PALETTE-UNSUPPORTED anti-pattern alias (e.g. "RdYlGn"); holds the
-    # originally-requested name for the render-stage detector. None otherwise.
-    requested_alias_palette: str | None
+    # WARN-PALETTE-UNSUPPORTED anti-pattern name (e.g. "RdYlGn"); holds that
+    # name for the render-stage detector. None otherwise.
+    warned_palette: str | None
     # Dash palette for line-family marks. Empty means "no strokeDash encoding".
     dashes: list[list[int]]
     # Theme role bindings carried alongside the cascade so chart-level style
@@ -196,10 +196,11 @@ class ChartStyleContext:
 
     # --- Global mark/legend/label defaults (tier 1 of the three-tier cascade) ---
     legend: ResolvedLegendStyle
+    # The key's authored leaves (board, then family, then chart): placement,
+    # direction and the type ladder read here; `legend` is its baked legend.
+    key: ChartsKeyStyle
     marks: GlobalMarksStyle
     view: ViewStyle
-    # Series-label primitive — shared typography for endpoint and stack labels.
-    series_label: SeriesLabelStyle
 
     # --- Per-family theme style ---
     bar: BarChartStyle

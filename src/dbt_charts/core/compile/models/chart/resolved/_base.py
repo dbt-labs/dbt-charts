@@ -112,19 +112,19 @@ class _BaseResolvedChartFields(BaseModel):
     palette: tuple[str, ...] = Field(
         description="Baked color-stop sequence from the style cascade.",
     )
-    requested_alias_palette: str | None = Field(
+    warned_palette: str | None = Field(
         default=None,
         description=(
             "Set when this chart's palette was authored as a known "
-            "WARN-PALETTE-UNSUPPORTED anti-pattern alias (e.g. RdYlGn); holds "
-            "the originally-requested name for the render-stage detector."
+            "WARN-PALETTE-UNSUPPORTED anti-pattern name (e.g. RdYlGn); holds "
+            "that name for the render-stage detector."
         ),
     )
-    requested_alias_substitute: str | None = Field(
+    warned_palette_recommendation: str | None = Field(
         default=None,
         description=(
-            "Display name of the palette dbt charts substituted for "
-            "requested_alias_palette — baked alongside it so the "
+            "Display name of the palette recommended in place of "
+            "warned_palette — baked alongside it so the "
             "WARN-PALETTE-UNSUPPORTED detector never calls "
             "compile.resolve.style.palette itself."
         ),

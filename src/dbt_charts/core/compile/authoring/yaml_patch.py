@@ -450,7 +450,13 @@ def _prune_emptied_parents(
                 lines, parent.line_index, item_end, parent.indent
             )
             continue
-        lines = lines[: parent.line_index] + lines[parent.line_index + 1 :]
+        # Comments left in the struck body now stand at the key's own level, so
+        # they stay with whatever takes its place.
+        remains = [
+            " " * parent.indent + line.lstrip(" ") if _COMMENT_RE.match(line) else line
+            for line in lines[body:extent]
+        ]
+        lines = lines[: parent.line_index] + remains + lines[extent:]
     return lines
 
 

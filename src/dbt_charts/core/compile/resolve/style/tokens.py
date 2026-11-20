@@ -301,7 +301,7 @@ def _resolve_color_tokens(
     from dbt_charts.core.compile.resolve.style.palette import (
         UnknownColorError,
         UnknownPaletteError,
-        resolve_palette_alias,
+        palette_with_warning,
     )
 
     categorical_color_style_types = _categorical_color_style_types()
@@ -343,18 +343,18 @@ def _resolve_color_tokens(
             # which is wrong here: a literal-name + variant scalar
             # (`category-6-tonal-blue.dark`) matches the same shape a role
             # token does, and resolves as an unbound theme role instead of a
-            # palette name -- ERR-INTERNAL. `resolve_palette_alias()` is the
+            # palette name -- ERR-INTERNAL. `palette_with_warning()` is the
             # whole-list resolver these two fields need -- not bare
             # `palette()`: it also reports whether *value* is a known
-            # anti-pattern alias (`RdYlGn`, and its shorthand forms
+            # anti-pattern name (`RdYlGn`, and its shorthand forms
             # `RdYlGn:5`/`RdYlGn_r` -- stripped the same way
-            # `_parse_palette_reference` does before the `PALETTE_WARN_ALIASES`
-            # check, so a shorthand alias is caught exactly like the bare
+            # `_parse_palette_reference` does before the `PALETTE_WARN_RECOMMENDATIONS`
+            # check, so a shorthand form is caught exactly like the bare
             # name is), in which case the literal string is left as-is:
             # `chart_context.py`'s own detector re-derives
-            # `requested_alias_palette` from exactly this string, later, and
+            # `warned_palette` from exactly this string, later, and
             # needs it to still be one -- a resolved list here would read as
-            # "not an alias" and silently drop WARN-PALETTE-UNSUPPORTED.
+            # "not warned" and silently drop WARN-PALETTE-UNSUPPORTED.
             # Scoped to this one model by isinstance, not by field name
             # alone: `ScaleTargetConfig.palette` is a same-named,
             # differently-shaped field where a Vega scheme name is legal --
@@ -365,7 +365,7 @@ def _resolve_color_tokens(
                 and isinstance(value, str)
             ):
                 try:
-                    stops, requested = resolve_palette_alias(value)
+                    stops, requested = palette_with_warning(value)
                 except UnknownPaletteError:
                     if not might_be_palette_role(value):
                         raise

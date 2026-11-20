@@ -121,11 +121,10 @@ PALETTE_FAMILIES: tuple[PaletteFamily, ...] = get_args(PaletteFamily)
 # Known perceptual anti-patterns, refused outright.
 HARD_FAIL_PALETTE_NAMES: frozenset[str] = frozenset({"jet", "rainbow", "hsv"})
 
-# RdYlGn/parula resolve (for migration paths) but emit a warning.
-# The mapped substitute is the nearest dbt charts palette so dashboards don't crash
-# when users encounter these names from prior tools. Warning text names
-# the substitution explicitly.
-PALETTE_WARN_ALIASES: dict[str, str] = {
+# RdYlGn/parula are ordinary registry palettes that draw as written, but
+# WARN-PALETTE-UNSUPPORTED fires on them and recommends the mapped dbt charts
+# palette instead.
+PALETTE_WARN_RECOMMENDATIONS: dict[str, str] = {
     "RdYlGn": "dbt-div-crimson-green",
     "parula": "dbt-seq-blue",
 }

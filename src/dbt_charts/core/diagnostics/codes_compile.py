@@ -1220,30 +1220,6 @@ ERR_THEME_AND_EXTENDS = REGISTRY.register(
     )
 )
 
-ERR_LEGEND_ALIGN_WITH_ENDPOINTS = REGISTRY.register(
-    ErrorCode(
-        code="ERR-LEGEND-ALIGN-WITH-ENDPOINTS",
-        domain="compile",
-        title="Legend align does not apply to endpoint labels",
-        message_template="`legend.position.align` is set beside `edge: endpoints`, which names each series on the chart instead of placing a legend along an edge, so there is nothing to align. Remove `align`, or use a side edge (`left`, `right`, `top` or `bottom`).",
-        doc="Fired when one `legend.position` mapping authors `edge: endpoints` and an `align` other than `auto`. Endpoint labels ignore an `align` inherited from another tier or file, but it must still name a placement the legend supports.",
-        summary="Fired when `align` is authored beside `edge: endpoints`.",
-        docs_topic="charts",
-    )
-)
-
-ERR_LEGEND_OVERLAY_WITH_ENDPOINTS = REGISTRY.register(
-    ErrorCode(
-        code="ERR-LEGEND-OVERLAY-WITH-ENDPOINTS",
-        domain="compile",
-        title="Legend overlay does not apply to endpoint labels",
-        message_template="`legend.position.overlay` is set beside `edge: endpoints`, which names each series on the chart in a strip of its own instead of placing a legend. Remove `overlay`.",
-        doc="Fired when one `legend.position` mapping authors `edge: endpoints` and an `overlay` other than `auto`. Endpoint labels ignore an `overlay` inherited from another tier or file, but it must still name a placement the legend supports.",
-        summary="Fired when `overlay` is authored beside `edge: endpoints`.",
-        docs_topic="charts",
-    )
-)
-
 ERR_EXTENDS_UNRESOLVED = REGISTRY.register(
     ErrorCode(
         code="ERR-EXTENDS-UNRESOLVED",

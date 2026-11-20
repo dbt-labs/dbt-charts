@@ -67,12 +67,12 @@ def test_kpi_value_font_family_overrides_stark(theme_name: str) -> None:
 
 
 @pytest.mark.parametrize("theme_name", EDITORIAL_THEMES)
-def test_legend_auto_by_default(theme_name: str) -> None:
+def test_key_type_auto_by_default(theme_name: str) -> None:
     theme = get_theme_style(theme_name)
-    assert theme.charts.legend.visible == "auto", (
-        f"{theme_name}.charts.legend.visible is "
-        f"{theme.charts.legend.visible!r}; the editorial-voiced themes leave "
-        f"the legend to the engine, which retires it behind direct labels."
+    assert theme.charts.key.type == "auto", (
+        f"{theme_name}.charts.key.type is "
+        f"{theme.charts.key.type!r}; the editorial-voiced themes leave "
+        f"the key to the engine, which retires the legend behind direct labels."
     )
 
 
@@ -123,13 +123,13 @@ def test_paper_inherits_clarity_kpi_value_font():
 
 
 @pytest.mark.parametrize("theme_name", EDITORIAL_THEMES)
-def test_legend_auto_propagates_through_resolve_style(theme_name: str) -> None:
-    """legend.visible=auto on the compiled theme must survive resolve_style."""
+def test_key_type_auto_propagates_through_resolve_style(theme_name: str) -> None:
+    """key.type=auto on the compiled theme must survive resolve_style."""
     compiled = get_theme_style(theme_name)
     ctx = resolve_chart_style_context(compiled)
-    assert ctx.pre_style.charts.legend.visible == "auto", (
-        f"{theme_name}.charts.legend.visible lost during resolve_style: "
-        f"{ctx.pre_style.charts.legend.visible!r}"
+    assert ctx.pre_style.charts.key.type == "auto", (
+        f"{theme_name}.charts.key.type lost during resolve_style: "
+        f"{ctx.pre_style.charts.key.type!r}"
     )
 
 

@@ -19,9 +19,7 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedHeatmapStyle
 from dbt_charts.core.compile.resolve.chart._axes import (
-    _NO_RAIL_ENDPOINT_LABELS,
     _bake_ay_position_left,
-    _cascaded_legend,
     cartesian_series_naming,
     color_legend_entries,
     estimate_cartesian_plot_height,
@@ -47,8 +45,8 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
-    _effective_requested_alias_palette,
     _effective_single_series_fill,
+    _effective_warned_palette,
     _primary_mark_paint,
     _unchanneled_fill,
 )
@@ -65,7 +63,9 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
-from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.resolve.style.legend_position import (
+    cascaded_key,
+)
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 
@@ -136,11 +136,10 @@ def _resolve_heatmap(
     naming = cartesian_series_naming(
         normalized,
         channels,
-        *_cascaded_legend(chart_style_context, heatmap.legend),
-        merge_legend(chart_style_context.legend, heatmap.legend),
+        cascaded_key(chart_local_style_context.key, direct=False),
+        chart_local_style_context.legend,
         width,
         no_rail,
-        _NO_RAIL_ENDPOINT_LABELS,
         endpoint_label_has_layers=False,
         has_layers=False,
         rail_eligible_for_suppression=False,
@@ -221,11 +220,9 @@ def _resolve_heatmap(
             normalized,
             chart_style_context,
             channels,
-            heatmap.legend,
+            chart_local_style_context,
             _effective_palette(chart_style_context, primary),
-            requested_alias_palette=_effective_requested_alias_palette(
-                chart_style_context, primary
-            ),
+            warned_palette=_effective_warned_palette(chart_style_context, primary),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=heatmap.padding,
             wrap_columns=legend_wrap_columns(
@@ -238,7 +235,7 @@ def _resolve_heatmap(
                 if isinstance(normalized.y, list) and not normalized.color
                 else color_legend_entries(channels, data),
                 width,
-                merge_legend(chart_style_context.legend, heatmap.legend),
+                chart_local_style_context.legend,
             ),
             suppress_legend=naming.suppress_legend,
             top_legend=naming.top_legend,

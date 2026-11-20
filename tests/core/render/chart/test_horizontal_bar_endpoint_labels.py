@@ -40,25 +40,13 @@ _BOARD_CTX = resolve_chart_style_context(get_theme_style())
 def seed_with_bar_endpoint_labels(model_copy_at):
     """Resolved style with bar.endpoint_labels override applied (seeded from stark)."""
     from dbt_charts.core.compile.config import get_theme_style
-    from dbt_charts.core.compile.models.style.authored import (
-        EndpointLabelsConfig,
-        LegendStylePatch,
-    )
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
     def _build(enabled: bool, label_offset: float = 5.0):
         seed = model_copy_at(
-            get_theme_style("stark"),
-            "charts.bar.endpoint_labels",
-            EndpointLabelsConfig(label_offset=label_offset, height=20.0),
+            get_theme_style("stark"), "charts.key.direct.offset", label_offset
         )
-        seed = model_copy_at(
-            seed,
-            "charts.bar.legend",
-            LegendStylePatch.model_validate(
-                {"position": {"edge": "auto" if enabled else "top"}}
-            ),
-        )
+        seed = model_copy_at(seed, "charts.key.type", "auto" if enabled else "legend")
         return resolve_chart_style_context(seed)
 
     return _build
@@ -95,7 +83,7 @@ def resolve_horizontal_bar_chart(make_chart, seed_with_bar_endpoint_labels):
         if author_asked:
             # The default steers a ragged anchor row back to a legend (the rail
             # has no collision resolver); only the chart's own patch outranks it.
-            style["legend"] = {"position": {"edge": "endpoints"}}
+            style["key"] = {"type": "direct"}
         chart = make_chart(
             "bar",
             x="row",
@@ -692,7 +680,7 @@ def test_center_stack_with_an_opted_in_rail_raises_a_registered_code(
     with pytest.raises(ChartDataError) as exc_info:
         _render(rc, data)
     assert exc_info.value.code is ERR_ENDPOINT_LABELS_CENTER_STACK
-    assert "style.legend.position.edge" in str(exc_info.value)
+    assert "style.key.type" in str(exc_info.value)
 
 
 def test_negative_values_with_an_opted_in_rail_raise_a_registered_code(
@@ -713,4 +701,4 @@ def test_negative_values_with_an_opted_in_rail_raise_a_registered_code(
     with pytest.raises(ChartDataError) as exc_info:
         _render(rc, data)
     assert exc_info.value.code is ERR_ENDPOINT_LABELS_NEGATIVE_STACK
-    assert "style.legend.position.edge" in str(exc_info.value)
+    assert "style.key.type" in str(exc_info.value)

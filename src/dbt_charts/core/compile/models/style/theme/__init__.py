@@ -17,6 +17,7 @@ Package layout (one file per concern, mirroring chart/normalized/):
   board.py       — frame/board dimensions, title, text, placeholder
   axis.py        — axis, scale, tooltip
   legend.py      — legend
+  key.py         — chart key
   marks.py       — shared per-mark-type styles and cross-family primitives
   _chart_base.py — chart-family style base class hierarchy
   bar.py, line.py, area.py, scatter.py, heatmap.py, pie.py, histogram.py,
@@ -145,6 +146,17 @@ from dbt_charts.core.compile.models.style.theme.histogram import (
     HistogramChartMarksStyle,
     HistogramChartStyle,
 )
+from dbt_charts.core.compile.models.style.theme.key import (
+    BarKeyStyle,
+    ChartsKeyStyle,
+    DirectKeyStyle,
+    KeyType,
+    LegendOnlyKeyStyle,
+    LegendOnlyKeyType,
+    LineAreaDirectKeyStyle,
+    LineAreaKeyStyle,
+    PieKeyStyle,
+)
 from dbt_charts.core.compile.models.style.theme.kpi import (
     KpiBackgroundGradient,
     KpiChartStyle,
@@ -181,8 +193,6 @@ from dbt_charts.core.compile.models.style.theme.legend import (
     LegendTitleStyle,
     PieLegendStyle,
     PiePositionStyle,
-    SideLegendPositionStyle,
-    SideLegendStyle,
 )
 from dbt_charts.core.compile.models.style.theme.line import (
     LineChartMarksStyle,
@@ -206,7 +216,6 @@ from dbt_charts.core.compile.models.style.theme.marks import (
     RectMarkStyle,
     RuleMarkStyle,
     SeriesLabelFontStyle,
-    SeriesLabelStyle,
     SliceLabelsStyle,
     SliceMarkStyle,
     SubtitleStyle,
@@ -364,7 +373,16 @@ __all__ = [
     "KpiValueStyle",
     "LabelsDefaultTemplate",
     "LayoutGapStyle",
+    "BarKeyStyle",
     "ChartLegendStyle",
+    "ChartsKeyStyle",
+    "DirectKeyStyle",
+    "KeyType",
+    "LegendOnlyKeyStyle",
+    "LegendOnlyKeyType",
+    "LineAreaDirectKeyStyle",
+    "LineAreaKeyStyle",
+    "PieKeyStyle",
     "LayoutStyle",
     "LegendAlign",
     "LegendAlignSetting",
@@ -376,8 +394,6 @@ __all__ = [
     "LegendPositionStyle",
     "LegendRowStyle",
     "LegendStyle",
-    "SideLegendPositionStyle",
-    "SideLegendStyle",
     "LegendTitleStyle",
     "LineChartMarksStyle",
     "LineChartStyle",
@@ -405,7 +421,6 @@ __all__ = [
     "ScatterChartStyle",
     "ScatterLayerStyle",
     "SeriesLabelFontStyle",
-    "SeriesLabelStyle",
     "SliceLabelsStyle",
     "SliceMarkStyle",
     "SparkAreaStyle",

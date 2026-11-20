@@ -46,10 +46,10 @@
 //! | `vega_lite/contracts.py` (`Projection`, `ProjectionType`) | `chart::projection` |
 //! | `primitives.py` (`NumberLocale`, `TimeLocale`, `RegionalLocale`, `Regional`) | `regional` |
 //! | `style/theme/legend.py` | `style::legend` |
+//! | `style/theme/key.py` | `style::key` |
 //! | `primitives.py` (`FontStyle`, `SingleLineFontStyle`, `SymbolShape`, `NamedFont` only) | `style::font` |
 //! | `primitives.py` (`Curve`, `LineCap`, `StrokeStyle`, `FontColorStrokeStyle`, `BorderStyle`, `CornerStyle`, `DividerStyle`, `SpacingValues`, `TextBaseline`, `Dasharray`, `ToneLiteral` as `Tone`, `ScaleTargetConfig`, `GradientColorStyle`, `ColorStyle`, `CategoricalColorStyle`, `GlyphText`, `FormatConfig`, `Link`, `BoxShadow`) | `primitives` |
 //! | `style/theme/_chart_base.py` | `style::chart_base` |
-//! | `style/authored/_base.py` (`EndpointLabelsConfig` only) | `style::endpoint_labels` |
 //! | `style/theme/annotations.py` | `style::annotations` |
 //! | `style/theme/area.py` | `style::area` |
 //! | `style/theme/axis.py` | `style::axis` |

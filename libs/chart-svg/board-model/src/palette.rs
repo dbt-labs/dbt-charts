@@ -633,7 +633,7 @@ struct Reference {
 
 fn reference(authored: &str) -> Result<Reference, PaletteError> {
     let (name, variants) = split_variants(authored);
-    let (mut name, steps, reverse) = if name.contains(':') || name.ends_with("_r") {
+    let (name, steps, reverse) = if name.contains(':') || name.ends_with("_r") {
         parse_reference(name)?
     } else {
         (name.to_string(), None, false)
@@ -643,11 +643,6 @@ fn reference(authored: &str) -> Result<Reference, PaletteError> {
             "palette '{name}' is a known perceptual anti-pattern and is not shipped"
         ));
     }
-    name = match name.as_str() {
-        "RdYlGn" => "dbt-div-crimson-green".to_string(),
-        "parula" => "dbt-seq-blue".to_string(),
-        _ => name,
-    };
     let spine = spine(&name)
         .map_err(|_| PaletteError(format!("unknown palette {name:?} in {authored:?}")))?;
     Ok(Reference { variants, name, steps, reverse, spine })

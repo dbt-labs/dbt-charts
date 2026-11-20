@@ -9,6 +9,7 @@ value.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal, TypeVar
 
 from pydantic import BaseModel
@@ -16,10 +17,11 @@ from pydantic import BaseModel
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedLegendPosition,
-    ResolvedLegendStyle,
 )
 from dbt_charts.core.compile.models.style.theme import (
     ChartLegendStyle,
+    ChartsKeyStyle,
+    KeyType,
     LegendAlign,
     LegendAlignSetting,
     LegendDirection,
@@ -27,10 +29,8 @@ from dbt_charts.core.compile.models.style.theme import (
     LegendEdgeSetting,
     LegendLabelStyle,
     LegendPositionStyle,
-    LegendStyle,
     LegendTitleStyle,
 )
-from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset, settled
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_LEGEND_POSITION_UNSUPPORTED
 
@@ -53,37 +53,26 @@ def merge_authored_position(
     return merge_onto_base(board, None if patch is None else patch.position)
 
 
-def merge_authored_direction(
-    board: LegendStyle, patch: ChartLegendStyle | None
-) -> LegendDirection | None:
-    if patch is not None and "direction" in patch.model_fields_set:
-        return patch.direction
-    return board.direction
+@dataclass(frozen=True)
+class CascadedKey:
+    """The key's authored leaves after the board, family and chart tiers.
 
-
-def merge_authored_visible(
-    board: LegendStyle, patch: ChartLegendStyle | None
-) -> bool | Literal["auto"]:
-    """The legend's ``visible`` after layering a family or chart patch on the board's.
-
-    ``auto`` survives here: the baked ``ResolvedLegendStyle`` holds a bool, so the
-    cascade's own answer is read from the sparse styles.
+    ``type`` never reads ``direct`` on a family that cannot name series on the
+    chart itself: the board-wide ``direct`` is a default those families skip.
     """
-    return settled(
-        board.visible if patch is None or patch.visible is None else patch.visible
+
+    visible: bool
+    type: KeyType
+    position: LegendPositionStyle
+
+
+def cascaded_key(key: ChartsKeyStyle, *, direct: bool) -> CascadedKey:
+    """*key*, the chart's merged key, as the leaves the engine decides from."""
+    return CascadedKey(
+        visible=key.visible,
+        type="auto" if key.type == "direct" and not direct else key.type,
+        position=key.legend.position,
     )
-
-
-def merge_authored_title_visible(
-    board: LegendStyle, patch: ChartLegendStyle | None
-) -> bool | Literal["auto"] | None:
-    """The legend title's ``visible`` after layering a family or chart patch."""
-    # A sparse patch leaves `title` None when unauthored, though the patch
-    # model's static stub declares it required.
-    patch_title: LegendTitleStyle | None = None if patch is None else patch.title
-    if patch_title is None or patch_title.visible is None:
-        return board.title.visible
-    return patch_title.visible
 
 
 def _without(model: _Patch, dropped: set[str]) -> _Patch:
@@ -116,11 +105,11 @@ def _element_without(
 
 def without_engine_decided(patch: _Patch | None) -> _Patch | None:
     """*patch* minus the leaves the engine decides per chart: ``position``,
-    ``direction``, ``visible`` and ``title.visible``. They may read ``auto``,
+    ``direction`` and ``title.visible``. They may read ``auto``,
     which the baked ``ResolvedLegendStyle`` cannot hold."""
     if patch is None:
         return None
-    fields = patch.model_fields_set - {"position", "direction", "visible"}
+    fields = patch.model_fields_set - {"position", "direction"}
     values = {field: getattr(patch, field) for field in fields}
     for name, dropped in (("title", {"visible"}), ("label", set())):
         if name not in values:
@@ -134,18 +123,11 @@ def without_engine_decided(patch: _Patch | None) -> _Patch | None:
     return patch.model_construct(_fields_set=fields, **values)
 
 
-def merge_legend(
-    base: ResolvedLegendStyle, patch: ChartLegendStyle | None
-) -> ResolvedLegendStyle:
-    """*patch* folded onto the resolved legend, decided leaves left to the engine."""
-    return merge_unset(base, without_engine_decided(patch))
-
-
 def placed_edge(
     leaf: LegendEdgeSetting | None,
 ) -> LegendEdge | None:
-    """A side someone set; ``auto``, ``endpoints`` (no legend) and unset are the engine's call."""
-    if leaf is None or leaf == "auto" or leaf == "endpoints":
+    """A side someone set; ``auto`` and unset are the engine's call."""
+    if leaf is None or leaf == "auto":
         return None
     return leaf
 

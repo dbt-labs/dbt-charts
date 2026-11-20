@@ -42,7 +42,7 @@ _NUMERIC_CHANNELS = frozenset({"opacity", "stroke_width"})
 _Family = Literal["sequential", "diverging"]
 
 # (authored path, data field, scale, number format spec the column prints with)
-_Binding = tuple[str | None, str, ResolvedScaleTarget, str | None]
+ScaleBinding = tuple[str | None, str, ResolvedScaleTarget, str | None]
 
 
 def _family(scale: ResolvedScaleTarget) -> _Family | None:
@@ -58,7 +58,7 @@ def _family(scale: ResolvedScaleTarget) -> _Family | None:
     return None  # categorical or cyclical Vega scheme: no center, no ramp to pivot
 
 
-def _bindings(chart_id: str, chart: ResolvedChart) -> Iterator[_Binding]:
+def scale_bindings(chart_id: str, chart: ResolvedChart) -> Iterator[ScaleBinding]:
     for channel in chart.resolved_channels.values():
         if channel.channel in _NUMERIC_CHANNELS:
             continue
@@ -128,7 +128,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         if chart_id not in ctx.chart_results:
             continue
         rows = ctx.chart_results[chart_id]
-        for path, field, scale, col_format in _bindings(chart_id, chart):
+        for path, field, scale, col_format in scale_bindings(chart_id, chart):
             problem = _problem(scale, rows, field, col_format)
             if problem is None:
                 continue

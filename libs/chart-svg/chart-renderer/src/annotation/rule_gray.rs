@@ -1,6 +1,6 @@
 //! The gray an `auto` rule (and its label) takes: the quietest rung of the
 //! theme's ladder that holds 3:1 against the canvas and every mark the rule
-//! crosses, stepped louder off any gridline.
+//! crosses, stepped louder (else quieter) off any gridline.
 
 use super::DataMark;
 use diagnostic::Diagnostic;
@@ -54,7 +54,8 @@ pub(crate) fn color_under(marks: &[DataMark], canvas: Color, (x, y): (f64, f64),
 /// The ladder entry (`ladder` runs canvas end first) an `auto` rule draws in.
 /// Rungs reaching `FLOOR` against the canvas and `under`: the quietest wins;
 /// none do: the rung with the best worst case. A pick within `GRID_CLEARANCE`
-/// of a gridline steps one rung louder until clear or out of rungs.
+/// of a gridline steps louder until clear, then quieter: a rule never takes a
+/// gridline's rung.
 pub(super) fn pick<'a>(ladder: &'a [String], avoid: &[String], canvas: Color, under: &[Color]) -> Result<&'a str, Diagnostic> {
     let rungs = ladder.iter().map(|g| parse(g)).collect::<Result<Vec<_>, _>>()?;
     let grids = avoid.iter().map(|g| parse(g)).collect::<Result<Vec<_>, _>>()?;
@@ -64,16 +65,16 @@ pub(super) fn pick<'a>(ladder: &'a [String], avoid: &[String], canvas: Color, un
     let against_canvas = |i: usize| contrast(rungs[i], canvas);
     let worst = |i: usize| under.iter().fold(against_canvas(i), |w, m| w.min(contrast(rungs[i], *m)));
     let holding = (0..rungs.len()).filter(|&i| worst(i) >= FLOOR).min_by(|&a, &b| against_canvas(a).total_cmp(&against_canvas(b)));
-    let mut at: usize = holding.unwrap_or_else(|| (0..rungs.len()).fold(0, |best, i| if worst(i) > worst(best) { i } else { best }));
+    let start: usize = holding.unwrap_or_else(|| (0..rungs.len()).fold(0, |best, i| if worst(i) > worst(best) { i } else { best }));
     let louder: isize = if contrast(*last, canvas) >= contrast(*first, canvas) { 1 } else { -1 };
     let clashes = |i: usize| grids.iter().any(|g| contrast(rungs[i], *g) < GRID_CLEARANCE);
-    while clashes(at) {
-        match at.checked_add_signed(louder).filter(|&n| n < rungs.len()) {
-            Some(n) => at = n,
-            None => break,
-        }
-    }
-    Ok(&ladder[at])
+    let n = rungs.len();
+    let walk = |step: isize| std::iter::successors(Some(start), move |&i: &usize| i.checked_add_signed(step).filter(|&j| j < n));
+    walk(louder)
+        .chain(walk(-louder).skip(1))
+        .find(|&i| !clashes(i))
+        .map(|i| ladder[i].as_str())
+        .ok_or_else(|| Diagnostic::refused("annotation rule gray: every rung of the ladder sits on a gridline"))
 }
 
 #[cfg(test)]
@@ -108,6 +109,30 @@ mod tests {
         assert_eq!(picked(&["#494A4C", "#626366"], "#161616", &[]), "#8A8C8F");
     }
 
+    /// A pick never lands on a gridline's rung: with every louder rung on a gridline it steps
+    /// quieter instead.
+    #[test]
+    fn a_pick_with_no_clear_louder_rung_steps_quieter() {
+        // On white the unchecked pick is #8A8C8F; every rung from it to the ink end is a gridline.
+        let grids = ["#8A8C8F", "#626366", "#494A4C", "#313233"];
+        let got = picked(&grids, "#FFFFFF", &[]);
+        assert!(!grids.contains(&got.as_str()), "{got}");
+        assert_eq!(got, "#B0B2B8");
+    }
+
+    /// Neon's gridlines are rungs 8 and 9: no canvas a neon chart draws on, and no mark under the
+    /// rule, resolves the rule to either.
+    #[test]
+    fn a_neon_rule_never_takes_a_gridline_rung() {
+        let grids = ["#494A4C", "#626366"];
+        for canvas in ["#161616", "#222222"] {
+            for under in [&[][..], &["#0073c2"][..], &["#3a3a3a", "#c8c8c8"][..], &["#494A4C"][..], &["#EDEFF2"][..]] {
+                let got = picked(&grids, canvas, under);
+                assert!(!grids.contains(&got.as_str()), "{canvas} {under:?}: {got}");
+            }
+        }
+    }
+
     #[test]
     fn a_louder_rung_is_one_nearer_the_ink_end_on_a_light_canvas() {
         // Rung 5 (#D0D3D9) is 1.5:1 on white; the first to reach 3:1 is #8A8C8F.
@@ -138,6 +163,12 @@ mod tests {
     #[test]
     fn an_empty_ladder_is_refused() {
         assert!(pick(&[], &[], hex("#161616"), &[]).is_err());
+    }
+
+    #[test]
+    fn a_ladder_entirely_on_gridlines_is_refused() {
+        let only = ["#8A8C8F".to_string()];
+        assert!(pick(&only, &only, hex("#FFFFFF"), &[]).is_err());
     }
 
     #[test]

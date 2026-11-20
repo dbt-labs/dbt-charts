@@ -91,9 +91,10 @@ def _resolve_kpi(
     primary = _with_color_tokens(normalized.style, chart_style_context)
     # The chart-local context re-runs inherit, so a chart's own `style.font`
     # reaches every slot font.
-    kpi = unset_auto_support_ink(
-        build_chart_style_context(chart_style_context, normalized).kpi
+    chart_local_style_context = build_chart_style_context(
+        chart_style_context, normalized
     )
+    kpi = unset_auto_support_ink(chart_local_style_context.kpi)
     available = set(data[0]) if data else set()
     _validate_kpi_conditional(normalized.id, kpi, available)
     channels = (
@@ -112,12 +113,12 @@ def _resolve_kpi(
         normalized,
         chart_style_context,
         channels,
-        None,
+        chart_local_style_context,
         # KPI has no series axis and no categorical color channel — no
         # per-chart color.categorical override is possible, so this is
         # always the board-level value, unlike the cartesian/radial
-        # families which route through _effective_requested_alias_palette.
-        requested_alias_palette=chart_style_context.requested_alias_palette,
+        # families which route through _effective_warned_palette.
+        warned_palette=chart_style_context.warned_palette,
         automatic_link_candidate=automatic_link_candidate,
         layout_padding=kpi.padding,
         legendless=True,
@@ -363,13 +364,14 @@ def _resolve_spark_bar(
             normalized,
             chart_style_context,
             channels,
+            chart_local_style_context,
             # spark_bar's style patch has no color-cascade concept at all
             # (SparkBarChartStyle does not inherit _ChartStyleBaseAllOptional,
             # unlike every other family) — color is a plain literal channel
             # (normalized.color below), not a chart-local categorical-palette
-            # override. There is nothing for _effective_requested_alias_palette
+            # override. There is nothing for _effective_warned_palette
             # to read from `primary`, so the board value is the whole answer.
-            requested_alias_palette=chart_style_context.requested_alias_palette,
+            warned_palette=chart_style_context.warned_palette,
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=spark_bar.padding,
             legendless=True,

@@ -1,3 +1,0 @@
-kind: Fixes
-body: A dropdown whose options come from a boolean, number or date column now accepts that value from a link or --var.
-time: 2026-11-18T09:43:22.781944-08:00

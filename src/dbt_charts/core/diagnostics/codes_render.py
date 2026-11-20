@@ -259,7 +259,7 @@ ERR_LEGEND_POSITION_UNSUPPORTED = REGISTRY.register(
         domain="render",
         title="Legend placement combination is not supported",
         message_template="Chart {chart_id!r} places its legend at `edge: {edge}`, `align: {align}`, `overlay: {overlay}`, which no placement supports. Supported placements: {supported}.",
-        doc="Fired when the resolved `legend.position` (edge, align, overlay) names a placement the renderer cannot draw.",
+        doc="Fired when the resolved `key.legend.position` (edge, align, overlay) names a placement the renderer cannot draw.",
         summary="Fired when a chart's legend `position` names an edge, align and overlay combination that no placement supports.",
         docs_topic="charts",
     )
@@ -271,7 +271,7 @@ ERR_LEGEND_ALIGN_UNSUPPORTED = REGISTRY.register(
         domain="render",
         title="A legend cannot be aligned this way on this chart",
         message_template="Chart {chart_id!r} asks for a legend `align` that cannot be honored: {reason}. Use `align: start` instead.",
-        doc="Fired when a `legend.position.align` of `center` (or a pie's `end`) cannot be honored: the chart is small multiples or has an endpoint-label rail (no single plot to align in), or its legend is larger than the plot.",
+        doc="Fired when a `key.legend.position.align` of `center` (or a pie's `end`) cannot be honored: the chart is small multiples or has an endpoint-label rail (no single plot to align in), or its legend is larger than the plot.",
         summary="Fired when a centered or end-aligned legend has no plot to align in or is larger than the plot.",
         docs_topic="charts",
     )
@@ -660,8 +660,8 @@ ERR_MULTIPLES_ENDPOINT_LABELS = REGISTRY.register(
         code="ERR-MULTIPLES-ENDPOINT-LABELS",
         domain="render",
         title="multiples cannot be combined with endpoint labels",
-        message_template="Chart {chart_id!r}: multiples cannot be combined with endpoint labels; the endpoint-label rail names series for a single panel, and a faceted chart has no single panel for it to sit beside. Set style.legend.position.edge: top on this chart to keep the small multiples, or remove multiples to keep the labels.",
-        doc="Fired when a chart authors `multiples:` while its endpoint-label rail is explicitly switched on. The rail names series for one panel; a faceted chart has no single panel for it to sit beside. The shipped default switches the rail off wherever `multiples:` is set (a legend above the panels names the series instead), so this fires only where the rail was asked for by name. Set `style.legend.position.edge: top` to keep the small multiples, or remove `multiples:` to keep the labels.",
+        message_template="Chart {chart_id!r}: multiples cannot be combined with endpoint labels; the endpoint-label rail names series for a single panel, and a faceted chart has no single panel for it to sit beside. Set style.key.type: legend on this chart to keep the small multiples, or remove multiples to keep the labels.",
+        doc="Fired when a chart authors `multiples:` while its endpoint-label rail is explicitly switched on. The rail names series for one panel; a faceted chart has no single panel for it to sit beside. The shipped default switches the rail off wherever `multiples:` is set (a legend above the panels names the series instead), so this fires only where the rail was asked for by name. Set `style.key.type: legend` to keep the small multiples, or remove `multiples:` to keep the labels.",
         docs_topic="charts",
     )
 )
@@ -683,8 +683,8 @@ ERR_ENDPOINT_LABELS_UNORDERABLE_SORT = REGISTRY.register(
         code="ERR-ENDPOINT-LABELS-UNORDERABLE-SORT",
         domain="render",
         title="sort by a non-numeric column cannot be combined with stacked endpoint labels",
-        message_template="Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be combined with stacked bar endpoint labels. The rail places its labels from the order the sorted axis draws, and dbt Charts confirms that order only for a column carrying numeric values. Sort by a measure instead, or set style.legend.position.edge: top on this chart.",
-        doc="Fired when a stacked bar chart authors `sort:` by a column that carries no numeric values while its endpoint-label rail is visible. The rail places its labels from the order the sorted axis draws (a vertical rail anchors each series at its own last drawn column, a horizontal one anchors every series on the top row), so it has to know that order before the chart renders. dbt Charts confirms it only for a numeric sort column, and labels placed from the wrong order name series in the wrong place, which is worse than a legend. Sort by a measure, or turn the rail off with `style.legend.position.edge: top`.",
+        message_template="Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be combined with stacked bar endpoint labels. The rail places its labels from the order the sorted axis draws, and dbt Charts confirms that order only for a column carrying numeric values. Sort by a measure instead, or set style.key.type: legend on this chart.",
+        doc="Fired when a stacked bar chart authors `sort:` by a column that carries no numeric values while its endpoint-label rail is visible. The rail places its labels from the order the sorted axis draws (a vertical rail anchors each series at its own last drawn column, a horizontal one anchors every series on the top row), so it has to know that order before the chart renders. dbt Charts confirms it only for a numeric sort column, and labels placed from the wrong order name series in the wrong place, which is worse than a legend. Sort by a measure, or turn the rail off with `style.key.type: legend`.",
         docs_topic="charts",
     )
 )
@@ -694,8 +694,8 @@ ERR_ENDPOINT_LABELS_NEGATIVE_STACK = REGISTRY.register(
         code="ERR-ENDPOINT-LABELS-NEGATIVE-STACK",
         domain="render",
         title="negative values are not supported for stacked endpoint labels",
-        message_template="Chart {chart_id!r}: negative values are not supported for stacked bar/area endpoint labels — they break the cumulative-midpoint computation. Set style.legend.position.edge: top on this chart.",
-        doc="Fired when a stacked bar or area chart's data carries a negative measure while its endpoint-label rail is visible. The rail anchors each label at its segment's cumulative midpoint, a computation that assumes every segment in the stack contributes in the same direction; a negative value crosses zero and breaks it. Turn the rail off with `style.legend.position.edge: top`.",
+        message_template="Chart {chart_id!r}: negative values are not supported for stacked bar/area endpoint labels — they break the cumulative-midpoint computation. Set style.key.type: legend on this chart.",
+        doc="Fired when a stacked bar or area chart's data carries a negative measure while its endpoint-label rail is visible. The rail anchors each label at its segment's cumulative midpoint, a computation that assumes every segment in the stack contributes in the same direction; a negative value crosses zero and breaks it. Turn the rail off with `style.key.type: legend`.",
         docs_topic="charts",
     )
 )
@@ -705,8 +705,8 @@ ERR_ENDPOINT_LABELS_CENTER_STACK = REGISTRY.register(
         code="ERR-ENDPOINT-LABELS-CENTER-STACK",
         domain="render",
         title="stack: center is not supported for horizontal endpoint labels",
-        message_template="Chart {chart_id!r}: stack: center is not supported for horizontal stacked bar endpoint labels — the rail anchors on the cumulative (0..Σ) axis, which a center stack (-Σ/2..+Σ/2) does not have. Use stack: zero, or set style.legend.position.edge: top on this chart.",
-        doc="Fired when a horizontal stacked bar chart uses `stack: center` while its endpoint-label rail is forced on. The rail anchors each label at its segment's cumulative midpoint from zero; a center stack has no such axis. Use `stack: zero`, or turn the rail off with `style.legend.position.edge: top`.",
+        message_template="Chart {chart_id!r}: stack: center is not supported for horizontal stacked bar endpoint labels — the rail anchors on the cumulative (0..Σ) axis, which a center stack (-Σ/2..+Σ/2) does not have. Use stack: zero, or set style.key.type: legend on this chart.",
+        doc="Fired when a horizontal stacked bar chart uses `stack: center` while its endpoint-label rail is forced on. The rail anchors each label at its segment's cumulative midpoint from zero; a center stack has no such axis. Use `stack: zero`, or turn the rail off with `style.key.type: legend`.",
         docs_topic="charts",
     )
 )
@@ -752,8 +752,8 @@ ERR_LAYER_AXIS_POSITION_ENDPOINT_LABELS = REGISTRY.register(
         code="ERR-LAYER-AXIS-POSITION-ENDPOINT-LABELS",
         domain="render",
         title="axis_y.position on a layer cannot be combined with endpoint labels",
-        message_template="Chart {chart_id!r}: style.legend.position.edge: endpoints is not supported on a layered chart whose layers pin an explicit axis_y.position — the label rail anchors on one shared y-scale, and a dual-axis layer renders on a different one. Remove the per-layer axis_y.position override, or set style.legend.position.edge: top on this chart.",
-        doc="Fired when a layered chart's endpoint-label rail is visible (authored or theme-set) while one of its layers pins its own `axis_y.position`. The rail anchors every layer's labels on the base chart's single shared y-scale; a layer with a pinned `axis_y.position` is a genuine dual-axis layer rendering on a different scale, which the rail has no way to represent. Remove the per-layer `axis_y.position`, or turn the rail off with `style.legend.position.edge: top`.",
+        message_template="Chart {chart_id!r}: style.key.type: direct is not supported on a layered chart whose layers pin an explicit axis_y.position — the label rail anchors on one shared y-scale, and a dual-axis layer renders on a different one. Remove the per-layer axis_y.position override, or set style.key.type: legend on this chart.",
+        doc="Fired when a layered chart's endpoint-label rail is visible (authored or theme-set) while one of its layers pins its own `axis_y.position`. The rail anchors every layer's labels on the base chart's single shared y-scale; a layer with a pinned `axis_y.position` is a genuine dual-axis layer rendering on a different scale, which the rail has no way to represent. Remove the per-layer `axis_y.position`, or turn the rail off with `style.key.type: legend`.",
         summary="Fired when a layered chart's endpoint-label rail is visible while one of its layers pins its own axis_y.position.",
         docs_topic="charts",
     )
@@ -1315,9 +1315,9 @@ WARN_PALETTE_UNSUPPORTED = REGISTRY.register(
         code="WARN-PALETTE-UNSUPPORTED",
         domain="render",
         title="Palette name is a known anti-pattern",
-        message_template="Chart {chart_id!r}: palette {requested!r} is a known anti-pattern; resolved to {resolved} instead.",
-        fix_template="Author a supported palette name; the substitute named in the message is what renders.",
-        doc="Fires when a chart authors a palette name on the known anti-pattern list (e.g. 'RdYlGn', 'parula'); these are CVD-hostile or superseded by a dbt-charts-native palette. palette() resolves the substitute silently at compile time; this detector is the only place the nudge surfaces.",
+        message_template="Chart {chart_id!r}: palette {requested!r} is a known anti-pattern; consider {recommended} instead.",
+        fix_template="Author {recommended} instead; {requested} still draws as written.",
+        doc="Fires when a chart authors a palette name on the known anti-pattern list (e.g. 'RdYlGn', 'parula'); these are CVD-hostile or superseded by a dbt-charts-native palette. The palette still draws as authored; the warning recommends the dbt-charts-native palette.",
         summary="Fires when a chart authors a palette name on the known anti-pattern list; these are CVD-hostile or superseded by a dbt-charts-native palette.",
         docs_topic="charts",
     )
@@ -1404,7 +1404,7 @@ WARN_SERIES_LABEL_TRUNCATED = REGISTRY.register(
         domain="render",
         title="Series label was too long for the endpoint-label rail and was truncated",
         message_template="Chart {chart_id!r}: {count} series {labels_noun} from {authored_field!r} {were} truncated in the endpoint-label rail, which is capped at a fraction of the chart's width: {labels}.",
-        fix_template="Shorten the {authored_field} values, widen the chart, or set style.legend.position.edge: top to keep the series names in the legend.",
+        fix_template="Shorten the {authored_field} values, widen the chart, or set style.key.type: legend to keep the series names in the legend.",
         doc="Fires when a chart's series labels are drawn in the right-hand endpoint-label rail and do not fit. The rail may claim only a fraction of the chart's width, so longer names are cut with an ellipsis (…). The labels are the values of the column bound to `color:`; for a wide-form chart authored `y: [a, b, …]`, the measure names themselves, prefixed by the `color:` column's value (`<value> - <measure>`) when one is authored; the warning names whichever key holds the long part. The label text in the message is the full value before truncation, so you can see exactly what was cut. Only the drawn label is shortened: the underlying values, the color scale, and tooltips still carry the full text.",
         docs_topic="charts",
     )
@@ -1416,7 +1416,7 @@ WARN_RAIL_VALUE_DROPPED = REGISTRY.register(
         domain="render",
         title="Endpoint label shows its series name without the value",
         message_template="Chart {chart_id!r}: {count} endpoint {labels_noun} from {authored_field!r} {were} drawn without the final value, because the value and the name fit neither one line nor two in the rail: {labels}.",
-        fix_template="Shorten the {authored_field} values, widen the chart, or set style.legend.position.edge: top to keep the series names in the legend.",
+        fix_template="Shorten the {authored_field} values, widen the chart, or set style.key.type: legend to keep the series names in the legend.",
         doc="Fires when an endpoint label cannot show its series' final value. A label reads `value name` on one line; when that is too wide for the rail it wraps onto a second line, and when two lines do not fit either, or the rail has no vertical room for two-line labels, the value is dropped and the name is drawn alone (cut with an ellipsis if it is still too long). The labels in the message are the full series names.",
         docs_topic="charts",
     )
@@ -1578,27 +1578,14 @@ WARN_Y_ENCODING_MOSTLY_NULL = REGISTRY.register(
     )
 )
 
-WARN_LEGEND_HIDDEN_UNDER_EDGE = REGISTRY.register(
-    WarningCode(
-        code="WARN-LEGEND-HIDDEN-UNDER-EDGE",
-        domain="render",
-        title="A hidden legend under a legend edge names no series",
-        message_template="Chart {chart_id!r} hides its legend, but `legend.position.edge: {edge}` also keeps endpoint labels off, so nothing names its series.",
-        fix_template="Set `legend.position.edge: endpoints` to name the series on the chart, or set `legend.visible: true` to show the legend.",
-        doc="Fires on a chart that has several series and would print endpoint labels by default, but whose resolved style hides the legend and sets a side (`top`, `bottom`, `left` or `right`) as `legend.position.edge`. A side places a legend, so it keeps the endpoint labels off whatever `legend.visible` says, and nothing names the series. A chart that never had endpoint labels (a grouped bar, small multiples, a layered chart) is not reported. Setting `edge: endpoints` restores the labels; `legend.visible: true` shows the legend.",
-        summary="Fired when a chart with several series hides its legend under a side legend edge.",
-        docs_topic="charts",
-    )
-)
-
 WARN_LEGEND_POSITION_WIDTH_FALLBACK = REGISTRY.register(
     WarningCode(
         code="WARN-LEGEND-POSITION-WIDTH-FALLBACK",
         domain="render",
-        title="A narrow card overrode an authored legend edge",
-        message_template="Chart {chart_id!r} authored `legend.position.edge: {authored_edge}`, but a card this narrow cannot hold that placement, so the legend was placed on the `{resolved_edge}` edge instead.",
-        fix_template="Widen the chart, or drop `legend.position.edge` and accept the automatic placement.",
-        doc="Fires when a chart authors a `legend.position.edge` its card is too narrow to honor and the engine places the legend elsewhere. A cartesian chart (bar, line, area, scatter, heatmap) authoring a non-top edge on a card in the tiny width tier gets a compact top strip, and so does `edge: endpoints`, whose on-chart series names need more width than the card has; a pie or donut authoring a side edge (`left` or `right`) gets its attached table below the wheel when the wheel region beside it would be too narrow. The fallback itself is not a defect (the card physically cannot fit that placement); this warning exists only because the override was otherwise silent: the resolved chart renders a different legend position than the one the author wrote, with no signal that happened.",
+        title="A narrow card overrode an authored key placement",
+        message_template="Chart {chart_id!r} authored `{authored_edge}`, but a card this narrow cannot hold that placement, so the legend was placed on the `{resolved_edge}` edge instead.",
+        fix_template="Widen the chart, or drop the key setting and accept the automatic placement.",
+        doc="Fires when a chart authors a `key.legend.position.edge`, or `key.type: direct`, that its card is too narrow to honor, and the engine places the legend elsewhere. A cartesian chart (bar, line, area, scatter, heatmap) authoring a non-top edge on a card in the tiny width tier gets a compact top strip, and so does `key.type: direct`, whose on-chart series names need more width than the card has; a pie or donut authoring a side edge (`left` or `right`) gets its attached table below the wheel when the wheel region beside it would be too narrow. The fallback itself is not a defect (the card physically cannot fit that placement); this warning exists only because the override was otherwise silent: the resolved chart renders a different legend position than the one the author wrote, with no signal that happened.",
         summary="Fired when a card too narrow for the placement its author wrote overrides that placement.",
         docs_topic="charts",
     )
@@ -1621,10 +1608,10 @@ WARN_LEGEND_VALUES_UNRESOLVED = REGISTRY.register(
     WarningCode(
         code="WARN-LEGEND-VALUES-UNRESOLVED",
         domain="render",
-        title="style.legend.values entry does not resolve against the legend domain",
-        message_template="Chart {chart_id!r} authored `legend.values` entries {values} that did not resolve to exactly one legend entry. Legend domain: {domain}.",
+        title="style.key.legend.values entry does not resolve against the legend domain",
+        message_template="Chart {chart_id!r} authored `key.legend.values` entries {values} that did not resolve to exactly one legend entry. Legend domain: {domain}.",
         fix_template="Check the spelling against the legend domain, or remove the entry if it's expected to be legitimately absent sometimes.",
-        doc="Fires when `style.legend.values` names an entry that matches none of the chart's legend entries, or matches more than one. The entry is dropped rather than shown or causing a render failure. If every authored entry misses, the legend falls back to its default order. Covers every nominal/ordinal `color:` field on bar, area, line, scatter, heatmap, and pie, a wide `y: [...]` chart, an overlay's `layers:` labels, and a geoshape choropleth. Not checked: `point_map`/`bubble_map` (no legend resolution there), a quantitative, temporal, or boolean `color:` column (`legend.values` is used exactly as authored, with no diagnostic on a miss), and an overlay whose base `y` is non-quantitative (its shared color scale is never built, so `legend.values` passes through verbatim).",
+        doc="Fires when `style.key.legend.values` names an entry that matches none of the chart's legend entries, or matches more than one. The entry is dropped rather than shown or causing a render failure. If every authored entry misses, the legend falls back to its default order. Covers every nominal/ordinal `color:` field on bar, area, line, scatter and heatmap, a wide `y: [...]` chart, an overlay's `layers:` labels, and a geoshape choropleth. Not checked: `point_map`/`bubble_map` (no legend resolution there), a quantitative, temporal, or boolean `color:` column (`key.legend.values` is used exactly as authored, with no diagnostic on a miss), and an overlay whose base `y` is non-quantitative (its shared color scale is never built, so `key.legend.values` passes through verbatim).",
         summary="Fired when an authored legend entry doesn't resolve against a chart's legend domain.",
         docs_topic="charts",
     )
@@ -2297,8 +2284,8 @@ WARN_LEGEND_OVERLAY_COVERS_MARKS = REGISTRY.register(
         domain="render",
         title="An overlay legend covers data marks",
         message_template="Chart {chart_id!r}: the overlay legend sits on top of the data, hiding part of a mark.",
-        fix_template="Move the legend to a corner the data leaves empty (`legend.position`), or set `overlay` to false to reserve a strip for it.",
-        doc="Fires on a line or area chart whose legend is drawn over the plot (`legend.position.overlay` true) and whose drawn box meets a line, an area's outline stroke, or a point. A line is not drawn across a missing value, and a filled area under the legend does not count. Other chart types never fire. The legend stays where it is; the warning only reports the overlap.",
+        fix_template="Move the legend to a corner the data leaves empty (`key.legend.position`), or set `overlay` to false to reserve a strip for it.",
+        doc="Fires on a line or area chart whose legend is drawn over the plot (`key.legend.position.overlay` true) and whose drawn box meets a line, an area's outline stroke, or a point. A line is not drawn across a missing value, and a filled area under the legend does not count. Other chart types never fire. The legend stays where it is; the warning only reports the overlap.",
         summary="Fired when an overlay legend sits on top of a line or point.",
         docs_topic="charts",
     )

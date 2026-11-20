@@ -207,6 +207,19 @@ def test_chart_style_that_overrides_the_board_tier_is_kept(
     assert restated(board) == []
 
 
+def test_chart_key_equal_to_the_board_tier_is_not_judged(
+    restated: Callable[..., list[Diagnostic]],
+) -> None:
+    board = (
+        "style:\n  charts:\n    line:\n      key:\n        visible: true\n"
+        "queries:\n  q:\n    columns: [n]\n    values:\n      - [1]\n"
+        "charts:\n  c:\n    type: line\n    query: q\n    x: n\n    y: n\n"
+        "    style:\n      key:\n        visible: true\n"
+        "rows:\n  - c\n"
+    )
+    assert restated(board) == []
+
+
 def test_query_source_equal_to_the_board_source_warns(
     restated: Callable[..., list[Diagnostic]],
 ) -> None:

@@ -131,9 +131,10 @@ charts:
     style:
       orientation: vertical
       stack: zero
-      legend:
-        position:
-          edge: top
+      key:
+        legend:
+          position:
+            edge: "top"
 rows:
   - c1
 """
@@ -170,10 +171,12 @@ charts:
     y: revenue
     color: region
     style:
-      legend:
+      key:
         visible: true
-        position:
-          edge: top
+        type: "legend"
+        legend:
+          position:
+            edge: "top"
 rows:
   - c1
 """
@@ -190,22 +193,28 @@ rows:
 # ---------------------------------------------------------------------------
 
 
-def test_pie_legend_and_arc_paint_order_share_one_authority():
-    """The legend lists and the wedges paint in the data's own row order."""
+def test_pie_table_and_arc_paint_order_share_one_authority():
+    """The key's table lists and the wedges paint in the data's own row order."""
     chart = PieChart(
         id="t",
         query_name="q",
         type="pie",
         theta="val",
         color="cat",
-        style=PieChartStylePatch.model_validate({"legend": {"visible": True}}),
+        style=PieChartStylePatch.model_validate(
+            {"key": {"visible": True, "type": "legend"}}
+        ),
     )
     data = [
         {"cat": "zeta", "val": 10},
         {"cat": "alpha", "val": 30},
     ]
     svg = render_pie_svg(chart, data)
-    assert legend_label_order(svg) == ["zeta", "alpha"]
+    names = [
+        re.sub("<[^>]*>", "", text)
+        for text in re.findall(r"<text[^>]*>(.*?)</text>", svg, re.S)
+    ]
+    assert [name for name in names if name in ("zeta", "alpha")] == ["zeta", "alpha"]
     wedge_headers = re.findall(
         r'aria-label="\u2064([^;]+);[^"]*"[^>]*aria-roledescription="arc mark"', svg
     )

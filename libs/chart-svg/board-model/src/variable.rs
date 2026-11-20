@@ -256,9 +256,9 @@ pub struct VariableOptions {
     /// Column in the query result to use as option values.
     #[model(absent = "no option column")]
     pub column: Option<String>,
-    /// Query column shown as the option text, apart from the value.
-    #[model(absent = "the value is the text")]
-    pub label_column: Option<String>,
+    /// Query column holding each option's count, shown beside the option and used to sort the menu by count. Write the count you mean in the query, such as COUNT(DISTINCT id) over a recent window.
+    #[model(absent = "no option counts")]
+    pub count_column: Option<String>,
 }
 
 /// Whether a control is enabled.

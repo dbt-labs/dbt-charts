@@ -13,20 +13,16 @@
 //! which always stands. The table modes draw the wheel at the theme's view height beside, above or under
 //! the table, which the table family lays out; the canvas takes its height from them, so `Plan::height`
 //! is the composed height the slot must be given. The authored `legend.position` places the table
-//! (`choose_table_placement`, `decide_table_align`). A table mode draws no legend (`Mode.parts`: the table
-//! keys the wheel). A title over a table above the wheel, an authored side the card is too narrow for, and
+//! (`choose_table_placement`, `decide_table_align`). A title over a table above the wheel, an authored side the card is too narrow for, and
 //! the other shapes this slice does not draw, are refused by name.
 //!
 //! `draw` is the chart's root `<svg class="marks">` with the wedges under [`crate::knockout`]'s mask,
 //! the center total and the slice labels. The stroke's `theme.background` names the board's card
-//! canvas, not the chart's own. The color legend is a strip on one edge of the
-//! direct mode: it shrinks the box the wheel is fitted in (`solve_wheel`: `plot.x1 += box_w +
-//! VEGA_LEGEND_OFFSET`), slides along the edge for `align` center or end (`legend_slide`) and is
-//! drawn after the marks. A pie over no rows draws no wheel: its title and the shared "No results" card
+//! canvas, not the chart's own. A pie over no rows draws no wheel: its title and the shared "No results" card
 //! ([`crate::plot::empty::body`]).
 
 use board_model::primitives::LinkOpen;
-use bind::bound::{Href, Listed, Pie, PieKeyEdge, PieLabeled, PieLegend, PieTable, Table, TableCell, TableColumn};
+use bind::bound::{Href, Listed, Pie, PieKeyEdge, PieLabeled, PieTable, Table, TableCell, TableColumn};
 use board_model::style::legend::LegendAlign;
 use board_model::style::board::{EmojiMode, OverflowMode};
 use board_model::style::pie::PieChartStyle;
@@ -39,14 +35,12 @@ use diagnostic::{diag, refuse, Diagnostic};
 use measure::shaped::{Font, FontBook};
 use measure::{baseline_shift, stand_in_family};
 use model_core::Engine;
-use board_model::rule::Auto;
 use scene::{Attrs, Chars, Escape, Extent, Node, Role, Run, Shape};
 
 use super::failed::Weight;
 use super::table::{self, TableCard, TableFaces};
 use crate::contract::{aria_attrs, hidden_mark_group, link, mark_group, ItemRole};
 use crate::knockout::{knock_out, safe_scope};
-use crate::plot::legend::{Flow, Side, SideLegend, Unfit, OFFSET as LEGEND_OFFSET};
 use crate::scene_path::scene_path;
 use crate::geom::Rect;
 use crate::text_ink;
@@ -63,6 +57,8 @@ const HOLE_TOTAL_MARGIN_PX: f64 = 4.0;
 const OUTER_FRACTION: f64 = 0.9;
 /// `ATTACHED_TABLE_GAP_PX` in `core/constants/pie.py`: the gap between the wheel and its table.
 const ATTACHED_TABLE_GAP: f64 = 12.0;
+/// `SIDE_TABLE_INK_GAP_PX`: the gap between a table beside the wheel and the wheel's ink.
+const SIDE_TABLE_INK_GAP: f64 = 24.0;
 /// `HYBRID_HEADING_GAP_PX`: the gap under the hybrid table's heading.
 const HYBRID_HEADING_GAP: f64 = 6.0;
 /// `RIGHT_PLACEMENT_MIN_WIDTH_FRACTION` and `_PX`: the table goes beside the wheel only when the wheel
@@ -86,8 +82,6 @@ enum Refused {
     NoRoom,
     WideTotal,
     Weight,
-    LegendCut,
-    LegendFit,
     TitleClip,
 }
 
@@ -100,8 +94,6 @@ impl Refused {
             Refused::NoRoom => "drawn in a box its labels leave no room in",
             Refused::WideTotal => "whose total is wider than its hole",
             Refused::Weight => "whose font weight names no axis value",
-            Refused::LegendCut => "whose legend text is cut at its limit",
-            Refused::LegendFit => "whose aligned legend is no smaller than its plot",
             Refused::TitleClip => "whose title `overflow: clip` cuts it",
         };
         Diagnostic::refused(refuse!("a pie {what} is not supported"))
@@ -175,8 +167,6 @@ pub struct Plan {
     attached: Option<Attached>,
     /// The canvas's height: the box's own for a wheel alone, else what the wheel and table stack to.
     height: f64,
-    /// The legend strip and its top left in the chart's box.
-    legend: Option<(SideLegend, (f64, f64))>,
     /// A pie over no rows draws no wheel: its card's "No results" text, centered in the plot box.
     no_results: Vec<Node>,
 }
@@ -216,8 +206,12 @@ struct Attached {
     wheel_height: f64,
     /// Where the table starts and ends across or down its side (`decide_table_align`).
     align: LegendAlign,
-    /// The card's padding (left, right, top), which a table above or beside the wheel sits inside.
-    pad: (f64, f64, f64),
+    /// The top left of the wheel's box and of the table in the canvas: above or below the wheel as
+    /// the table is measured, the rest once the wheel is solved (`wheel_plan`).
+    wheel_at: (f64, f64),
+    table_at: (f64, f64),
+    /// The canvas width and its left and right padding, which a table beside the wheel stays inside.
+    across: (f64, f64, f64),
     heading: Option<Heading>,
     /// The table's height with its heading.
     height: f64,
@@ -244,22 +238,22 @@ impl Plan {
 #[derive(Clone, Copy)]
 struct Parts {
     labels: bool,
-    legend: bool,
     total: bool,
 }
 
-/// `Mode.parts`: the direct mode draws all three ink groups, the hybrid one no legend (the table keys the
-/// wheel), the full table no labels either; `BARE` is the reference wheel with no ink group.
-const ALL: Parts = Parts { labels: true, legend: true, total: true };
-const HYBRID: Parts = Parts { labels: true, legend: false, total: true };
-const BARE: Parts = Parts { labels: false, legend: false, total: false };
-const NO_LABELS: Parts = Parts { labels: false, legend: false, total: true };
+/// `Mode.parts`: the direct and hybrid modes draw the labels and the total, the full table no labels; `BARE`
+/// is the reference wheel with no ink group.
+const LABELED: Parts = Parts { labels: true, total: true };
+const BARE: Parts = Parts { labels: false, total: false };
+const NO_LABELS: Parts = Parts { labels: false, total: true };
 
 #[derive(Debug, Clone, PartialEq)]
 struct Placed {
     slice: usize,
     mid: f64,
     max_w: f64,
+    /// The label block's ink top and bottom relative to its anchor row (`Callout::dy` and `ink`).
+    ink_y: (f64, f64),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -315,21 +309,12 @@ struct Solved {
     min_radius: Option<f64>,
     placed: Vec<Placed>,
     center: Option<CenterInk>,
-    /// The box the wheel was fitted in, less a reserved legend's strip.
-    plot: Ink,
-}
-
-/// The legend strip and the side it reserves.
-struct Key {
-    strip: SideLegend,
-    side: Side,
-    align: LegendAlign,
 }
 
 /// One solve of the wheel in `(w, h)` inside `pad` (left, right, top, bottom): `parts` reserves room
-/// for the slice labels and the center total (`solve_wheel`, no legend). The radius, and the
+/// for the slice labels and the center total (`solve_wheel`). The radius, and the
 /// smallest radius whose hole holds the total.
-fn solve(card: &PieCard, book: &FontBook, (w, h): (f64, f64), pad: (f64, f64, f64, f64), parts: Parts, key: Option<&Key>) -> Result<Solved, Unsolved> {
+fn solve(card: &PieCard, book: &FontBook, (w, h): (f64, f64), pad: (f64, f64, f64, f64), parts: Parts) -> Result<Solved, Unsolved> {
     let pie_ = card.pie;
     let faces = faces(card);
     let labels_style = &card.style.marks.slice.labels;
@@ -348,7 +333,10 @@ fn solve(card: &PieCard, book: &FontBook, (w, h): (f64, f64), pad: (f64, f64, f6
             for line in &label.lines {
                 max_w = max_w.max(faces.label.width(book, line).map_err(Unsolved::Failed)?);
             }
-            placed.push(Placed { slice: idx, mid: mids[idx], max_w });
+            let lines = label.lines.len() as f64;
+            let b = text_ink(max_w, labels_style.font.size, "left", "top");
+            let dy = if mids[idx].cos() >= 0.0 { -lines * labels_style.line_height } else { 0.0 };
+            placed.push(Placed { slice: idx, mid: mids[idx], max_w, ink_y: (dy + b.y1, dy + b.y2 + (lines - 1.0) * labels_style.line_height) });
         }
     }
     if parts.total {
@@ -357,17 +345,7 @@ fn solve(card: &PieCard, book: &FontBook, (w, h): (f64, f64), pad: (f64, f64, f6
         }
     }
     let (_, stroke_w, _) = stroke(card).map_err(Unsolved::Failed)?;
-    let mut plot = Ink { x1: pad.0, y1: pad.2, x2: w - pad.1, y2: h - pad.3 };
-    // The strip sits `VEGA_LEGEND_OFFSET` from the plot rect, as Vega places it: the wheel is fitted in what it leaves.
-    if let Some(key) = key.filter(|_| parts.legend) {
-        let (box_w, box_h) = key.strip.size();
-        match key.side {
-            Side::Left => plot.x1 += box_w + LEGEND_OFFSET,
-            Side::Right => plot.x2 -= box_w + LEGEND_OFFSET,
-            Side::Top => plot.y1 += box_h + LEGEND_OFFSET,
-            Side::Bottom => plot.y2 -= box_h + LEGEND_OFFSET,
-        }
-    }
+    let plot = Ink { x1: pad.0, y1: pad.2, x2: w - pad.1, y2: h - pad.3 };
     let cap = (plot.x2 - plot.x1).min(plot.y2 - plot.y1) / 2.0 * OUTER_FRACTION;
     let centered: Vec<Ink> = center
         .iter()
@@ -396,80 +374,22 @@ fn solve(card: &PieCard, book: &FontBook, (w, h): (f64, f64), pad: (f64, f64, f6
         SolveError::Inconsistent(why) => Unsolved::Failed(diag::err_internal(format!("pie: {why}"))),
     })?;
     let min_radius = radial_fit::min_radius_for_hole(&centered, HOLE_TOTAL_MARGIN_PX, card.pie.hole);
-    Ok(Solved { wheel, min_radius, placed, center, plot })
-}
-
-/// The legend as the strip a pie reserves: its swatches carry the slice stroke's color, as Vega draws a filled
-/// arc mark's key. `width` is the card's, which a horizontal legend wraps its columns within.
-fn lay_out_key(card: &PieCard, legend: &PieLegend, width: f64, book: &FontBook) -> Result<Key, Diagnostic> {
-    let side = match legend.edge {
-        PieKeyEdge::Left => Side::Left,
-        PieKeyEdge::Right => Side::Right,
-        PieKeyEdge::Top => Side::Top,
-        PieKeyEdge::Bottom => Side::Bottom,
-    };
-    let vertical = matches!(side, Side::Left | Side::Right);
-    let base = &legend.base;
-    // `entry_columns`: the authored columns, else (`_base_kwargs`) the columns a horizontal legend with no
-    // authored direction wraps into, else one column beside the wheel and one row along it.
-    let columns = match (base.columns, vertical, base.direction == Engine::Rule(Auto::Auto)) {
-        (0, true, _) => 1,
-        (0, false, true) => wrap_columns(card, legend, width, book)?.unwrap_or(0),
-        (0, false, false) => 0,
-        (authored, ..) => authored as usize,
-    };
-    let (stroke, ..) = stroke(card)?;
-    let title = Some(legend.title.as_str()).filter(|title| !title.is_empty());
-    let strip = SideLegend::key(side, &legend.entries, legend.fold, title, base, &stroke, Flow { columns, vertical }, card.emoji, book).map_err(|unfit| match unfit {
-        Unfit::Cut => Refused::LegendCut.refusal(),
-        Unfit::Weight => Refused::Weight.refusal(),
-        Unfit::Failed(error) => error,
-        Unfit::Empty | Unfit::TooTall => diag::err_internal("a pie's legend has entries and takes any height"),
-    })?;
-    Ok(Key { strip, side, align: legend.align })
-}
-
-/// `legend_wrap_columns`: the columns a horizontal legend wraps into within `width`, none when one row
-/// holds every entry of the color domain, not only those a symbol limit keeps (`legend_row_fits`). Every
-/// column is as wide as the widest entry, whose width is its swatch box, the label padding and the whole
-/// label in the legend's own font, never cut at `label.max_width`.
-fn wrap_columns(card: &PieCard, legend: &PieLegend, width: f64, book: &FontBook) -> Result<Option<usize>, Diagnostic> {
-    let (row, label) = (&legend.base.row, &legend.base.label);
-    let font = &label.element.font;
-    let face = PieFace::of(font.family.as_str(), font.size, &font.weight, false, "", card.emoji);
-    let chrome = row.swatch_width.get() + label.element.padding;
-    let widths = legend.domain.iter().map(|text| Ok(chrome + face.width(book, text)?)).collect::<Result<Vec<f64>, Diagnostic>>()?;
-    Ok(wrap(&widths, row.entry_gap.get(), width, legend.base.compact_columns as usize))
-}
-
-/// `legend_wrap_columns` over the entries' full `widths`: none when one row of them and their `gap`s fits
-/// `width` (`legend_row_fits`), else the most columns whose cells (as wide as the widest entry) and gaps fit,
-/// at most `compact` and never fewer than one.
-fn wrap(widths: &[f64], gap: f64, width: f64, compact: usize) -> Option<usize> {
-    if widths.iter().sum::<f64>() + gap * (widths.len() as f64 - 1.0) <= width {
-        return None;
-    }
-    let cell = widths.iter().copied().fold(0.0, f64::max);
-    let fitted = ((width + gap) / (cell + gap)).floor() as usize;
-    Some(fitted.min(compact).min(widths.len()).max(1))
+    Ok(Solved { wheel, min_radius, placed, center })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::wrap;
+    use super::beside;
 
-    /// `legend_wrap_columns`: a row that fits wraps nowhere; else as many columns as the widest entry's cell
-    /// and the gaps leave room for, capped at `compact_columns` and the entry count, and at least one.
+    /// `compose`'s `beside` pins: a centered wheel the sides mirror around, and on a tight card the
+    /// far ink kept inside it (700px, a 246px reach away from a left table: the center stops at 438).
     #[test]
-    fn a_horizontal_legend_wraps_into_the_columns_its_widest_entry_leaves_room_for() {
-        let entries = [100.0; 5];
-        assert_eq!(wrap(&entries, 16.0, 564.0, 4), None);
-        assert_eq!(wrap(&entries, 16.0, 563.9, 4), Some(4));
-        assert_eq!(wrap(&entries, 16.0, 400.0, 4), Some(3));
-        assert_eq!(wrap(&entries, 16.0, 400.0, 2), Some(2));
-        assert_eq!(wrap(&[100.0, 40.0], 16.0, 130.0, 4), Some(1));
-        assert_eq!(wrap(&[100.0; 3], 16.0, 90.0, 4), Some(1));
-        assert_eq!(wrap(&[], 16.0, 0.0, 4), None);
+    fn a_table_beside_the_wheel_mirrors_and_keeps_the_far_ink_in_the_card() {
+        let (pad, ink) = ((16.0, 16.0), (156.0, 246.0));
+        assert_eq!(beside(true, 1200.0, pad, 200.0, ink), (600.0, 870.0));
+        assert_eq!(beside(false, 1200.0, pad, 200.0, ink), (600.0, 130.0));
+        assert_eq!(beside(false, 700.0, pad, 200.0, ink), (438.0, 16.0));
+        assert_eq!(beside(true, 700.0, pad, 200.0, (246.0, 156.0)), (262.0, 484.0));
     }
 }
 
@@ -559,18 +479,19 @@ fn attach(card: &PieCard, book: &FontBook, listed: &PieTable, width: f64, card_p
         Placement::Left | Placement::Right => (region.min(BESIDE_MAX_WHEEL_PX), natural),
         Placement::Top | Placement::Bottom => (width, natural.min(width)),
     };
-    // `decide_table_align`: authored, else the start beside the wheel and the center above or below.
-    let align = authored.align.unwrap_or(match placement {
-        Placement::Left | Placement::Right => LegendAlign::Start,
-        Placement::Top | Placement::Bottom => LegendAlign::Center,
-    });
+    // `decide_table_align`: authored, else the center.
+    let align = authored.align.unwrap_or(LegendAlign::Center);
+    let (pad_l, pad_r, pad_t, _) = card_pad;
     let laid = table::plan(&TableCard { table: &table, style: &style, faces: &faces, cell: None }, book, table_width, None, TitleShift::default())?;
     let heading = listed.heading.as_ref().map(|text| Heading { text: text.clone(), size: faces.body.size, family: faces.body.family.clone(), weight: faces.header.weight.attr(), color: faces.body.color.clone() });
     let block = heading.as_ref().map_or(0.0, |heading| heading.size + 2.0 + HYBRID_HEADING_GAP);
     let height = laid.height + block;
     // A table above the wheel adds its height and the gap to the wheel's view (`placement == "top"`).
     let wheel_height = card.placed.charts.view.continuous_height + if placement == Placement::Top { height + ATTACHED_TABLE_GAP } else { 0.0 };
-    Ok(Attached { placement, height, table, style, faces, laid, table_width, wheel_width, wheel_height, align, pad: (card_pad.0, card_pad.1, card_pad.2), heading })
+    // A table above the wheel sits under the card's top padding; one below it once the wheel is solved.
+    let table_y = if placement == Placement::Top { pad_t } else { 0.0 };
+    let wheel_at = ((width - wheel_width) / 2.0, 0.0);
+    Ok(Attached { placement, height, table, style, faces, laid, table_width, wheel_width, wheel_height, align, wheel_at, table_at: (0.0, table_y), across: (width, pad_l, pad_r), heading })
 }
 
 /// The pie in the mode the size stage chooses (`pie_layout_classified`) and the wheel in the box it is
@@ -586,7 +507,7 @@ fn attach(card: &PieCard, book: &FontBook, listed: &PieTable, width: f64, card_p
 /// the whole pixels `round(body_dy - title_dy)` the title-to-wheel gap takes, and the wheel's box by all
 /// of `body_dy`. A table pie stays out of the `cols` row's title band, so it takes none.
 pub fn plan(card: &PieCard, book: &FontBook, sized: (f64, f64), (w, h): (f64, f64), pad: (f64, f64, f64, f64), shift: TitleShift) -> Result<Plan, Diagnostic> {
-    let solve = |size: (f64, f64), frame: &Framed, parts: Parts, key: Option<&Key>| match solve(card, book, size, frame.pad, parts, key) {
+    let solve = |size: (f64, f64), frame: &Framed, parts: Parts| match solve(card, book, size, frame.pad, parts) {
         Ok(solved) => Ok(Some(solved)),
         Err(Unsolved::NoRoom) => Ok(None),
         Err(Unsolved::Failed(e)) => Err(e),
@@ -599,15 +520,14 @@ pub fn plan(card: &PieCard, book: &FontBook, sized: (f64, f64), (w, h): (f64, f6
         let area = Rect { x: pad.0, y: frame.pad.2, width: w - pad.0 - pad.1, height: h - frame.pad.2 - pad.3 };
         let filters = empty.empty.filters.as_deref().map(|line| (&card.placed.charts.title.base.subtitle.font, line));
         let no_results = crate::plot::empty::body(&empty.headline, filters, area, book, card.emoji)?;
-        return Ok(Plan { cx: 0.0, cy: 0.0, r: 0.0, labels: Vec::new(), center: None, title: frame.title, title_at: frame.title_at, attached: None, height: h, legend: None, no_results });
+        return Ok(Plan { cx: 0.0, cy: 0.0, r: 0.0, labels: Vec::new(), center: None, title: frame.title, title_at: frame.title_at, attached: None, height: h, no_results });
     }
     if shift != TitleShift::default() && whole.title.is_none() {
         return Err(diag::err_internal(format!("the pie {} is given a title shift with no title block to move", card.chart_id)));
     }
-    let Some(free) = solve(sized, &whole, BARE, None)? else { return Err(no_room()) };
+    let Some(free) = solve(sized, &whole, BARE)? else { return Err(no_room()) };
     let stands = |ink: &Solved| ink.wheel.r >= WHEEL_DOMINANCE_MIN_RATIO * free.wheel.r && ink.min_radius.is_none_or(|min| ink.wheel.r >= min);
-    // A wheel beside, above or under its table, drawn in the box the table leaves it. A table mode draws no
-    // legend, so none is laid out for it.
+    // A wheel beside, above or under its table, drawn in the box the table leaves it.
     let beside = |listed: &Listed, parts: Parts| -> Result<Option<(Attached, Framed, Solved)>, Diagnostic> {
         if shift != TitleShift::default() {
             return Err(diag::err_internal(format!("the table pie {} is given a title shift, but a table pie stays out of the title band", card.chart_id)));
@@ -615,84 +535,115 @@ pub fn plan(card: &PieCard, book: &FontBook, sized: (f64, f64), (w, h): (f64, f6
         let attached = attach(card, book, listed.as_ref().map_err(Clone::clone)?, sized.0, pad)?;
         // The wheel under a table above it starts below it: the top padding grows by the table's room (`bump_padding_top`).
         let room = if attached.placement == Placement::Top { attached.height + ATTACHED_TABLE_GAP } else { 0.0 };
-        let mut frame = framed(card, book, sized.0, attached.wheel_width, (pad.0, pad.1, pad.2 + room, pad.3))?;
-        // A table left of the wheel slides the title back by the wheel's offset (`title_dx`).
-        if attached.placement == Placement::Left {
-            frame.title_at.0 -= attached.table_width + ATTACHED_TABLE_GAP;
-        }
-        Ok(solve((attached.wheel_width, attached.wheel_height), &frame, parts, None)?.map(|solved| (attached, frame, solved)))
+        let frame = framed(card, book, sized.0, attached.wheel_width, (pad.0, pad.1, pad.2 + room, pad.3))?;
+        Ok(solve((attached.wheel_width, attached.wheel_height), &frame, parts)?.map(|solved| (attached, frame, solved)))
     };
     match &card.pie.labeled {
+        PieLabeled::Bare => {
+            let mut frame = framed(card, book, w, w, (pad.0, pad.1, pad.2 + shift.body_dy, pad.3))?;
+            frame.title_at.1 -= (shift.body_dy - shift.title_dy).round_ties_even();
+            let drawn = solve((w, h), &frame, NO_LABELS)?.ok_or_else(no_room)?;
+            return Ok(wheel_plan(drawn, frame, None, h, card.style.marks.slice.labels.offset));
+        }
         PieLabeled::Direct => {
-            let key = card.pie.legend.as_ref().map(|legend| lay_out_key(card, legend, w, book)).transpose()?;
-            if solve(sized, &whole, ALL, key.as_ref())?.is_some_and(|ink| stands(&ink)) {
+            if solve(sized, &whole, LABELED)?.is_some_and(|ink| stands(&ink)) {
                 let mut frame = framed(card, book, w, w, (pad.0, pad.1, pad.2 + shift.body_dy, pad.3))?;
                 frame.title_at.1 -= (shift.body_dy - shift.title_dy).round_ties_even();
-                let drawn = solve((w, h), &frame, ALL, key.as_ref())?.ok_or_else(no_room)?;
-                // The strip was reserved against the plot's exact edge, so it is drawn from there (`legend_edge_origin`), then
-                // slid along it for `align` center or end (`legend_slide`: the block moves within the plot's own extent).
-                let legend = key
-                    .map(|key| {
-                        let (box_w, box_h) = key.strip.size();
-                        let along_x = matches!(key.side, Side::Top | Side::Bottom);
-                        let (span, block) = if along_x { (drawn.plot.x2 - drawn.plot.x1, box_w) } else { (drawn.plot.y2 - drawn.plot.y1, box_h) };
-                        let slide = match key.align {
-                            LegendAlign::Start => 0.0,
-                            _ if span <= 0.0 || block >= span => return Err(Refused::LegendFit.refusal()),
-                            LegendAlign::Center => (span - block) / 2.0,
-                            LegendAlign::End => span - block,
-                        };
-                        let (x, y) = match key.side {
-                            Side::Left => (drawn.plot.x1 - LEGEND_OFFSET - box_w, drawn.plot.y1 + slide),
-                            Side::Right => (drawn.plot.x2 + LEGEND_OFFSET, drawn.plot.y1 + slide),
-                            Side::Top => (drawn.plot.x1 + slide, drawn.plot.y1 - LEGEND_OFFSET - box_h),
-                            Side::Bottom => (drawn.plot.x1 + slide, drawn.plot.y2 + LEGEND_OFFSET),
-                        };
-                        Ok((key.strip, (x, y)))
-                    })
-                    .transpose()?;
-                return Ok(wheel_plan(drawn, frame, None, h, legend));
+                let drawn = solve((w, h), &frame, LABELED)?.ok_or_else(no_room)?;
+                return Ok(wheel_plan(drawn, frame, None, h, card.style.marks.slice.labels.offset));
             }
         }
         PieLabeled::Hybrid(listed) => {
-            if let Some((attached, frame, ink)) = beside(listed, HYBRID)?.filter(|(_, _, ink)| stands(ink)) {
-                return Ok(wheel_plan(ink, frame, Some(attached), 0.0, None));
+            if let Some((attached, frame, ink)) = beside(listed, LABELED)?.filter(|(_, _, ink)| stands(ink)) {
+                return Ok(wheel_plan(ink, frame, Some(attached), 0.0, card.style.marks.slice.labels.offset));
             }
         }
         PieLabeled::None => {}
     }
     let (attached, frame, ink) = beside(&card.pie.full, NO_LABELS)?.ok_or_else(no_room)?;
-    Ok(wheel_plan(ink, frame, Some(attached), 0.0, None))
+    Ok(wheel_plan(ink, frame, Some(attached), 0.0, card.style.marks.slice.labels.offset))
+}
+
+/// `compose`'s `beside`: where the wheel's center and a table beside it (on the `right`, else the
+/// left) sit across a canvas `w` wide inside its `pad` (left, right). The wheel centers in the
+/// canvas and the table sits the gap past the wheel's farther ink reach (`ink`: left, right of the
+/// center), so the two sides mirror. A table that would cross the padding stops there and takes
+/// the wheel along, but never past the wheel's far ink: on a card too tight for both, the gap
+/// shrinks.
+fn beside(right: bool, w: f64, pad: (f64, f64), table_w: f64, ink: (f64, f64)) -> (f64, f64) {
+    let gap = SIDE_TABLE_INK_GAP;
+    // Solved for a right table; a left one is its mirror image.
+    let solve = |(pad_far, pad_table): (f64, f64), (near, far): (f64, f64)| {
+        let half = near.max(far);
+        let edge = w - pad_table - table_w - gap;
+        let x = if w / 2.0 + half > edge { (edge - half).max(pad_far + far) } else { w / 2.0 };
+        (x, (x + half + gap).min(w - pad_table - table_w))
+    };
+    if right {
+        solve(pad, (ink.1, ink.0))
+    } else {
+        let (x, table_x) = solve((pad.1, pad.0), ink);
+        (w - x, w - table_x - table_w)
+    }
 }
 
 /// The wheel solved in its frame as a plan; a table pie's height is what the wheel and table stack to
-/// (`compose`): the table under the wheel (the gap between), or beside it down the wheel's disk,
-/// never above the disk's top.
-fn wheel_plan(solved: Solved, frame: Framed, attached: Option<Attached>, h: f64, legend: Option<(SideLegend, (f64, f64))>) -> Plan {
+/// (`compose`): the table under the wheel (the gap between), or beside it aligned down the wheel's
+/// ink box. A side table that would ride above the plot's top, into the title, stays there and the
+/// wheel moves down to align on it. Beside the wheel the wheel centers in the card and the table
+/// sits the gap past its ink (`label_offset` places the slice labels), so the sides mirror; a table
+/// that would cross the card's padding stops there and takes the wheel along. The title stays on
+/// the card's own corner.
+fn wheel_plan(solved: Solved, mut frame: Framed, mut attached: Option<Attached>, h: f64, label_offset: f64) -> Plan {
     let wheel = &solved.wheel;
-    let height = match &attached {
-        None => h,
-        Some(a) if a.placement == Placement::Bottom => a.wheel_height + ATTACHED_TABLE_GAP + a.height,
-        Some(a) if a.placement == Placement::Top => a.wheel_height,
-        Some(a) => a.wheel_height.max(side_table_y(a, wheel.r) + a.height),
+    // The box the whole wheel consumes around its center: the disk, the slice labels and the center
+    // total (left, right, top, bottom). A table aligns on it, not on the disk.
+    let total = solved.center.as_ref().map_or(0.0, |center| center.value_w.max(center.caption_w) / 2.0);
+    let ink = solved.placed.iter().fold((wheel.r.max(total), wheel.r.max(total), wheel.r, wheel.r), |(left, right, top, bottom), placed| {
+        let (reach, rise) = (placed.mid.sin() * (wheel.r + label_offset), -placed.mid.cos() * (wheel.r + label_offset));
+        let (top, bottom) = (top.max(-(rise + placed.ink_y.0)), bottom.max(rise + placed.ink_y.1));
+        if reach >= 0.0 { (left, right.max(reach + placed.max_w), top, bottom) } else { (left.max(placed.max_w - reach), right, top, bottom) }
+    });
+    // Above or below the wheel the table aligns across the ink box, inside the card's padding.
+    let across = |a: &Attached| {
+        let (width, pad_l, pad_r) = a.across;
+        let cx = a.wheel_at.0 + wheel.cx;
+        match a.align {
+            LegendAlign::Start => cx - ink.0,
+            LegendAlign::Center => cx + (ink.1 - ink.0) / 2.0 - a.table_width / 2.0,
+            LegendAlign::End => cx + ink.1 - a.table_width,
+        }
+        .min(width - pad_r - a.table_width)
+        .max(pad_l)
     };
-    Plan { cx: wheel.cx, cy: wheel.cy, r: wheel.r, labels: solved.placed, center: solved.center, title: frame.title, title_at: frame.title_at, attached, height, legend, no_results: Vec::new() }
-}
-
-/// The top of the wheel's disk, which a table beside the wheel never starts above.
-fn disk_top(attached: &Attached, radius: f64) -> f64 {
-    ((attached.wheel_height - 2.0 * radius) / 2.0).max(0.0)
-}
-
-/// Where a table beside the wheel starts down the disk (`align`), never above the disk's top.
-fn side_table_y(attached: &Attached, radius: f64) -> f64 {
-    let top = disk_top(attached, radius);
-    let diameter = 2.0 * radius;
-    top.max(match attached.align {
-        LegendAlign::Start => top,
-        LegendAlign::Center => top + (diameter - attached.height) / 2.0,
-        LegendAlign::End => top + diameter - attached.height,
-    })
+    let height = match &mut attached {
+        None => h,
+        Some(a) if a.placement == Placement::Bottom => {
+            a.table_at = (across(a), a.wheel_height + ATTACHED_TABLE_GAP);
+            a.wheel_height + ATTACHED_TABLE_GAP + a.height
+        }
+        Some(a) if a.placement == Placement::Top => {
+            a.table_at.0 = across(a);
+            a.wheel_height
+        }
+        Some(a) => {
+            let table_y = match a.align {
+                LegendAlign::Start => wheel.cy - ink.2,
+                LegendAlign::Center => wheel.cy + (ink.3 - ink.2) / 2.0 - a.height / 2.0,
+                LegendAlign::End => wheel.cy + ink.3 - a.height,
+            };
+            let wheel_y = (frame.pad.2 - table_y).max(0.0);
+            let (width, pad_l, pad_r) = a.across;
+            let (center, table_x) = beside(a.placement == Placement::Right, width, (pad_l, pad_r), a.table_width, (ink.0, ink.1));
+            a.wheel_at = (center - wheel.cx, wheel_y);
+            a.table_at = (table_x, table_y + wheel_y);
+            (wheel_y + a.wheel_height).max(table_y + wheel_y + a.height)
+        }
+    };
+    if let Some(a) = &attached {
+        frame.title_at = (frame.title_at.0 - a.wheel_at.0, frame.title_at.1 - a.wheel_at.1);
+    }
+    Plan { cx: wheel.cx, cy: wheel.cy, r: wheel.r, labels: solved.placed, center: solved.center, title: frame.title, title_at: frame.title_at, attached, height, no_results: Vec::new() }
 }
 
 /// The chart's root `<svg class="marks">`: the background, the wheel, the center total and the
@@ -716,20 +667,7 @@ pub fn draw(card: &PieCard, plan: &Plan, (w, h): (f64, f64)) -> Result<Node, Dia
         let table = Node::group(Role::Chrome, Attrs::new(), table_nodes).translate(0.0, block);
         table_nodes = vec![Node::new(Role::Chrome, Attrs::new(), Shape::Svg { extent: Extent { width: attached.table_width, height: attached.height }, children: vec![text, table] })];
     }
-    let (pad_l, pad_r, pad_t) = attached.pad;
-    // Across the card inside its padding, for a table above or below the wheel.
-    let across_x = match attached.align {
-        LegendAlign::Start => pad_l,
-        LegendAlign::Center => (w - attached.table_width) / 2.0,
-        LegendAlign::End => w - attached.table_width - pad_r,
-    };
-    let wheel_x = (w - attached.wheel_width) / 2.0;
-    let (wheel_at, table_at) = match attached.placement {
-        Placement::Right => ((0.0, 0.0), (attached.wheel_width + ATTACHED_TABLE_GAP, side_table_y(attached, plan.r))),
-        Placement::Left => ((attached.table_width + ATTACHED_TABLE_GAP, 0.0), (pad_l, side_table_y(attached, plan.r))),
-        Placement::Bottom => ((wheel_x, 0.0), (across_x, attached.wheel_height + ATTACHED_TABLE_GAP)),
-        Placement::Top => ((wheel_x, 0.0), (across_x, pad_t)),
-    };
+    let (wheel_at, table_at) = (attached.wheel_at, attached.table_at);
     let table = Node::group(Role::Chrome, Attrs::new(), table_nodes);
     Ok(root(w, plan.height, vec![wheel.translate(wheel_at.0, wheel_at.1), table.translate(table_at.0, table_at.1)]))
 }
@@ -832,9 +770,6 @@ fn wheel_nodes(card: &PieCard, plan: &Plan, (w, h): (f64, f64)) -> Result<Vec<No
         let at = (x, y + baseline_shift("top", faces.label.size));
         let text = Node::new(Role::Label, attrs, Shape::Text { at, bounds: None, runs: tspans });
         nodes.push(mark_group("text", "layer_3_marks", vec![linked(bound.href.as_ref(), pie_.link_open, text)]).map_err(internal)?);
-    }
-    if let Some((strip, at)) = &plan.legend {
-        nodes.push(strip.nodes(*at));
     }
     Ok(nodes)
 }

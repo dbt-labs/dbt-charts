@@ -19,6 +19,9 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPointLabels,
     ResolvedPointMarkStyle,
 )
+from dbt_charts.core.compile.models.style.resolved._cartesian import (
+    ResolvedEndpointLabelsConfig,
+)
 from dbt_charts.core.compile.models.style.theme.marks import (
     label_anchors,
     labels_drawn,
@@ -31,7 +34,6 @@ from dbt_charts.core.compile.resolve.chart._annotations import (
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
     _bake_ay_orient,
-    _cascaded_legend,
     _rail_off_for_layers,
     _rail_off_for_multiples,
     _reject_dual_axis_layered_endpoint_labels,
@@ -85,8 +87,8 @@ from dbt_charts.core.compile.resolve.chart._marks import (
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
-    _effective_requested_alias_palette,
     _effective_single_series_fill,
+    _effective_warned_palette,
     _resolved_series_label,
 )
 from dbt_charts.core.compile.resolve.chart._plan import (
@@ -113,7 +115,9 @@ from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bou
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
-from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.resolve.style.legend_position import (
+    cascaded_key,
+)
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.constants.marks import (
@@ -266,7 +270,7 @@ def _resolve_line(
     )
     endpoint_label_has_layers = layered_endpoint_rail_fires(
         layered_endpoint_rail_shape(normalized.x, normalized.y),
-        [layer.color is None for layer in normalized.layers],
+        [layer.color is None for layer in normalized.layers if layer.key],
     )
     # Line qualifies for the top-legend fit rule -- once it has an overlay
     # layer to name -- but rarely reaches it in practice: a multi-series line
@@ -284,22 +288,19 @@ def _resolve_line(
         field_labels=normalized.field_labels,
     )
     top_legend_series = legend_entries if normalized.layers else None
-    authored_position, authored_visible = _cascaded_legend(
-        chart_style_context, line.legend
-    )
+    key = cascaded_key(chart_local_style_context.key, direct=True)
+    direct = chart_local_style_context.key.direct
     naming = cartesian_series_naming(
         normalized,
         channels,
-        authored_position,
-        authored_visible,
-        merge_legend(chart_style_context.legend, line.legend),
+        key,
+        chart_local_style_context.legend,
         width,
         lambda request: _rail_off_for_multiples(
             _rail_off_for_layers(request, normalized), normalized
         ),
-        line.endpoint_labels,
         endpoint_label_has_layers=endpoint_label_has_layers,
-        has_layers=bool(normalized.layers),
+        has_layers=any(layer.key for layer in normalized.layers),
         rail_eligible_for_suppression=True,
         suppress_wide_measure_series=wide_measure_series,
         multiples_wide_measure_series=wide_measure_series,
@@ -315,7 +316,7 @@ def _resolve_line(
         # for (known gap, not fixed here; see
         # estimate_left_axis_reserve_px's own docstring).
         left_axis_reserve_px=estimate_left_axis_reserve_px(
-            None, merge_legend(chart_style_context.legend, line.legend)
+            None, chart_local_style_context.legend
         ),
         card_padding_px=chart_style_context.card_padding,
         subtitle_height_px=subtitle_cost_px(
@@ -326,7 +327,9 @@ def _resolve_line(
         # horizontal rail.
         axis_title_height_px=axis_title_cost_px(plan.axes.x.style.title),
     )
-    endpoint_labels = naming.endpoint_labels
+    endpoint_labels = ResolvedEndpointLabelsConfig(
+        visible=naming.rail, label_offset=direct.offset
+    )
     _reject_dual_axis_layered_endpoint_labels(
         normalized.id,
         normalized.layers,
@@ -537,18 +540,15 @@ def _resolve_line(
         normalized,
         chart_style_context,
         channels,
-        line.legend,
+        chart_local_style_context,
         _effective_palette(chart_style_context, primary),
-        requested_alias_palette=_effective_requested_alias_palette(
-            chart_style_context, primary
-        ),
+        warned_palette=_effective_warned_palette(chart_style_context, primary),
         automatic_link_candidate=automatic_link_candidate,
         layout_padding=line.padding,
         suppress_legend=naming.suppress_legend,
         top_legend=naming.top_legend,
         wrap_columns=naming.wrap_columns,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
-        legend_hidden_under_edge=naming.hidden_under_edge,
     )
     resolved_layers = _resolve_layer_list(
         normalized.layers,
@@ -604,6 +604,7 @@ def _resolve_line(
         style=ResolvedLineStyle(
             series_label=_resolved_series_label(
                 chart_style_context,
+                direct.font,
                 _effective_palette(chart_style_context, primary),
                 width,
                 chart_local_style_context.ink_canvas,

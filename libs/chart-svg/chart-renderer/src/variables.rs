@@ -156,6 +156,8 @@ struct VariableOptionsDoc {
     static_values: Option<Vec<Value>>,
     #[serde(default)]
     query: Option<String>,
+    #[serde(default)]
+    column: Option<String>,
 }
 
 /// `compile/models/variable/authored.py::Variable`, the render-relevant
@@ -1206,25 +1208,30 @@ fn dated(id: &str, date: &str) -> Result<String, String> {
     display_text::language::tr(id, None, &[("date", date)])
 }
 
-/// `variables_resolve.py::resolve_query_options`'s column-priority
-/// extraction (`value` > `label` > `name` > `id` > the row's first key).
-fn extract_option_values(rows: &[serde_json::Map<String, Value>]) -> Vec<String> {
+/// `variables_resolve.py::_option_cells`: each row's cell in the options query's
+/// `option_value_column`.
+fn extract_option_values(
+    rows: &[serde_json::Map<String, Value>],
+    query: &str,
+    name: &str,
+    column: Option<&str>,
+) -> Result<Vec<String>, String> {
     let Some(first_row) = rows.first() else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    let value_key = ["value", "label", "name", "id"]
+    let columns: Vec<&str> = first_row.keys().map(String::as_str).collect();
+    let query = query.strip_prefix("queries.").unwrap_or(query);
+    let Some(value_key) = bind::variables::option_value_column(&columns, query, name, column)
+        .map_err(|d| d.to_string())?
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(rows
         .iter()
-        .find(|k| first_row.contains_key(**k))
-        .map(|k| k.to_string())
-        .or_else(|| first_row.keys().next().cloned());
-    let Some(value_key) = value_key else {
-        return Vec::new();
-    };
-    rows.iter()
-        .filter_map(|row| row.get(&value_key))
+        .filter_map(|row| row.get(value_key))
         .filter(|v| !v.is_null())
         .map(py_str)
-        .collect()
+        .collect())
 }
 
 fn dedupe(values: Vec<String>) -> Vec<String> {
@@ -1241,20 +1248,21 @@ fn resolve_option_values(
     var_def: &VariableDoc,
     name: &str,
     datasets: Option<&HashMap<String, Vec<serde_json::Map<String, Value>>>>,
-) -> Vec<String> {
+) -> Result<Vec<String>, String> {
     if let Some(opts) = &var_def.options {
         if let Some(static_values) = &opts.static_values {
-            return dedupe(static_values.iter().map(py_str).collect());
+            return Ok(dedupe(static_values.iter().map(py_str).collect()));
         }
     }
-    if var_def.option_query().is_none() {
-        return Vec::new();
-    }
+    let Some(query) = var_def.option_query() else {
+        return Ok(Vec::new());
+    };
     let Some(datasets) = datasets else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let rows = datasets.get(name).map(Vec::as_slice).unwrap_or(&[]);
-    dedupe(extract_option_values(rows))
+    let column = var_def.options.as_ref().and_then(|o| o.column.as_deref());
+    Ok(dedupe(extract_option_values(rows, query, name, column)?))
 }
 
 /// `variables_resolve.py::_slider_bounds`.
@@ -1593,7 +1601,7 @@ pub fn resolve_controls(
         if !var_def.visible {
             continue;
         }
-        let option_values = resolve_option_values(var_def, name, datasets);
+        let option_values = resolve_option_values(var_def, name, datasets)?;
         let refined = refine_input_type_from_data(
             &var_def.input,
             var_def.input_auto_detected,

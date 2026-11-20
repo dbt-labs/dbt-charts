@@ -267,7 +267,6 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
     from dbt_charts import _engine
     from dbt_charts.core.compile.authoring.yaml_patch import (
         rename_key_at_path,
-        set_board_block,
         set_board_values,
     )
     from dbt_charts.core.compile.parse.parser import load_yaml_mapping
@@ -323,6 +322,11 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
             )
         value = edit["before"]
         if edit["rewrite"]:
+            # The rewrite lands now and starts from `before`, which already
+            # carries any earlier edit queued at this path; flushing that queued
+            # edit at the end would resurrect the key the rewrite just moved.
+            updates.pop(".".join(source), None)
+            removals.discard(".".join(source))
             yaml_text = _replay_rewrite(yaml_text, edit, value, source, destination)
             continue
         # A value_map changes the value itself (html_policy's bool -> string),
@@ -331,9 +335,9 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
             yaml_text = rename_key_at_path(yaml_text, ".".join(source), destination[-1])
             continue
         if isinstance(value, dict) and not edit["value_map"]:
-            yaml_text = _delete_paths_in_yaml_text(yaml_text, [tuple(source)])
+            yaml_text = _delete_paths_in_yaml_text(yaml_text, [_document_path(source)])
             if _holds_list(value):
-                yaml_text = set_board_block(yaml_text, ".".join(destination), value)
+                yaml_text = _write_rewritten(yaml_text, edit, destination, value)
             else:
                 updates.update(_destination_leaves(edit, destination, value))
             continue
@@ -487,7 +491,7 @@ def _write_rewritten(
     held = edit.get("merged_into")
     if isinstance(held, dict) and isinstance(rewritten, dict):
         return _write_merged(yaml_text, tuple(destination), held, rewritten)
-    if isinstance(rewritten, dict) and _holds_list(rewritten):
+    if isinstance(rewritten, (dict, list)) and _holds_list(rewritten):
         return set_board_block(yaml_text, ".".join(destination), rewritten)
     return set_board_values(
         yaml_text, dict(_destination_leaves(edit, destination, rewritten))
@@ -664,13 +668,16 @@ def _delete_paths_in_yaml_text(yaml_text: str, paths: Sequence[DocumentPath]) ->
         to_delete.add(index)
         # The key's whole nested block: every line down to the last one
         # indented past it (blank and comment lines inside that span
-        # included). A scalar leaf has none, and the range stays empty.
+        # included), and the items of a sequence written at the key's own
+        # column. A scalar leaf has none, and the range stays empty.
         block_end = index
         cursor = index + 1
         while cursor < len(lines):
             line = lines[cursor]
             if not _YAML_BLANK_OR_COMMENT_RE.match(line):
-                if len(line) - len(line.lstrip(" ")) <= column:
+                indent = len(line) - len(line.lstrip(" "))
+                sequence_item = line.lstrip(" ").startswith("- ")
+                if indent < column or (indent == column and not sequence_item):
                     break
                 block_end = cursor
             cursor += 1

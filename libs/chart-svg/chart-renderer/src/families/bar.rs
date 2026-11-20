@@ -2093,6 +2093,85 @@ mod tests {
             tag.split(" y=\"").nth(1).and_then(|r| r.split('"').next()).expect("a y").parse().expect("a number")
         }
 
+        /// Jan and Feb: 1234 and 1233 bars labeled at `position`, a layer line labeled at `jan` and `feb`.
+        fn bars_and_layer_labels_at(position: &str, jan: f64, feb: f64, top: Option<f64>) -> String {
+            let mut layer = line_layer_json("#dea628");
+            layer["line_mark"]["labels"]["visible"] = serde_json::json!(true);
+            let mut payload = payload_with_layer(&[("Jan", 1234.0, jan), ("Feb", 1233.0, feb)], layer);
+            payload["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
+                "visible": true, "position": position, "field": null, "format": null, "dx": null, "dy": null, "font": null
+            });
+            if let Some(top) = top {
+                let axis_y = &mut payload["resolved"]["style"]["axis_y"];
+                axis_y["tick_values"] = serde_json::json!([0.0, top / 2.0, top]);
+                axis_y["domain_min"] = serde_json::json!(0.0);
+                axis_y["domain_max"] = serde_json::json!(top);
+            }
+            render(&make_payload(payload), &test_fonts()).expect("renders")
+        }
+
+        /// The page y of the layer's label printing `text`: it prints inside the translated plot group the gridlines open.
+        fn layer_label_page_y(svg: &str, text: &str) -> f64 {
+            let before_grid = svg.split("<g class=\"mark-rule role-axis-grid\"").next().expect("gridlines");
+            let plot_top: f64 = before_grid.rsplit("translate(").next().and_then(|r| r.split(',').nth(1)).and_then(|r| r.split(')').next()).expect("the plot group").parse().expect("a number");
+            label_y(svg, text) + plot_top
+        }
+
+        #[test]
+        fn a_bar_label_and_a_layer_label_that_collide_stack_above_the_group_in_value_order() {
+            let svg = bars_and_layer_labels_at("above", 1200.0, 900.0, None);
+            let (bar, layer) = (label_y(&svg, "1234"), layer_label_page_y(&svg, "1200"));
+            assert!(bar + 11.0 <= layer, "the higher value on top, a type height clear: {svg}");
+            let apart = bars_and_layer_labels_at("above", 900.0, 900.0, None);
+            assert!(label_y(&apart, "1233") == label_y(&svg, "1233") && label_y(&apart, "900") == label_y(&svg, "900"), "a pair that does not collide does not move: {svg}");
+        }
+
+        #[test]
+        fn an_inside_bar_label_that_collides_leaves_the_bar_in_ink_that_reads_on_the_canvas() {
+            let svg = bars_and_layer_labels_at("top", 1200.0, 900.0, None);
+            let (bar, layer) = (label_y(&svg, "1234"), layer_label_page_y(&svg, "1200"));
+            assert!(bar + 11.0 <= layer, "stacked above the group: {svg}");
+            let outside = bars_and_layer_labels_at("above", 900.0, 900.0, None);
+            assert_eq!(label_fill(&svg, "1234"), label_fill(&outside, "1234"), "outside the bar the label takes the outside ink: {svg}");
+        }
+
+        /// A 100-under-40 stack labeled at `top`, and a layer line at `target` labeled above it.
+        fn stacked_bars_and_a_layer_label_at(target: f64) -> String {
+            let mut layer = line_layer_json("#dea628");
+            layer["line_mark"]["labels"]["visible"] = serde_json::json!(true);
+            let mut payload = stacked_layer_payload(layer);
+            payload["rows"] = serde_json::json!([
+                {"product": "Jan", "segment": "A", "revenue": 100.0, "target": target},
+                {"product": "Jan", "segment": "B", "revenue": 40.0, "target": target},
+                {"product": "Feb", "segment": "A", "revenue": 60.0, "target": 20.0},
+                {"product": "Feb", "segment": "B", "revenue": 30.0, "target": 20.0},
+            ]);
+            payload["resolved"]["stacked_domain_max"] = serde_json::json!(200.0);
+            payload["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
+                "visible": true, "position": "top", "field": null, "format": null, "dx": null, "dy": null, "font": null
+            });
+            render(&make_payload(payload), &test_fonts()).expect("renders")
+        }
+
+        #[test]
+        fn an_inner_segment_label_keeps_its_place_and_a_layer_label_it_meets_drops() {
+            let clear = stacked_bars_and_a_layer_label_at(30.0);
+            assert!(clear.contains(">30</text>"), "clear of the label the layer label draws: {clear}");
+            let met = stacked_bars_and_a_layer_label_at(87.0);
+            assert_eq!(label_y(&met, "100"), label_y(&clear, "100"), "the inner segment's label keeps its place: {met}");
+            assert_eq!(label_fill(&met, "100"), label_fill(&clear, "100"), "{met}");
+            assert!(!met.contains(">87</text>"), "the layer label it meets is not drawn: {met}");
+            let crossed = stacked_bars_and_a_layer_label_at(92.0);
+            assert_eq!(label_y(&crossed, "100"), label_y(&clear, "100"), "a layer line across it does not push it off its segment: {crossed}");
+        }
+
+        #[test]
+        fn a_stack_that_does_not_fit_the_plot_drops_the_layer_label_and_keeps_the_bar_label() {
+            let svg = bars_and_layer_labels_at("above", 1230.0, 900.0, Some(1240.0));
+            assert!(svg.contains(">1234</text>"), "the bar label stays: {svg}");
+            assert!(!svg.contains(">1230</text>"), "the layer label is not drawn: {svg}");
+        }
+
         #[test]
         fn a_bar_label_on_a_layer_line_takes_the_other_side_of_the_bar_end() {
             let clear = labels_above_with_a_line_at(1900.0, "above");
@@ -4370,6 +4449,34 @@ mod tests {
             let payload_json = bullet_like_payload(stacked_bar_layer_json(None), layer);
             let err = render(&make_payload(payload_json), &test_fonts()).unwrap_err();
             assert!(err.contains("line_mark.disconnected_width must be resolved"), "{err}");
+        }
+
+        /// A disconnected step plateau names the datum it draws (`data-dbt-plateau`, the
+        /// aria-label of that row's hover point), so hover can recede it with its band's bars.
+        #[test]
+        fn a_disconnected_step_plateau_names_its_datum() {
+            let mut payload_json = bullet_like_payload(
+                stacked_bar_layer_json(None),
+                disconnected_step_layer_json("round", Some("butt")),
+            );
+            payload_json["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
+            let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+            let doc = roxmltree::Document::parse(&svg).expect("svg parses");
+            let points: Vec<&str> = doc
+                .descendants()
+                .filter(|n| n.attribute("data-dct-role") == Some("point"))
+                .filter_map(|n| n.attribute("aria-label"))
+                .collect();
+            let plateaus: Vec<_> = doc
+                .descendants()
+                .filter(|n| n.tag_name().name() == "path" && n.attribute("stroke") == Some("#dea628"))
+                .filter(|n| n.ancestors().any(|a| a.attribute("class").is_some_and(|c| c.contains("mark-line"))))
+                .collect();
+            assert_eq!(plateaus.len(), 2, "one plateau per band");
+            for plateau in plateaus {
+                let datum = plateau.attribute("data-dbt-plateau").expect("a plateau names its datum");
+                assert!(points.contains(&datum), "{datum} is a hover point's label");
+            }
         }
 
         /// A colorless bar layer over a stacked, color-grouped base is admitted

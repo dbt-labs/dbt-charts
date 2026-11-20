@@ -23,8 +23,9 @@ charts:
     x: month
     y: revenue
     style:
-      legend:
-        position: 42
+      key:
+        legend:
+          position: 42
 rows:
   - rev_chart
 """
@@ -57,7 +58,7 @@ rows:
     assert err.range == inline.range
     assert err.range is not None
     assert err.range.file == "other.yaml"
-    assert err.range.start_line == 14
+    assert err.range.start_line == 15
 
 
 _CHART = """\

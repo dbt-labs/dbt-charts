@@ -188,7 +188,7 @@ def test_chart_styles_equal_what_the_resolvers_paint_with() -> None:
         shared = {
             "palette": built.palette,
             "single_series_palette": built.single_series_palette,
-            "requested_alias_palette": built.requested_alias_palette,
+            "warned_palette": built.warned_palette,
             "background": built.background,
             "ink_canvas": built.ink_canvas,
             "legend": built.legend,

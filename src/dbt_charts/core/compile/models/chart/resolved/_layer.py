@@ -152,7 +152,7 @@ class ResolvedBarLayer:
     # narrative register. False when the format is a literal d3 spec authored
     # directly (not via a theme alias), matching base-chart provenance logic.
     label_is_house: bool = False
-    # False when the layer declines its legend entry (authored `legend: false`).
+    # False when the layer declines its legend entry (authored `key: false`).
     legend: bool = True
 
 
@@ -172,7 +172,6 @@ class ResolvedLineLayer:
     color: str | None = None
     query_name: str | None = None
     label_is_house: bool = False
-    # False when the layer declines its legend entry (authored `legend: false`).
     legend: bool = True
 
 
@@ -193,7 +192,6 @@ class ResolvedAreaLayer:
     color: str | None = None
     query_name: str | None = None
     label_is_house: bool = False
-    # False when the layer declines its legend entry (authored `legend: false`).
     legend: bool = True
 
 
@@ -212,7 +210,6 @@ class ResolvedScatterLayer:
     color: str | None = None
     query_name: str | None = None
     label_is_house: bool = False
-    # False when the layer declines its legend entry (authored `legend: false`).
     legend: bool = True
 
 

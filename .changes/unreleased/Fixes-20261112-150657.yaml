@@ -1,3 +1,0 @@
-kind: Fixes
-body: Support-table rows no longer print stray float decimals, and date strips keep a cell for every labeled period instead of skipping some.
-time: 2026-11-12T15:06:57.807816-08:00

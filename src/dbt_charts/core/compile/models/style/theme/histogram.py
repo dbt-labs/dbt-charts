@@ -12,8 +12,8 @@ from dbt_charts.core.compile.models.markers import (
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _CartesianChartStyle,
+    _LegendKeyedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
-    _SideLegendedChartStyleBaseAllOptional,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     BarMarkStyle,
@@ -40,7 +40,7 @@ class HistogramChartMarksStyle(BaseModel):
 
 class HistogramChartStyle(
     _CartesianChartStyle,
-    _SideLegendedChartStyleBaseAllOptional,
+    _LegendKeyedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
 ):
     """Histogram chart style."""

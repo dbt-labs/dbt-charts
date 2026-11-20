@@ -37,7 +37,6 @@ from dbt_charts.core.compile.models.style.authored import (
     BarChartStylePatch,
     BaseAxisGridStylePatch,
     DimensionLabelStylePatch,
-    LegendStylePatch,
     LineChartStylePatch,
     QuantitativeAxisStylePatch,
 )
@@ -690,7 +689,7 @@ class TestPreInheritPatchReMerge:
 
 class TestChartLocalLegendMerge:
     def test_legend_leaf_propagates(self) -> None:
-        patch = BarChartStylePatch(legend=LegendStylePatch(symbol_limit=5))
+        patch = BarChartStylePatch(key={"legend": {"symbol_limit": 5}})
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
         )
@@ -750,7 +749,7 @@ class TestChartLocalPaletteMerge:
                 _board(), BarChart(id="t", type="bar", style=patch)
             )
 
-    def test_alias_palette_sets_requested_alias_palette(self) -> None:
+    def test_alias_palette_sets_warned_palette(self) -> None:
         """A chart-local WARN-PALETTE-UNSUPPORTED anti-pattern alias survives
         the style cascade onto ResolvedChartsStyle, so a render-stage detector
         can see it — palette() itself resolves silently."""
@@ -760,23 +759,23 @@ class TestChartLocalPaletteMerge:
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
         )
-        assert result.requested_alias_palette == "RdYlGn"
+        assert result.warned_palette == "RdYlGn"
 
-    def test_non_alias_palette_leaves_requested_alias_palette_none(self) -> None:
+    def test_non_alias_palette_leaves_warned_palette_none(self) -> None:
         patch = BarChartStylePatch.model_validate(
             {"color": {"categorical": {"palette": "dbt-seq-rust"}}}
         )
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
         )
-        assert result.requested_alias_palette is None
+        assert result.warned_palette is None
 
-    def test_no_palette_override_preserves_board_requested_alias_palette(self) -> None:
+    def test_no_palette_override_preserves_board_warned_palette(self) -> None:
         board = _board()
         result = build_chart_style_context(
             board, BarChart(id="t", type="bar", style=BarChartStylePatch())
         )
-        assert result.requested_alias_palette == board.requested_alias_palette
+        assert result.warned_palette == board.warned_palette
 
 
 class TestRendererReadsNoPatch:

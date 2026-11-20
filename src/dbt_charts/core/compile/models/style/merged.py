@@ -45,7 +45,7 @@ class _MergedChartStyle(BaseModel):
     single_series_palette: list[str] = Field(
         description="Colors a single-series chart picks from."
     )
-    requested_alias_palette: str | None = Field(
+    warned_palette: str | None = Field(
         description="Name of an unsupported palette that was requested."
     )
     background: str = Field(description="Fill color behind the chart.")

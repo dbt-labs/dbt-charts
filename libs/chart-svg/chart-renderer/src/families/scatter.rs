@@ -34,7 +34,6 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use ::bind::rows::color_domain_of;
-use crate::common::MeasuredAs;
 use crate::common::{format_y_label, symbol_radius, AxisStyle, Font, FormatSlot, Labeling, StyleChannel, TitleStyle};
 use ::bind::rows::{row_num, row_str, ChartSort};
 use crate::families::axis_caption::{vega_axis_format, AxisCaption, CaptionScale, NumericScale};
@@ -2009,7 +2008,7 @@ fn color_legend_layout(
 ) -> Result<(Vec<String>, legend::VegaLegend), String> {
     let title = legend::legend_title_text(r.color.as_deref().unwrap_or(""), &r.legend, &r.field_labels)?;
     let labels = order.iter().map(|&idx| color_domain[idx].as_str());
-    let limited = legend::limit_legend_text(labels, &title, &r.legend, fonts, MeasuredAs::Vega)?;
+    let limited = legend::limit_legend_text(labels, &title, &r.legend, fonts)?;
     let symbols: Vec<Option<legend::LegendSymbol>> = match ring_glyphs {
         None => vec![Some(if mirror { legend::LegendSymbol::Circle } else { legend::LegendSymbol::FilledCircle }); order.len()],
         Some(names) => order

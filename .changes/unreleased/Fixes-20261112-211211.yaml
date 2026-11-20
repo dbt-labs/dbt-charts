@@ -1,3 +1,0 @@
-kind: Fixes
-body: Bold text (such as a table cell with a conditional bold font) now stays bold in PNG and PDF exports.
-time: 2026-11-12T21:12:11.504799832Z

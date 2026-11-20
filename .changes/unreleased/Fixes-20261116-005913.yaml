@@ -1,3 +1,0 @@
-kind: Fixes
-body: A markdown page draws a charts fence whose text reads a query, when the host draws each fence on its own.
-time: 2026-11-16T00:59:13.175465-08:00

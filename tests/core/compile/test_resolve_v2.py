@@ -1920,7 +1920,7 @@ def test_bar_chart_local_palette_override_survives_resolve() -> None:
     )
 
 
-def test_bar_chart_alias_palette_sets_requested_alias_palette_on_resolve() -> None:
+def test_bar_chart_alias_palette_sets_warned_palette_on_resolve() -> None:
     """A chart-local WARN-PALETTE-UNSUPPORTED alias (e.g. RdYlGn) survives all
     the way onto the resolved chart's shared-envelope field, where a
     render-stage detector can see it — palette() itself resolves silently."""
@@ -1933,11 +1933,11 @@ def test_bar_chart_alias_palette_sets_requested_alias_palette_on_resolve() -> No
         )
     )
     resolved = resolve(compiled, _BAR_DATA, _default_board_style())
-    assert resolved.requested_alias_palette == "RdYlGn"
+    assert resolved.warned_palette == "RdYlGn"
     assert len(resolved.palette) > 0
 
 
-def test_bar_chart_non_alias_palette_leaves_requested_alias_palette_none() -> None:
+def test_bar_chart_non_alias_palette_leaves_warned_palette_none() -> None:
     """A non-alias chart-local palette must not fabricate a requested alias."""
     from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
     from dbt_charts.core.compile.resolve import resolve
@@ -1948,7 +1948,7 @@ def test_bar_chart_non_alias_palette_leaves_requested_alias_palette_none() -> No
         )
     )
     resolved = resolve(compiled, _BAR_DATA, _default_board_style())
-    assert resolved.requested_alias_palette is None
+    assert resolved.warned_palette is None
 
 
 def test_line_chart_local_palette_override_survives_resolve() -> None:

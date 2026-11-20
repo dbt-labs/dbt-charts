@@ -27,7 +27,6 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
 from .._results import rows_result
-from ._engine_render import render_pie_svg
 from ._svg_render import legend_label_order, render_board_to_svg
 
 
@@ -42,27 +41,10 @@ def _render(make_chart, chart_type: str, style: dict, rows, **kwargs):
 
 class TestOtherFamiliesResolveToo:
     """Wide/overlay/bar-color aren't the only families with a legend --
-    pie, scatter, heatmap and grouped (stack: none) bar must resolve an
+    scatter, heatmap and grouped (stack: none) bar must resolve an
     authored `legend.values` too, not write it through `legend_to_vl`
     verbatim (a grouped-bar author entry matching no real series must not
     paint a phantom swatch)."""
-
-    def test_pie_resolves_and_filters(self, make_chart):
-        rows = [
-            {"segment": "Direct", "revenue": 10},
-            {"segment": "Organic", "revenue": 20},
-            {"segment": "Paid", "revenue": 15},
-        ]
-        chart = make_chart(
-            "pie",
-            style={"legend": {"visible": True, "values": ["paid", "direct"]}},
-            theta="revenue",
-            color="segment",
-        )
-        assert legend_label_order(render_pie_svg(chart, rows, width=800.0)) == [
-            "Paid",
-            "Direct",
-        ]
 
     def test_geoshape_nominal_choropleth_resolves(self):
         # "SOUTH"/"WEST" (uppercase, against the data order) fold to the real domain entries
@@ -83,8 +65,11 @@ charts:
     lookup: state_code
     value: tier
     style:
-      legend:
-        values: [SOUTH, WEST]
+      key:
+        legend:
+          values:
+            - SOUTH
+            - WEST
 rows:
   - c
 """
@@ -116,10 +101,13 @@ class TestWideMeasureAllNullDoesNotRaise:
                 {
                     "orientation": "vertical",
                     "stack": "zero",
-                    "legend": {
+                    "key": {
                         "visible": True,
-                        "values": ["Alpha", "Beta"],
-                        "position": {"edge": "right"},
+                        "type": "legend",
+                        "legend": {
+                            "values": ["Alpha", "Beta"],
+                            "position": {"edge": "right"},
+                        },
                     },
                 },
                 rows,

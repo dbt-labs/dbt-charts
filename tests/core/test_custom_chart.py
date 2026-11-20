@@ -827,8 +827,8 @@ class TestStyleTreeWeights:
         )
         template = (
             '<text id="w">{{ style.charts.title.font.weight }} '
-            "{{ style.charts.legend.title.font.weight }} "
-            "{{ style.charts.series_label.font.compact_weight }}</text>"
+            "{{ style.charts.key.legend.title.font.weight }} "
+            "{{ style.charts.key.direct.font.compact_weight }}</text>"
         )
         out = _render(_project(tmp_path, template), yaml_text)
         assert out.chart_errors == []

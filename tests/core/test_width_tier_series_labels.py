@@ -9,10 +9,6 @@ import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.resolved import ResolvedLineChart
-from dbt_charts.core.compile.models.style.authored import (
-    EndpointLabelsConfig,
-    LegendStylePatch,
-)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -39,7 +35,7 @@ def _board_with_distinctive_series_label_sizes(
 
     seed = model_copy_at(
         get_theme_style(),
-        "charts.series_label.font",
+        "charts.key.direct.font",
         SeriesLabelFontStyle(
             size=regular_size,
             weight=731.0,
@@ -47,17 +43,7 @@ def _board_with_distinctive_series_label_sizes(
             compact_weight=587.0,
         ),
     )
-    seed = model_copy_at(
-        seed,
-        "charts.line.endpoint_labels",
-        EndpointLabelsConfig(label_offset=5.0, height=20.0),
-    )
-    seed = model_copy_at(
-        seed,
-        "charts.line.legend",
-        LegendStylePatch.model_validate({"position": {"edge": "endpoints"}}),
-    )
-    seed = model_copy_at(seed, "charts.legend.compact_columns", 7)
+    seed = model_copy_at(seed, "charts.key.legend.compact_columns", 7)
     return resolve_chart_style_context(seed)
 
 
@@ -132,7 +118,7 @@ def test_tiny_width_owns_an_authored_legend_edge(
         y="value",
         color="series",
         style={
-            "legend": {"position": {"edge": "right"}, "direction": "vertical"},
+            "key": {"legend": {"position": {"edge": "right"}, "direction": "vertical"}},
         },
     )
     resolved = resolve(
@@ -165,10 +151,12 @@ def test_top_horizontal_legend_title_defaults_hidden_with_explicit_opt_in(
         y="value",
         color="series",
         style={
-            "legend": {
-                "position": {"edge": "top"},
-                "direction": "horizontal",
-                "title": title,
+            "key": {
+                "legend": {
+                    "position": {"edge": "top"},
+                    "direction": "horizontal",
+                    "title": title,
+                },
             },
         },
     )
@@ -191,10 +179,12 @@ def test_top_horizontal_legend_preserves_board_level_title_opt_in(
     board_style = StylePatch.model_validate(
         {
             "charts": {
-                "legend": {
-                    "position": {"edge": "top"},
-                    "direction": "horizontal",
-                    "title": {"visible": True},
+                "key": {
+                    "legend": {
+                        "position": {"edge": "top"},
+                        "direction": "horizontal",
+                        "title": {"visible": True},
+                    }
                 }
             }
         }

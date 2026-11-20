@@ -470,7 +470,7 @@ def _resolve_one_layer(
             color=layer.color,
             query_name=query_name,
             label_is_house=layer_label_is_house,
-            legend=layer.legend,
+            legend=layer.key,
         )
     if isinstance(layer, AreaLayer):
         area_marks = layer_style.marks if layer_style is not None else None
@@ -516,7 +516,7 @@ def _resolve_one_layer(
             color=layer.color,
             query_name=query_name,
             label_is_house=area_label_is_house,
-            legend=layer.legend,
+            legend=layer.key,
         )
     if isinstance(layer, BarLayer):
         bar_marks = layer_style.marks if layer_style is not None else None
@@ -557,7 +557,7 @@ def _resolve_one_layer(
             color=layer.color,
             query_name=query_name,
             label_is_house=bar_label_is_house,
-            legend=layer.legend,
+            legend=layer.key,
         )
     # ScatterLayer
     scatter_marks = layer_style.marks if layer_style is not None else None
@@ -590,7 +590,7 @@ def _resolve_one_layer(
         color=layer.color,
         query_name=query_name,
         label_is_house=scatter_label_is_house,
-        legend=layer.legend,
+        legend=layer.key,
     )
 
 

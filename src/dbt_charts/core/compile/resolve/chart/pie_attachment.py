@@ -158,13 +158,10 @@ def choose_table_placement(
     return TablePlacement("bottom", authored_edge)
 
 
-def decide_table_align(
-    placement: LegendEdge, authored_align: LegendAlign | None
-) -> LegendAlign:
-    """Authored align, else start beside the wheel and center above or below."""
-    if authored_align is not None:
-        return authored_align
-    return "start" if placement in ("left", "right") else "center"
+def decide_table_align(authored_align: LegendAlign | None) -> LegendAlign:
+    """Authored align, else center: along the wheel's disk, down it beside the wheel
+    and across it above or below."""
+    return "center" if authored_align is None else authored_align
 
 
 class AttachmentPlan(NamedTuple):
@@ -219,7 +216,7 @@ def plan_attachment(
     placement, overridden_edge = choose_table_placement(
         width, natural_width, authored_edge
     )
-    align = decide_table_align(placement, authored_align)
+    align = decide_table_align(authored_align)
     if placement in ("left", "right"):
         wheel_width = min(
             width - natural_width - ATTACHED_TABLE_GAP_PX,

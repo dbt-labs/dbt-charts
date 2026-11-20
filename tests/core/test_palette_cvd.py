@@ -13,6 +13,7 @@ import sys
 
 import pytest
 
+from dbt_charts.core.compile.models.palette import PALETTE_WARN_RECOMMENDATIONS
 from dbt_charts.core.compile.resolve.style.palette import list_palettes, palette
 
 from .._paths import DBT_CHARTS_DIR
@@ -46,8 +47,18 @@ def _adjacent_pair_delta_e(hex_a: str, hex_b: str, vision_type: str) -> float:
     return _checker.delta_e_ciede2000(lab_a, lab_b)
 
 
-_SEQUENTIAL = list_palettes(family="sequential")
-_DIVERGING = list_palettes(family="diverging")
+# Warned palettes (RdYlGn, parula) are drawn as written and are not held to the
+# house CVD floor; RdYlGn is warned for exactly that reason.
+_SEQUENTIAL = [
+    n
+    for n in list_palettes(family="sequential")
+    if n not in PALETTE_WARN_RECOMMENDATIONS
+]
+_DIVERGING = [
+    n
+    for n in list_palettes(family="diverging")
+    if n not in PALETTE_WARN_RECOMMENDATIONS
+]
 
 
 class TestSequentialCVD:

@@ -55,22 +55,22 @@ def _bar(
         y="val",
         color="series",
         style=BarChartStylePatch.model_validate(
-            {"orientation": orientation, "legend": legend}
+            {"orientation": orientation, "key": {"legend": legend}}
         ),
     )
 
 
-def _pie(position: dict[str, Any] | None = None, visible: bool = False) -> PieChart:
-    legend: dict[str, Any] = {"visible": visible}
+def _pie(position: dict[str, Any] | None = None) -> PieChart:
+    key: dict[str, Any] = {}
     if position is not None:
-        legend["position"] = position
+        key["legend"] = {"position": position}
     return PieChart(
         id="p1",
         type="pie",
         query_name="q",
         theta="v",
         color="n",
-        style=PieChartStylePatch.model_validate({"legend": legend}),
+        style=PieChartStylePatch.model_validate({"key": key}),
     )
 
 
@@ -202,15 +202,6 @@ def _attachment(resolved: ResolvedPieChart) -> PieAttachment:
     return attachment
 
 
-@pytest.mark.parametrize("edge", ["left", "right", "top", "bottom"])
-def test_pie_edge_reaches_the_resolved_legend_in_direct_mode(edge: str) -> None:
-    resolved = make_test_resolved_chart(
-        _pie({"edge": edge}, visible=True), _pie_rows(_DIRECT), width=1000.0
-    )
-    assert resolved.labeled_mode == "direct"
-    assert resolved.legend.position.edge == edge
-
-
 @pytest.mark.parametrize("values", [_HYBRID, _FULL], ids=["hybrid", "full_table"])
 @pytest.mark.parametrize("edge", ["left", "right", "top", "bottom"])
 def test_pie_edge_places_the_attached_table(
@@ -264,19 +255,6 @@ def test_a_radial_decision_honors_align_and_ignores_overlay() -> None:
 
 
 @pytest.mark.parametrize("align", ["start", "center", "end"])
-def test_pie_align_reaches_the_resolved_direct_legend(align: str) -> None:
-    resolved = make_test_resolved_chart(
-        _pie({"edge": "top", "align": align}, visible=True),
-        _pie_rows(_DIRECT),
-        width=1000.0,
-    )
-    assert (resolved.legend.position.edge, resolved.legend.position.align) == (
-        "top",
-        align,
-    )
-
-
-@pytest.mark.parametrize("align", ["start", "center", "end"])
 @pytest.mark.parametrize("edge", ["left", "right", "top", "bottom"])
 def test_pie_align_places_the_attached_table_along_its_edge(
     edge: str, align: str
@@ -288,17 +266,12 @@ def test_pie_align_places_the_attached_table_along_its_edge(
     assert _attachment(resolved).align == align
 
 
-@pytest.mark.parametrize(
-    ("edge", "expected"),
-    [("left", "start"), ("right", "start"), ("top", "center"), ("bottom", "center")],
-)
-def test_an_unset_pie_align_keeps_each_edges_long_standing_default(
-    edge: str, expected: str
-) -> None:
+@pytest.mark.parametrize("edge", ["left", "right", "top", "bottom"])
+def test_an_unset_pie_align_centers_the_table_on_every_edge(edge: str) -> None:
     resolved = make_test_resolved_chart(
         _pie({"edge": edge}), _pie_rows(_HYBRID), width=1100.0
     )
-    assert _attachment(resolved).align == expected
+    assert _attachment(resolved).align == "center"
 
 
 @pytest.mark.parametrize("leaf", ["edge", "align", "overlay"])
@@ -336,11 +309,12 @@ def test_a_board_wide_unsupported_placement_spares_charts_with_no_legend() -> No
 title: t
 style:
   charts:
-    legend:
-      position:
-        edge: left
-        align: end
-        overlay: true
+    key:
+      legend:
+        position:
+          edge: "left"
+          align: "end"
+          overlay: true
 queries:
   q:
     type: values
@@ -395,18 +369,11 @@ def test_authored_direction_wins_over_the_edge() -> None:
     assert resolved.legend.direction == "vertical"
 
 
-def test_direction_follows_a_top_edge_off_the_top_strip() -> None:
-    resolved = make_test_resolved_chart(
-        _pie({"edge": "top"}, visible=True), _pie_rows(_DIRECT), width=1000.0
-    )
-    assert resolved.legend.direction == "horizontal"
-
-
 @pytest.mark.parametrize(
     "scope",
     [
-        {"legend": {"direction": "vertical"}},
-        {"bar": {"legend": {"direction": "vertical"}}},
+        {"key": {"legend": {"direction": "vertical"}}},
+        {"bar": {"key": {"legend": {"direction": "vertical"}}}},
     ],
     ids=["board", "family"],
 )
@@ -444,7 +411,7 @@ def _many(width: float, **legend: Any) -> Any:
         y="val",
         color="series",
         style=BarChartStylePatch.model_validate(
-            {"orientation": "vertical", "legend": legend}
+            {"orientation": "vertical", "key": {"legend": legend}}
         ),
     )
     return make_test_resolved_chart(chart, _MANY_ROWS, width=width).legend
@@ -482,7 +449,11 @@ def test_every_cartesian_family_wraps_a_legend_too_wide_for_one_row(
 
     style = getattr(a, f"{family.capitalize()}ChartStylePatch").model_validate(
         {
-            "legend": {"visible": True, "position": {"edge": edge}},
+            "key": {
+                "visible": True,
+                "type": "legend",
+                "legend": {"position": {"edge": edge}},
+            },
         }
     )
     chart = getattr(n, f"{family.capitalize()}Chart")(
@@ -515,19 +486,16 @@ def test_a_categorical_heatmap_legend_wraps() -> None:
         x="cat",
         y="val",
         color="series",
-        style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
+        style={
+            "key": {
+                "visible": True,
+                "type": "legend",
+                "legend": {"position": {"edge": "bottom"}},
+            }
+        },
     )
     legend = make_test_resolved_chart(chart, _MANY_ROWS, width=500.0).legend
     assert _wraps(legend)
-
-
-def test_a_direct_pie_key_too_wide_for_one_row_wraps() -> None:
-    rows = _pie_rows([(f"Segment name {i}", 14.0) for i in range(7)])
-    resolved = make_test_resolved_chart(
-        _pie({"edge": "bottom"}, visible=True), rows, width=600.0
-    )
-    assert resolved.legend.visible
-    assert _wraps(resolved.legend)
 
 
 def test_a_categorical_point_map_legend_wraps() -> None:
@@ -542,7 +510,13 @@ def test_a_categorical_point_map_legend_wraps() -> None:
         longitude="lon",
         projection="albersUsa",
         color="series",
-        style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
+        style={
+            "key": {
+                "visible": True,
+                "type": "legend",
+                "legend": {"position": {"edge": "bottom"}},
+            }
+        },
     )
     legend = make_test_resolved_chart(chart, rows, width=500.0).legend
     assert _wraps(legend)
@@ -558,7 +532,13 @@ def test_a_multi_measure_heatmap_legend_wraps() -> None:
         query_name="q",
         x="cat",
         y=measures,
-        style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
+        style={
+            "key": {
+                "visible": True,
+                "type": "legend",
+                "legend": {"position": {"edge": "bottom"}},
+            }
+        },
     )
     rows = [{"cat": "a", **dict.fromkeys(measures, 1)}]
     legend = make_test_resolved_chart(chart, rows, width=500.0).legend
@@ -579,7 +559,13 @@ def test_a_choropleth_legend_reads_the_value_field_not_the_color_channel() -> No
         lookup="region",
         value="tier",
         color="n",
-        style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
+        style={
+            "key": {
+                "visible": True,
+                "type": "legend",
+                "legend": {"position": {"edge": "bottom"}},
+            }
+        },
     )
     legend = make_test_resolved_chart(chart, rows, width=500.0).legend
     assert _wraps(legend)
@@ -610,7 +596,7 @@ def test_a_wide_bar_measures_its_folded_series() -> None:
         x="cat",
         y=measures,
         style=BarChartStylePatch.model_validate(
-            {"legend": {"position": {"edge": "bottom"}}}
+            {"key": {"legend": {"position": {"edge": "bottom"}}}}
         ),
     )
     rows = [{"cat": "a", **dict.fromkeys(measures, 1)}]

@@ -154,9 +154,6 @@ class WarningContext(BaseModel):
     # chart id → a pie's mode as the size stage decided it for the same
     # placement as ``layout_charts``; absent for every chart that is not a pie.
     pie_modes: dict[str, PieMode] = {}
-    # chart id → the sized mode of every active placement of a pie (``pie_modes``
-    # keeps only the narrowest placement's).
-    pie_placement_modes: dict[str, tuple[PieMode, ...]] = {}
     # chart id → the series labels the endpoint-label rail cap cut, captured at
     # the single measure site (render/chart/features/endpoint_labels.py). Sparse —
     # only charts whose rail was actually degraded appear.

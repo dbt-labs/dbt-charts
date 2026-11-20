@@ -10,13 +10,14 @@ style:
       title:
         font:
           color: chrome[10]
-    legend:
-      label:
-        font:
-          color: chrome[8]
-      title:
-        font:
-          color: chrome[10]
+    key:
+      legend:
+        label:
+          font:
+            color: chrome[8]
+        title:
+          font:
+            color: chrome[10]
   title:
     font:
       color: chrome[11]

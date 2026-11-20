@@ -52,9 +52,10 @@ pub enum AxisMap {
     Point { domain: Vec<String>, positions: Vec<f64>, days: Option<Vec<f64>>, range: (f64, f64) },
     /// Temporal line x: days-since-epoch extent to a pixel range, the
     /// `frac_of` law. `range` already includes the family's x padding.
-    /// `grain` is the bucket a bucketed x sits on: a range then runs half a
-    /// bucket earlier, so a month's (or day's) band is centered on its mark.
-    Time { extent: (f64, f64), range: (f64, f64), grain: Option<TimeUnit> },
+    /// `grain` is the bucket a bucketed x sits on and the written day of one of
+    /// its data values: a band then covers whole buckets, each centered on its
+    /// mark ([`Self::band_span`]).
+    Time { extent: (f64, f64), range: (f64, f64), grain: Option<(TimeUnit, f64)> },
 }
 
 impl AxisMap {
@@ -173,19 +174,66 @@ impl AxisMap {
         }
     }
 
-    /// A band's pixel span: [`Self::span`], except on a bucketed time axis,
-    /// where each bound runs half a bucket earlier so a month's band is centered
-    /// on its mark.
+    /// A band's pixel span: [`Self::span`], except on a date point axis (each
+    /// mark's step, [`Self::point_steps`]) and on a bucketed time axis, where a
+    /// band covers whole buckets, each centered on its mark: `from` moves to its
+    /// bucket's leading edge, half a bucket before the mark, and `to` to its
+    /// bucket's trailing edge, half a bucket before the next mark, or to its own
+    /// leading edge when it falls on a bucket start or, on a weekly axis, on the
+    /// data's weekday (`to` is exclusive).
     pub fn band_span(&self, a: &Anchor, site: &Site) -> Result<Option<(f64, f64)>, Diagnostic> {
-        let (AxisMap::Time { grain: Some(tu), range, .. }, Anchor::Range { from, to }) = (self, a) else { return self.span(a, site) };
-        let bound = |v: &Option<Scalar>, edge: f64| -> Result<f64, Diagnostic> {
+        if let (AxisMap::Point { positions, days: Some(days), .. }, Anchor::Range { from, to }) = (self, a) {
+            let dated = |b: &Option<Scalar>| b.as_ref().is_none_or(|v| matches!(v, Scalar::Date(_)));
+            if dated(from) && dated(to) {
+                self.check()?;
+                return Ok(Some(self.point_steps(positions, days, from, to, site)?));
+            }
+        }
+        let (AxisMap::Time { grain: Some((tu, mark)), range, .. }, Anchor::Range { from, to }) = (self, a) else { return self.span(a, site) };
+        let bound = |v: &Option<Scalar>, edge: f64, is_to: bool| -> Result<f64, Diagnostic> {
             let Some(v) = v else { return Ok(edge) };
             let d = date_days(v, site)?;
-            // Only a bound on a bucket start moves; a band on other dates stays on them.
-            let on_start = floor_day(d.floor() as i64, *tu) as f64 == d;
-            self.time_px(if on_start { d - bucket_days(d, *tu) / 2.0 } else { d })
+            let start = floor_day(d.floor() as i64, *tu) as f64;
+            // Weekly data may sit on any weekday while its mark sits on the week's Sunday.
+            let on_start = start == d || (*tu == TimeUnit::YearWeek && (d - mark).rem_euclid(7.0) == 0.0);
+            let edge = if is_to && !on_start { start + bucket_days(start, *tu) } else { start };
+            self.time_px(edge - bucket_days(edge, *tu) / 2.0)
         };
-        Ok(Some(sorted(bound(from, range.0)?, bound(to, range.1)?)))
+        Ok(Some(sorted(bound(from, range.0, false)?, bound(to, range.1, true)?)))
+    }
+
+    /// A band on a date point axis, by [`Self::band_span`]'s law: each mark's
+    /// step runs halfway to its neighbors (the end steps as wide as their one
+    /// gap), a date belongs to the step of the last mark on or before it, and
+    /// `to` on a mark stops before that mark's step.
+    fn point_steps(
+        &self,
+        positions: &[f64],
+        days: &[f64],
+        from: &Option<Scalar>,
+        to: &Option<Scalar>,
+        site: &Site,
+    ) -> Result<(f64, f64), Diagnostic> {
+        let (r0, r1) = self.range();
+        let mut marks: Vec<(f64, f64)> = days.iter().copied().zip(positions.iter().copied()).collect();
+        marks.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let n = marks.len();
+        // edges[i] is mark i's leading edge; edges[n] the last mark's trailing edge.
+        let edges: Vec<f64> = (0..=n)
+            .map(|i| match (i.checked_sub(1).map(|j| marks[j].1), marks.get(i).map(|m| m.1)) {
+                (Some(a), Some(b)) => (a + b) / 2.0,
+                (None, Some(b)) => marks.get(1).map_or(r0, |m| b - (m.1 - b) / 2.0),
+                (Some(a), None) => n.checked_sub(2).map_or(r1, |j| a + (a - marks[j].1) / 2.0),
+                (None, None) => unreachable!("check refuses an empty domain"),
+            })
+            .collect();
+        let bound = |b: &Option<Scalar>, edge: f64, is_to: bool| -> Result<f64, Diagnostic> {
+            let Some(v) = b else { return Ok(edge) };
+            let d = date_days(v, site)?;
+            let Some(k) = marks.iter().rposition(|m| m.0 <= d) else { return Ok(if is_to { edges[0] } else { r0 }) };
+            Ok(if is_to && marks[k].0 != d { edges[k + 1] } else { edges[k] })
+        };
+        Ok(sorted(bound(from, r0, false)?, bound(to, r1, true)?))
     }
 
     fn check(&self) -> Result<(), Diagnostic> {
@@ -330,7 +378,7 @@ fn band_date_span(
             let to = to.as_ref().map(|v| date_days(v, site)).transpose()?;
             slots
                 .iter()
-                .filter(|&&(_, d, _)| from.is_none_or(|f| d >= f) && to.is_none_or(|t| d < t))
+                .filter(|&&(_, lo, hi)| from.is_none_or(|f| hi > f) && to.is_none_or(|t| lo < t))
                 .map(|&(i, _, _)| i)
                 .collect()
         }
@@ -570,7 +618,7 @@ mod tests {
 
     #[test]
     fn a_range_on_a_monthly_time_axis_runs_from_mid_bucket_to_mid_bucket() {
-        let monthly = AxisMap::Time { extent: (day("2024-01-01"), day("2024-08-01")), range: (0.0, 212.0), grain: Some(TimeUnit::YearMonth) };
+        let monthly = AxisMap::Time { extent: (day("2024-01-01"), day("2024-08-01")), range: (0.0, 212.0), grain: Some((TimeUnit::YearMonth, day("2024-01-01"))) };
         let px = |iso: &str| monthly.position(&date(iso), &SITE).unwrap().unwrap();
         let june = range(Some(date("2024-06-01")), Some(date("2024-07-01")));
         assert_eq!(monthly.span(&june, &SITE).unwrap().unwrap(), (px("2024-06-01"), px("2024-07-01")), "only a band shifts");
@@ -580,24 +628,55 @@ mod tests {
         let (lo, hi) = monthly.band_span(&range(Some(date("2024-08-01")), Some(date("2024-09-01"))), &SITE).unwrap().unwrap();
         assert!(lo < px("2024-08-01") && hi > px("2024-08-01"), "the last month's band reaches back from its mark: {lo}..{hi}");
         let (lo, hi) = monthly.band_span(&range(Some(date("2024-06-10")), Some(date("2024-06-20"))), &SITE).unwrap().unwrap();
-        assert_eq!((lo, hi), (px("2024-06-10"), px("2024-06-20")), "a band off the bucket starts stays on its dates");
+        assert_eq!((lo, hi), monthly.band_span(&june, &SITE).unwrap().unwrap(), "a band inside June covers June");
         assert_eq!(monthly.position(&date("2024-06-01"), &SITE).unwrap().unwrap(), px("2024-06-01"), "a point stays on its mark");
     }
 
     #[test]
+    fn a_band_bound_inside_a_bucket_snaps_to_that_bucket() {
+        // Weekly marks on Sundays 2025-12-28 and 2026-01-04.
+        let weekly = AxisMap::Time { extent: (day("2025-12-24"), day("2026-01-08")), range: (0.0, 150.0), grain: Some((TimeUnit::YearWeek, day("2025-12-28"))) };
+        let px = |iso: &str| weekly.position(&date(iso), &SITE).unwrap().unwrap();
+        let half = (px("2026-01-04") - px("2025-12-28")) / 2.0;
+        let span = |from: Option<&str>, to: Option<&str>| weekly.band_span(&range(from.map(date), to.map(date)), &SITE).unwrap().unwrap();
+        let near = |a: (f64, f64), b: (f64, f64)| assert!((a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9, "{a:?} != {b:?}");
+        let last_week = (px("2026-01-04") - half, px("2026-01-04") + half);
+        near(span(Some("2026-01-05"), Some("2026-01-10")), last_week);
+        near(span(Some("2026-01-04"), Some("2026-01-11")), last_week);
+        near(span(Some("2025-12-30"), Some("2026-01-04")), (px("2025-12-28") - half, px("2025-12-28") + half));
+        near(span(Some("2025-12-30"), None), (px("2025-12-28") - half, 150.0));
+        near(span(None, Some("2025-12-30")), (0.0, px("2025-12-28") + half));
+    }
+
+    #[test]
+    fn a_to_on_the_weekly_data_weekday_stops_before_its_week() {
+        // Monday rows Dec 8, 15 and 22 2025, marked on their weeks' Sundays.
+        let weekly = AxisMap::Time { extent: (day("2025-12-04"), day("2025-12-26")), range: (0.0, 220.0), grain: Some((TimeUnit::YearWeek, day("2025-12-08"))) };
+        let px = |iso: &str| weekly.position(&date(iso), &SITE).unwrap().unwrap();
+        let half = (px("2025-12-21") - px("2025-12-14")) / 2.0;
+        let span = |from: &str, to: &str| weekly.band_span(&range(Some(date(from)), Some(date(to))), &SITE).unwrap().unwrap();
+        let near = |a: (f64, f64), b: (f64, f64)| assert!((a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9, "{a:?} != {b:?}");
+        let dec_15_week = (px("2025-12-14") - half, px("2025-12-14") + half);
+        near(span("2025-12-15", "2025-12-22"), dec_15_week);
+        near(span("2025-12-17", "2025-12-19"), dec_15_week);
+        near(span("2025-12-16", "2025-12-22"), dec_15_week);
+    }
+
+    #[test]
     fn a_range_on_a_daily_time_axis_runs_from_mid_day_to_mid_day() {
-        let daily = AxisMap::Time { extent: (day("2024-06-01"), day("2024-06-10")), range: (0.0, 90.0), grain: Some(TimeUnit::YearMonthDate) };
+        let daily = AxisMap::Time { extent: (day("2024-06-01"), day("2024-06-10")), range: (0.0, 90.0), grain: Some((TimeUnit::YearMonthDate, day("2024-06-01"))) };
         let (lo, hi) = daily.band_span(&range(Some(date("2024-06-10")), Some(date("2024-06-11"))), &SITE).unwrap().unwrap();
         assert!((lo - 85.0).abs() < 1e-6 && (hi - 95.0).abs() < 1e-6, "{lo}..{hi}");
     }
 
     #[test]
-    fn band_date_range_is_the_union_of_slots_it_starts() {
+    fn band_date_range_is_the_union_of_slots_it_overlaps() {
         let b = band(monthly_days());
         close(
             b.span(&range(Some(date("2024-01-15")), Some(date("2024-03-01"))), &SITE).unwrap().unwrap(),
-            (100.0, 200.0),
+            (0.0, 200.0),
         );
+        close(b.span(&range(Some(date("2024-03-15")), Some(date("2024-03-20"))), &SITE).unwrap().unwrap(), (200.0, 300.0));
         close(b.span(&range(None, Some(date("2024-02-02"))), &SITE).unwrap().unwrap(), (0.0, 200.0));
         close(b.span(&range(Some(date("2024-02-01")), None), &SITE).unwrap().unwrap(), (100.0, 300.0));
         let (span, warn) = warned(|| b.span(&range(Some(date("2024-05-01")), None), &SITE).unwrap());
@@ -617,6 +696,25 @@ mod tests {
         assert_eq!(b.position(&date("2024-02-10"), &SITE).unwrap(), Some(150.0));
         let (p, warn) = warned(|| b.position(&date("2025-01-01"), &SITE).unwrap());
         assert_eq!((p, warn), (None, true));
+    }
+
+    #[test]
+    fn a_band_on_a_date_point_axis_covers_whole_steps_centered_on_its_marks() {
+        // Marks Jan 1, Feb 1 and Mar 1 at 50, 100 and 200: edges 25, 75, 150 and 250.
+        let p = point(monthly_days());
+        let span = |from: Option<&str>, to: Option<&str>| p.band_span(&range(from.map(date), to.map(date)), &SITE).unwrap().unwrap();
+        close(span(Some("2024-02-01"), Some("2024-03-01")), (75.0, 150.0));
+        close(span(Some("2024-01-15"), Some("2024-02-10")), (25.0, 150.0));
+        close(span(Some("2024-03-10"), Some("2024-03-20")), (150.0, 250.0));
+        close(span(None, Some("2024-02-01")), (0.0, 75.0));
+        close(span(Some("2023-12-01"), Some("2024-01-01")), (0.0, 25.0));
+    }
+
+    #[test]
+    fn a_band_on_a_number_point_axis_interpolates() {
+        let p = point(Some(vec![0.0, 10.0, 20.0]));
+        let r = range(Some(num(5.0)), Some(num(15.0)));
+        assert_eq!(p.band_span(&r, &SITE).unwrap(), p.span(&r, &SITE).unwrap());
     }
 
     #[test]

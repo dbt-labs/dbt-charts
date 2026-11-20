@@ -5,7 +5,7 @@
 //! does here, so the field is the total model.
 
 use crate::primitives::PatternStyle;
-use crate::style::chart_base::{CartesianChartStyle, SideLegendedChartStyleBase};
+use crate::style::chart_base::{CartesianChartStyle, LegendKeyedChartStyleBase};
 use crate::chart::conditional_formatting::Predicate;
 use crate::style::axis::AxisXConditional;
 use crate::style::bar::misplaced_defaults;
@@ -65,7 +65,7 @@ pub struct HeatmapChartStyleConditional {
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct HeatmapChartStyle {
     #[flatten]
-    pub legended: SideLegendedChartStyleBase,
+    pub keyed: LegendKeyedChartStyleBase,
     #[flatten]
     pub cartesian: CartesianChartStyle,
     /// Padding between heatmap cells in pixels.

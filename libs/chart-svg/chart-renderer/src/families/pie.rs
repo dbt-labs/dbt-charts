@@ -54,13 +54,14 @@ struct Attachment {
     heading_font: Font,
 }
 
-/// The labels the pie's resolve kept: `none` leaves only the full table.
+/// The labels the pie's resolve kept: `none` leaves only the full table, `bare` no label and no table.
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum LabeledMode {
     Direct,
     Hybrid,
     None,
+    Bare,
 }
 
 #[derive(Deserialize)]
@@ -104,9 +105,8 @@ struct Resolved {
     style: PieStyle,
     #[serde(default)]
     total: Option<TotalConfig>,
-    /// The resolved legend (`ResolvedLegendStyle`), always carried. Production
-    /// hides it outside "direct" label mode (`suppress_legend`), so a visible
-    /// one is drawn by `pie/layout.rs`'s wheel.
+    /// The resolved legend (`ResolvedLegendStyle`). A pie draws no legend; its title font
+    /// case titles the tooltip's value row.
     legend: LegendConfig,
     attached_table_gap: f64,
     hybrid_heading_gap: f64,
@@ -264,10 +264,9 @@ impl Mode {
         }
     }
 
-    /// The ink groups the mode draws: the direct mode all three, the hybrid one no legend
-    /// (the table keys the wheel), the full table no labels either.
+    /// The ink groups the mode draws: labels and total, except the full table, which has no labels.
     fn parts(self) -> Parts {
-        Parts { labels: self != Mode::FullTable, legend: self == Mode::Direct, total: true }
+        Parts { labels: self != Mode::FullTable, total: true }
     }
 }
 
@@ -275,15 +274,14 @@ impl Mode {
 #[derive(Clone, Copy)]
 pub(crate) struct Parts {
     pub(crate) labels: bool,
-    pub(crate) legend: bool,
     pub(crate) total: bool,
 }
 
 /// Every ink group the bound wheel holds.
-pub(crate) const ALL_PARTS: Parts = Parts { labels: true, legend: true, total: true };
+pub(crate) const ALL_PARTS: Parts = Parts { labels: true, total: true };
 
-/// The bare wheel: no labels, no legend, no total.
-pub(crate) const BARE: Parts = Parts { labels: false, legend: false, total: false };
+/// The bare wheel: no labels, no total.
+pub(crate) const BARE: Parts = Parts { labels: false, total: false };
 
 /// Why a wheel could not be laid out. `NoRoom` is the solve's own answer (the ink leaves no
 /// positive radius), which a labeled mode takes as "use the table"; `Refused` is a payload
@@ -411,7 +409,8 @@ pub struct PieLayout {
 /// `WHEEL_DOMINANCE_MIN_RATIO` of the bare wheel's radius in the whole card (hybrid as
 /// direct, however narrow its table leaves the wheel box) and its hole still holds the
 /// center total; otherwise the full table. The full table always stands. A wheel that
-/// cannot fit even bare is the box being too small, an error.
+/// cannot fit even bare is the box being too small, an error. A hidden key (`bare`) is the
+/// direct wheel whatever the box holds: it never falls to the table.
 pub fn pie_layout(payload: &Payload, fonts: &FontBook) -> Result<PieLayout, Diagnostic> {
     pie_layout_classified(payload, fonts).map_err(Diagnostic::from)
 }
@@ -435,6 +434,12 @@ pub fn pie_layout_classified(payload: &Payload, fonts: &FontBook) -> Result<PieL
         LabeledMode::Direct => Some(Mode::Direct),
         LabeledMode::Hybrid => Some(Mode::Hybrid),
         LabeledMode::None => None,
+        LabeledMode::Bare => {
+            if payload.resolved.get("slice_label_indices").and_then(Value::as_array).is_some_and(|kept| !kept.is_empty()) {
+                return Err("pie payload: a bare pie labels no slice, but slice_label_indices is not empty".into());
+            }
+            return Ok(candidate(payload, Mode::Direct, fonts)?.into_layout(Mode::Direct));
+        }
     };
     if let Some(mode) = labeled {
         // Labels that cannot fit at any radius are the same answer as labels that fit too
@@ -615,14 +620,18 @@ mod tests {
     }
 
     /// The payload sized in the mode its resolve chose: the full table when it carries a
-    /// `full_attachment`, else direct.
+    /// `full_attachment`, the hybrid when it carries a `hybrid_attachment`, else direct.
     fn make_payload(payload_json: Value) -> Payload {
         crate::test_payload(sized(payload_json))
     }
 
     fn sized(mut payload_json: Value) -> Value {
-        let attached = !payload_json["resolved"]["full_attachment"].is_null();
-        payload_json["pie_mode"] = json!(if attached { "full_table" } else { "direct" });
+        let mode = match (&payload_json["resolved"]["full_attachment"], &payload_json["resolved"]["hybrid_attachment"]) {
+            (full, _) if !full.is_null() => "full_table",
+            (_, hybrid) if !hybrid.is_null() => "hybrid",
+            _ => "direct",
+        };
+        payload_json["pie_mode"] = json!(mode);
         payload_json
     }
 
@@ -778,26 +787,6 @@ mod tests {
         p["resolved"]["field_labels"] = json!({"revenue": "Sales volume"});
         let labeled = render(&make_payload(p), &test_fonts()).expect("renders");
         assert!(labeled.contains("\u{2060}Sales volume: 197,199"), "{labeled}");
-    }
-
-    #[test]
-    fn a_field_label_titles_the_legend() {
-        let mut p = legend_pie_payload("right", "start", "vertical");
-        let plain = render(&make_payload(p.clone()), &test_fonts()).expect("renders");
-        assert!(plain.contains(">Category<"), "{plain}");
-        p["resolved"]["field_labels"] = json!({"category": "Department"});
-        let labeled = render(&make_payload(p), &test_fonts()).expect("renders");
-        assert!(labeled.contains(">Department<") && !labeled.contains(">Category<"), "{labeled}");
-    }
-
-    /// A floating legend sits over the wheel's frame: its labels carry the chart's opaque canvas as an outline.
-    #[test]
-    fn a_floating_legend_outlines_its_labels_in_the_canvas() {
-        let mut p = legend_pie_payload("right", "center", "vertical");
-        p["resolved"]["canvas"] = json!("#123456");
-        p["resolved"]["legend"]["position"]["overlay"] = json!(true);
-        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
-        assert!(svg.contains("fill=\"#123456\" stroke=\"#123456\" stroke-width=\"5\" stroke-linejoin=\"round\" aria-hidden=\"true\""), "{svg}");
     }
 
     /// `chart_interactivity.js`'s `RECEDE_ROLES` matches `arc`
@@ -1356,21 +1345,17 @@ mod tests {
     }
 
     #[test]
-    fn attached_table_right_places_table_beside_pie_at_disk_top() {
+    fn attached_table_right_too_wide_for_the_centered_wheel_stops_at_the_padding() {
         let payload_json = make_pie_payload_with_attached_table("right", "Too small to label");
         let payload = make_payload(payload_json);
         let svg = render(&payload, &test_fonts()).expect("renders with attached table on the right");
 
         assert!(svg.contains("Too small to label"), "heading text present:\n{svg}");
-        // Wheel group is untranslated (right placement never shifts the wheel).
-        assert!(svg.contains("translate(0,0)"), "wheel group at origin:\n{svg}");
-        // Table starts right of the wheel (wheel_width + gap) at the disk's
-        // top edge: the wheel box is 300×300, so the fitted disk radius
-        // decides disk_top = (300 − 2r)/2; with no label/total ink the
-        // radius is min(pw, ph)/2 × outer_fraction — table_y must sit above
-        // the vertical middle and the canvas keeps the wheel's 300 height
-        // (disk_top + table_h < 300 here).
-        assert!(svg.contains("translate(312,"), "table positioned right of the wheel:\n{svg}");
+        // Beside the wheel centered at 300 (disk radius 120.6, no label ink) the table would start
+        // at 300 + 120.6 + 24 = 444.6 and cross the right padding at 584, so it stops at
+        // 600 − 16 − 212 = 372 and the 300px wheel box moves back with it: 150 − 72.6 = 77.4.
+        assert!(svg.contains("translate(77.4,0)"), "wheel group moved with the table:\n{svg}");
+        assert!(svg.contains("translate(372,"), "table at the right padding:\n{svg}");
         assert!(svg.contains("height=\"300\""), "right placement keeps the wheel height:\n{svg}");
     }
 
@@ -1394,30 +1379,74 @@ mod tests {
         svg.split("height=\"").nth(1).and_then(|s| s.split('"').next()).unwrap().parse().unwrap()
     }
 
-    /// A table above or below the wheel aligns across the card — `start` at the left
-    /// padding, `center` on the card's middle, `end` against the right padding.
-    /// Card 600, table 212, padding 16.
-    #[test]
-    fn attached_table_aligns_across_the_card_inside_its_padding() {
-        for (align, x) in [("start", 16.0), ("center", 194.0), ("end", 600.0 - 212.0 - 16.0)] {
-            let svg = render(&make_payload(attached_with("bottom", align)), &test_fonts()).expect("renders");
-            // y = donut_h 300 + gap 12; canvas = 300 + 12 + 72.
-            assert_eq!(table_origin(&svg), (x, 312.0), "bottom / {align}:\n{svg}");
-            assert_eq!(canvas_height(&svg), 384.0, "bottom / {align}");
-        }
+    /// A hybrid pie: slice labels beside the disk and the table in `placement` aligned `align`.
+    fn labeled_with(placement: &str, align: &str) -> Value {
+        let mut p = attached_with(placement, align);
+        p["resolved"]["labeled_mode"] = json!("hybrid");
+        p["resolved"]["hybrid_attachment"] = p["resolved"]["full_attachment"].take();
+        p["resolved"]["slice_label_indices"] = json!([0, 1, 2]);
+        p["resolved"]["style"]["slice_mark"]["labels"] = json!({
+            "offset": 6.0,
+            "line_height": 14.0,
+            "font": {"family": TEST_FONT, "size": 14.0, "weight": "500"},
+            "template": "{{ category }}"
+        });
+        p
     }
 
-    /// A table beside the wheel aligns down the
-    /// wheel's DISK, never above its top. This wheel is 300 tall with no label
-    /// ink, so the disk is 2 × 0.9 × (300 − 32)/2 = 241.2 and disk_top 29.4;
-    /// `center` is `disk_top + (241.2 − 72)/2` = 114 and `end`
-    /// `disk_top + 241.2 − 72` = 198.6. A right table sits at `wheel_width +
-    /// gap`; a left one at the left padding, with the wheel at `table_width +
-    /// gap`.
+    /// The `[left, right, top, bottom]` of the label texts' anchors and first-line baselines in the
+    /// canvas (the wheel's group offsets them); their text widths stay out of it.
+    fn label_anchors(svg: &str) -> [f64; 4] {
+        let offset = svg.split("translate(").nth(1).unwrap().split(')').next().unwrap();
+        let (dx, dy): (f64, f64) = {
+            let (x, y) = offset.split_once(',').unwrap();
+            (x.parse().unwrap(), y.parse().unwrap())
+        };
+        let mut anchors = [f64::MAX, f64::MIN, f64::MAX, f64::MIN];
+        for text in svg.split("<text ").skip(1).filter(|t| t.contains("text-anchor") && !t.contains("data-dct-role")) {
+            let attr = |name: &str| -> f64 {
+                let at = text.find(&format!("{name}=\"")).unwrap() + name.len() + 2;
+                text[at..at + text[at..].find('"').unwrap()].parse().unwrap()
+            };
+            let (x, y) = (dx + attr("x"), dy + attr("y"));
+            anchors = [anchors[0].min(x), anchors[1].max(x), anchors[2].min(y), anchors[3].max(y)];
+        }
+        anchors
+    }
+
+    /// A table above or below the wheel aligns across the wheel's ink box: the disk, its slice
+    /// labels and the total. With no labels the box is the disk: `start` on its left edge,
+    /// `center` on its middle, `end` on its right edge. Card 600, table 212; the disk (radius
+    /// 120.6) centers at 300, so 179.4, 194 and 208.6.
     #[test]
-    fn attached_table_aligns_down_the_disk_on_a_side() {
+    fn attached_table_aligns_across_the_ink_box() {
+        for (align, x) in [("start", 300.0 - 120.6), ("center", 194.0), ("end", 300.0 + 120.6 - 212.0)] {
+            let svg = render(&make_payload(attached_with("bottom", align)), &test_fonts()).expect("renders");
+            // y = donut_h 300 + gap 12; canvas = 300 + 12 + 72.
+            let (tx, ty) = table_origin(&svg);
+            assert!((tx - x).abs() < 1e-9 && ty == 312.0, "bottom / {align}: ({tx}, {ty}), want {x}:\n{svg}");
+            assert_eq!(canvas_height(&svg), 384.0, "bottom / {align}");
+        }
+        let origin = |align: &str| table_origin(&render(&make_payload(labeled_with("bottom", align)), &test_fonts()).expect("renders")).0;
+        let svg = render(&make_payload(labeled_with("bottom", "start")), &test_fonts()).expect("renders");
+        let [left, right, _, _] = label_anchors(&svg);
+        let (start, center, end) = (origin("start"), origin("center"), origin("end"));
+        assert!(start < left, "start is flush with the left label's far edge: table {start}, label anchor {left}");
+        assert!(end + 212.0 > right, "end is flush with the right label's far edge: table right {}, label anchor {right}", end + 212.0);
+        assert!(((start + end + 212.0) / 2.0 - (center + 106.0)).abs() < 1e-9 && start < center && center < end, "{start} {center} {end}");
+    }
+
+    /// A table beside the wheel aligns down the wheel's ink box. This wheel is 300 tall
+    /// with no label ink, so the box is the disk, 2 × 0.9 × (300 − 32)/2 = 241.2 around y 150:
+    /// `start` at its top 29.4, `center` at 150 − 72/2 = 114 and `end` at
+    /// 150 + 120.6 − 72 = 198.6. The table beside the wheel centered at 300 would
+    /// cross the padding on this 600px card, so it stops there (right: 372; left: 16)
+    /// and the wheel box moves 72.6 with it (right: 77.4; left: 222.6). With labels, `start` and
+    /// `end` reach the topmost and bottommost label instead.
+    #[test]
+    fn attached_table_aligns_down_the_ink_box_on_a_side() {
         for (placement, x, wheel_x) in
-            [("right", 300.0 + 12.0, "translate(0,0)"), ("left", 16.0, "translate(224,0)")]
+            [("right", 372.0, "translate(77.4,0)"), ("left", 16.0, "translate(222.6,0)")]
         {
             for (align, y) in [("start", 29.4), ("center", 114.0), ("end", 198.6)] {
                 let svg = render(&make_payload(attached_with(placement, align)), &test_fonts())
@@ -1429,21 +1458,30 @@ mod tests {
                 assert_eq!(canvas_height(&svg), 300.0, "{placement} / {align}");
             }
         }
+        let table_y = |align: &str| table_origin(&render(&make_payload(labeled_with("right", align)), &test_fonts()).expect("renders")).1;
+        let svg = render(&make_payload(labeled_with("right", "start")), &test_fonts()).expect("renders");
+        let [_, _, top, bottom] = label_anchors(&svg);
+        let (start, center, end) = (table_y("start"), table_y("center"), table_y("end"));
+        assert!(start <= top - 8.0, "start is flush with the top label's ink: table {start}, label baseline {top}");
+        assert!(end + 72.0 > bottom + 1.0, "end is flush with the bottom label's ink: table bottom {}, label baseline {bottom}", end + 72.0);
+        assert!(((start + end) / 2.0 - center).abs() < 1e-9 && start < center && center < end, "{start} {center} {end}");
     }
 
-    /// A left table pushes the
-    /// wheel right by `table_width + gap` and the title back by the same, so it
-    /// stays on the card's left edge. Only a left placement slides it.
+    /// Wherever the wheel's box goes, the title slides back by its offset and stays on
+    /// the card's own corner. Under the title the disk's radius is 108, so a table beside
+    /// the wheel centered at 300 would cross the padding by 60 and the box moves that much:
+    /// to 210 beside a left table and 90 beside a right one. Over or under a table the
+    /// 300px box is centered on the 600px card at 150.
     #[test]
-    fn attached_table_left_slides_the_title_back_by_the_wheel_offset() {
-        for (placement, slid) in [("left", true), ("right", false), ("top", false), ("bottom", false)] {
+    fn attached_table_slides_the_title_back_by_the_wheel_offset() {
+        for (placement, slid) in [("left", "-210,0"), ("right", "-90,0"), ("top", "-150,0"), ("bottom", "-150,0")] {
             let mut p = attached_with(placement, "start");
             p["resolved"]["title"] = json!("Revenue");
             p["resolved"]["style"]["title_font"] = json!({"size": 18.0, "family": "Source Serif 4"});
             p["resolved"]["title_style"] =
                 json!({"font": {"size": 18.0, "family": "Source Serif 4"}, "position": {"offset": 10.0}});
             let svg = render(&make_payload(p), &test_fonts()).expect("renders");
-            assert_eq!(svg.contains("<g transform=\"translate(-224,0)\">"), slid, "{placement}:\n{svg}");
+            assert!(svg.contains(&format!("<g transform=\"translate({slid})\">")), "{placement}:\n{svg}");
         }
     }
 
@@ -1458,18 +1496,21 @@ mod tests {
         p["resolved"]["title_style"] =
             json!({"font": {"size": 18.0, "family": "Source Serif 4"}, "position": {"offset": 10.0}});
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
-        assert!(svg.contains("<g transform=\"translate(-224.12,0)\">"), "{svg}");
+        // Under the title (disk radius 108) the table would start at 300 − 132 − 212.123456789 =
+        // −44.12…, so it and the wheel box move 60.12… right: the box to 150 + 60.12… = 210.12….
+        assert!(svg.contains("<g transform=\"translate(-210.12,0)\">"), "{svg}");
     }
 
     /// vega_lite.py:605-628, untitled: the wheel's view gains the table's
     /// height plus the gap (72 + 12) and its plot is pushed down by it
     /// (`bump_padding_top`), so the 300 + 84 = 384 view holds a plot box
     /// 268 square from y = 16 + 84 (center (150, 234)); the table drops in at
-    /// the top padding.
+    /// the top padding, `start` on the disk's left edge: 300 − 0.9 × 134 = 179.4.
     #[test]
     fn attached_table_top_pushes_the_untitled_wheel_down_by_the_table() {
         let svg = render(&make_payload(attached_with("top", "start")), &test_fonts()).expect("renders");
-        assert_eq!(table_origin(&svg), (16.0, 16.0), "{svg}");
+        let (tx, ty) = table_origin(&svg);
+        assert!((tx - 179.4).abs() < 1e-9 && ty == 16.0, "({tx}, {ty}):\n{svg}");
         assert_eq!(canvas_height(&svg), 384.0);
         assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"300\" height=\"384\""), "wheel child is the pushed view:\n{svg}");
         assert!(svg.contains("translate(150,234)"), "plot pushed below the table:\n{svg}");
@@ -1813,6 +1854,15 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_pie_arriving_with_labeled_slices_is_refused() {
+        let mut json = make_pie_payload(Value::Null);
+        json["resolved"]["labeled_mode"] = json!("bare");
+        json["resolved"]["slice_label_indices"] = json!([0]);
+        let err = pie_layout(&make_payload(json), &test_fonts()).unwrap_err();
+        assert!(err.to_string().contains("bare pie labels no slice"), "{err}");
+    }
+
+    #[test]
     fn fit_label_ink_pushes_margins_asymmetrically() {
         let mut json = make_pie_payload(Value::Null);
         json["resolved"]["slice_label_indices"] = serde_json::json!([0]);
@@ -2105,134 +2155,22 @@ mod tests {
         }
     }
 
-    // ── Visible legend ───────────────────────────────────────────────────
+    // ── Stroked slices ───────────────────────────────────────────────────
 
-    fn legend_json(edge: &str, align: &str, direction: &str) -> Value {
-        json!({
-            "visible": true,
-            "position": {"edge": edge, "align": align, "overlay": false},
-            "direction": direction,
-            "columns": 0,
-            "label": {
-                "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"},
-                "padding": 8.0,
-                "max_width": 200.0
-            },
-            "title": {
-                "font": {"family": TEST_FONT, "color": "#313233", "size": 12.0, "weight": 600.0, "case": "title"},
-                "visible": null
-            },
-            "symbol_limit": 20,
-            "values": null,
-            "symbol_shape": null,
-            "symbol_fill": null
-        })
-    }
-
-    fn legend_pie_payload(edge: &str, align: &str, direction: &str) -> Value {
+    fn stroked_pie_payload() -> Value {
         let mut p = make_pie_payload(Value::Null);
         p["resolved"]["resolved_channels"] =
             json!({"color": {"channel": "color", "mode": "series", "data_field": "category", "quantitative_data": false}});
         p["resolved"]["style"]["slice_mark"]["stroke"] =
             json!({"color": "#FFFFFF", "width": 3.0, "join": "round"});
-        p["resolved"]["legend"] = legend_json(edge, align, direction);
         p
-    }
-
-    const LEGEND_LABELS: [&str; 3] = ["Electronics", "Accessories", "Tools"];
-
-    /// The legend box the shared Vega layout gives `labels` under `payload`'s
-    /// own legend config: `(box_w, box_h)`.
-    fn legend_box(payload: &Value, labels: &[&str]) -> (f64, f64) {
-        use crate::families::legend::{legend_title_text, vega_legend, LegendConfig, LegendEntry};
-        let cfg: LegendConfig = Deserialize::deserialize(&payload["resolved"]["legend"]).unwrap();
-        let entries: Vec<LegendEntry> =
-            labels.iter().map(|label| LegendEntry {
-                label,
-                fill: "#000",
-                symbol: None,
-                series_key: None,
-                recede: None,
-                action: None,
-            }).collect();
-        let title = legend_title_text("category", &cfg, &Default::default()).unwrap();
-        let legend = vega_legend(&entries, false, &title, &cfg, &test_fonts()).unwrap();
-        (legend.box_w, legend.box_h())
-    }
-
-    /// The wheel's center, off its `<g transform="translate(cx,cy)">`.
-    fn wheel_center(svg: &str) -> (f64, f64) {
-        let rest = &svg[svg.find("<g transform=\"translate(").unwrap() + "<g transform=\"translate(".len()..];
-        let (cx, cy) = rest.split(')').next().unwrap().split_once(',').unwrap();
-        (cx.parse().unwrap(), cy.parse().unwrap())
-    }
-
-    /// Vega's autosize fit gives the plot box exactly what the legend takes:
-    /// the legend box plus `legend.offset` (18) on the legend's own edge
-    /// (`ViewLayout.js` `layoutLegend`: `F.add(o.x1, 0).add(o.x2, 0)` for a
-    /// left/right legend, `F.add(0, o.y1).add(0, o.y2)` for a top/bottom one,
-    /// the legend anchored at `ceil(x2)/ceil(y2) + offset` of the plot rect,
-    /// or `floor(x1)/floor(y1) - offset - box` on the far edges). No title,
-    /// no labels, no total: the wheel is the plot's own center.
-    #[test]
-    fn a_visible_legend_shrinks_the_plot_by_its_box_plus_the_offset_on_each_edge() {
-        // (edge, direction, title visible): a top/horizontal legend is baked
-        // untitled (`_base_kwargs`: top + horizontal + title.visible None).
-        let (avail_w, avail_h) = (568.0, 400.0);
-        for (edge, direction, untitled) in
-            [("right", "vertical", false), ("left", "vertical", false), ("top", "horizontal", true), ("bottom", "horizontal", false)]
-        {
-            let mut p = legend_pie_payload(edge, "start", direction);
-            if untitled {
-                p["resolved"]["legend"]["title"]["visible"] = json!(false);
-            }
-            let (box_w, box_h) = legend_box(&p, &LEGEND_LABELS);
-            let svg = render(&make_payload(p), &test_fonts()).unwrap_or_else(|e| panic!("{edge}: {e}"));
-            let (cx, cy) = wheel_center(&svg);
-            let (pw, ph, left, top) = match edge {
-                "right" => (avail_w - 18.0 - box_w, avail_h, 0.0, 0.0),
-                "left" => (avail_w - 18.0 - box_w, avail_h, 18.0 + box_w, 0.0),
-                "top" => (avail_w, avail_h - 18.0 - box_h, 0.0, 18.0 + box_h),
-                _ => (avail_w, avail_h - 18.0 - box_h, 0.0, 0.0),
-            };
-            assert_eq!((cx, cy), (16.0 + left + pw / 2.0, 16.0 + top + ph / 2.0), "{edge}: {svg}");
-        }
-    }
-
-    /// The legend is the outermost ink on its own edge: a right legend's
-    /// swatch column starts at `ceil(plot right) + 18`, a bottom one's title
-    /// at `ceil(plot bottom) + 18` (`ViewLayout.js` legend anchors).
-    #[test]
-    fn the_legend_sits_past_the_plot_rect_on_its_own_edge() {
-        let p = legend_pie_payload("right", "start", "vertical");
-        let (box_w, _) = legend_box(&p, &LEGEND_LABELS);
-        let svg = render(&make_payload(p), &test_fonts()).unwrap();
-        let plot_right = 16.0 + (568.0 - 18.0 - box_w);
-        // First entry's symbol center: x = legend x + size/2, size = 12.
-        assert!(svg.contains(&format!("translate({},", print::geometry(plot_right + 18.0 + 6.0))), "{svg}");
-        // The label sits at legend x + 12 + labelOffset 8.
-        assert!(svg.contains(&format!("<text x=\"{}\"", print::geometry(plot_right + 18.0 + 20.0))), "{svg}");
-    }
-
-    fn legend_swatches(svg: &str) -> Vec<(String, String)> {
-        // (fill, label) per entry, in painted order.
-        let legend = &svg[svg.find("d=\"M5,0A5,5,0,1,1,-5,0").unwrap() - 80..];
-        legend
-            .split("<path transform=\"translate(")
-            .skip(1)
-            .map(|entry| {
-                let fill = entry.split("fill=\"").nth(1).unwrap().split('"').next().unwrap().to_string();
-                let label = entry.split("role-legend-label").nth(1).unwrap().split("</text>").next().unwrap();
-                (fill, label.rsplit('>').next().unwrap().to_string())
-            })
-            .collect()
     }
 
     /// A slice's canvas-colored stroke is a mask over the wedges, not paint: the slices read the
     /// same on the canvas, and nothing under a slice shows a rim.
     #[test]
     fn slices_knock_their_canvas_stroke_out_with_a_mask() {
-        let mut p = legend_pie_payload("right", "start", "vertical");
+        let mut p = stroked_pie_payload();
         // The border is the canvas it sits on, which a transparent chart background is not.
         p["resolved"]["background"] = json!("transparent");
         p["resolved"]["canvas"] = json!("#FFFFFF");
@@ -2242,262 +2180,6 @@ mod tests {
         assert_eq!(svg.matches("mask=\"url(#").count(), 1, "{svg}");
         assert!(svg.contains("id=\"ko0-"), "{svg}");
         assert!(!svg.contains("knockout-undercoat"), "the canvas is all that is under a slice: {svg}");
-    }
-
-    /// Entries are the color scale's domain in row order, each swatch the scale's own color for that
-    /// value, stroked in the slice mark's own stroke color
-    /// (`encode.ts` `symbols`: the mark's `stroke` flows to the legend
-    /// symbol, never its `strokeWidth` — the 1.5 stays Vega's).
-    #[test]
-    fn legend_entries_follow_slice_order_and_the_color_scale() {
-        let p = legend_pie_payload("right", "start", "vertical");
-        let svg = render(&make_payload(p), &test_fonts()).unwrap();
-        assert_eq!(
-            legend_swatches(&svg),
-            [("#3164a3", "Electronics"), ("#779bc9", "Accessories"), ("#ad9c7f", "Tools")]
-                .map(|(f, l)| (f.to_string(), l.to_string())),
-            "{svg}"
-        );
-        assert_eq!(svg.matches("stroke=\"#FFFFFF\" stroke-width=\"1.5\"/>").count(), 3, "{svg}");
-
-        let mut bound = legend_pie_payload("right", "start", "vertical");
-        bound["resolved"]["category_colors"] = json!([{
-            "field": "category",
-            "slots": {"Electronics": 2, "Accessories": 0, "Tools": 1},
-            "overrides": {}
-        }]);
-        let svg = render(&make_payload(bound), &test_fonts()).unwrap();
-        assert_eq!(
-            legend_swatches(&svg),
-            [("#ad9c7f", "Electronics"), ("#3164a3", "Accessories"), ("#779bc9", "Tools")]
-                .map(|(f, l)| (f.to_string(), l.to_string())),
-            "the board slot wins the swatch, like the wedge: {svg}"
-        );
-    }
-
-    /// A hidden legend reserves nothing and draws nothing, and a visible one
-    /// over a pie with no color channel draws nothing either: there is no
-    /// color scale to carry a legend.
-    #[test]
-    fn a_hidden_or_colorless_legend_draws_nothing_and_reserves_nothing() {
-        let mut hidden = legend_pie_payload("right", "start", "vertical");
-        hidden["resolved"]["legend"]["visible"] = json!(false);
-        let svg = render(&make_payload(hidden), &test_fonts()).unwrap();
-        assert!(!svg.contains("role-legend-label"), "{svg}");
-        assert_eq!(wheel_center(&svg), (16.0 + 568.0 / 2.0, 16.0 + 400.0 / 2.0), "{svg}");
-
-        let mut colorless = legend_pie_payload("right", "start", "vertical");
-        colorless["resolved"]["resolved_channels"] = json!({});
-        let svg = render(&make_payload(colorless), &test_fonts()).unwrap();
-        assert!(!svg.contains("role-legend-label"), "{svg}");
-        assert_eq!(wheel_center(&svg), (16.0 + 568.0 / 2.0, 16.0 + 400.0 / 2.0), "{svg}");
-    }
-
-    /// `symbolLimit` (theme 20) keeps the first `limit - 1` entries and folds the rest into one
-    /// "+N more" note (`w.length - (limit - 1)`) with no swatch, starting at the swatch column.
-    #[test]
-    fn symbol_limit_folds_the_overflow_into_a_swatchless_more_note() {
-        let mut p = legend_pie_payload("right", "start", "vertical");
-        p["rows"] = json!((0..22).map(|n| json!({"category": format!("C{n}"), "revenue": 10.0})).collect::<Vec<_>>());
-        let svg = render(&make_payload(p), &test_fonts()).unwrap();
-        let swatches = legend_swatches(&svg);
-        assert_eq!(swatches.len(), 19, "the note draws no swatch: {svg}");
-        assert_eq!(swatches[18].1, "C18");
-        let note_x = |label: &str| -> f64 {
-            let before = &svg[..svg.find(&format!(">{label}</text>")).unwrap_or_else(|| panic!("{label}: {svg}"))];
-            before.rsplit(" x=\"").next().unwrap().split('"').next().unwrap().parse().unwrap()
-        };
-        assert!(note_x("+3 more") < note_x("C18") - 10.0, "the note starts at the swatch column: {svg}");
-
-        let mut at_limit = legend_pie_payload("right", "start", "vertical");
-        at_limit["rows"] = json!((0..20).map(|n| json!({"category": format!("C{n}"), "revenue": 10.0})).collect::<Vec<_>>());
-        let svg = render(&make_payload(at_limit), &test_fonts()).unwrap();
-        assert_eq!(legend_swatches(&svg).len(), 20);
-        assert!(!svg.contains(" more<"), "an exactly-full legend folds nothing: {svg}");
-    }
-
-    /// `labelLimit` (theme 200): a wider label is truncated with an
-    /// ellipsis by the same Vega `truncate` the axes use, and the legend box
-    /// is bounded at the limit.
-    #[test]
-    fn a_label_wider_than_the_label_limit_truncates_with_an_ellipsis() {
-        let mut p = legend_pie_payload("right", "start", "vertical");
-        p["resolved"]["legend"]["label"]["max_width"] = json!(100.0);
-        p["rows"][0]["category"] = json!("Enterprise accounts managed by the strategic partnerships team");
-        let svg = render(&make_payload(p), &test_fonts()).unwrap();
-        let drawn = &legend_swatches(&svg)[0].1;
-        assert!(drawn.starts_with("Enterprise ") && drawn.ends_with('\u{2026}'), "{drawn}");
-        let width = test_fonts().measure_shaped(drawn, TEST_FONT, 11.0).unwrap();
-        assert!(width <= 100.0 && width > 90.0, "{width}");
-        // Vega bounds a truncated text at its limit, not at the shorter
-        // drawn text: the box is symbol cell + offset (20) + 100.
-        let (cx, _) = wheel_center(&svg);
-        assert_eq!(cx, 16.0 + (568.0 - 18.0 - 120.0) / 2.0, "{svg}");
-    }
-
-    /// `titleLimit` (180): the same law for the legend title — drawn
-    /// truncated, bounded at the limit, so the box is as wide as the limit.
-    #[test]
-    fn a_title_wider_than_the_title_limit_truncates_and_bounds_the_box_at_the_limit() {
-        let field = "a_remarkably_long_customer_segment_classification_field_name";
-        let mut p = legend_pie_payload("right", "start", "vertical");
-        p["resolved"]["resolved_channels"]["color"]["data_field"] = json!(field);
-        p["resolved"]["identity_field"] = json!(field);
-        for row in p["rows"].as_array_mut().unwrap() {
-            let value = row["category"].take();
-            row[field] = value;
-        }
-        let svg = render(&make_payload(p), &test_fonts()).unwrap();
-        // The title paints at 600, so the cut is the longest prefix that fits 180px at that
-        // weight.
-        let drawn = "A Remarkably Long Custome\u{2026}";
-        assert!(svg.contains(&format!("{drawn}</text>")), "{svg}");
-        let width = crate::common::measure_at_css_weight(&test_fonts(), drawn, TEST_FONT, 12.0, "600").unwrap();
-        assert!(width <= 180.0 && width > 170.0, "{width}");
-        let (cx, _) = wheel_center(&svg);
-        assert_eq!(cx, 16.0 + (568.0 - 18.0 - 180.0) / 2.0, "{svg}");
-    }
-
-    /// A horizontal legend flows its entries across `columns` (the
-    /// resolver's compact wrap, else one row): the box is the shared
-    /// grid's, so the plot gives up exactly its height on the bottom edge.
-    #[test]
-    fn a_wrapped_horizontal_legend_gives_the_plot_its_taller_box() {
-        let mut p = legend_pie_payload("bottom", "start", "horizontal");
-        p["resolved"]["legend"]["columns"] = json!(2);
-        let (_, box_h) = legend_box(&p, &LEGEND_LABELS);
-        let (_, one_row) = legend_box(&legend_pie_payload("bottom", "start", "horizontal"), &LEGEND_LABELS);
-        assert!(box_h > one_row, "two columns wrap three entries onto two rows");
-        let svg = render(&make_payload(p), &test_fonts()).unwrap();
-        let (_, cy) = wheel_center(&svg);
-        assert_eq!(cy, 16.0 + (400.0 - 18.0 - box_h) / 2.0, "{svg}");
-    }
-
-    /// `legend_align.py:100-103`: center is `(span - block) / 2`, end is
-    /// `span - block`, against the plot rect the scenegraph reports (a pie
-    /// with no label ink converges, so that is the drawn plot).
-    #[test]
-    fn center_and_end_slide_the_legend_along_its_strip() {
-        for (align, share) in [("start", 0.0), ("center", 0.5), ("end", 1.0)] {
-            let p = legend_pie_payload("right", align, "vertical");
-            let (box_w, box_h) = legend_box(&p, &LEGEND_LABELS);
-            let svg = render(&make_payload(p), &test_fonts()).unwrap();
-            let title_baseline = 16.0 + share * (400.0 - box_h) + 9.0;
-            let x = 16.0 + (568.0 - 18.0 - box_w).ceil() + 18.0;
-            assert!(
-                svg.contains(&format!("<text x=\"{}\" y=\"{}\"", print::geometry(x), print::geometry(title_baseline))),
-                "{align}: title at ({x}, {title_baseline}): {svg}"
-            );
-        }
-    }
-
-    /// An unstroked slice mark gives an unstroked symbol (`d.stroke` is
-    /// never set); the legend keeps Vega's 1.5 width and draws no ring.
-    #[test]
-    fn an_unstroked_slice_mark_gives_unstroked_legend_symbols() {
-        let mut p = legend_pie_payload("right", "start", "vertical");
-        p["resolved"]["style"]["slice_mark"]["stroke"] = Value::Null;
-        let svg = render(&make_payload(p), &test_fonts()).unwrap();
-        assert_eq!(svg.matches("fill=\"#3164a3\" stroke-width=\"1.5\"/>").count(), 1, "{svg}");
-        assert!(!svg.contains("stroke=\"#FFFFFF\" stroke-width=\"1.5\""), "{svg}");
-        // The bare glyph's bound tightens the row pitch from the ringed 16 to
-        // 13 (`gridLayout`: `rowPadding + ceil(-y1) + ceil(y2)`: 2 + 0 + 11, not 2 + 1 + 13).
-        let ys = |svg: &str| -> Vec<f64> {
-            svg.split("<path transform=\"translate(")
-                .skip(1)
-                .map(|t| t.split(')').next().unwrap().split_once(',').unwrap().1.parse().unwrap())
-                .collect()
-        };
-        let pitch = |svg: &str| ys(svg)[1] - ys(svg)[0];
-        assert_eq!(pitch(&svg), 13.0, "{svg}");
-        let stroked = render(&make_payload(legend_pie_payload("right", "start", "vertical")), &test_fonts()).unwrap();
-        assert_eq!(pitch(&stroked), 16.0, "{stroked}");
-    }
-
-    /// Every legend shape this port does not draw refuses by name rather
-    /// than drawing a guess.
-    #[test]
-    fn legend_shapes_the_port_does_not_draw_refuse_by_name() {
-        type Edit = fn(&mut Value);
-        let cases: [(&str, Edit, &str); 10] = [
-            ("symbol_shape", |p| p["resolved"]["legend"]["symbol_shape"] = json!("square"), "legend.symbol_shape"),
-            ("symbol_fill", |p| p["resolved"]["legend"]["symbol_fill"] = json!(false), "legend.symbol_fill"),
-            ("empty values", |p| p["resolved"]["legend"]["values"] = json!([]), "legend.values: []"),
-            ("opacity", |p| p["resolved"]["style"]["slice_mark"]["opacity"] = json!(0.5), "slice opacity"),
-            ("quantitative", |p| p["resolved"]["resolved_channels"]["color"]["quantitative_data"] = json!(true), "quantitative color"),
-            ("no flag", |p| p["resolved"]["resolved_channels"]["color"]["quantitative_data"] = Value::Null, "quantitative_data flag"),
-            ("gradient", |p| p["resolved"]["resolved_channels"]["color"]["mode"] = json!("gradient"), "gradient legend"),
-            ("number", |p| p["rows"][0]["category"] = json!(7), "non-string color value"),
-            ("date", |p| p["rows"].as_array_mut().unwrap().iter_mut().for_each(|row| row["category"] = json!("2024-01-31")), "date-like color"),
-            ("overlay", |p| p["resolved"]["legend"]["position"]["overlay"] = json!(true), "overlay true"),
-        ];
-        for (name, edit, expected) in cases {
-            let mut p = legend_pie_payload("right", "start", "vertical");
-            edit(&mut p);
-            let err = match serde_json::from_value::<Payload>(sized(p)) {
-                Ok(payload) => render(&payload, &test_fonts()).unwrap_err().to_string(),
-                Err(e) => e.to_string(),
-            };
-            assert!(err.contains(expected), "{name}: {err}");
-        }
-    }
-
-    /// An authored `legend.values` (`apply_legend_entry_order`) orders and
-    /// filters the entries drawn; each keeps the swatch its own value has in
-    /// the scale, and a token that matches nothing is dropped.
-    #[test]
-    fn authored_legend_values_order_and_filter_the_entries() {
-        let mut p = legend_pie_payload("right", "start", "vertical");
-        p["resolved"]["legend"]["values"] = json!(["tools", "Electronics", "Nothing"]);
-        let svg = render(&make_payload(p), &test_fonts()).unwrap();
-        assert_eq!(
-            legend_swatches(&svg),
-            [("#ad9c7f", "Tools"), ("#3164a3", "Electronics")].map(|(f, l)| (f.to_string(), l.to_string())),
-            "{svg}"
-        );
-
-        let mut none = legend_pie_payload("right", "start", "vertical");
-        none["resolved"]["legend"]["values"] = json!(["x"]);
-        let svg = render(&make_payload(none), &test_fonts()).unwrap();
-        assert_eq!(legend_swatches(&svg).len(), 3, "nothing resolving leaves the full order: {svg}");
-    }
-
-    /// `legend-symbol.js`: a vertical legend with `columns` > 1 fills
-    /// column-major (`row = index % ceil(n / columns)`), a horizontal one
-    /// row-major (`row = floor(index / columns)`). Three entries over two
-    /// columns: vertical gives Electronics/Accessories down the first column
-    /// and Tools on top of the second; horizontal gives Electronics and
-    /// Accessories across the first row.
-    #[test]
-    fn a_vertical_legend_over_columns_fills_column_major_and_a_horizontal_one_row_major() {
-        let cells = |direction: &str, edge: &str| -> Vec<(String, f64, f64)> {
-            let mut p = legend_pie_payload(edge, "start", direction);
-            p["resolved"]["legend"]["columns"] = json!(2);
-            p["resolved"]["legend"]["title"]["visible"] = json!(false);
-            let svg = render(&make_payload(p), &test_fonts()).unwrap();
-            let labels: Vec<String> = legend_swatches(&svg).into_iter().map(|(_, label)| label).collect();
-            let positions: Vec<(f64, f64)> = svg
-                .split("<path transform=\"translate(")
-                .skip(1)
-                .map(|t| {
-                    let (x, y) = t.split(')').next().unwrap().split_once(',').unwrap();
-                    (x.parse().unwrap(), y.parse().unwrap())
-                })
-                .collect();
-            labels.into_iter().zip(positions).map(|(label, (x, y))| (label, x, y)).collect()
-        };
-        let vertical = cells("vertical", "right");
-        let order: Vec<&str> = vertical.iter().map(|(label, ..)| label.as_str()).collect();
-        assert_eq!(order, ["Electronics", "Tools", "Accessories"], "{vertical:?}");
-        let (electronics, tools, accessories) = (&vertical[0], &vertical[1], &vertical[2]);
-        assert!(tools.1 > electronics.1 && tools.2 == electronics.2, "Tools heads column two: {vertical:?}");
-        assert!(accessories.1 == electronics.1 && accessories.2 > electronics.2, "Accessories under Electronics: {vertical:?}");
-
-        let horizontal = cells("horizontal", "bottom");
-        let order: Vec<&str> = horizontal.iter().map(|(label, ..)| label.as_str()).collect();
-        assert_eq!(order, ["Electronics", "Accessories", "Tools"], "{horizontal:?}");
-        assert!(horizontal[1].1 > horizontal[0].1 && horizontal[1].2 == horizontal[0].2, "{horizontal:?}");
-        assert!(horizontal[2].1 == horizontal[0].1 && horizontal[2].2 > horizontal[0].2, "{horizontal:?}");
     }
 
     /// Both center-total text layers are `aria: False`: hidden mark sets whose
@@ -2572,7 +2254,7 @@ mod tests {
     }
 
     #[test]
-    fn bind_derives_the_slices_labels_total_and_legend_without_a_font() {
+    fn bind_derives_the_slices_labels_and_total_without_a_font() {
         let payload = contract_payload();
         let bound = bind::bind(&payload, Mode::Direct).expect("binds");
         let labels = &bound.wheel.labels;
@@ -2585,7 +2267,6 @@ mod tests {
         assert_eq!(labels.len(), 1);
         assert_eq!((labels[0].idx, labels[0].lines.clone()), (1, vec!["Accessories".to_string()]));
         assert_eq!(bound.wheel.center.as_deref(), Some("443023"));
-        assert_eq!(bound.wheel.legend.as_ref().expect("a drawn legend").entries.len(), 3);
         assert!(bound.attached.is_none());
     }
 
@@ -2733,16 +2414,5 @@ mod tests {
         let payload = make_payload(json);
         let err = render(&payload, &test_fonts()).expect_err("a swatch that is no color refuses");
         assert_eq!(err.code, diagnostic::codes::ERR_TABLE_SWATCH_NOT_COLOR.id, "{err}");
-    }
-
-    #[test]
-    fn a_legend_slide_refusal_keeps_its_code() {
-        let mut json = legend_pie_payload("right", "center", "vertical");
-        json["height"] = json!(120.0);
-        json["rows"] = json!((0..14)
-            .map(|i| json!({"category": format!("Category number {i}"), "revenue": 100.0 + f64::from(i)}))
-            .collect::<Vec<_>>());
-        let err = render(&make_payload(json), &test_fonts()).expect_err("a legend taller than its plot cannot center");
-        assert_eq!(err.code, diagnostic::codes::ERR_LEGEND_ALIGN_UNSUPPORTED.id, "{err}");
     }
 }

@@ -244,10 +244,10 @@ def test_null_on_an_absence_field_survives_an_inline_rows_chart() -> None:
     source = (
         "queries:\n  q:\n    type: values\n    rows:\n      - {x: a, y: 1}\n"
         "rows:\n  - type: bar\n    query: q\n    x: x\n    y: y\n"
-        "    style:\n      legend:\n        symbol_limit: null\n"
+        "    style:\n      key:\n        legend:\n          symbol_limit: null\n"
     )
     result = compile(source)
     assert result.success, result.errors
     (chart,) = result.board.charts.values()
-    assert chart.style is not None and chart.style.legend is not None
-    assert "symbol_limit" in chart.style.legend.model_fields_set
+    assert chart.style is not None and chart.style.key is not None
+    assert "symbol_limit" in chart.style.key.legend.model_fields_set

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -114,6 +115,7 @@ def _resolved(
     stack: str = "zero",
     orientation: str | None = None,
     legend: LegendStylePatch = _CALIBRATED_LEGEND,
+    key: dict[str, Any] | None = None,
     height: float | None = None,
     aspect_ratio: float | None = None,
     min_height: float | None = None,
@@ -131,7 +133,9 @@ def _resolved(
         height=height,
         aspect_ratio=aspect_ratio,
         min_height=min_height,
-        style=BarChartStylePatch(stack=stack, orientation=orientation, legend=legend),
+        style=BarChartStylePatch(
+            stack=stack, orientation=orientation, key={"legend": legend, **(key or {})}
+        ),
     )
     resolved = resolve(chart, _stacked_data(series_count), _CTX, width=width)
     assert isinstance(resolved, ResolvedBarChart)
@@ -173,7 +177,7 @@ def _resolved_wide_by_dimension(
         x="x_time",
         y=fields,
         color="series",
-        style=BarChartStylePatch(stack="zero", legend=_CALIBRATED_LEGEND),
+        style=BarChartStylePatch(stack="zero", key={"legend": _CALIBRATED_LEGEND}),
     )
     resolved = resolve(chart, data, _CTX, width=width)
     assert isinstance(resolved, ResolvedBarChart)
@@ -232,7 +236,10 @@ def test_authored_legend_visible_true_never_beats_the_yield() -> None:
     """The explicit signal must not lose where the weaker one wins."""
     assert (
         _resolved(
-            25, _NARROW_WIDTH, legend=LegendStylePatch(visible=True, compact_columns=2)
+            25,
+            _NARROW_WIDTH,
+            legend=LegendStylePatch(compact_columns=2),
+            key={"visible": True, "type": "legend"},
         ).legend.visible
         is False
     )

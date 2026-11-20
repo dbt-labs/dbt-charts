@@ -41,10 +41,11 @@ from dbt_charts.core.compile.models.style.theme.board import (
     ChartTitleStyle,
     PaddingStyle,
 )
-from dbt_charts.core.compile.models.style.theme.legend import (
-    LegendStyle,
-    PieLegendStyle,
-    SideLegendStyle,
+from dbt_charts.core.compile.models.style.theme.key import (
+    BarKeyStyle,
+    LegendOnlyKeyStyle,
+    LineAreaKeyStyle,
+    PieKeyStyle,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     BasemapStyle,
@@ -249,50 +250,58 @@ else:
     )
 
 
-class _LegendedChartStyleBase(BaseModel):
-    """The legend slot for families placed along a plot edge (not pie/donut)."""
+class _LineAreaKeyedChartStyleBase(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    key: LineAreaKeyStyle = Field(description="How the chart names its series.")
+
+
+class _BarKeyedChartStyleBase(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    key: BarKeyStyle = Field(description="How the chart names its series.")
+
+
+class _LegendKeyedChartStyleBase(BaseModel):
+    """The key slot for families that can only draw a legend."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    legend: LegendStyle = Field(description="Chart legend style.")
+    key: LegendOnlyKeyStyle = Field(description="How the chart names its series.")
 
 
-class _SideLegendedChartStyleBase(BaseModel):
-    """The legend slot for families that cannot name series on the chart itself."""
-
+class _PieKeyedChartStyleBase(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    legend: SideLegendStyle = Field(description="Chart legend style.")
-
-
-class _PieLegendedChartStyleBase(BaseModel):
-    """The legend slot for pie and donut."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    legend: PieLegendStyle = Field(description="Pie key style.")
+    key: PieKeyStyle = Field(description="How the chart names its slices.")
 
 
 if TYPE_CHECKING:
 
-    class _LegendedChartStyleBaseAllOptional(_LegendedChartStyleBase):
+    class _LineAreaKeyedChartStyleBaseAllOptional(_LineAreaKeyedChartStyleBase):
         pass
 
-    class _SideLegendedChartStyleBaseAllOptional(_SideLegendedChartStyleBase):
+    class _BarKeyedChartStyleBaseAllOptional(_BarKeyedChartStyleBase):
         pass
 
-    class _PieLegendedChartStyleBaseAllOptional(_PieLegendedChartStyleBase):
+    class _LegendKeyedChartStyleBaseAllOptional(_LegendKeyedChartStyleBase):
+        pass
+
+    class _PieKeyedChartStyleBaseAllOptional(_PieKeyedChartStyleBase):
         pass
 
 else:
-    _LegendedChartStyleBaseAllOptional = build_patch_model_ext(
-        _LegendedChartStyleBase, is_recursive=True
+    _LineAreaKeyedChartStyleBaseAllOptional = build_patch_model_ext(
+        _LineAreaKeyedChartStyleBase, is_recursive=True
     )
-    _SideLegendedChartStyleBaseAllOptional = build_patch_model_ext(
-        _SideLegendedChartStyleBase, is_recursive=True
+    _BarKeyedChartStyleBaseAllOptional = build_patch_model_ext(
+        _BarKeyedChartStyleBase, is_recursive=True
     )
-    _PieLegendedChartStyleBaseAllOptional = build_patch_model_ext(
-        _PieLegendedChartStyleBase, is_recursive=True
+    _LegendKeyedChartStyleBaseAllOptional = build_patch_model_ext(
+        _LegendKeyedChartStyleBase, is_recursive=True
+    )
+    _PieKeyedChartStyleBaseAllOptional = build_patch_model_ext(
+        _PieKeyedChartStyleBase, is_recursive=True
     )
 
 
@@ -302,8 +311,8 @@ class _CartesianChartStyle(
 ):
     """Cartesian families: bar, line, area, scatter, histogram, heatmap.
 
-    Each family mixes in its own legend slot: only line, area and bar accept
-    ``edge: endpoints``.
+    Each family mixes in its own key slot: only line, area, bar and pie accept
+    ``type: direct``.
 
     Shared axis tier — theme YAML populates per-family axis overrides here.
     ``axis_quantitative`` is NOT declared here — see
@@ -392,7 +401,7 @@ class _AnnotatedChartStyleMixin(BaseModel):
 
 class _RadialChartStyle(
     _PaintedChartStyleBaseAllOptional,
-    _PieLegendedChartStyleBaseAllOptional,
+    _PieKeyedChartStyleBaseAllOptional,
     _TitledChartStyleBaseAllOptional,
 ):
     """Radial families: pie, donut."""
@@ -410,7 +419,7 @@ class _RadialChartStyle(
 class _GeoChartStyle(
     _ChartCardStyleMixinAllOptional,
     _PaintedChartStyleBaseAllOptional,
-    _SideLegendedChartStyleBaseAllOptional,
+    _LegendKeyedChartStyleBaseAllOptional,
     _TitledChartStyleBaseAllOptional,
 ):
     """Geo families: geoshape (choropleth), point_map.

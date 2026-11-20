@@ -171,7 +171,7 @@ def inferred_restated(
 # a global -> family -> local stack: not one tier below the chart, so comparing
 # the chart's value to the family tier alone could name a key that still matters.
 _ORDERED_AT_RENDER = frozenset(
-    {"axis", "axis_x", "axis_y", "axis_quantitative", "axis_band", "legend", "title"}
+    {"axis", "axis_x", "axis_y", "axis_quantitative", "axis_band", "key", "title"}
 )
 # Chart style slot -> the chart field naming the column that slot formats; the
 # query's `formats:` entry for that column sits below the slot in the cascade.

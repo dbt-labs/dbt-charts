@@ -12,16 +12,6 @@ string_enum!(
     LegendEdge { Left = "left", Right = "right", Top = "top", Bottom = "bottom" }
 );
 string_enum!(
-    /// A legend edge, or `endpoints` to name the series on the chart itself.
-    LegendPlacementEdge {
-        Left = "left",
-        Right = "right",
-        Top = "top",
-        Bottom = "bottom",
-        Endpoints = "endpoints",
-    }
-);
-string_enum!(
     /// Position along the legend's edge.
     LegendAlign { Start = "start", Center = "center", End = "end" }
 );
@@ -73,39 +63,17 @@ pub struct PlacementLeaves {
     pub overlay: Engine<bool, Auto>,
 }
 
-/// Legend placement for families that cannot name series on the chart itself.
+/// Legend placement: edge, align along it, overlay or reserve.
 ///
-/// Scatter, heatmap, histogram and the geo families: `edge` is a side or `auto`,
-/// never `endpoints`.
+/// Every leaf is `auto` on every built-in theme: the engine decides and bakes the
+/// concrete placement into the resolved legend.
 #[derive(Debug, Clone, PartialEq, Model)]
-pub struct SideLegendPositionStyle {
+pub struct LegendPositionStyle {
     #[flatten]
     pub leaves: PlacementLeaves,
     /// Side of the plot the legend sits on. 'auto' = the engine decides.
     #[model(fill = "auto")]
     pub edge: Engine<LegendEdge, Auto>,
-}
-
-/// Legend placement for line, area and bar charts, and the board-wide default.
-///
-/// Every leaf is `auto` on every built-in theme: the engine decides and bakes
-/// the concrete placement into the resolved legend.
-#[derive(Debug, Clone, PartialEq, Model)]
-#[allow(clippy::duplicated_attributes)]
-#[model(
-    constraint(forbids(align, when(is_in(edge, "endpoints"), not_in(align, "auto")),
-        code = "ERR-LEGEND-ALIGN-WITH-ENDPOINTS"
-    )),
-    constraint(forbids(overlay, when(is_in(edge, "endpoints"), not_in(overlay, "auto")),
-        code = "ERR-LEGEND-OVERLAY-WITH-ENDPOINTS"
-    ))
-)]
-pub struct LegendPositionStyle {
-    #[flatten]
-    pub leaves: PlacementLeaves,
-    /// Legend side, 'endpoints' for on-chart series names, or 'auto' (engine decides).
-    #[model(fill = "auto")]
-    pub edge: Engine<LegendPlacementEdge, Auto>,
 }
 
 /// Pie key placement: edge and align, never overlay.
@@ -159,10 +127,6 @@ pub struct LegendStyleBase {
     pub label: LegendLabelStyle,
     /// Legend title style.
     pub title: LegendTitleStyle,
-    /// Show the legend. 'auto' shows it unless direct labeling (endpoint labels,
-    /// or a pie's slice labels) names the series instead; true keeps it beside
-    /// direct labels and false hides it.
-    pub visible: Engine<bool, Auto>,
     /// Maximum number of legend entries to display; maps to VL symbolLimit.
     /// A positive integer prevents overflow on high-cardinality series.
     #[model(absent = "no cap")]
@@ -181,29 +145,18 @@ pub struct LegendStyleBase {
     pub symbol_fill: Engine<bool, Auto>,
 }
 
-/// Legend for line, area and bar charts, and the board-wide default.
+/// Legend style.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct LegendStyle {
     #[flatten]
     pub base: LegendStyleBase,
-    /// Legend edge (or `endpoints`), align along it, overlay or reserve.
+    /// Legend edge, align along it, overlay or reserve.
     pub position: LegendPositionStyle,
 }
 
-/// Legend for scatter, heatmap, histogram and the geo families.
-#[derive(Debug, Clone, PartialEq, Model)]
-pub struct SideLegendStyle {
-    #[flatten]
-    pub base: LegendStyleBase,
-    /// Legend edge, align along it, overlay or reserve.
-    pub position: SideLegendPositionStyle,
-}
-
-/// Pie legend.
+/// A pie's key legend is its attached table: `position` places it, nothing else styles it.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct PieLegendStyle {
-    #[flatten]
-    pub base: LegendStyleBase,
     /// Pie key placement: edge and align along it.
     pub position: PiePositionStyle,
 }

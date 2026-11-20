@@ -1,7 +1,7 @@
 """Sweep of the rule gray: every theme against the mark colors a rule can cross.
 
 Each case renders a real board through the engine and reads the rule's stroke
-and its label out of the SVG. Light themes draw rung 7 of the dbt-grays ladder;
+and its label out of the SVG. Light themes draw rung 8 of the dbt-grays ladder, a rung louder than the axis baseline;
 paper and stark keep the rule ink they set; neon picks per rule the quietest
 rung that holds 3:1 against the canvas and the mark crossed, a step louder off
 any gridline, never from the ladder's two pale or two near-black ends.
@@ -26,7 +26,7 @@ from dbt_charts.core.compile.resolve.style.palette import (
 from .._svg_render import render_board_to_svg
 
 GRAYS = palette("dbt-grays")
-RUNG_7 = GRAYS[6]
+RUNG_8 = GRAYS[7]
 # Rungs 1, 2, 11 and 12 are never eligible for a picked rule.
 ELIGIBLE = GRAYS[2:10]
 MIN_CONTRAST = 3.0
@@ -79,9 +79,9 @@ def _rule_ink(theme: str, fill: str, rule_y: int) -> tuple[str, str]:
 
 @pytest.mark.parametrize("theme", ["clarity", "vivid"])
 @pytest.mark.parametrize("rule_y", [CROSSES, CLEAR])
-def test_a_light_theme_draws_every_rule_in_rung_seven(theme: str, rule_y: int) -> None:
+def test_a_light_theme_draws_every_rule_in_rung_eight(theme: str, rule_y: int) -> None:
     for fill in SLOTS:
-        assert _rule_ink(theme, fill, rule_y) == (RUNG_7, RUNG_7), fill
+        assert _rule_ink(theme, fill, rule_y) == (RUNG_8, RUNG_8), fill
 
 
 @pytest.mark.parametrize("theme", ["paper", "stark"])

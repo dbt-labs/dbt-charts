@@ -76,7 +76,7 @@ from dbt_charts.core.colors import (
 )
 from dbt_charts.core.compile.models.palette import (
     HARD_FAIL_PALETTE_NAMES,
-    PALETTE_WARN_ALIASES,
+    PALETTE_WARN_RECOMMENDATIONS,
     Palette,
     PaletteFamily,
     PaletteIndexEntry,
@@ -614,8 +614,6 @@ def palette(
             f"palette '{name}' is a known perceptual anti-pattern and is not "
             f"shipped. See {docs_site_url()}/guides/palette-resolver/#anti-patterns"
         )
-    if name in PALETTE_WARN_ALIASES:
-        name = PALETTE_WARN_ALIASES[name]
 
     entry = _get_index().get(name)
     if entry is None:
@@ -643,12 +641,15 @@ def palette(
         # neutral that holds the light text — otherwise the light palette's
         # near-white neutral fails WCAG and the whole chart drops out. Mirrors the
         # categorical light/dark <name>-dark convention; scoped to surface="table".
-        if (
-            surface == "table"
-            and not name.endswith("-dark")
-            and canvas_tone == "dark"
-            and _has_continuous_dark_companion(name)
-        ):
+        if surface == "table" and not name.endswith("-dark") and canvas_tone == "dark":
+            if not _has_continuous_dark_companion(name):
+                # Every house continuous palette ships a twin; only a warned
+                # third-party ramp lacks one.
+                raise SurfaceUnsupportedError(
+                    f"palette '{name}' has no dark-canvas version, so it cannot "
+                    "keep table text readable on a dark theme. Use "
+                    f"{PALETTE_WARN_RECOMMENDATIONS[name]}, which has one."
+                )
             name = f"{name}-dark"
             family = _get_index()[name]["family"]
 
@@ -713,30 +714,29 @@ def resolve_palette_ref(ref: str, palettes: Mapping[str, str]) -> str:
     return substituted
 
 
-def resolve_palette_alias(name: str) -> tuple[list[str], str | None]:
-    """Resolve a palette name, reporting the anti-pattern name it replaced.
+def warned_palette_name(name: str) -> str | None:
+    """The base of ``name`` when it is in ``PALETTE_WARN_RECOMMENDATIONS``, else None.
 
-    ``palette()`` itself resolves anti-pattern aliases (see ``PALETTE_WARN_ALIASES``)
-    silently — the WARN-PALETTE-UNSUPPORTED nudge is a render-stage detector
-    over the compiled board, not an inline emit. This is the single place
-    that detects the alias so a compile-time model (``CategoricalColorStyle``)
-    can retain the originally-authored name for that detector.
-
-    Returns ``(resolved_stops, requested_name)``: ``requested_name`` is the
-    shorthand-stripped ``name`` when it is a known anti-pattern alias, else
-    ``None``.
+    Strips a trailing variant, then ``:N`` / ``_r`` shorthand, in the order
+    ``palette()`` does: parsing the shorthand first would feed
+    ``_parse_palette_reference`` a ``:N`` segment with a non-numeric tail
+    (``"4.dark"``), which raises.
     """
-    # Variant first, shorthand second -- the same order `palette()` and
-    # `_split_trailing_variant`'s own docstring mandate. `name` may carry
-    # both (`vivid-10:4.dark`): parsing the shorthand before splitting the
-    # variant feeds `_parse_palette_reference` a `:N` segment with a
-    # non-numeric tail (`"4.dark"`), which raises -- on a path `palette()`
-    # itself handles correctly, since it splits in this order.
-    parsed_name, _ = _split_trailing_variant(name)
-    if ":" in parsed_name or parsed_name.endswith("_r"):
-        parsed_name, _, _ = _parse_palette_reference(parsed_name)
-    requested = parsed_name if parsed_name in PALETTE_WARN_ALIASES else None
-    return palette(name), requested
+    base, _ = _split_trailing_variant(name)
+    if ":" in base or base.endswith("_r"):
+        base, _, _ = _parse_palette_reference(base)
+    return base if base in PALETTE_WARN_RECOMMENDATIONS else None
+
+
+def palette_with_warning(name: str) -> tuple[list[str], str | None]:
+    """Resolve a palette name, reporting it when it is a discouraged palette.
+
+    The WARN-PALETTE-UNSUPPORTED nudge is a render-stage detector over the
+    compiled board, not an inline emit, so a compile-time model
+    (``CategoricalColorStyle``) retains the discouraged name for it. The
+    palette still draws as authored.
+    """
+    return palette(name), warned_palette_name(name)
 
 
 def is_hard_fail_name(name: str) -> bool:
@@ -749,25 +749,24 @@ def is_hard_fail_name(name: str) -> bool:
     return name in HARD_FAIL_PALETTE_NAMES
 
 
-def is_warn_alias(name: str) -> bool:
-    """True when ``name`` is a known anti-pattern alias.
+def is_warned_palette(name: str) -> bool:
+    """True when ``name`` is a discouraged palette the render detector warns on.
 
-    Every value ``resolve_palette_alias`` reports is by construction one of
+    Every value ``palette_with_warning`` reports is by construction one of
     these, so this is what separates provenance the compiler computed from a
     value a board author fabricated.
     """
-    return name in PALETTE_WARN_ALIASES
+    return name in PALETTE_WARN_RECOMMENDATIONS
 
 
-def substitute_for_alias(requested_alias_palette: str) -> str:
-    """Return the palette name substituted for a known anti-pattern alias.
+def recommended_palette_for(warned_palette: str) -> str:
+    """Return the palette name recommended in place of a warned palette.
 
-    ``requested_alias_palette`` is one of ``PALETTE_WARN_ALIASES``'s keys (the name
-    ``resolve_palette_alias`` stripped down to before substitution). Used by
-    the WARN-PALETTE-UNSUPPORTED render detector to name the substitute
-    palette, not its resolved hex stops, in the user-facing message.
+    ``warned_palette`` is one of ``PALETTE_WARN_RECOMMENDATIONS``'s keys.
+    Used by the WARN-PALETTE-UNSUPPORTED render detector to name the
+    recommendation, not its hex stops, in the user-facing message.
     """
-    return PALETTE_WARN_ALIASES[requested_alias_palette]
+    return PALETTE_WARN_RECOMMENDATIONS[warned_palette]
 
 
 def _resolve_discrete(
@@ -1485,8 +1484,6 @@ def palette_family(name: str) -> PaletteFamily:
     base, _ = _split_trailing_variants(name)
     if ":" in base or base.endswith("_r"):
         base = _parse_palette_reference(base)[0]
-    if base in PALETTE_WARN_ALIASES:
-        base = PALETTE_WARN_ALIASES[base]
     entry = _get_index().get(base)
     if entry is None:
         raise UnknownPaletteError(_unknown_palette_message(base, authored=name))

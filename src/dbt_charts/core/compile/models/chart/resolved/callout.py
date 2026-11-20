@@ -121,15 +121,15 @@ class ResolvedCalloutChart(BaseModel):
         "generic chart-iteration code (warning detectors) can access "
         "chart.category_colors without isinstance guards.",
     )
-    requested_alias_palette: str | None = Field(
+    warned_palette: str | None = Field(
         default=None,
         description="Always None — callout has no color encoding. Present so "
         "generic chart-iteration code (warning detectors) can access "
-        "chart.requested_alias_palette without isinstance guards.",
+        "chart.warned_palette without isinstance guards.",
     )
-    requested_alias_substitute: str | None = Field(
+    warned_palette_recommendation: str | None = Field(
         default=None,
         description="Always None — callout has no color encoding. Present so "
         "generic chart-iteration code (warning detectors) can access "
-        "chart.requested_alias_substitute without isinstance guards.",
+        "chart.warned_palette_recommendation without isinstance guards.",
     )

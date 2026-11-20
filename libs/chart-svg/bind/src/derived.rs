@@ -24,7 +24,7 @@ use board_model::board::BoardBody;
 use board_model::chart::Chart;
 use board_model::primitives::PaletteChoice;
 use board_model::style::chart_base::PaintedChartStyleBase;
-use board_model::style::legend::{LegendEdge, LegendPlacementEdge, SideLegendPositionStyle, SideLegendStyle};
+use board_model::style::legend::LegendStyle;
 use board_model::style::style::Style;
 use color::Rgba;
 use diagnostic::{diag, refuse, Diagnostic};
@@ -36,7 +36,7 @@ pub type StylePatch = <Style as Leaf>::Patch;
 
 use crate::families::cartesian::unsupported;
 use crate::bound::{Frame, Sizing};
-use crate::style::legend::walked_legend;
+use crate::style::legend::{walked_key_visible, walked_legend};
 use crate::style::title::walked_title;
 use crate::style::Tiers;
 
@@ -58,11 +58,15 @@ pub struct Placed<'a> {
 #[derive(Debug, Clone)]
 pub struct DerivedChart {
     pub frame: Frame,
-    pub legend: SideLegendStyle,
+    pub legend: LegendStyle,
+    /// `key.visible`: false hides the legend however it is styled.
+    pub key_visible: bool,
 }
 
 /// The leaves of a tier's legend and title patch the walks read; any other set leaf is refused.
-pub(crate) const LEGEND_WALKED: [&str; 4] = ["symbol_limit", "direction", "visible", "title.visible"];
+pub(crate) const KEY_WALKED: [&str; 5] = ["visible", "type", "legend.symbol_limit", "legend.direction", "legend.title.visible"];
+/// A line, area or bar's theme states the label offset (and a bar its strip height) the bind never draws.
+const DIRECT_KEY_WALKED: [&str; 7] = ["visible", "type", "legend.symbol_limit", "legend.direction", "legend.title.visible", "direct.offset", "direct.height"];
 const TITLE_WALKED: [&str; 2] = ["min_height", "subtitle.overflow"];
 
 pub(crate) fn refuse_unwalked(slot: &str, patch: &impl SetLeaves, walked: &[&str]) -> Result<(), Diagnostic> {
@@ -101,10 +105,10 @@ impl Placed<'_> {
         let (painted, own_painted, height) = match self.chart {
             Chart::Bar(c) => {
                 let (o, f) = (&*self.own.charts.bar, &*scope.charts.bar);
-                refuse_unwalked_tri("legend", &o.legended.legend, &LEGEND_WALKED)?;
+                refuse_unwalked_tri("key", &o.keyed.key, &DIRECT_KEY_WALKED)?;
                 refuse_unwalked_tri("title", &o.cartesian.titled.title, &TITLE_WALKED)?;
-                if let Some(legend) = &f.legended.legend {
-                    refuse_unwalked("legend", legend, &LEGEND_WALKED)?;
+                if let Some(key) = &f.keyed.key {
+                    refuse_unwalked("key", key, &DIRECT_KEY_WALKED)?;
                 }
                 if let Some(title) = &f.cartesian.titled.title {
                     refuse_unwalked("title", title, &TITLE_WALKED)?;
@@ -113,10 +117,10 @@ impl Placed<'_> {
             }
             Chart::Line(c) => {
                 let (o, f) = (&*self.own.charts.line, &*scope.charts.line);
-                refuse_unwalked_tri("legend", &o.legended.legend, &LEGEND_WALKED)?;
+                refuse_unwalked_tri("key", &o.keyed.key, &DIRECT_KEY_WALKED)?;
                 refuse_unwalked_tri("title", &o.cartesian.titled.title, &TITLE_WALKED)?;
-                if let Some(legend) = &f.legended.legend {
-                    refuse_unwalked("legend", legend, &LEGEND_WALKED)?;
+                if let Some(key) = &f.keyed.key {
+                    refuse_unwalked("key", key, &DIRECT_KEY_WALKED)?;
                 }
                 if let Some(title) = &f.cartesian.titled.title {
                     refuse_unwalked("title", title, &TITLE_WALKED)?;
@@ -125,9 +129,9 @@ impl Placed<'_> {
             }
             Chart::Scatter(c) => {
                 let (o, f) = (&*self.own.charts.scatter, &*scope.charts.scatter);
-                refuse_unwalked_tri("legend", &o.legended.legend, &LEGEND_WALKED)?;
+                refuse_unwalked_tri("key", &o.keyed.key, &KEY_WALKED)?;
                 refuse_unwalked_tri("title", &o.cartesian.titled.title, &TITLE_WALKED)?;
-                refuse_unwalked("legend", &f.legended.legend, &LEGEND_WALKED)?;
+                refuse_unwalked("key", &f.keyed.key, &KEY_WALKED)?;
                 if let Some(title) = &f.cartesian.titled.title {
                     refuse_unwalked("title", title, &TITLE_WALKED)?;
                 }
@@ -136,9 +140,9 @@ impl Placed<'_> {
             // `family_slots!` folds a histogram's own style into `charts.bar`.
             Chart::Histogram(c) => {
                 let (o, f) = (&*self.own.charts.bar, &*scope.charts.histogram);
-                refuse_unwalked_tri("legend", &o.legended.legend, &LEGEND_WALKED)?;
+                refuse_unwalked_tri("key", &o.keyed.key, &KEY_WALKED)?;
                 refuse_unwalked_tri("title", &o.cartesian.titled.title, &TITLE_WALKED)?;
-                refuse_unwalked("legend", &f.legended.legend, &LEGEND_WALKED)?;
+                refuse_unwalked("key", &f.keyed.key, &KEY_WALKED)?;
                 if let Some(title) = &f.cartesian.titled.title {
                     refuse_unwalked("title", title, &TITLE_WALKED)?;
                 }
@@ -154,22 +158,8 @@ impl Placed<'_> {
         let tiers = Tiers::of(self.chart, self.own, &scope.charts)?;
         let ended = || diag::err_internal("the total style ends every title and legend walk");
         let title = walked_title(&tiers).ok_or_else(ended)?;
-        let legend = SideLegendStyle {
-            base: walked_legend(&tiers).ok_or_else(ended)?,
-            position: SideLegendPositionStyle {
-                leaves: scope.charts.legend.position.leaves.clone(),
-                // A side legend has no `endpoints` edge: production leaves it to the engine, as `auto`. Safe
-                // only while bind refuses `color:` and a list `y:`: one series has no endpoint rail.
-                edge: match &scope.charts.legend.position.edge {
-                    Engine::Rule(auto) => Engine::Rule(*auto),
-                    Engine::Value(LegendPlacementEdge::Endpoints) => Engine::Rule(board_model::rule::Auto::Auto),
-                    Engine::Value(LegendPlacementEdge::Left) => Engine::Value(LegendEdge::Left),
-                    Engine::Value(LegendPlacementEdge::Right) => Engine::Value(LegendEdge::Right),
-                    Engine::Value(LegendPlacementEdge::Top) => Engine::Value(LegendEdge::Top),
-                    Engine::Value(LegendPlacementEdge::Bottom) => Engine::Value(LegendEdge::Bottom),
-                },
-            },
-        };
+        let key_visible = walked_key_visible(&tiers);
+        let legend = LegendStyle { base: walked_legend(&tiers).ok_or_else(ended)?, position: scope.charts.key.legend.position.clone() };
         let frame = Frame {
             canvas: color::parse_css_color(&self.canvas(&own_painted.base.background, scope)?).map_err(diag::err_internal)?,
             card: self.card(&own_painted.base.background, scope)?,
@@ -182,7 +172,7 @@ impl Placed<'_> {
                 max_height: own_painted.max_height.as_ref().map_or(scope.charts.max_height, |own| *own),
             },
         };
-        Ok(DerivedChart { frame, legend })
+        Ok(DerivedChart { frame, legend, key_visible })
     }
 
     /// The chart's canvas (`_canvases`, `merge_chart_style`'s `own_canvas`): its own background

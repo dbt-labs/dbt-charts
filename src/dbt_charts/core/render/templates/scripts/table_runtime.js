@@ -407,30 +407,46 @@
         });
     }
 
-    /*{# A mark is a tspan appended to the header's label: it inherits the label's #}*/
-    /*{# ink and needs no geometry. The filter dot is set smaller so it reads as a #}*/
-    /*{# badge, not a second glyph as loud as the label. #}*/
-    function _setMark(header, kind, text) {
-        var mark = header.querySelector('[data-dbt-mark="' + kind + '"]');
-        if (!text) {
-            if (mark) mark.remove();
-            return;
-        }
-        if (!mark) {
-            mark = document.createElementNS(SVG_NS, 'tspan');
-            mark.setAttribute('data-dbt-mark', kind);
-            if (kind === 'filter') mark.setAttribute('font-size', '0.6em');
-            header.querySelector('text').appendChild(mark);
-        }
+    /*{# A header's marks are one run of tspans after its label: they inherit the #}*/
+    /*{# label's ink. The filter dot is set smaller so it reads as a badge, not a #}*/
+    /*{# second glyph as loud as the label. #}*/
+    function _addMark(run, kind, text) {
+        if (!text) return;
+        var mark = document.createElementNS(SVG_NS, 'tspan');
+        mark.setAttribute('data-dbt-mark', kind);
+        if (kind === 'filter') mark.setAttribute('font-size', '0.6em');
         mark.textContent = text;
+        run.appendChild(mark);
+    }
+
+    /*{# Run on from a centered or right-aligned line, the marks would widen it #}*/
+    /*{# and slide the label off its anchor. There the run is its own text chunk, #}*/
+    /*{# starting at the right edge of the label's last line. Measured on each #}*/
+    /*{# marking: a web font can land after the table is bound. #}*/
+    function _placeMarks(label, run) {
+        var anchor = label.getAttribute('text-anchor');
+        if (anchor !== 'middle' && anchor !== 'end') return;
+        var lines = label.querySelectorAll('tspan');
+        var line = lines.length ? lines[lines.length - 1] : label;
+        var x = Number(label.getAttribute('x'));
+        if (anchor === 'middle') x += line.getComputedTextLength() / 2;
+        run.setAttribute('x', String(Math.round(x * 100) / 100));
+        run.setAttribute('text-anchor', 'start');
     }
 
     function _markHeaders(state) {
         Object.keys(state.headers).forEach(function(col) {
+            var label = state.headers[col].querySelector('text');
+            var old = label.querySelector('[data-dbt-marks]');
+            if (old) old.remove();
+            var run = document.createElementNS(SVG_NS, 'tspan');
+            run.setAttribute('data-dbt-marks', '');
             var sorted = state.sort && state.sort.col === col;
-            _setMark(state.headers[col], 'sort', sorted ? (state.sort.dir > 0 ? ' \u25B2' : ' \u25BC') : '');
-            var filtered = state.filters[col] || state.ranges[col];
-            _setMark(state.headers[col], 'filter', filtered ? ' \u25CF' : '');
+            _addMark(run, 'sort', sorted ? (state.sort.dir > 0 ? ' \u25B2' : ' \u25BC') : '');
+            _addMark(run, 'filter', state.filters[col] || state.ranges[col] ? ' \u25CF' : '');
+            if (!run.firstChild) return;
+            _placeMarks(label, run);
+            label.appendChild(run);
         });
     }
 

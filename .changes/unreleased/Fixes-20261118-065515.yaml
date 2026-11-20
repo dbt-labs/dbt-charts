@@ -1,3 +1,0 @@
-kind: Fixes
-body: A bar value label too small for its number format prints as a bound, such as <0.1, instead of 0.0.
-time: 2026-11-18T06:55:15.973597-08:00

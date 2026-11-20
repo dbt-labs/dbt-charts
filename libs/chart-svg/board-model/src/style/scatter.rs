@@ -2,7 +2,7 @@
 
 use crate::style::chart_base::{
     AnnotatedChartStyleMixin, CartesianChartStyle, QuantitativeAxisChartStyleMixin,
-    SideLegendedChartStyleBase,
+    LegendKeyedChartStyleBase,
 };
 use crate::chart::conditional_formatting::Predicate;
 use crate::style::axis::AxisXConditional;
@@ -78,7 +78,7 @@ pub struct ScatterChartStyle {
     #[flatten]
     pub quantitative: QuantitativeAxisChartStyleMixin,
     #[flatten]
-    pub legended: SideLegendedChartStyleBase,
+    pub keyed: LegendKeyedChartStyleBase,
     #[flatten]
     pub cartesian: CartesianChartStyle,
     /// Scatter-family mark overrides.

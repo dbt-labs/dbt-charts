@@ -1161,14 +1161,14 @@ def _extra_field_diagnostic(
                 ),
                 fields=fields,
             )
-        if "style" in field_path and field_name == "legend":
+        if "style" in field_path and field_name == "key":
             chart_type = _chart_type_from_error_path(field_path, yaml_content)
             if chart_type in ("kpi", "table"):
                 return _ExtraFieldDiagnostic(
                     message=message,
                     hint=(
                         f"`type: {chart_type}` charts never paint a legend — "
-                        "the field has no effect and should be removed."
+                        "`key` has no effect and should be removed."
                     ),
                     fields=fields,
                 )

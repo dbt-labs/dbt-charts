@@ -40,7 +40,6 @@ from ._links import (
     should_fetch_table_fk_links,
     should_synthesize_automatic_link,
 )
-from ._table import infer_pivot_measure_names
 from .positional import (
     bind_channels,
     channel_error,
@@ -58,7 +57,6 @@ __all__ = [
     "AutomaticLinkCandidate",
     "automatic_link_excludes_x",
     "default_chart_width",
-    "infer_pivot_measure_names",
     "layers_own_y_scale",
     "preferred_chart_width",
     "resolve",

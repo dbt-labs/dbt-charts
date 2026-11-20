@@ -561,11 +561,19 @@ class Generator:
 
     def palettes(self, family: str) -> str:
         """Palette names of one family; a `-dark` twin is folded into its base name."""
-        from dbt_charts.core.compile.models.palette import build_palette_index
+        from dbt_charts.core.compile.models.palette import (
+            PALETTE_WARN_RECOMMENDATIONS,
+            build_palette_index,
+        )
         from dbt_charts.core.compile.models.schema_names import _DEFAULTS_DIR
 
         index = build_palette_index(_DEFAULTS_DIR / "palettes")
-        names = [n for n, e in index.items() if e["family"] == family]
+        # Warned palettes draw but are never recommended, so agents aren't offered them.
+        names = [
+            n
+            for n, e in index.items()
+            if e["family"] == family and n not in PALETTE_WARN_RECOMMENDATIONS
+        ]
         dark = [n for n in names if n.endswith("-dark")]
         bases = [n for n in names if n not in dark]
         text = _names(bases)

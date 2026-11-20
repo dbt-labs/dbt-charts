@@ -17,7 +17,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         Diagnostic.from_code(
             WARN_LEGEND_OVERLAY_COVERS_MARKS,
             chart=chart_id,
-            path=f"charts.{chart_id}.style.legend.position",
+            path=f"charts.{chart_id}.style.key.legend.position",
             message=WARN_LEGEND_OVERLAY_COVERS_MARKS.message_template.format(
                 chart_id=chart_id
             ),

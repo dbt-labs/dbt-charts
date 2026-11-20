@@ -1,3 +1,0 @@
-kind: Fixes
-body: Hovering inside an area chart's fill now shows the data point at the cursor's position instead of jumping between nearby points.
-time: 2026-11-16T18:38:10.587825357Z

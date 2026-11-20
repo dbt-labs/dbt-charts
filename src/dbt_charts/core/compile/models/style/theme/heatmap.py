@@ -18,7 +18,7 @@ from dbt_charts.core.compile.models.markers import (
 from dbt_charts.core.compile.models.primitives import PatternStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _CartesianChartStyle,
-    _SideLegendedChartStyleBaseAllOptional,
+    _LegendKeyedChartStyleBaseAllOptional,
 )
 from dbt_charts.core.compile.models.style.theme.axis_conditional import (
     AxisConditionalPredicate,
@@ -47,7 +47,7 @@ class HeatmapChartMarksStyle(BaseModel):
 
 
 class _HeatmapChartStyleBase(
-    _CartesianChartStyle, _SideLegendedChartStyleBaseAllOptional
+    _CartesianChartStyle, _LegendKeyedChartStyleBaseAllOptional
 ):
     """Heatmap chart style."""
 

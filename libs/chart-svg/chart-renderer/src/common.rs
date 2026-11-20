@@ -184,19 +184,6 @@ pub fn measure_at_css_weight(
     )
 }
 
-/// How a run of text is measured (`docs/laws-shared.md` § A width production bakes
-/// into its own layout takes the painted weight). A family whose layout keeps parity
-/// with Vega's (bar, line, area, scatter, heatmap) measures as vl-convert did, shaped at
-/// the default instance, because vl-convert never re-instanced a variable font; a family
-/// whose layout is its own (the pie) measures at the weight the text paints at, so the
-/// room the layout reserves is the room the ink takes. A helper that serves both takes
-/// it as an argument.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MeasuredAs {
-    Vega,
-    Painted,
-}
-
 // Tabular numeric font used for all number cells (table.rs body cells, pie.rs
 // attached-table value column).
 pub const TAB_FONT: &str = "'dbt Sans Tabular', Inter, system-ui, sans-serif";
@@ -275,19 +262,6 @@ impl Font {
             ));
         }
         measure_at_css_weight(fonts, text, self.family_or("sans-serif"), size, &self.weight_str())
-    }
-    /// `text`'s width measured `how`.
-    pub fn measure_as(
-        &self,
-        how: MeasuredAs,
-        fonts: &measure::FontBook,
-        text: &str,
-        size: f64,
-    ) -> Result<f64, String> {
-        match how {
-            MeasuredAs::Vega => fonts.measure_shaped(text, self.family_or("sans-serif"), size),
-            MeasuredAs::Painted => self.measure_weighted(fonts, text, size),
-        }
     }
     pub fn size_or(&self, d: f64) -> f64 {
         self.size.unwrap_or(d)

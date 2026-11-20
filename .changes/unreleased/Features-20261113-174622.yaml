@@ -1,3 +1,0 @@
-kind: Features
-body: '`dct cloud export-eval` writes a Platform project''s approved question-to-SQL pairs as JSON Lines.'
-time: 2026-11-13T17:46:22.499716-08:00

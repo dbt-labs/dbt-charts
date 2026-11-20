@@ -18,7 +18,6 @@ import pytest
 
 from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.compile.normalize.variables import OPTION_COUNT_COLUMN
 from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.collect import collect_all_query_names
@@ -80,7 +79,7 @@ _INVALID_COLUMN_ONLY_YAML = _board_with_column_ref("name")
 
 class TestNormalizerPromotion:
     def test_options_column_produces_synthetic_query(self) -> None:
-        """options.column → _var_{name}_options in board.queries, counting each value."""
+        """options.column → _var_{name}_options in board.queries, listing each value."""
         result = compile_with_board_sources(_OPTIONS_COLUMN_YAML)
         assert result.success, f"Compilation failed: {result.errors}"
         board = result.board
@@ -88,9 +87,9 @@ class TestNormalizerPromotion:
         assert "_var_options_region" in board.queries
         q = board.queries["_var_options_region"]
         assert isinstance(q, SqlQuery)
-        assert "GROUP BY name" in q.sql
+        assert "DISTINCT name" in q.sql
         assert "regions" in q.sql
-        assert OPTION_COUNT_COLUMN in q.sql
+        assert "COUNT" not in q.sql.upper()
         assert "ORDER BY" in q.sql.upper()
 
     def test_options_column_pointer_rewritten(self) -> None:
@@ -100,6 +99,7 @@ class TestNormalizerPromotion:
         var = result.board.variables["region"]
         assert var.options is not None
         assert var.options.query == "_var_options_region"
+        assert var.options.count_column is None
         # The column field is cleared after promotion
         assert var.options.column is None
 
@@ -112,7 +112,7 @@ class TestNormalizerPromotion:
         assert "_var_options_region" in board.queries
         q = board.queries["_var_options_region"]
         assert isinstance(q, SqlQuery)
-        assert "GROUP BY name" in q.sql
+        assert "DISTINCT name" in q.sql
         assert "regions" in q.sql
 
     def test_top_level_column_pointer_rewritten(self) -> None:
@@ -144,17 +144,13 @@ class TestNormalizerPromotion:
 
         assert [e.code for e in result.errors] == ["ERR-VALIDATION-FIELD"]
 
-    def test_sql_counts_each_value_in_value_order(self) -> None:
-        """One row per value with its row count, ordered by value — the menu's
-        listed order, and what its count sorts reorder."""
+    def test_sql_lists_each_value_in_value_order(self) -> None:
+        """One row per distinct value, ordered by value, with no count."""
         result = compile_with_board_sources(_OPTIONS_COLUMN_YAML)
         assert result.success
         q = result.board.queries["_var_options_region"]
         assert isinstance(q, SqlQuery)
-        expected = (
-            f"SELECT name, COUNT(*) AS {OPTION_COUNT_COLUMN} "
-            "FROM regions GROUP BY name ORDER BY name"
-        )
+        expected = "SELECT DISTINCT name FROM regions ORDER BY name"
         assert q.sql.strip() == expected
 
 
@@ -178,8 +174,7 @@ class TestSchemaQualifiedColumnRef:
         q = result.board.queries["_var_options_region"]
         assert isinstance(q, SqlQuery)
         assert q.sql.strip() == (
-            f"SELECT property_type, COUNT(*) AS {OPTION_COUNT_COLUMN} "
-            "FROM gis.fact_sales GROUP BY property_type ORDER BY property_type"
+            "SELECT DISTINCT property_type FROM gis.fact_sales ORDER BY property_type"
         )
 
     def test_three_part_table_compiles(self) -> None:
@@ -362,7 +357,7 @@ class TestFailingColumnOptionQuery:
         executor.ledger.errors[key] = QueryError("no such table: regions")
 
         with pytest.raises(QueryError) as exc_info:
-            resolve_query_options("region", "_var_options_region", executor, {})
+            resolve_query_options("region", "_var_options_region", None, executor, {})
 
         assert exc_info.value.code is ERR_VARIABLE_OPTIONS_FAILED
         assert "'region'" in str(exc_info.value)

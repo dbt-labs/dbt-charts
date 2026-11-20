@@ -43,7 +43,7 @@ _GROUPED_ROWS: list[dict[str, Any]] = [
 def _grouped_bar(style: dict[str, Any] | None = None, **kwargs: Any) -> BarChart:
     # The 2-column wrap these starved cards were measured on: five short names
     # would otherwise fit one legend row and leave the plot room.
-    legend = {"legend": {"compact_columns": 2}}
+    legend = {"key": {"legend": {"compact_columns": 2}}}
     return BarChart(
         **{
             "style": {**legend, **(style or {})},

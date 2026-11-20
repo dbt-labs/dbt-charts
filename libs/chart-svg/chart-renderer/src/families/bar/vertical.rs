@@ -35,7 +35,7 @@ use super::bind::zero_label;
 use super::ribbons::RibbonDraft;
 use super::domain::{CenterStack, RawX, SegmentSpan, SegmentSpans, bar_value_extent, base_series, build_cat_domain, build_data_map, Extras, cat_order, category_totals, collapsed_authored_domain, grouped_rail_anchors, grouped_spans, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_reach, stack_spans, stacked_rail_anchors, tallest_total, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
 use super::facet::color_1to1_with_cat;
-use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, label_hang, mark_labels, plain_sites, step_band_of, value_label_layers};
+use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, label_hang, mark_labels, plain_sites, LayerCaptions, step_band_of, value_label_layers};
 use super::layout::{Drawn, XScale, clipped_if, warn_vertical_density};
 use super::legend::{LayeredBarLegend, authored_legend_order, bar_link_keys, grouped_legend_domain, numeric_legends_of, stacked_legend_entries};
 use super::marks::{BandColumns, ColumnSplit, Columns, RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, collapsed_bars, direction_layers, grouped_overlap_fraction, hover_band_for, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, strip_columns, unity_rule};
@@ -4500,7 +4500,7 @@ under,
                 crate::contract::native_label(&[(x_title, site.cat.to_string()), (layer_value_title.as_str(), site.value.to_string())])
             }))
         })?;
-        Ok(mark_labels(ml, false, false, true, &points, 0, payload.board_style.as_ref(), 0.0, 0.0, r.canvas.as_str(), under, r.link_open)?)
+        Ok(mark_labels(ml, false, false, true, &points, 0, payload.board_style.as_ref(), 0.0, 0.0, r.canvas.as_str(), under, &mut LayerCaptions::default(), r.link_open)?)
     };
     // A scale pinned away from the 0 baseline clips every bar layer and drops its radius.
     let layer_undercoat = std::cell::RefCell::new(Vec::new());
@@ -4792,10 +4792,14 @@ under,
             OverlayLayer::Scatter(_) => Ok(out.extend(paint_scatter_layer(kind_index, scale, under)?)),
         }
     };
+    // Where the layers' nodes sit in `plot`: what the bar labels stack against.
+    let mut layer_spans: Vec<std::ops::Range<usize>> = Vec::new();
     if !independent_y {
         for position in 0..layers.len() {
             let under = crate::annotation::DataMark::plot_marks(&plot);
+            let from = plot.len();
             paint_layer(&mut plot, position, &linear, &under)?;
+            layer_spans.push(from..plot.len());
         }
     }
 
@@ -4931,7 +4935,9 @@ under,
         let mut painted: Vec<Node> = Vec::new();
         let under = crate::annotation::DataMark::plot_marks(&plot);
         paint_layer(&mut painted, position, ll, &under)?;
+        let from = plot.len();
         plot.extend(clipped_if(clipped, &clips, (plot_w, plot_h), painted));
+        layer_spans.push(from..plot.len());
         if let (Some(rule_width), Some(zl)) = (zero_rule, &grid.threshold) {
             let zc = zl.stroke();
             let layer_edge = if layer_axes[position].side == LayerSide::Right { plot_right + ax_off_y + 0.5 } else { plot_left - ax_off_y + 0.5 } - plot_left;
@@ -4944,7 +4950,11 @@ under,
         }
     }
 
-    plot.splice(under_annotations..under_annotations, layer_undercoat.into_inner());
+    let undercoat = layer_undercoat.into_inner();
+    for span in &mut layer_spans {
+        *span = span.start + undercoat.len()..span.end + undercoat.len();
+    }
+    plot.splice(under_annotations..under_annotations, undercoat);
 
     let mut tail: Vec<Node> = Vec::new();
 
@@ -4960,6 +4970,7 @@ under,
     };
     let label_geom = LabelGeometry { band: &band, center: &label_center, linear: &linear };
     let under = crate::annotation::DataMark::plot_marks(&plot);
+    let mut captions = LayerCaptions::read(&mut plot, &layer_spans, plot_h, fonts)?;
     for layer in &label_layers {
         if facet.is_some() {
             // A facet cell's bounds carry its labels' ink; the grid lays rows out around it.
@@ -4997,11 +5008,13 @@ under,
             }
         })?;
         tail.extend(mark_labels(&layer.spec.ml, false, layer.stacked, !layer.total, &points, painted_layers,
-            payload.board_style.as_ref(), plot_left, plot_top, r.canvas.as_str(), &under, r.link_open)?);
+            payload.board_style.as_ref(), plot_left, plot_top, r.canvas.as_str(), &under, &mut captions, r.link_open)?);
         if !layer.total {
             painted_layers += 1;
         }
     }
+
+    captions.apply(&mut plot, &layer_spans);
 
     // Over the value labels; the plot origin is offset into the page frame.
     let mut occupied = crate::annotation::DataMark::plot_marks(&plot);

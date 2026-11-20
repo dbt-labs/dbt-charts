@@ -202,8 +202,6 @@ charts:
     x: category
     y: value
     style:
-      legend:
-        visible: false
       color:
         categorical:
           palette:
@@ -212,6 +210,8 @@ charts:
       marks:
         bar:
           band_width: 0.04
+      key:
+        visible: false
     layers:
     - type: scatter
       y: value
@@ -235,13 +235,6 @@ charts:
       stack_order: data
       # The chart is about the measures, not the backdrop, so the legend leads
       # with them; the bands then follow top-down as they stack.
-      legend:
-        values:
-        - Actual
-        - Goal
-        - Good
-        - Satisfactory
-        - Poor
       # Slots follow the color domain (poor, satisfactory, good, actual, goal),
       # so the three band grays run dark -> light as the band improves: worse
       # bands carry more ink, and the ramp reads as one sequence.
@@ -253,6 +246,14 @@ charts:
           - "#D5D8DC"
           - "#16181B"
           - "#16181B"
+      key:
+        legend:
+          values:
+            - Actual
+            - Goal
+            - Good
+            - Satisfactory
+            - Poor
     layers:
     - type: bar
       query: bullet_measures
@@ -338,10 +339,6 @@ charts:
       order: desc
     style:
       orientation: horizontal
-      legend:
-        values:
-        - "2019"
-        - "2024"
       color:
         categorical:
           palette:
@@ -351,6 +348,11 @@ charts:
       marks:
         bar:
           band_width: 0.04
+      key:
+        legend:
+          values:
+            - "2019"
+            - "2024"
     layers:
     - type: scatter
       y: value_2019
@@ -381,8 +383,6 @@ charts:
       order: desc
     style:
       orientation: horizontal
-      legend:
-        visible: false
       color:
         categorical:
           palette:
@@ -391,6 +391,8 @@ charts:
       marks:
         bar:
           band_width: 0.35
+      key:
+        visible: false
     layers:
     - type: scatter
       y: value
@@ -424,8 +426,6 @@ charts:
       # splitting each band into side-by-side slots.
       overlap: full
       # The bars' own colors read as rise, fall and total; no key needed.
-      legend:
-        visible: false
       marks:
         bar:
           labels:
@@ -433,6 +433,8 @@ charts:
       axis_y:
         labels:
           format: "$,.0f"
+      key:
+        visible: false
   candlestick:
     query: prices
     type: bar
@@ -446,8 +448,6 @@ charts:
       # One session per day, so each day's bar fills its band instead of a grouped slot.
       overlap: full
       # Rising and falling read from the marks themselves.
-      legend:
-        visible: false
       # The wick and the body share one color scale, in the domain's order: Down, Up.
       color:
         categorical:
@@ -465,6 +465,8 @@ charts:
       axis_y:
         labels:
           format: "$,.0f"
+      key:
+        visible: false
     layers:
     - type: bar
       y: close
@@ -487,8 +489,6 @@ charts:
     y_start: low
     style:
       overlap: full
-      legend:
-        visible: false
       # Slots: the ink wick, then the body's Down and Up fills.
       color:
         categorical:
@@ -504,6 +504,8 @@ charts:
       axis_y:
         labels:
           format: "$,.0f"
+      key:
+        visible: false
     layers:
     - type: bar
       y: close

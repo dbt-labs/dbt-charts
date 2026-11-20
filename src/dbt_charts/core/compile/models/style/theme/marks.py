@@ -77,29 +77,6 @@ class SeriesLabelFontStyle(FontStyle):
     )
 
 
-class SeriesLabelStyle(BaseModel):
-    """Series-label primitive: typography for any text mark that names a
-    data series, regardless of placement.
-
-    Endpoint labels (line/area) and direct stack labels (bar-stacked) read
-    their typography from this single primitive. Placement is family-specific;
-    typography is shared.
-
-    No ``align`` field: alignment is a placement decision owned by the
-    family-specific renderer (endpoint labels left-anchor in their pane;
-    stack labels center within their marks).
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    # InheritSlot: series_label.font fills from charts.font.
-    font: Annotated[
-        SeriesLabelFontStyle, InheritSlot(from_path="Style.charts.font")
-    ] = Field(
-        description="Series label font style overrides; cascade fills missing fields from charts.font.",
-    )
-
-
 class TotalSlotStyle(BaseModel):
     """Theme slot for one text element of the donut center total."""
 

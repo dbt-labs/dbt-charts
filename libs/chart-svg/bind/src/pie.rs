@@ -9,8 +9,7 @@
 //! wedge's theta, the compensated shares the label floor reads, the default label template with
 //! the tooltip's voted format, wedge fills by row position, companion ink, tooltip text and a
 //! donut's center total with its auto caption. A donut reads `charts.donut` over it for the hole
-//! and the total format only. The chart's own `style:`, a legend that is not a plain key beside, above or below
-//! the wheel, a shared color field
+//! and the total format only. The chart's own `style:`, a shared color field
 //! and every field the slice does not draw are refused by name. `engine`'s `tests/it/board.rs`
 //! draws the pie cases of `board_inputs.json`.
 
@@ -20,7 +19,8 @@ use board_model::chart::PieChart;
 use board_model::ids::ChartId;
 use board_model::primitives::{FormatSpec, LinkOpen, PaletteChoice};
 use board_model::rule::Auto;
-use board_model::style::legend::{LegendAlign, LegendDirection, LegendEdge, LegendPlacementEdge, LegendStyleBase};
+use board_model::style::key::KeyType;
+use board_model::style::legend::LegendEdge;
 use board_model::style::pie::PieChartStyle;
 use board_model::style::style::Style;
 use column_types::ColumnType;
@@ -35,17 +35,12 @@ use crate::formats::locale::{active_number_locale, d3_format};
 use crate::formats::{column_format, resolve_format_parts, AuthoredFormat, Formats, Kind, ResolvedFormat, Tiers};
 use crate::kpi::declared_column_format;
 use crate::label_template::{Scope, Template, Where};
-use crate::bound::{TablePosition, CategoryExcess, Empty, Failure, Family, Href, Listed, Pie, PieCenter, PieEmpty, PieKeyEdge, PieLabel, PieLabeled, PieLegend, PieSlice, PieTable, Table, TableCell, TableColumn};
+use crate::bound::{TablePosition, CategoryExcess, Empty, Failure, Family, Href, Listed, Pie, PieCenter, PieEmpty, PieKeyEdge, PieLabel, PieLabeled, PieSlice, PieTable, Table, TableCell, TableColumn};
 use crate::table::{number_columns, swatch_cell, table_cell, NumberInput, Role};
 use board_model::style::table::{CellAlign, SymbolMode, TableChartStyle};
 use display_text::slug_to_text;
-use crate::derived::{refuse_unwalked, LEGEND_WALKED};
-use crate::legend::{fold_symbol_limit, resolve_legend_values, SYMBOL_LIMIT};
 use crate::run::RunResult;
 use crate::category_colors::{self, CategoryColorScale};
-use crate::variables::LEGEND_VIEW_PREFIX;
-use crate::style::legend::walked_legend;
-use crate::style::{Tier, Tiers as StyleTiers};
 
 /// `WEDGE_LABEL_MIN_SHARE` in `core/constants/pie.py`: a slice labels only past this share.
 const WEDGE_LABEL_MIN_SHARE: f64 = 0.08;
@@ -65,31 +60,6 @@ const MUTED: char = '\u{2060}';
 /// A chart field, style or board fact that changes what the pie says and is not modeled.
 fn unmodeled(what: &str) -> Diagnostic {
     Diagnostic::refused(refuse!("a pie with {what} is not supported"))
-}
-
-/// A legend shape the key does not draw.
-#[derive(Clone, Copy)]
-enum Key {
-    Direction,
-    WrapValues,
-    Symbol,
-    EmptyValues,
-    ViewHeld,
-    DateLike,
-}
-
-impl Key {
-    fn refusal(self) -> Diagnostic {
-        let what = match self {
-            Key::Direction => "a legend whose direction runs against its edge",
-            Key::WrapValues => "a `values` list on a legend above or below the wheel",
-            Key::Symbol => "an authored legend symbol shape or fill",
-            Key::EmptyValues => "an empty `legend.values`",
-            Key::ViewHeld => "a legend view the board holds",
-            Key::DateLike => "a legend over date-like color values",
-        };
-        unmodeled(what)
-    }
 }
 
 /// Data the chart's rows hold that production draws another way, or fails on.
@@ -194,11 +164,11 @@ pub fn bind_pie(
     // `no_results::nothing_to_plot`: a query with no row draws the card's "No results" before any
     // column is read.
     if rows.is_empty() {
-        let headline = pie_legend(placed, style)?.label.element.font;
+        let headline = placed.style.charts.key.legend.base.label.element.font.clone();
         let empty = Some(PieEmpty { empty: Empty { filters: run.empty_filters_line(placed.public_id) }, headline });
         // No slice, so no table: layout draws the card and never reads these.
         let full = Ok(PieTable { heading: None, table: Table { columns: Vec::new(), empty: None, links: None }, value_widths: Vec::new() });
-        return Ok(Ok(Family::Pie(Box::new(Pie { canvas, ground, background, title, subtitle, hole, slices: Vec::new(), link_open, total: 0.0, center: None, legend: None, table_position: table_position(placed, style), labeled: PieLabeled::Direct, full, excess_categories: None, empty }))));
+        return Ok(Ok(Family::Pie(Box::new(Pie { canvas, ground, background, title, subtitle, hole, slices: Vec::new(), link_open, total: 0.0, center: None, table_position: table_position(placed, style), labeled: PieLabeled::Direct, full, excess_categories: None, empty }))));
     }
     if dataset.schema.get(color).map_err(diag::err_internal)? != &ColumnType::String {
         return Err(Data::ColorNotText.refusal());
@@ -273,7 +243,8 @@ pub fn bind_pie(
         return Err(diag::err_internal("the tooltip format settles a spec"));
     }
     let field_labels = &chart.radial.labels.field_labels;
-    let value_title = field_display_text(theta, field_labels, placed.style.charts.legend.base.title.element.font.case.as_str())?;
+    let value_title = field_display_text(theta, field_labels, placed.style.charts.key.legend.base.title.element.font.case.as_str())?;
+    let key = pie_key(placed, style);
     let mut slices = Vec::with_capacity(rows.len());
     for (idx, row) in rows.iter().enumerate() {
         let slot = idx % palette.len();
@@ -293,7 +264,7 @@ pub fn bind_pie(
         let scope = Scope { row, theta_field: theta, color_field: Some(color), percent: share, total };
         // `prepare_label_data`: a slice its `where` rejects gets no label.
         let kept = keep.as_ref().map_or(Ok(true), |w| w.holds(&scope)).map_err(|e| Label::Where(e).refusal())?;
-        let label = if kept && shares[idx] > WEDGE_LABEL_MIN_SHARE {
+        let label = if kept && key.kind != KeyKind::Legend && shares[idx] > WEDGE_LABEL_MIN_SHARE {
             let lines = template.render(&scope).map_err(|e| Label::Template(e).refusal())?;
             let ink = match scale {
                 Some(scale) => category_colors::ink_at(scale, names[idx], &companions, &canvas).map_err(diag::err_internal)?,
@@ -313,9 +284,8 @@ pub fn bind_pie(
         Some(caption) => Some(center(placed, donut, caption, declared.as_ref(), total, &vote, &locale)?),
         None => None,
     };
-    let legend = bind_legend(placed, style, color, field_labels, &names, &palette, scale, run)?;
     let attach = |rows: Vec<usize>, heading: Option<String>| refuse_table_style(&placed.style.charts.table).and_then(|()| attached_table(&rows, &shares, &names, &slices, &numbers, placed.style.charts.table.symbol_mode, formats, declared.as_ref(), heading));
-    let labeled = labeled_mode(&shares, || {
+    let labeled = labeled_mode(&shares, key, || {
         let small = (0..shares.len()).filter(|&i| shares[i] <= WEDGE_LABEL_MIN_SHARE).collect();
         attach(small, Some(display_text::language::tr("pie.too_small_to_label", None, &[]).map_err(diag::err_internal)?))
     });
@@ -326,7 +296,7 @@ pub fn bind_pie(
     let background = style.base.background.as_ref().map_or(placed.style.charts.background.as_str(), |c| c.as_str()).to_string();
     let title = chart.radial.shared.title.as_ref().map(|t| t.as_str().to_string()).filter(|t| !t.is_empty());
     let subtitle = chart.radial.shared.subtitle.as_ref().map(|t| t.as_str().to_string()).filter(|t| !t.is_empty());
-    Ok(Ok(Family::Pie(Box::new(Pie { canvas, ground, background, title, subtitle, hole, slices, link_open, total, center, legend, table_position: table_position(placed, style), labeled, full, excess_categories, empty: None }))))
+    Ok(Ok(Family::Pie(Box::new(Pie { canvas, ground, background, title, subtitle, hole, slices, link_open, total, center, table_position: table_position(placed, style), labeled, full, excess_categories, empty: None }))))
 }
 
 /// `row_href` over `pie_link_value`: the link's `{{ color }}` is the slice's name, `{{ theta }}` its
@@ -343,92 +313,32 @@ fn slice_href(template: &str, automatic: bool, row: &Map<String, Value>, theta: 
     if automatic { Href::new(&raw) } else { crate::links::resolve(&raw, run) }
 }
 
-/// The pie's legend as the board's `charts.legend` with the pie family's patch walked over it, the
-/// legend a pie draws and the face its empty card's headline paints in (`no_results::render`). A
-/// patch leaf the walk does not read is refused by name.
-fn pie_legend(placed: &Placed, style: &PieChartStyle) -> Result<LegendStyleBase, Diagnostic> {
-    let family = style.legended.legend.as_ref();
-    if let Some(patch) = family {
-        refuse_unwalked("legend", patch, &[LEGEND_WALKED.as_slice(), &["position.edge", "position.align"]].concat())?;
-    }
-    let tiers = StyleTiers { own: Tier::default(), family: Tier { legend: family.map(|legend| &legend.base), ..Tier::default() }, charts: &placed.style.charts };
-    walked_legend(&tiers).ok_or_else(|| diag::err_internal("the board's total legend ends the legend walk"))
+/// What the pie's `style.key` decides (`_resolve_pie`): whether the key is shown at all and its form.
+#[derive(Clone, Copy)]
+struct KeyForm {
+    visible: bool,
+    kind: KeyKind,
 }
 
-/// The color legend `_base_kwargs` decides for a radial chart and `plan_legend` lists: visible only
-/// when some tier says `visible: true` (a pie's slice labels name the series, so `auto` hides it),
-/// its entries the color values in row order each once, each in its palette slot, the key on the
-/// side the board or the pie's own `legend.position` names, else the right. A value the board's color
-/// plan seats paints as its slice does. Every legend shape the
-/// layout does not draw is refused by name.
-#[allow(clippy::too_many_arguments)]
-fn bind_legend(placed: &Placed, style: &PieChartStyle, color: &str, field_labels: &IndexMap<String, String>, names: &[&str], palette: &[String], scale: Option<&CategoryColorScale>, run: &RunResult) -> Result<Option<Box<PieLegend>>, Diagnostic> {
-    let base = pie_legend(placed, style)?;
-    if base.visible != Engine::Value(true) {
-        return Ok(None);
-    }
-    // `decide_legend_position`: an unset align is the start of the edge.
-    let TablePosition { edge, align } = table_position(placed, style);
-    let align = align.unwrap_or(LegendAlign::Start);
-    let edge = edge.unwrap_or(PieKeyEdge::Right);
-    // `decide_legend_direction`: horizontal along the top and bottom, vertical beside the wheel; an authored
-    // direction against its edge is a strip this layout does not draw.
-    let horizontal = matches!(edge, PieKeyEdge::Top | PieKeyEdge::Bottom);
-    if base.direction == Engine::Value(if horizontal { LegendDirection::Vertical } else { LegendDirection::Horizontal }) {
-        return Err(Key::Direction.refusal());
-    }
-    // A horizontal legend with no authored direction or columns wraps by the whole color domain's width, not
-    // the entries `values` keeps (`color_legend_entries`). Layout holds the domain (`PieLegend.domain`), but a
-    // wrapped strip over a `values` list has no twin yet, so it stays refused.
-    if horizontal && base.columns == 0 && base.direction == Engine::Rule(Auto::Auto) && base.values.is_some() {
-        return Err(Key::WrapValues.refusal());
-    }
-    if base.symbol_shape != Engine::Rule(Auto::Auto) || base.symbol_fill != Engine::Rule(Auto::Auto) {
-        return Err(Key::Symbol.refusal());
-    }
-    if base.values.as_ref().is_some_and(Vec::is_empty) {
-        return Err(Key::EmptyValues.refusal());
-    }
-    if run.variables.contains_key(&format!("{LEGEND_VIEW_PREFIX}{}", placed.public_id)) {
-        return Err(Key::ViewHeld.refusal());
-    }
-    let mut domain: Vec<&str> = Vec::new();
-    for name in names {
-        // `plan_legend` refuses a legend over a date-like color field (a temporal scale).
-        if column_types::is_date_like(name) {
-            return Err(Key::DateLike.refusal());
-        }
-        if !domain.contains(name) {
-            domain.push(name);
-        }
-    }
-    let order: Vec<usize> = match &base.values {
-        None => (0..domain.len()).collect(),
-        Some(authored) => resolve_legend_values(authored, &domain, None),
+/// `auto` leaves the form to the slices, `legend` is the full attached table with no slice labels,
+/// `direct` names the slices on the wedges and lists only the unlabeled ones in a table.
+#[derive(Clone, Copy, PartialEq)]
+enum KeyKind {
+    Auto,
+    Legend,
+    Direct,
+}
+
+/// The pie's key as the pie family's patch over the board's `charts.key`.
+fn pie_key(placed: &Placed, style: &PieChartStyle) -> KeyForm {
+    let family = style.keyed.key.as_ref();
+    let charts = &placed.style.charts.key;
+    let kind = match family.and_then(|key| key.r#type.as_ref()).unwrap_or(&charts.r#type) {
+        Engine::Value(KeyType::Legend) => KeyKind::Legend,
+        Engine::Value(KeyType::Direct) => KeyKind::Direct,
+        Engine::Rule(_) => KeyKind::Auto,
     };
-    let limit = base.symbol_limit.map_or(SYMBOL_LIMIT, |limit| limit as usize);
-    // `symbolLimit`: the first `limit - 1` entries, then one "+N more" note standing for the rest.
-    let fold = fold_symbol_limit(order.len(), limit);
-    // A value the board's plan seats paints its slice's color (`category_paint`); else its slot in the domain.
-    let mut entries: Vec<(String, String)> = order
-        .iter()
-        .take(fold.as_ref().map_or(order.len(), |(kept, _)| kept + 1))
-        .map(|&idx| {
-            let fill = match scale {
-                Some(scale) => category_colors::color_at(scale, domain[idx], palette).map_err(diag::err_internal)?,
-                None => palette[idx % palette.len()].clone(),
-            };
-            Ok((domain[idx].to_string(), fill))
-        })
-        .collect::<Result<_, Diagnostic>>()?;
-    // The note takes the first folded entry's slot and its fill, which it never paints.
-    if let (Some((_, note)), Some(last)) = (&fold, entries.last_mut()) {
-        last.0 = note.clone();
-    }
-    // `_base_kwargs`: a top legend that runs horizontally drops its title unless one was authored.
-    let hidden = base.title.visible == Engine::Value(false) || (edge == PieKeyEdge::Top && base.title.visible == Engine::Rule(Auto::Auto));
-    let title = if hidden { String::new() } else { field_display_text(color, field_labels, base.title.element.font.case.as_str())? };
-    Ok(Some(Box::new(PieLegend { entries, fold: fold.is_some(), domain: domain.iter().map(|name| name.to_string()).collect(), title, base, edge, align })))
+    KeyForm { visible: family.and_then(|key| key.visible).unwrap_or(charts.visible), kind }
 }
 
 /// `core/text/case.py::field_display_text`: the chart's `field_labels` entry for `field` verbatim,
@@ -440,24 +350,17 @@ fn field_display_text(field: &str, field_labels: &IndexMap<String, String>, case
     }
 }
 
-/// `merge_authored_position`: a leaf the pie's patch sets, else the board's; an edge the board leaves auto or
-/// at its endpoints, or an auto align, is none.
+/// `merge_authored_position`: a leaf the pie's patch sets, else the board's; an auto edge or align is none.
 fn table_position(placed: &Placed, style: &PieChartStyle) -> TablePosition {
     let charts = &placed.style.charts;
-    let family = style.legended.legend.as_ref();
+    let family = style.keyed.key.as_ref().map(|key| &key.legend);
     let edge = match family.and_then(|legend| legend.position.edge.as_ref()).map(authored_edge) {
         Some(edge) => edge,
-        None => match &charts.legend.position.edge {
-            Engine::Value(LegendPlacementEdge::Left) => Some(LegendEdge::Left),
-            Engine::Value(LegendPlacementEdge::Right) => Some(LegendEdge::Right),
-            Engine::Value(LegendPlacementEdge::Top) => Some(LegendEdge::Top),
-            Engine::Value(LegendPlacementEdge::Bottom) => Some(LegendEdge::Bottom),
-            Engine::Value(LegendPlacementEdge::Endpoints) | Engine::Rule(Auto::Auto) => None,
-        },
+        None => authored_edge(&charts.key.legend.position.edge),
     };
     let align = match family.and_then(|legend| legend.position.align.as_ref()) {
         Some(align) => align,
-        None => &charts.legend.position.leaves.align,
+        None => &charts.key.legend.position.leaves.align,
     };
     TablePosition {
         edge: edge.map(|edge| match edge {
@@ -538,14 +441,22 @@ fn refuse_unmodeled(
     }
 }
 
-/// `labeled_mode` (resolve): the slices alone decide whether a pie may label its big slices on the
-/// wheel (a slice under `INVISIBLE_SLICE_SHARE` makes it hybrid, with a table listing the small
-/// ones) or only a table of every slice labels it (no slice clears `WEDGE_LABEL_MIN_SHARE`). Whether
-/// the box lets the labels stand is the size stage's call.
-fn labeled_mode(shares: &[f64], small: impl FnOnce() -> Listed) -> PieLabeled {
-    if !shares.iter().any(|&share| share > WEDGE_LABEL_MIN_SHARE) {
+/// `labeled_mode` (resolve): the key decides first (`legend` is the full table alone, a hidden key the bare
+/// wheel, `direct` the wedge labels with a table of the slices too small to label); otherwise the slices alone
+/// decide whether a pie may label its big slices on the wheel (a slice under `INVISIBLE_SLICE_SHARE` makes it
+/// hybrid, with a table listing the small ones) or only a table of every slice labels it (no slice clears
+/// `WEDGE_LABEL_MIN_SHARE`). Whether the box lets the labels stand is the size stage's call.
+fn labeled_mode(shares: &[f64], key: KeyForm, small: impl FnOnce() -> Listed) -> PieLabeled {
+    let smallest = shares.iter().copied().fold(f64::INFINITY, f64::min);
+    if !key.visible {
+        PieLabeled::Bare
+    } else if key.kind == KeyKind::Legend {
         PieLabeled::None
-    } else if shares.iter().copied().fold(f64::INFINITY, f64::min) < INVISIBLE_SLICE_SHARE {
+    } else if key.kind == KeyKind::Direct {
+        if smallest <= WEDGE_LABEL_MIN_SHARE { PieLabeled::Hybrid(small()) } else { PieLabeled::Direct }
+    } else if !shares.iter().any(|&share| share > WEDGE_LABEL_MIN_SHARE) {
+        PieLabeled::None
+    } else if smallest < INVISIBLE_SLICE_SHARE {
         PieLabeled::Hybrid(small())
     } else {
         PieLabeled::Direct
@@ -727,15 +638,45 @@ fn center(
 mod tests {
     use super::*;
 
+    const AUTO: KeyForm = KeyForm { visible: true, kind: KeyKind::Auto };
+
     #[test]
     fn the_shares_alone_decide_the_labeled_mode() {
         let small = || Ok(PieTable { heading: None, table: Table { columns: Vec::new(), empty: None, links: None }, value_widths: Vec::new() });
-        assert_eq!(labeled_mode(&[0.5, 0.3, 0.2], small), PieLabeled::Direct);
-        assert!(matches!(labeled_mode(&[0.6, 0.25, 0.14, 0.01], small), PieLabeled::Hybrid(_)));
-        assert_eq!(labeled_mode(&[1.0 / 14.0; 14], small), PieLabeled::None);
+        assert_eq!(labeled_mode(&[0.5, 0.3, 0.2], AUTO, small), PieLabeled::Direct);
+        assert!(matches!(labeled_mode(&[0.6, 0.25, 0.14, 0.01], AUTO, small), PieLabeled::Hybrid(_)));
+        assert_eq!(labeled_mode(&[1.0 / 14.0; 14], AUTO, small), PieLabeled::None);
         // A slice at the label floor is not labeled (`share > WEDGE_LABEL_MIN_SHARE`).
-        assert_eq!(labeled_mode(&[0.08, 0.08, 0.84 / 2.0, 0.84 / 2.0], small), PieLabeled::Direct);
-        assert_eq!(labeled_mode(&[0.08; 12].iter().chain(&[0.04]).copied().collect::<Vec<_>>(), small), PieLabeled::None);
+        assert_eq!(labeled_mode(&[0.08, 0.08, 0.84 / 2.0, 0.84 / 2.0], AUTO, small), PieLabeled::Direct);
+        assert_eq!(labeled_mode(&[0.08; 12].iter().chain(&[0.04]).copied().collect::<Vec<_>>(), AUTO, small), PieLabeled::None);
+    }
+
+    #[test]
+    fn a_legend_key_is_the_full_table_alone_whatever_the_shares() {
+        let small = || Ok(PieTable { heading: None, table: Table { columns: Vec::new(), empty: None, links: None }, value_widths: Vec::new() });
+        let legend = KeyForm { visible: true, kind: KeyKind::Legend };
+        assert_eq!(labeled_mode(&[0.5, 0.3, 0.2], legend, small), PieLabeled::None);
+        assert_eq!(labeled_mode(&[0.6, 0.25, 0.14, 0.01], legend, small), PieLabeled::None);
+    }
+
+    #[test]
+    fn a_direct_key_labels_the_wedges_and_never_reaches_the_full_table() {
+        let small = || Ok(PieTable { heading: None, table: Table { columns: Vec::new(), empty: None, links: None }, value_widths: Vec::new() });
+        let direct = KeyForm { visible: true, kind: KeyKind::Direct };
+        assert_eq!(labeled_mode(&[1.0 / 14.0; 14], AUTO, small), PieLabeled::None);
+        assert!(matches!(labeled_mode(&[1.0 / 14.0; 14], direct, small), PieLabeled::Hybrid(_)));
+        assert!(matches!(labeled_mode(&[0.6, 0.35, 0.05], direct, small), PieLabeled::Hybrid(_)));
+        assert_eq!(labeled_mode(&[0.5, 0.3, 0.2], direct, small), PieLabeled::Direct);
+    }
+
+    #[test]
+    fn a_hidden_key_is_the_bare_wheel_whatever_its_type() {
+        let small = || Ok(PieTable { heading: None, table: Table { columns: Vec::new(), empty: None, links: None }, value_widths: Vec::new() });
+        for kind in [KeyKind::Auto, KeyKind::Legend, KeyKind::Direct] {
+            let hidden = KeyForm { visible: false, kind };
+            assert_eq!(labeled_mode(&[1.0 / 14.0; 14], hidden, small), PieLabeled::Bare);
+            assert_eq!(labeled_mode(&[0.6, 0.25, 0.14, 0.01], hidden, small), PieLabeled::Bare);
+        }
     }
 
     #[test]

@@ -3,10 +3,9 @@
 use crate::primitives::{PatternStyle, StrokeStyle};
 use crate::style::bar::{StackMode, StackOrder};
 use crate::style::chart_base::{
-    AnnotatedChartStyleMixin, CartesianChartStyle, LegendedChartStyleBase,
+    AnnotatedChartStyleMixin, CartesianChartStyle, LineAreaKeyedChartStyleBase,
     QuantitativeAxisChartStyleMixin,
 };
-use crate::style::endpoint_labels::EndpointLabelsConfig;
 use crate::chart::conditional_formatting::Predicate;
 use crate::style::axis::AxisXConditional;
 use crate::style::bar::misplaced_defaults;
@@ -108,7 +107,7 @@ pub struct AreaChartStyle {
     #[flatten]
     pub quantitative: QuantitativeAxisChartStyleMixin,
     #[flatten]
-    pub legended: LegendedChartStyleBase,
+    pub keyed: LineAreaKeyedChartStyleBase,
     #[flatten]
     pub cartesian: CartesianChartStyle,
     /// Default stack mode for area charts: 'none', 'zero', 'normalize', or 'center'.
@@ -116,8 +115,6 @@ pub struct AreaChartStyle {
     /// Z-order of stacked segments. Unset or 'value' puts the largest aggregate at baseline. 'data' stacks series in first-appearance order: SQL row order for color:, the listed order for y: [a, b, ...] (a measure null in the first rows appears later). 'alphabetical' sorts by series name. Ignored when stacking is off or there is only one series.
     #[model(absent = "ranks by value")]
     pub stack_order: Option<StackOrder>,
-    /// Series names printed on the bands instead of in a legend.
-    pub endpoint_labels: EndpointLabelsConfig,
     /// How the `pattern:` channel paints fills.
     pub pattern: PatternStyle,
     /// Area-family mark overrides.

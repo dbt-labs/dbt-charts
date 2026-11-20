@@ -46,7 +46,7 @@ pub fn bind_geoshape(chart: &GeoshapeChart, run: &RunResult, placed: &Placed) ->
         (geo.height.is_some() || geo.width.is_some(), "a `height` or `width`"),
         (geo.shared.subtitle.as_ref().is_some_and(|t| !t.as_str().is_empty()) && geo.shared.title.as_ref().is_none_or(|t| t.as_str().is_empty()), "a `subtitle` but no `title`"),
         (!chart.style.conditional.is_empty() || !style.conditional.is_empty(), "a conditional style"),
-        (placed.style.charts.legend.base.visible == Engine::Value(true), "a visible legend"),
+        (placed.style.charts.key.visible && matches!(placed.style.charts.key.r#type, Engine::Value(board_model::style::key::KeyType::Legend)), "a visible legend"),
     ];
     if let Some((_, what)) = checks.iter().find(|(set, _)| *set) {
         return Err(unmodeled(what));

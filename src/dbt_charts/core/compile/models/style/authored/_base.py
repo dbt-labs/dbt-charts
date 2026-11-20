@@ -19,9 +19,7 @@ import re
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import (
-    BaseModel,
     BeforeValidator,
-    ConfigDict,
     Field,
     StringConstraints,
 )
@@ -83,7 +81,6 @@ from dbt_charts.core.compile.models.style.theme import (
     ScaleContinuousStyle,
     ScatterChartStyle,
     ScatterLayerStyle,
-    SideLegendStyle,
     Style,
     SupportTableStyle as SupportTableStyle,
     TableChartStyle,
@@ -207,30 +204,6 @@ else:
     PaddingStylePatch = build_patch_model(PaddingStyle)
 
 
-class EndpointLabelsConfig(BaseModel):
-    """Styling of the series names printed on the chart itself instead of in a legend.
-
-    The names appear when `legend.position.edge` is `endpoints`, which `auto`
-    resolves to wherever they can name every series (line and area charts and
-    stacked bars). Also called direct labels, series labels, or an in-chart
-    legend. Each series gets one label in its own color, beside the plot: to
-    the right on line, area, and vertical stacked bar charts, above the top
-    row on horizontal stacked bars. Their font comes from
-    `style.charts.series_label.font`.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
-
-    label_offset: float = Field(
-        description="Gap in pixels between the plot and the series labels."
-    )
-    height: float = Field(
-        description=(
-            "Height in pixels of the label strip above a horizontal stacked bar."
-        )
-    )
-
-
 # Inject authored types into theme.py's module globals so that Pydantic
 # can resolve forward references in _CartesianChartStyle, BarChartStyle, etc.
 # when build_patch_model(Style) triggers schema building for those classes.
@@ -250,7 +223,6 @@ for _name, _obj in (
     ("SupportTableStylePatch", SupportTableStylePatch),
     ("PaddingStylePatch", PaddingStylePatch),
     ("TableChartStylePatch", TableChartStylePatch),
-    ("EndpointLabelsConfig", EndpointLabelsConfig),
     ("PaginationConfig", PaginationConfig),
     ("TableColumnDefaultsConfig", TableColumnDefaultsConfig),
     ("TableColumnConfig", TableColumnConfig),
@@ -263,7 +235,7 @@ del _theme_mod, _name, _obj
 # Must run BEFORE build_patch_model(BarChartStyle) etc. so that model_fields
 # on chart-style classes reflect the real authored types, not unresolved
 # ForwardRefs. The patch factory uses field annotations to determine recursive
-# types; a ForwardRef for EndpointLabelsConfig produces the wrong patch.
+# types.
 _authored_ns: dict[str, object] = {
     "BaseAxisStylePatch": BaseAxisStylePatch,
     "AxisXStylePatch": AxisXStylePatch,
@@ -275,7 +247,6 @@ _authored_ns: dict[str, object] = {
     "SupportTableStylePatch": SupportTableStylePatch,
     "PaddingStylePatch": PaddingStylePatch,
     "TableChartStylePatch": TableChartStylePatch,
-    "EndpointLabelsConfig": EndpointLabelsConfig,
     "PaginationConfig": PaginationConfig,
     "TableColumnDefaultsConfig": TableColumnDefaultsConfig,
     "TableColumnConfig": TableColumnConfig,
@@ -406,14 +377,6 @@ else:
 
 if TYPE_CHECKING:
 
-    class SideLegendStylePatch(SideLegendStyle):
-        pass
-
-else:
-    SideLegendStylePatch = build_patch_model(SideLegendStyle)
-
-if TYPE_CHECKING:
-
     class PieLegendStylePatch(PieLegendStyle):
         pass
 
@@ -433,14 +396,10 @@ if TYPE_CHECKING:
     class AreaMarkStylePatch(AreaMarkStyle):
         pass
 
-    class EndpointLabelsConfigPatch(EndpointLabelsConfig):
-        pass
-
 else:
     BarMarkStylePatch = build_patch_model(BarMarkStyle)
     LineMarkStylePatch = build_patch_model(LineMarkStyle)
     AreaMarkStylePatch = build_patch_model(AreaMarkStyle)
-    EndpointLabelsConfigPatch = build_patch_model(EndpointLabelsConfig)
 
 # Per-family layer style patches — generated from thin required wrappers in style/theme/.
 # build_patch_model recurses: LineLayerStyle{marks: LineChartMarksStyle} →

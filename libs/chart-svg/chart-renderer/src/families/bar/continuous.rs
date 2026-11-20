@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use super::axes::ContinuousXAxis;
 use super::bind::zero_label;
 use super::domain::nice_shared_scale;
-use super::labels::{LabelPoint, LabelSpec, label_font, label_spot, mark_labels, zero_label_at};
+use super::labels::{LabelPoint, LabelSpec, label_font, label_spot, LayerCaptions, mark_labels, zero_label_at};
 use super::layout::{Drawn, clipped_if};
 use super::legend::{grouped_legend_domain, numeric_legends_of, scatter_legend_entries};
 use super::marks::{Rounded, bar_passes, base_mark, baseline_rule_layers, baseline_rules, collapsed_bars, datum_by_key, hover_band_for, layer_bar, layer_bar_labels, link_hrefs, unity_rule};
@@ -1332,6 +1332,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                     blank,
                     side,
                     ends: None,
+                    inner_segment: false,
                     span: None,
                     text: spec.text(None, yv, None)?.0,
                     href: hrefs.get(&(cat.clone(), String::new())).cloned(),
@@ -1343,7 +1344,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
             })
             .collect::<Result<Vec<LabelPoint>, String>>()?;
         let under = crate::annotation::DataMark::plot_marks(&plot);
-        plot.extend(mark_labels(ml, false, false, true, &points, painted_layers, board_style, 0.0, 0.0, r.canvas.as_str(), &under, r.link_open)?);
+        plot.extend(mark_labels(ml, false, false, true, &points, painted_layers, board_style, 0.0, 0.0, r.canvas.as_str(), &under, &mut LayerCaptions::default(), r.link_open)?);
     }
     let annotations = crate::annotation::AnnotationCtx { occupied: crate::annotation::DataMark::plot_marks(&plot), ..annotations };
     // Built where the data marks are known, painted right after the x axis so a rule on the plot edge covers its ticks.

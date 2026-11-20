@@ -21,7 +21,6 @@ from dbt_charts.core.compile.models.primitives import (
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     ChartTitleStylePatch,
-    _LegendedChartStyleBase,
     _PaintedChartStyleBase,
 )
 from dbt_charts.core.compile.models.style.theme.area import (
@@ -56,6 +55,7 @@ from dbt_charts.core.compile.models.style.theme.heatmap import (
 from dbt_charts.core.compile.models.style.theme.histogram import (
     HistogramChartStyle,
 )
+from dbt_charts.core.compile.models.style.theme.key import ChartsKeyStyle
 from dbt_charts.core.compile.models.style.theme.kpi import (
     KpiChartStyle,
 )
@@ -67,7 +67,6 @@ from dbt_charts.core.compile.models.style.theme.line import (
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     GlobalMarksStyle,
-    SeriesLabelStyle,
 )
 from dbt_charts.core.compile.models.style.theme.pie import (
     PieChartStyle,
@@ -143,11 +142,11 @@ else:
     PieChartStylePatch = build_patch_model(PieChartStyle)
 
 
-class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
+class ChartsStyle(_PaintedChartStyleBase):
     """Registry of all chart-type styles plus shared chart configuration.
 
     Inherits ``_PaintedChartStyleBase`` — most shared chart fields (padding,
-    aspect_ratio, min_height, max_height, legend) are populated by theme YAML
+    aspect_ratio, min_height, max_height, key) are populated by theme YAML
     at the global ``charts:`` level and serve as the cascade source for
     per-family defaults.  ``font``/``border`` are declared directly on this
     class rather than inherited — ``_ChartStyleBase`` deliberately does not
@@ -351,11 +350,7 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
         ),
     )
 
-    # Series-label primitive — typography for Cartesian series-naming text marks
-    # (endpoint labels and direct stack labels).
-    series_label: SeriesLabelStyle = Field(
-        description="Shared series-label typography for endpoint and stack labels."
-    )
+    key: ChartsKeyStyle = Field(description="How every chart names its series.")
 
     # Non-Vega chart types (required — theme pipeline always populates)
     kpi: KpiChartStyle = Field(description="KPI card chart style.")

@@ -281,7 +281,7 @@ pub fn bind(
             rail: None,
             entries: Vec::new(),
             asks_top_strip: false,
-            authored: AuthoredLegend::Side(lines.derived.legend.clone()),
+            authored: AuthoredLegend { style: lines.derived.legend.clone(), visible: lines.derived.key_visible },
         },
         legends: Vec::new(),
         support: None,

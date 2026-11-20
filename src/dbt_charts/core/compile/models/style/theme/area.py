@@ -4,15 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Literal
 
-if TYPE_CHECKING:
-    # These authored types are injected into theme/__init__.py's module globals at
-    # runtime by dbt_charts.core.compile.models.style.authored (after authored.py
-    # finishes executing). The import here is TYPE_CHECKING-only to give pyright and
-    # ruff the static definitions they need without creating a circular import.
-    from dbt_charts.core.compile.models.style.authored import (  # noqa: PLC0415
-        EndpointLabelsConfig,
-    )
-
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.conditional_predicate import (
@@ -29,7 +20,7 @@ from dbt_charts.core.compile.models.primitives import PatternStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
-    _LegendedChartStyleBaseAllOptional,
+    _LineAreaKeyedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
 )
 from dbt_charts.core.compile.models.style.theme.axis_conditional import (
@@ -124,7 +115,7 @@ class AreaLayerStyle(BaseModel):
 
 class _AreaChartStyleBase(
     _CartesianChartStyle,
-    _LegendedChartStyleBaseAllOptional,
+    _LineAreaKeyedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
     _AnnotatedChartStyleMixin,
 ):
@@ -149,9 +140,6 @@ class _AreaChartStyleBase(
             "'alphabetical' sorts by series name. Ignored when stacking is off or "
             "there is only one series."
         ),
-    )
-    endpoint_labels: EndpointLabelsConfig = Field(
-        description="Styling of the series names printed on the bands (`legend.position.edge: endpoints`)."
     )
     pattern: PatternStyle = Field(
         description="How the `pattern:` channel paints fills."

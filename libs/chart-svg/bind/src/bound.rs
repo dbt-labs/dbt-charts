@@ -17,7 +17,7 @@ use board_model::ids::{BoardId, ChartId, ItemId};
 use board_model::style::board::{ChartTitleStyle, PaddingStyle};
 use board_model::style::font::FontStyle;
 use board_model::style::table::CellAlign;
-use board_model::style::legend::{LegendAlign, LegendStyle, LegendStyleBase, SideLegendStyle};
+use board_model::style::legend::{LegendAlign, LegendStyle};
 use color::Rgba;
 use d3rs::vega_symbol::VegaSymbol;
 use diagnostic::Diagnostic;
@@ -418,16 +418,13 @@ pub struct Pie {
     pub full: Listed,
     /// The color column names more categories than a reader can tell apart (`WARN-TOO-MANY-COLOR-CATEGORIES`).
     pub excess_categories: Option<CategoryExcess>,
-    /// The color legend, when the board makes it visible.
-    pub legend: Option<Box<PieLegend>>,
-    /// The authored `legend.position`: where it puts the table of a pie drawn with one, visible legend or not,
-    /// and the edge and align of the visible legend (both read the same merge).
+    /// The authored `key.legend.position`: where it puts the table of a pie drawn with one.
     pub table_position: TablePosition,
     /// The query returned no row: the card draws "No results" in place of a wheel, and `slices` is empty.
     pub empty: Option<PieEmpty>,
 }
 
-/// The authored `legend.position` edge and align of a pie (`merge_authored_position`), which place its
+/// The authored `key.legend.position` edge and align of a pie (`merge_authored_position`), which place its
 /// attached table (`choose_table_placement`, `decide_table_align`); none where the board names none.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TablePosition {
@@ -465,6 +462,8 @@ pub enum PieLabeled {
     Hybrid(Listed),
     /// No slice clears the label floor: only the table of every slice labels the pie.
     None,
+    /// The key is hidden: the bare wheel, whatever the box holds, never a table.
+    Bare,
 }
 
 /// A pie's attached table (`PieAttachment.table`): swatch, share, name and value columns over the
@@ -476,27 +475,6 @@ pub struct PieTable {
     /// Per listed slice, the text the value column is measured at (`_format_value_for_width`), which
     /// is not the text it prints.
     pub value_widths: Vec<String>,
-}
-
-/// A pie's color legend: its entries over the color scale's domain, the title it would draw and the
-/// walked style that places and fonts it. Layout limits the text and lays it out.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PieLegend {
-    /// `(label, fill)` per entry, in the legend's order.
-    pub entries: Vec<(String, String)>,
-    /// The last entry is the "+N more" note that stands for the entries past the symbol limit: it draws no swatch.
-    pub fold: bool,
-    /// The color scale's whole domain, in order, whatever the symbol limit keeps: a wrapped strip above or
-    /// below the wheel sizes its columns by all of it (`legend_wrap_columns`).
-    pub domain: Vec<String>,
-    /// The cased field name; empty when the title is hidden.
-    pub title: String,
-    /// The walked legend style (`direction`, `visible` and `title.visible` decided per chart).
-    pub base: LegendStyleBase,
-    /// The side of the wheel the legend reserves its strip on.
-    pub edge: PieKeyEdge,
-    /// Where the strip sits along that edge.
-    pub align: LegendAlign,
 }
 
 /// The side of a wheel a key sits on.
@@ -1205,12 +1183,11 @@ pub struct RailEnd {
     pub text: String,
 }
 
-/// The legend style a family walked, in board-model's own type for that family: line, area and
-/// bar may name series at their endpoints, the others place a legend on a side only.
+/// The legend style a family walked, and whether its key shows at all (`key.visible`).
 #[derive(Debug, Clone, PartialEq)]
-pub enum AuthoredLegend {
-    Endpoints(LegendStyle),
-    Side(SideLegendStyle),
+pub struct AuthoredLegend {
+    pub style: LegendStyle,
+    pub visible: bool,
 }
 
 /// A legend: its entries ordered and labeled.

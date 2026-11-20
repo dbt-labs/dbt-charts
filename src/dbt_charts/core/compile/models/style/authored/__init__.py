@@ -35,7 +35,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # Load-bearing import order: `_base` must be imported before any per-family
 # submodule below. `_base` injects authored types into `style.theme`'s module
 # globals and calls `model_rebuild()` on the theme chart-style classes so their
-# EndpointLabelsConfig/etc. forward refs resolve; each per-family submodule's
+# PaginationConfig/etc. forward refs resolve; each per-family submodule's
 # own `build_patch_model(FooChartStyle)` call reads those (by-then-resolved)
 # field annotations at *its own* import time. Moving `_base` below a per-family
 # import would silently rebuild the wrong (unresolved-ForwardRef) shape.
@@ -60,8 +60,6 @@ from dbt_charts.core.compile.models.style.authored._base import (
     ChartTitleStylePatch,
     DimensionLabelStylePatch,
     DimensionTicksStylePatch,
-    EndpointLabelsConfig,
-    EndpointLabelsConfigPatch,
     GlobalMarksStylePatch,
     LegendStylePatch,
     LineMarkStylePatch,
@@ -70,7 +68,6 @@ from dbt_charts.core.compile.models.style.authored._base import (
     PointMarkStylePatch,
     QuantitativeAxisStylePatch,
     ScaleContinuousStylePatch,
-    SideLegendStylePatch,
     StylePatch,
     SupportTableStylePatch,
     TotalSlotStylePatch,
@@ -149,8 +146,6 @@ __all__ = [
     "ColumnScaleConfig",
     "ColumnScaleTargetConfig",
     "SupportTableStylePatch",
-    "EndpointLabelsConfig",
-    "EndpointLabelsConfigPatch",
     "GeoshapeChartStylePatch",
     "GlobalMarksStylePatch",
     "HeatmapChartStylePatch",
@@ -162,7 +157,6 @@ __all__ = [
     "PaginationConfig",
     "PieChartStylePatch",
     "PieLegendStylePatch",
-    "SideLegendStylePatch",
     "PointMapChartStylePatch",
     "PointMarkStylePatch",
     "ScatterChartStylePatch",

@@ -17,6 +17,7 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedSeriesLabelStyle,
 )
 from dbt_charts.core.compile.models.style.theme import (
+    SeriesLabelFontStyle,
     font_weight_as_css,
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import settled
@@ -28,7 +29,7 @@ from dbt_charts.core.constants.marks import ENDPOINT_LABEL_LINE_HEIGHT_MULTIPLIE
 __all__ = [
     "_cartesian_style_tail",
     "_effective_palette",
-    "_effective_requested_alias_palette",
+    "_effective_warned_palette",
     "_effective_single_series_fill",
     "_unchanneled_fill",
     "_pin_companions",
@@ -47,12 +48,12 @@ class _HasColor(Protocol):
 def _resolve_patch_categorical(
     primary: _HasColor | None,
 ) -> tuple[list[str] | None, str | None]:
-    """Return (chart-local categorical palette override, alias provenance).
+    """Return (chart-local categorical palette override, warned-palette provenance).
 
     Returns (None, None) when the chart has no color.categorical override so
-    callers fall through to chart_style_context.palette / chart_style_context.requested_alias_palette.
-    The second element is the originally-requested name when the override is a
-    known WARN-PALETTE-UNSUPPORTED anti-pattern alias (e.g. "RdYlGn"), else None.
+    callers fall through to chart_style_context.palette / chart_style_context.warned_palette.
+    The second element is the authored name when the override is a known
+    WARN-PALETTE-UNSUPPORTED anti-pattern name (e.g. "RdYlGn"), else None.
 
     """
     if primary is None or primary.color is None:
@@ -61,12 +62,12 @@ def _resolve_patch_categorical(
     if _cat is None or _cat.palette is None:
         return None, None
     from dbt_charts.core.compile.resolve.style.palette import (
-        resolve_palette_alias,  # noqa: PLC0415
+        palette_with_warning,  # noqa: PLC0415
     )
 
     _pal = _cat.palette
     if isinstance(_pal, str):
-        return resolve_palette_alias(_pal)
+        return palette_with_warning(_pal)
     return list(_pal), None
 
 
@@ -82,22 +83,18 @@ def _effective_palette(
     return override if override is not None else chart_style_context.palette
 
 
-def _effective_requested_alias_palette(
+def _effective_warned_palette(
     chart_style_context: ChartStyleContext, primary: _HasColor | None
 ) -> str | None:
     """Return the effective WARN-PALETTE-UNSUPPORTED provenance for this chart.
 
     Mirrors ``_effective_palette``: a chart-local ``color.categorical.palette``
-    override — alias or not — always wins over the board value; only the
+    override — warned or not — always wins over the board value; only the
     absence of any chart-local override falls through to
-    ``chart_style_context.requested_alias_palette``.
+    ``chart_style_context.warned_palette``.
     """
     override, requested = _resolve_patch_categorical(primary)
-    return (
-        requested
-        if override is not None
-        else chart_style_context.requested_alias_palette
-    )
+    return requested if override is not None else chart_style_context.warned_palette
 
 
 def _primary_mark_paint(
@@ -195,6 +192,7 @@ def _pin_companions(
 
 def _resolved_series_label(
     chart_style_context: ChartStyleContext,
+    font: SeriesLabelFontStyle,
     eff_palette: list[str],
     width: float,
     canvas: str,
@@ -211,7 +209,6 @@ def _resolved_series_label(
     board-level cascade bag for the palette/font lookups above. Font fields
     are required post-cascade.
     """
-    font = chart_style_context.series_label.font
     compact = width_tier(width) in ("tiny", "narrow")
     font_size = font.compact_size if compact else settled(font.size)
     return ResolvedSeriesLabelStyle(

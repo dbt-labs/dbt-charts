@@ -76,7 +76,7 @@ def _resolved(
 ) -> ResolvedBarChart:
     patch: dict[str, object] = dict(patch_extra or {})
     if hide_legend:
-        patch["legend"] = {"visible": False}
+        patch["key"] = {"visible": False}
     if hide_axis_title:
         patch[hide_axis_title] = {"title": {"visible": False}}
     if orientation:
@@ -361,9 +361,7 @@ def test_a_layered_bar_is_charged_for_the_legend_its_layers_earn() -> None:
     assert isinstance(resolved, ResolvedBarChart)
 
     unlegended = layered.model_copy(
-        update={
-            "style": BarChartStylePatch.model_validate({"legend": {"visible": False}})
-        }
+        update={"style": BarChartStylePatch.model_validate({"key": {"visible": False}})}
     )
     without = resolve(unlegended, rows, _CTX, width=640.0)
     assert isinstance(without, ResolvedBarChart)
@@ -429,9 +427,12 @@ def test_a_suppressed_legend_is_charged_nothing() -> None:
 
     def build(hide_legend: bool) -> ResolvedBarChart:
         # The 2-column wrap the yield boundary was measured on.
-        patch: dict[str, object] = {"stack": "zero", "legend": {"compact_columns": 2}}
+        patch: dict[str, object] = {
+            "stack": "zero",
+            "key": {"legend": {"compact_columns": 2}},
+        }
         if hide_legend:
-            patch["legend"] = {"visible": False, "compact_columns": 2}
+            patch["key"] = {"visible": False, "legend": {"compact_columns": 2}}
         chart = BarChart(
             id="probe",
             query=SqlQuery(sql="SELECT 1", source="t"),
@@ -481,7 +482,7 @@ def _colored_overlay(
             else []
         ),
         style=BarChartStylePatch.model_validate(
-            {"legend": {"compact_columns": _OVERLAY_COLUMNS}}
+            {"key": {"legend": {"compact_columns": _OVERLAY_COLUMNS}}}
         ),
     )
     resolved = resolve(chart, rows, _CTX, width=300.0)
@@ -620,7 +621,7 @@ def test_a_layer_declining_its_legend_entry_is_not_charged_for_the_legend() -> N
                     type="line",
                     y=f"target_{n}",
                     label=f"A long target label {n}",
-                    legend=legend,
+                    key=legend,
                 )
                 for n in range(6)
             ],

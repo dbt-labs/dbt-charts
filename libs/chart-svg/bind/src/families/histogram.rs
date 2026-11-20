@@ -200,7 +200,7 @@ pub fn bind(id: &ChartId, chart: &BarChart, board: &Board, run: &RunResult, plac
         panels: Panels::Single,
         series: vec![series],
         layers: vec![MarkLayer { mark: Mark::Bins, y_scale: 0, panels: vec![datums] }],
-        naming: Naming { rail: None, entries: Vec::new(), asks_top_strip: false, authored: AuthoredLegend::Side(derived.legend.clone()) },
+        naming: Naming { rail: None, entries: Vec::new(), asks_top_strip: false, authored: AuthoredLegend { style: derived.legend.clone(), visible: derived.key_visible } },
         legends: Vec::new(),
         support: None,
         baselines,

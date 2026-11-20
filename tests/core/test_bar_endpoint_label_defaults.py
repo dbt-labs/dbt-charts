@@ -9,6 +9,7 @@ back to a legend wherever the rail could not name every series — see
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 
@@ -22,7 +23,6 @@ from dbt_charts.core.compile.models.chart.resolved import ResolvedBarChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     BarChartStylePatch,
-    LegendStylePatch,
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
@@ -75,7 +75,7 @@ def _resolved(
     data: list[_Row],
     orientation: str | None = None,
     stack: str = "zero",
-    legend: LegendStylePatch | None = None,
+    key: dict[str, Any] | None = None,
 ) -> ResolvedBarChart:
     chart = BarChart(
         id="t",
@@ -90,7 +90,7 @@ def _resolved(
             orientation=orientation,
             # Omitted rather than passed as None: the patch model rejects an
             # explicit None here.
-            **({"legend": legend} if legend else {}),
+            **({"key": key} if key else {}),
         ),
     )
     resolved = resolve(
@@ -149,7 +149,7 @@ def test_grouped_bar_labels_directly_when_the_author_asks_for_it() -> None:
         "month",
         _TEMPORAL_DATA,
         stack="none",
-        legend=LegendStylePatch.model_validate({"position": {"edge": "endpoints"}}),
+        key={"type": "direct"},
     )
 
     assert resolved.stack == "none"
@@ -166,7 +166,7 @@ def test_author_opt_in_reaches_the_render_layer_raise() -> None:
     resolved = _resolved(
         "month",
         _NEGATIVE_DATA,
-        legend=LegendStylePatch.model_validate({"position": {"edge": "endpoints"}}),
+        key={"type": "direct"},
     )
 
     assert resolved.style.endpoint_labels.visible is True
@@ -226,7 +226,7 @@ def test_author_can_still_turn_the_legend_off() -> None:
         color="stage",
         style=BarChartStylePatch(
             stack="none",
-            legend=LegendStylePatch.model_validate({"visible": False}),
+            key={"visible": False},
         ),
     )
     resolved = resolve(

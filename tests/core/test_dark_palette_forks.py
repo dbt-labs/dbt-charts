@@ -172,3 +172,36 @@ def test_neon_overrides_light_continuous_color_scheme():
         else None
     )
     assert neon_geo_palette != base_geo_palette
+
+
+@pytest.mark.parametrize(
+    ("name", "recommended"),
+    [("RdYlGn", "dbt-div-crimson-green"), ("parula", "dbt-seq-blue")],
+)
+def test_a_palette_without_a_dark_twin_refuses_a_dark_table_by_name(
+    name: str, recommended: str
+):
+    """No `-dark` twin to swap to: the table refuses with the reason and a
+    palette that has one, not a bare WCAG failure on the light neutral."""
+    with pytest.raises(palette.SurfaceUnsupportedError, match=recommended):
+        palette.palette(
+            name, surface="table", text_color=_NEON_TEXT, canvas_tone="dark"
+        )
+
+
+def test_every_house_continuous_palette_has_a_dark_twin():
+    """The dark-table refusal names a recommendation, which only the warned
+    third-party ramps have; every house continuous palette must swap instead."""
+    from dbt_charts.core.compile.models.palette import (  # noqa: PLC0415
+        PALETTE_WARN_RECOMMENDATIONS,
+    )
+
+    names = [
+        n
+        for fam in ("sequential", "diverging")
+        for n in palette.list_palettes(family=fam)
+        if not n.endswith("-dark") and n not in PALETTE_WARN_RECOMMENDATIONS
+    ]
+    assert names
+    missing = [n for n in names if not palette._has_continuous_dark_companion(n)]
+    assert not missing

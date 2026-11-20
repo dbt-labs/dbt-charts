@@ -41,6 +41,8 @@ pub struct Tier<'a> {
     pub axis_quantitative: Option<&'a Patch<QuantitativeAxisStyle>>,
     pub axis_band: Option<&'a Patch<BandAxisStyle>>,
     pub legend: Option<&'a Patch<LegendStyleBase>>,
+    /// The tier's authored `key.visible`.
+    pub visible: Option<bool>,
     pub title: Option<&'a Patch<ChartTitleStyle>>,
 }
 
@@ -61,7 +63,7 @@ pub(crate) fn set<T>(slot: &Tri<T>) -> Option<&T> {
 }
 
 macro_rules! tier_of {
-    ($style:ty, $patch:ty, quantitative: $quantitative:tt, legend: $legend:ident) => {
+    ($style:ty, $patch:ty, quantitative: $quantitative:tt, key: $key:ident) => {
         impl<'a> From<&'a $patch> for Tier<'a> {
             fn from(s: &'a $patch) -> Self {
                 Tier {
@@ -70,7 +72,8 @@ macro_rules! tier_of {
                     axis_y: set(&s.cartesian.axis_y),
                     axis_quantitative: tier_of!(@pq s, $quantitative),
                     axis_band: set(&s.cartesian.axis_band),
-                    legend: set(&s.legended.legend).map(|l| &l.base),
+                    legend: tier_of!(@pl s, $key),
+                    visible: tier_of!(@pv s, $key),
                     title: set(&s.cartesian.titled.title),
                 }
             }
@@ -84,7 +87,8 @@ macro_rules! tier_of {
                     axis_y: s.cartesian.axis_y.as_ref(),
                     axis_quantitative: tier_of!(@q s, $quantitative),
                     axis_band: s.cartesian.axis_band.as_ref(),
-                    legend: tier_of!(@l s, $legend),
+                    legend: tier_of!(@l s, $key),
+                    visible: tier_of!(@v s, $key),
                     title: s.cartesian.titled.title.as_ref(),
                 }
             }
@@ -94,16 +98,23 @@ macro_rules! tier_of {
     (@q $s:ident, false) => { None };
     (@pq $s:ident, true) => { set(&$s.quantitative.axis_quantitative) };
     (@pq $s:ident, false) => { None };
-    (@l $s:ident, edge) => { $s.legended.legend.as_ref().map(|l| &l.base) };
-    (@l $s:ident, side) => { Some(&$s.legended.legend.base) };
+    (@pk $s:ident, $k:ident) => { set(&$s.keyed.key) };
+    // A total's `key` is optional for the families that can name series on the chart, and an
+    // always-present, possibly empty patch for the rest.
+    (@pl $s:ident, $k:ident) => { tier_of!(@pk $s, $k).map(|k| &k.legend.base) };
+    (@pv $s:ident, $k:ident) => { tier_of!(@pk $s, $k).and_then(|k| k.visible) };
+    (@k $s:ident, edge) => { $s.keyed.key.as_ref() };
+    (@k $s:ident, side) => { Some(&$s.keyed.key) };
+    (@l $s:ident, $k:ident) => { tier_of!(@k $s, $k).map(|k| &k.legend.base) };
+    (@v $s:ident, $k:ident) => { tier_of!(@k $s, $k).and_then(|k| k.visible) };
 }
 
-tier_of!(BarChartStyle, BarChartStylePatch, quantitative: true, legend: edge);
-tier_of!(LineChartStyle, LineChartStylePatch, quantitative: true, legend: edge);
-tier_of!(AreaChartStyle, AreaChartStylePatch, quantitative: true, legend: edge);
-tier_of!(ScatterChartStyle, ScatterChartStylePatch, quantitative: true, legend: side);
-tier_of!(HistogramChartStyle, HistogramChartStylePatch, quantitative: true, legend: side);
-tier_of!(HeatmapChartStyle, HeatmapChartStylePatch, quantitative: false, legend: side);
+tier_of!(BarChartStyle, BarChartStylePatch, quantitative: true, key: edge);
+tier_of!(LineChartStyle, LineChartStylePatch, quantitative: true, key: edge);
+tier_of!(AreaChartStyle, AreaChartStylePatch, quantitative: true, key: edge);
+tier_of!(ScatterChartStyle, ScatterChartStylePatch, quantitative: true, key: side);
+tier_of!(HistogramChartStyle, HistogramChartStylePatch, quantitative: true, key: side);
+tier_of!(HeatmapChartStyle, HeatmapChartStylePatch, quantitative: false, key: side);
 
 /// The three tiers a cartesian chart's ladders read, and the board's `charts` whose
 /// total slots end them.

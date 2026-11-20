@@ -2,21 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dbt_charts.core.compile.models.constraints import (
-    ConstrainedModel,
-    Constraint,
-    Forbids,
-    ValueIn,
-)
-from dbt_charts.core.compile.models.factories import (
-    _PatchBase,
-    build_patch_model_ext,
-    register_patch,
-)
 from dbt_charts.core.compile.models.markers import (
     Absent,
     AutoUnset,
@@ -26,19 +15,12 @@ from dbt_charts.core.compile.models.primitives import (
     FontStyle,
     SymbolShape,
 )
-from dbt_charts.core.diagnostics.codes_compile import (
-    ERR_LEGEND_ALIGN_WITH_ENDPOINTS,
-    ERR_LEGEND_OVERLAY_WITH_ENDPOINTS,
-)
 
 # Where a legend sits relative to the plot. `edge` is the side it hugs,
 # `align` its position along that edge, `overlay` whether it floats over the
 # marks (reserving nothing) or takes a strip beside the plot.
 LegendEdge = Literal["left", "right", "top", "bottom"]
-# `endpoints` is no legend at all: the series are named on the chart itself
-# (`style.endpoint_labels` styles those labels). Only line, area and bar can
-# do it, so only their legend styles (and the board's) accept it.
-LegendEdgeSetting = Literal["left", "right", "top", "bottom", "endpoints", "auto"]
+LegendEdgeSetting = Literal["left", "right", "top", "bottom", "auto"]
 LegendAlign = Literal["start", "center", "end"]
 LegendAlignSetting = Literal["start", "center", "end", "auto"]
 # Vega-Lite legend direction values (encoding.color.legend.direction).
@@ -92,23 +74,8 @@ class _PlacementLeaves(BaseModel):
     )
 
 
-class SideLegendPositionStyle(_PlacementLeaves):
-    """Legend placement for families that cannot name series on the chart itself.
-
-    Scatter, heatmap, histogram and the geo families: `edge` is a side or
-    `auto`, never `endpoints`.
-    """
-
-    edge: Literal["left", "right", "top", "bottom", "auto"] | None = Field(
-        default=None,
-        description=(
-            "Side of the plot the legend sits on. 'auto' = the engine decides."
-        ),
-    )
-
-
 class LegendPositionStyle(_PlacementLeaves):
-    """Legend placement for line, area and bar charts, and the board-wide default.
+    """Legend placement: edge, align along it, overlay or reserve.
 
     Every leaf is `auto` on every built-in theme: the engine decides
     (``resolve/style/legend_position.py``) and bakes the concrete placement
@@ -117,51 +84,7 @@ class LegendPositionStyle(_PlacementLeaves):
 
     edge: LegendEdgeSetting | None = Field(
         default=None,
-        description=(
-            "Legend side, 'endpoints' for on-chart series names, or 'auto' "
-            "(engine decides)."
-        ),
-    )
-
-
-class _LegendPositionStylePatchBase(_PatchBase, ConstrainedModel):
-    """Refuses an ``align`` or ``overlay`` authored beside ``edge: endpoints``.
-
-    Judged on one authored mapping only: endpoint labels ignore an ``align`` or
-    ``overlay`` inherited from another tier or file.
-    """
-
-    __judges_one_mapping__: ClassVar[bool] = True
-    __constraints__: ClassVar[tuple[Constraint, ...]] = (
-        Forbids(
-            ("align",),
-            ERR_LEGEND_ALIGN_WITH_ENDPOINTS,
-            when=(
-                ValueIn("edge", ("endpoints",)),
-                ValueIn("align", ("auto",), negate=True),
-            ),
-        ),
-        Forbids(
-            ("overlay",),
-            ERR_LEGEND_OVERLAY_WITH_ENDPOINTS,
-            when=(
-                ValueIn("edge", ("endpoints",)),
-                ValueIn("overlay", ("auto",), negate=True),
-            ),
-        ),
-    )
-
-
-if TYPE_CHECKING:
-
-    class LegendPositionStylePatch(LegendPositionStyle):
-        pass
-
-else:
-    LegendPositionStylePatch = register_patch(LegendPositionStyle)(
-        build_patch_model_ext(
-            LegendPositionStyle, base_cls=_LegendPositionStylePatchBase
-        )
+        description="Side of the plot the legend sits on. 'auto' = the engine decides.",
     )
 
 
@@ -237,14 +160,6 @@ class _LegendStyleBase(BaseModel):
     )
     label: LegendLabelStyle = Field(description="Legend label style.")
     title: LegendTitleStyle = Field(description="Legend title style.")
-    visible: bool | Literal["auto"] | None = Field(
-        default=None,
-        description=(
-            "Show the legend. 'auto' shows it unless direct labeling (endpoint "
-            "labels, or a pie's slice labels) names the series instead; true "
-            "keeps it beside direct labels and false hides it."
-        ),
-    )
     symbol_limit: Annotated[int | None, Absent("no cap")] = Field(
         default=None,
         ge=1,
@@ -287,18 +202,15 @@ class _LegendStyleBase(BaseModel):
 class LegendStyle(_LegendStyleBase):
     position: LegendPositionStyle = Field(
         default_factory=LegendPositionStyle,
-        description="Legend edge (or `endpoints`), align along it, overlay or reserve.",
-    )
-
-
-class SideLegendStyle(_LegendStyleBase):
-    position: SideLegendPositionStyle = Field(
-        default_factory=SideLegendPositionStyle,
         description="Legend edge, align along it, overlay or reserve.",
     )
 
 
-class PieLegendStyle(_LegendStyleBase):
+class PieLegendStyle(BaseModel):
+    """A pie's key legend is its attached table: `position` places it, nothing else styles it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     position: PiePositionStyle = Field(
         default_factory=PiePositionStyle,
         description="Pie key placement: edge and align along it.",
@@ -306,4 +218,4 @@ class PieLegendStyle(_LegendStyleBase):
 
 
 # Any family's legend style; a resolver that only reads the shared leaves takes this.
-ChartLegendStyle = LegendStyle | SideLegendStyle | PieLegendStyle
+ChartLegendStyle = LegendStyle | PieLegendStyle

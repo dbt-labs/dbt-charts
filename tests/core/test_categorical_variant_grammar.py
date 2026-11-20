@@ -634,7 +634,7 @@ class TestWholeListVariantThroughFullCompile:
         composed -- must resolve through the board-level whole-list field,
         not just through `palette()` called directly.
 
-        `resolve_palette_alias` (the whole-list resolver `tokens.py`'s
+        `palette_with_warning` (the whole-list resolver `tokens.py`'s
         `_resolve_color_tokens` walk calls) used to parse the `:N` shorthand
         before splitting off the variant, so `_parse_palette_reference` saw
         `"4.dark"` as the steps segment and raised -- a path `palette()`

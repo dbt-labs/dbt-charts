@@ -84,13 +84,14 @@ style:
           color: chrome[11]
       grid:
         color: chrome[5]
-    legend:
-      label:
-        font:
-          color: chrome[8]
-      title:
-        font:
-          color: chrome[10]
+    key:
+      legend:
+        label:
+          font:
+            color: chrome[8]
+        title:
+          font:
+            color: chrome[10]
     # Soft tooltip: no outline (the _base drop shadow separates the card).
     # stark is the hard-outline variant.
     tooltip:

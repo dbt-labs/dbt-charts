@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'Every value axis uses one compaction tier: a 1,500k axis now reads 1.5M, and scatter and histogram axes no longer mix tiers on one axis.'
-time: 2026-11-10T09:21:46.582589-08:00

@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 
 use super::domain::row_keys;
-use super::labels::{LabelPoint, LabelSide, LabelSpec, LabelStyle, label_font, label_need, label_position, label_spot, mark_labels, plain_label_place};
+use super::labels::{LabelPoint, LabelSide, LabelSpec, LabelStyle, label_font, label_need, label_position, label_spot, LayerCaptions, mark_labels, plain_label_place};
 use super::time_x::TimeX;
 use super::{BarResolved, MIN_COLUMN_WIDTH, Overlap};
 
@@ -415,6 +415,7 @@ pub(crate) fn layer_bar_labels(
                 blank,
                 side,
                 ends: None,
+                inner_segment: false,
                 span: None,
                 text,
                 href: link.map(|link| link.href(mark.row)).transpose()?,
@@ -431,7 +432,7 @@ pub(crate) fn layer_bar_labels(
         Some(crowd.layer),
         boxes.into_iter().zip(bar_widths).map(|((ink, over_bar), &bar_width)| (ink, over_bar.then_some(bar_width))),
     );
-    mark_labels(ml, false, false, true, &points, 0, board_style, 0.0, 0.0, canvas, under, link.map(|link| link.open).unwrap_or_default())
+    mark_labels(ml, false, false, true, &points, 0, board_style, 0.0, 0.0, canvas, under, &mut LayerCaptions::default(), link.map(|link| link.open).unwrap_or_default())
 }
 
 /// A bar layer's label anchor and side: `plain_label_place` on the layer's own

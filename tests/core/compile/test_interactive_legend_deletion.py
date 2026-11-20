@@ -63,9 +63,9 @@ def test_chart_local_interactive_legend_stripped(catalog: YamlSchemaCatalog) -> 
 
     migrated = _migrate(raw, catalog)
 
-    legend = migrated["charts"]["sales"]["style"]["legend"]
-    assert "interactive_legend" not in legend
-    assert legend["visible"] is True
+    key = migrated["charts"]["sales"]["style"]["key"]
+    assert "interactive_legend" not in key.get("legend", {})
+    assert key["visible"] is True
     AuthoredBoard.model_validate(migrated)
 
 
@@ -94,8 +94,8 @@ def test_chart_local_interactive_legend_false_also_stripped(
 
     migrated = _migrate(raw, catalog)
 
-    legend = migrated["charts"]["heat"]["style"]["legend"]
-    assert "interactive_legend" not in legend
+    key = migrated["charts"]["heat"]["style"]["key"]
+    assert "interactive_legend" not in key.get("legend", {})
 
 
 def test_global_chart_type_interactive_legend_stripped(
@@ -126,9 +126,9 @@ def test_global_chart_type_interactive_legend_stripped(
 
     migrated = _migrate(raw, catalog)
 
-    legend = migrated["style"]["charts"]["bar"]["legend"]
-    assert "interactive_legend" not in legend
-    assert legend["visible"] is True
+    key = migrated["style"]["charts"]["bar"]["key"]
+    assert "interactive_legend" not in key.get("legend", {})
+    assert key["visible"] is True
     AuthoredBoard.model_validate(migrated)
 
 
@@ -144,7 +144,7 @@ def test_board_without_interactive_legend_is_unchanged(
                 "x": "month",
                 "y": "amount",
                 "style": {
-                    "legend": {"visible": True},
+                    "key": {"visible": True, "type": "legend"},
                 },
             }
         },
@@ -216,8 +216,8 @@ def test_yaml_text_strips_interactive_legend_key(catalog: YamlSchemaCatalog) -> 
     assert "interactive_legend" not in migrated
     assert "# keep this comment" in migrated
     doc = load_yaml_mapping(migrated)
-    legend = doc["charts"]["sales"]["style"]["legend"]
-    assert legend["visible"] is True
+    key = doc["charts"]["sales"]["style"]["key"]
+    assert key["visible"] is True
 
 
 def test_yaml_text_strips_nested_board_interactive_legend(

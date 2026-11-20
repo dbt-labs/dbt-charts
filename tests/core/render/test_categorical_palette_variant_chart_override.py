@@ -119,13 +119,13 @@ def test_chart_level_shorthand_alias_still_warns(alias: str) -> None:
     on a known anti-pattern name must still surface WARN-PALETTE-UNSUPPORTED.
 
     `_resolve_color_tokens`'s whole-list branch used to gate on
-    `is_warn_alias(value)`, an exact membership check against `PALETTE_WARN_ALIASES`
+    `is_warned_palette(value)`, an exact membership check against `PALETTE_WARN_RECOMMENDATIONS`
     -- `"RdYlGn:5"` and `"RdYlGn_r"` are not exact members, so the branch
     resolved them to `list[str]` before `chart_context.py`/`_palette.py`
-    ever saw the raw string, and `requested_alias_palette` came back `None`:
+    ever saw the raw string, and `warned_palette` came back `None`:
     the warning silently disappeared for every shorthand-suffixed alias.
-    `resolve_palette_alias()` strips the shorthand the same way
-    `_parse_palette_reference` does before checking `PALETTE_WARN_ALIASES`, so the
+    `palette_with_warning()` strips the shorthand the same way
+    `_parse_palette_reference` does before checking `PALETTE_WARN_RECOMMENDATIONS`, so the
     literal string survives for the detector to re-derive provenance from.
     """
     style_yaml = f"""      color:
@@ -161,7 +161,7 @@ def test_chart_level_shorthand_steps_plus_variant_renders(field: str) -> None:
     -- authored as a *chart-level* override, must render instead of
     crashing ERR-INTERNAL.
 
-    `resolve_palette_alias` used to parse the `:N` shorthand before
+    `palette_with_warning` used to parse the `:N` shorthand before
     splitting off the variant, so `_parse_palette_reference` saw the tail
     `"4.dark"` where it expected an integer and raised -- reachable from
     every board path (`tokens.py`'s whole-list branch calls it), even

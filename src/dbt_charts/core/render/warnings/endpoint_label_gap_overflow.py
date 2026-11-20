@@ -44,7 +44,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             Diagnostic.from_code(
                 code,
                 chart=chart_id,
-                path=f"charts.{chart_id}.style.endpoint_labels",
+                path=f"charts.{chart_id}.style.key.direct",
                 message=code.message_template.format(
                     chart_id=chart_id,
                     series_count=overflow.series_count,

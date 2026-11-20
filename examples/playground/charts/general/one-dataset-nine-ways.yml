@@ -83,11 +83,11 @@ charts:
       color:
         categorical:
           palette: [dbt-grays.10, dbt-grays.10]
-      legend:
-        visible: false
       marks:
         bar:
           size: 3
+      key:
+        visible: false
     layers:
       - type: scatter
         y: value

@@ -74,11 +74,19 @@
     },
     {
       "version": "0.12.0",
+      "status": "RELEASED",
+      "released_at": "2026-11-20",
+      "file": "0.12.0.json",
+      "sha256": "810a4a0d1c9df72f0b1f71e91545f30cedd389b8d8b779d559c2f0ddbfea282c",
+      "predecessor": "0.11.0"
+    },
+    {
+      "version": "0.13.0",
       "status": "DEV",
       "released_at": null,
       "file": null,
       "sha256": null,
-      "predecessor": "0.11.0"
+      "predecessor": "0.12.0"
     }
   ]
 }

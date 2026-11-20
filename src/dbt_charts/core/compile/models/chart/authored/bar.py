@@ -62,13 +62,13 @@ class BarChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
             when=(ValueIn("type", ("histogram",)),),
         ),
         Forbids(
-            ("style.legend.position.edge",),
-            "legend position `endpoints` is not supported on type: histogram: "
-            "it has one series, so there are no endpoint labels to print. Set "
-            "the edge to `top`, `bottom`, `left` or `right`, or remove it.",
+            ("style.key.type",),
+            "style.key.type: direct is not supported on type: histogram: "
+            "it has one series, so there are no series labels to print. Set "
+            "the type to `legend` or `auto`, or remove it.",
             when=(
                 ValueIn("type", ("histogram",)),
-                ValueIn("style.legend.position.edge", ("endpoints",)),
+                ValueIn("style.key.type", ("direct",)),
             ),
         ),
         Forbids(

@@ -28,10 +28,11 @@ from dbt_charts.core.compile.template.daterange import (
 )
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_UNKNOWN_VARIABLE_OVERRIDE,
+    ERR_VARIABLE_OPTIONS_COLUMN_MISSING,
     ERR_VARIABLE_VALUE_INVALID,
     ERR_VARIABLE_VALUE_NOT_IN_OPTIONS,
 )
-from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 
 # `?name={{ color }}`: the one link shape whose click sets exactly one variable
 # from the clicked series. The engine's `selected::setter` accepts the same text.
@@ -518,9 +519,28 @@ def option_member_type(kind: ColumnKind) -> str | None:
     return None
 
 
-def option_value_column(columns: Sequence[str], query: str) -> str:
-    """The column an options query's values come from: 'value', 'label', 'name'
-    or 'id' if it has one (``match_column``), else the first column."""
+def option_value_column(
+    columns: Sequence[str], query: str, variable: str, column: str | None
+) -> str:
+    """The column an options query's values come from: ``options.column`` when
+    set, else 'value', 'label', 'name' or 'id' if it has one (``match_column``),
+    else the first column.
+
+    Raises:
+        QueryError: ERR-VARIABLE-OPTIONS-COLUMN-MISSING when the query does not
+            return ``column``.
+    """
+    if column is not None:
+        declared = match_column(column, columns, f"variable {variable!r}")
+        if declared is None:
+            raise QueryError.from_code(
+                ERR_VARIABLE_OPTIONS_COLUMN_MISSING,
+                variable=variable,
+                column=column,
+                query_name=query.removeprefix("queries."),
+                columns=", ".join(columns),
+            )
+        return declared
     return next(
         (
             found

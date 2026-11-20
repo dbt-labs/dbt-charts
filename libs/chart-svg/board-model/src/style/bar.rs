@@ -4,10 +4,9 @@ use crate::primitives::PatternStyle;
 use crate::rule::Auto;
 use crate::string_enum;
 use crate::style::chart_base::{
-    AnnotatedChartStyleMixin, CartesianChartStyle, LegendedChartStyleBase,
+    AnnotatedChartStyleMixin, CartesianChartStyle, BarKeyedChartStyleBase,
     QuantitativeAxisChartStyleMixin,
 };
-use crate::style::endpoint_labels::EndpointLabelsConfig;
 use crate::style::marks::{
     BarMarkStyle, BarMarkStyleConditional, TextMarkStyle, TextMarkStyleConditional,
 };
@@ -142,7 +141,7 @@ pub struct BarChartStyle {
     #[flatten]
     pub quantitative: QuantitativeAxisChartStyleMixin,
     #[flatten]
-    pub legended: LegendedChartStyleBase,
+    pub keyed: BarKeyedChartStyleBase,
     #[flatten]
     pub cartesian: CartesianChartStyle,
     /// Preferred bar orientation; unset behaves like 'auto', which picks horizontal for a categorical x and vertical for a continuous one (temporal, quantitative, or date-like). Never remaps x/y.
@@ -156,8 +155,6 @@ pub struct BarChartStyle {
     /// Z-order of stacked segments. Unset or 'value' puts the largest aggregate at baseline. 'data' stacks series in first-appearance order: SQL row order for color:, the listed order for y: [a, b, ...] (a measure null in the first rows appears later). 'alphabetical' sorts by series name. Ignored when stacking is off or there is only one series.
     #[model(absent = "ranks by value")]
     pub stack_order: Option<StackOrder>,
-    /// Series names printed on stacked bars instead of in a legend.
-    pub endpoint_labels: EndpointLabelsConfig,
     /// Band-scale padding for grouped bars.
     pub grouped: BarGroupedStyle,
     /// Tear bars far longer than the rest and float their ends as caps.

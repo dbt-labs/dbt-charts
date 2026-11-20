@@ -70,7 +70,7 @@ def test_parity_root_font_fills_charts_font_color():
 
 
 def test_parity_charts_font_fills_legend_label_font_color():
-    """charts.legend.label.font.color inherits from charts.font.color, NOT root font.
+    """charts.key.legend.label.font.color inherits from charts.font.color, NOT root font.
 
     The multi-hop chain (legend ← charts.font ← font) is split into single
     parent links.  This fixture proves the intermediate is respected: when
@@ -78,7 +78,7 @@ def test_parity_charts_font_fills_legend_label_font_color():
     legend fills from charts.font.color, not from root.
     """
     graph = get_inherit_graph()
-    target = "Style.charts.legend.label.font.color"
+    target = "Style.charts.key.legend.label.font.color"
 
     base = get_theme_style("clarity")
     root_color = "#ff0000"
@@ -87,19 +87,20 @@ def test_parity_charts_font_fills_legend_label_font_color():
     # Set charts.font.color to something different from root font
     patched_charts_font = base.charts.font.model_copy(update={"color": charts_color})
     # Clear legend.label.font.color so it must be filled
-    patched_label_font = base.charts.legend.label.font.model_copy(
+    patched_label_font = base.charts.key.legend.label.font.model_copy(
         update={"color": None}
     )
-    patched_label = base.charts.legend.label.model_copy(
+    patched_label = base.charts.key.legend.label.model_copy(
         update={"font": patched_label_font}
     )
-    patched_legend = base.charts.legend.model_copy(update={"label": patched_label})
+    patched_legend = base.charts.key.legend.model_copy(update={"label": patched_label})
+    patched_key = base.charts.key.model_copy(update={"legend": patched_legend})
     patched_root_font = base.font.model_copy(update={"color": root_color})
     merged = base.model_copy(
         update={
             "font": patched_root_font,
             "charts": base.charts.model_copy(
-                update={"font": patched_charts_font, "legend": patched_legend}
+                update={"font": patched_charts_font, "key": patched_key}
             ),
         }
     )
@@ -685,23 +686,27 @@ def test_parity_tooltip_label_font_fills_from_charts_font():
 # ── series_label font fixture ─────────────────────────────────────────────────
 
 
-def test_parity_series_label_font_fills_from_charts_font():
-    """series_label.font inherits from charts.font via InheritSlot."""
+def test_parity_direct_key_font_fills_from_charts_font():
+    """key.direct.font inherits from charts.font via InheritSlot."""
     graph = get_inherit_graph()
-    target = "Style.charts.series_label.font.color"
+    target = "Style.charts.key.direct.font.color"
 
     base = get_theme_style("clarity")
     distinctive = "#778899"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
-    patched_sl_font = base.charts.series_label.font.model_copy(update={"color": None})
+    patched_sl_font = base.charts.key.direct.font.model_copy(update={"color": None})
     merged = base.model_copy(
         update={
             "charts": base.charts.model_copy(
                 update={
                     "font": patched_charts_font,
-                    "series_label": base.charts.series_label.model_copy(
-                        update={"font": patched_sl_font}
+                    "key": base.charts.key.model_copy(
+                        update={
+                            "direct": base.charts.key.direct.model_copy(
+                                update={"font": patched_sl_font}
+                            )
+                        }
                     ),
                 }
             )

@@ -64,7 +64,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     board_family_style,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
-    _effective_requested_alias_palette,
+    _effective_warned_palette,
     _with_color_tokens,
 )
 from dbt_charts.core.compile.resolve.chart.link_keys import plan_link_keys
@@ -75,6 +75,7 @@ from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.palette import (
     palette as resolve_named_palette,
     palette_family,
+    warned_palette_name,
 )
 from dbt_charts.core.compile.resolve.style.typography import (
     concrete_title_style,
@@ -102,36 +103,10 @@ from dbt_charts.core.utils import coerce_numeric_cell
 __all__ = [
     "_EMPTY_TABLE_COLUMN_LINKS",
     "_resolve_table",
-    "infer_pivot_measure_names",
 ]
 
 
 _EMPTY_TABLE_COLUMN_LINKS: Mapping[str, str] = MappingProxyType({})
-
-
-def infer_pivot_measure_names(
-    all_keys: Sequence[str],
-    rows: Sequence[str],
-    columns: Sequence[str],
-    values: Sequence[str] | None,
-    row_role_spec: str | None,
-) -> list[str]:
-    """Resolve the effective pivot measure list: explicit, or every observed
-    key not claimed by ``rows``/``columns``/the row-role marker.
-
-    Single owner of this inference rule — render's ``pivot_table_data`` (via
-    ``_validate_pivot_fields``) and resolve's table-column materialization
-    (``_materialize_table_columns``) both call this, so a pivoting chart's
-    effective measure set can never diverge between the two: a measure
-    column never gets exposed as an ordinary inferred column at resolve just
-    because ``values:`` was omitted from the authored board.
-    """
-    claimed = set(rows) | set(columns) | ({row_role_spec} if row_role_spec else set())
-    return (
-        list(values)
-        if values is not None
-        else [k for k in all_keys if k not in claimed]
-    )
 
 
 def _style_input_columns(
@@ -283,7 +258,6 @@ def _materialize_table_columns(
     defaults: TableColumnDefaultsConfig | None,
     data: Sequence[Mapping[str, Any]],
     row_role: str | None,
-    pivot_measure_names: frozenset[str],
     table_column_links: Mapping[str, str],
     table_column_rows: Sequence[Mapping[str, str]],
     hide_underscore_columns: bool,
@@ -295,13 +269,12 @@ def _materialize_table_columns(
     verdict, via ``fill_table_column_defaults``. A single identity-key column
     (per ``plan_link_keys``) is protected from FK-link assignment.
 
-    Keys: every query-inferred column — excluding the row-role column and,
-    for a pivoting chart, the measure fields named in ``pivot_measure_names``
-    — plus any explicitly authored keys beyond those (a pivoting chart
-    authors columns keyed by measure name or bare pivoted value, and an
-    empty result set still needs the authored entries for its empty-state
-    headers). ``style.columns`` is styling-only: authoring a subset styles
-    those columns and never narrows this mapping. Hiding is the per-column
+    Keys: every query-inferred column — excluding the row-role column — plus
+    any explicitly authored keys beyond those (a pivoting chart authors
+    columns keyed by bare pivoted value, and an empty result set still needs
+    the authored entries for its empty-state headers). ``style.columns`` is
+    styling-only: authoring a subset styles those columns and never narrows
+    this mapping. Hiding is the per-column
     ``visible: false`` — such entries stay present here carrying
     ``visible=False`` (render filters at display time), and a column
     consumed as a style input (see ``_style_input_columns``), or named with a
@@ -310,14 +283,12 @@ def _materialize_table_columns(
 
     A pivoted measure's real leaf-column key space (leaf keys, or bare
     pivoted values for a single-dim single-measure pivot) only exists after
-    render's ``pivot_table_data`` transform runs — it is not a function of
-    the pre-pivot rows resolve holds, and reconstructing it here would
-    duplicate that transform's inference logic. So measure fields are
-    excluded here; render applies ``column_defaults`` (kept on
-    ``ResolvedTableChart`` for exactly this) to its own synthesized pivot-leaf
-    columns instead. Row/pivot-dimension fields that survive pivoting
-    unchanged (e.g. a `rows:` column) are NOT excluded — they get their
-    defaults/FK-link here same as any other inferred column.
+    render's ``pivot_table_data`` transform runs. The measure's own entry is
+    resolved here over every value it holds before the pivot — its inferred
+    and declared format, shared scale and exact digits are properties of the
+    measure, not of one leaf — and render fans that entry to each leaf it
+    synthesizes. A pivot dimension is resolved the same way: render prints
+    its values as headers through its format.
 
     Returns ``None`` when there is nothing to materialize: no explicit
     columns, no defaults, no runtime links, AND no data to classify a
@@ -335,11 +306,7 @@ def _materialize_table_columns(
     if not explicit and defaults is None and not table_column_links and not data:
         return None
 
-    keys = [
-        key
-        for key in (data[0] if data else {})
-        if key != row_role and key not in pivot_measure_names
-    ]
+    keys = [key for key in (data[0] if data else {}) if key != row_role]
     if explicit:
         present = set(keys)
         keys += [key for key in explicit if key not in present]
@@ -814,6 +781,7 @@ def _bake_scale_stops(
                             **target.model_dump(exclude_unset=True),
                             "resolved_stops": stops,
                             "family": palette_family(target.palette),
+                            "warned_palette": warned_palette_name(target.palette),
                         }
                     )
                 )
@@ -899,19 +867,6 @@ def _resolve_table(
     # Table-specific promoted field, lifted to the top level here so the
     # renderer can read a typed, already-final field instead of reaching into
     # style.table or re-merging defaults/FK links itself.
-    pivot_measure_names = (
-        frozenset(
-            infer_pivot_measure_names(
-                list(data[0]) if data else [],
-                normalized.rows or [],
-                normalized.columns,
-                normalized.values,
-                normalized.row_role,
-            )
-        )
-        if normalized.columns
-        else frozenset()
-    )
     # Cell body text sits on the scale fill, so the table carve must keep
     # fills that hold this color — light on dark themes, dark on light.
     # The column-default ink is the table's cell text color. A column-ID ink is
@@ -938,7 +893,6 @@ def _resolve_table(
         column_defaults_val,
         data,
         normalized.row_role,
-        pivot_measure_names,
         table_column_links,
         table_column_rows,
         table.hide_underscore_columns,
@@ -981,10 +935,8 @@ def _resolve_table(
             normalized,
             chart_style_context,
             channels,
-            None,
-            requested_alias_palette=_effective_requested_alias_palette(
-                chart_style_context, primary
-            ),
+            chart_local_style_context,
+            warned_palette=_effective_warned_palette(chart_style_context, primary),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=table.padding,
             legendless=True,

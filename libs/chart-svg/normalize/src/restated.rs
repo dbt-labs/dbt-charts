@@ -35,7 +35,7 @@ const ORDERED_AT_RENDER: [&str; 7] = [
     "axis_y",
     "axis_quantitative",
     "axis_band",
-    "legend",
+    "key",
     "title",
 ];
 

@@ -40,7 +40,7 @@ def _merge_line(
         build_chart_style_context,
     )
 
-    chart_patch = LineChartStylePatch.model_validate({"legend": patch_dict})
+    chart_patch = LineChartStylePatch.model_validate({"key": {"legend": patch_dict}})
     chart = LineChart(id="c", type="line", style=chart_patch)
     effective_board = _board() if board is None else board
     result = build_chart_style_context(effective_board, chart)

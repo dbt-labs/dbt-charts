@@ -123,12 +123,11 @@ class TestEffectiveStyleOnResolvedChart:
         """
         from dbt_charts.core.compile.models.style.authored import (
             BarChartStylePatch,
-            LegendStylePatch,
         )
         from dbt_charts.core.compile.vega_lite.mapping import style_to_vega_lite
 
         board_style = _board()
-        style = BarChartStylePatch(legend=LegendStylePatch(visible=False))
+        style = BarChartStylePatch(key={"visible": False})
         chart = _chart(x="a", y="b", style=style)
         rs = build_chart_style_context(board_style, chart)
         vlc = style_to_vega_lite(rs).model_dump(exclude_none=True)

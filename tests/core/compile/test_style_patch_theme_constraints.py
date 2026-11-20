@@ -37,7 +37,7 @@ def _board(style: dict[str, Any]) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("board", "message"),
     [
-        (_bar({"legend": {"symbol_limit": 0}}), "greater than or equal to 1"),
+        (_bar({"key": {"legend": {"symbol_limit": 0}}}), "greater than or equal to 1"),
         (
             _chart_board(
                 {

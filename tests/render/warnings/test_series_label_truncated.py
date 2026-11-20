@@ -78,7 +78,7 @@ def test_detector_anchors_on_the_color_key_and_quotes_the_full_value() -> None:
     # entire point of the warning.
     assert _LONG in warning.message
     assert warning.fix is not None
-    assert "style.legend.position.edge: top" in warning.fix
+    assert "style.key.type: legend" in warning.fix
 
 
 def test_detector_anchors_on_y_for_wide_form_measures() -> None:

@@ -2,7 +2,7 @@
 
 Proves that after the refactor:
 1. ChartStylePatch.axis_x/y/quantitative use per-variant axis patches
-2. ChartStylePatch.legend uses LegendStylePatch (no LegendStyle)
+2. ChartStylePatch.key carries a LegendStylePatch (no LegendStyle)
 3. BaseAxisStyle subtypes carry the VL-passthrough fields needed
 """
 
@@ -89,12 +89,12 @@ class TestChartStylePatchUsesCompiledTypes:
         assert patch.axis_y.grid.visible is False
 
     def test_chartstylepatch_legend_accepts_visible(self):
-        """BarChartStylePatch.legend should accept visible: bool."""
+        """BarChartStylePatch.key should accept visible: bool."""
         from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
-        patch = BarChartStylePatch.model_validate({"legend": {"visible": False}})
-        assert patch.legend is not None
-        assert patch.legend.visible is False
+        patch = BarChartStylePatch.model_validate({"key": {"visible": False}})
+        assert patch.key is not None
+        assert patch.key.visible is False
 
     def test_axis_grid_color_round_trips_through_patch(self):
         """grid.color propagates through BarChartStylePatch authored-surface."""

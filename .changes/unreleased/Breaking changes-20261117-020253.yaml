@@ -1,3 +1,0 @@
-kind: Breaking changes
-body: A `pow`, `sqrt` or `symlog` axis scale on a line, area, bar or histogram chart is now a compile error instead of silently drawing linear; use a scatter or remove the scale type.
-time: 2026-11-17T02:02:53.457472179Z

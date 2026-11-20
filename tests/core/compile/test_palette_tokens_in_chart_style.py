@@ -152,7 +152,7 @@ class TestTitleLegendTokenResolution:
                 id="t",
                 type="bar",
                 style=_patch(
-                    {"bar": {"legend": {"label": {"font": {"color": TOKEN}}}}}
+                    {"bar": {"key": {"legend": {"label": {"font": {"color": TOKEN}}}}}}
                 ),
             ),
         )

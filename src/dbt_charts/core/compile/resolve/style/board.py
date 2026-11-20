@@ -193,7 +193,9 @@ def _seed_spark_colors(style: Style) -> Style:
     return style.model_copy(update={"charts": new_charts})
 
 
-def _build_resolved_legend(legend: LegendStyle) -> ResolvedLegendStyle:
+def _build_resolved_legend(
+    legend: LegendStyle, *, visible: bool
+) -> ResolvedLegendStyle:
     position = decide_legend_position(legend.position, top_strip=False)
     return ResolvedLegendStyle(
         position=position,
@@ -201,7 +203,7 @@ def _build_resolved_legend(legend: LegendStyle) -> ResolvedLegendStyle:
         columns=legend.columns,
         compact_columns=legend.compact_columns,
         row=legend.row,
-        visible=legend.visible is not False,
+        visible=visible,
         symbol_limit=legend.symbol_limit,
         values=legend.values,
         symbol_shape=legend.symbol_shape,
@@ -373,7 +375,7 @@ def _build_chart_style_context(
     # they're populated only by build_chart_style_context from a chart's
     # ChartStylePatch. Default to None at theme-resolve time.
     # "palette" and "single_series_palette" are excluded because they derive from
-    # charts.color.categorical below; "requested_alias_palette" derives from the
+    # charts.color.categorical below; "warned_palette" derives from the
     # same source.
     _CHART_LOCAL_ONLY = {
         "palette",
@@ -381,7 +383,7 @@ def _build_chart_style_context(
         "ink_canvas",
         "board_canvas",
         "single_series_palette",
-        "requested_alias_palette",
+        "warned_palette",
         "axis_overrides_global",
         "axis_overrides_x",
         "axis_overrides_y",
@@ -447,7 +449,7 @@ def _build_chart_style_context(
         ink_canvas=chart_canvas,
         board_canvas=board_canvas,
         single_series_palette=resolved_single_series_palette,
-        requested_alias_palette=_categorical_obj.requested_alias_palette,
+        warned_palette=_categorical_obj.warned_palette,
         dashes=charts.dashes if charts.dashes is not None else [],
         category_color_pins=charts.category_colors,
         # axis is a raw BaseAxisStyle passthrough — no eager resolution here.
@@ -457,7 +459,7 @@ def _build_chart_style_context(
         axis_x=charts.axis_x,
         axis_y=charts.axis_y,
         axis_quantitative=charts.axis_quantitative,
-        legend=_build_resolved_legend(charts.legend),
+        legend=_build_resolved_legend(charts.key.legend, visible=charts.key.visible),
         callout_error=_build_resolved_error_tile(
             charts.callout,
             bold_font_weight,
@@ -744,6 +746,9 @@ def concrete_family_defaults(
 # untranslated inside them, and the timestamp becomes a strftime string around
 # the time and date.
 _BRAND = "dbt Charts"
+_CHART_TITLE_AUTO_SIZE = StylePatch.model_validate(
+    {"charts": {"title": {"font": {"size": AUTO}}}}
+)
 
 
 def _bake_theme_words(cascaded: Style, language: LanguageCode) -> Style:
@@ -821,6 +826,9 @@ def _finalize_style(
     token_style = expand_named_fonts(
         merged.model_copy(update={"fonts": registry}), registry
     )
+    # A named font resets font.size and this slot has no inherit parent: restore auto.
+    if settled(token_style.charts.title).font.size is None:
+        token_style = merge_onto_base(token_style, _CHART_TITLE_AUTO_SIZE)
     pre_style = _resolve_canvas_tokens(base, token_style, base_background)
     cascaded = apply_inherit(pre_style, get_inherit_graph())
     cascaded = _seed_spark_colors(cascaded)

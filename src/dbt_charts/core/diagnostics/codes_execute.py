@@ -810,6 +810,45 @@ ERR_VARIABLE_OPTIONS_FAILED = REGISTRY.register(
     )
 )
 
+ERR_VARIABLE_COUNT_COLUMN_MISSING = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VARIABLE-COUNT-COLUMN-MISSING",
+        domain="execute",
+        title="Options query does not return its count column",
+        message_template="Variable {variable!r} reads option counts from {count_column!r}, but query {query_name!r} returns only: {columns}.",
+        fix_template="Return the count column from the options query, or fix the `options.count_column` name.",
+        doc="Fired when a variable's `options.count_column` names a column its options query does not return. The render stops rather than drawing the menu without counts, which would hide the typo.",
+        summary="Fired when an options query does not return the column its count_column names.",
+        docs_topic="variables",
+    )
+)
+
+ERR_VARIABLE_COUNT_NOT_A_NUMBER = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VARIABLE-COUNT-NOT-A-NUMBER",
+        domain="execute",
+        title="Option count is not a number",
+        message_template="Variable {variable!r} reads option counts from {count_column!r}, but option {option!r} has count {count!r}.",
+        fix_template="Make the options query return a whole number for every option, for example with COALESCE(count, 0).",
+        doc="Fired when the column a variable's `options.count_column` names holds a value that is not a whole number for some option, such as NULL from a LEFT JOIN. The render stops rather than drawing a count it cannot read.",
+        summary="Fired when an option's count is not a whole number.",
+        docs_topic="variables",
+    )
+)
+
+ERR_VARIABLE_OPTIONS_COLUMN_MISSING = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VARIABLE-OPTIONS-COLUMN-MISSING",
+        domain="execute",
+        title="Options query does not return its value column",
+        message_template="Variable {variable!r} reads option values from {column!r}, but query {query_name!r} returns only: {columns}.",
+        fix_template="Return the column from the options query, or fix the `options.column` name.",
+        doc="Fired when a variable's `options.column` names a column its `options.query` does not return. The render stops rather than guessing another column, which would filter on the wrong values.",
+        summary="Fired when an options query does not return the column its options.column names.",
+        docs_topic="variables",
+    )
+)
+
 ERR_UNKNOWN_VARIABLE_OVERRIDE = REGISTRY.register(
     ErrorCode(
         code="ERR-UNKNOWN-VARIABLE-OVERRIDE",

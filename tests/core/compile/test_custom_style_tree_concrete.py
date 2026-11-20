@@ -53,15 +53,15 @@ def test_family_legend_position_inherits_the_board_general_position() -> None:
     board_patch = StylePatch.model_validate(
         {
             "charts": {
-                "legend": {"position": {"edge": "bottom"}},
-                "line": {"legend": {"position": {"align": "end"}}},
+                "key": {"legend": {"position": {"edge": "bottom"}}},
+                "line": {"key": {"legend": {"position": {"align": "end"}}}},
             }
         }
     )
     tree = _style_tree(
         resolve_chart_style_context(get_theme_style("clarity"), board_patch)
     )
-    position = tree["charts"]["line"]["legend"]["position"]
+    position = tree["charts"]["line"]["key"]["legend"]["position"]
     assert (position["edge"], position["align"]) == ("bottom", "end")
 
 
@@ -79,7 +79,7 @@ def _rendered_position(chart_def: dict[str, Any], board_patch: Any) -> tuple[Any
 
 def _tree_position(family: str, board_patch: Any) -> tuple[Any, ...]:
     ctx = resolve_chart_style_context(get_theme_style("clarity"), board_patch)
-    position = _style_tree(ctx)["charts"][family]["legend"]["position"]
+    position = _style_tree(ctx)["charts"][family]["key"]["legend"]["position"]
     return (position["edge"], position["align"], position["overlay"])
 
 
@@ -106,8 +106,8 @@ def test_family_legend_position_matches_the_chart_resolver(
     board_patch = StylePatch.model_validate(
         {
             "charts": {
-                "legend": {"position": {"edge": "bottom"}},
-                family: {"legend": legend},
+                "key": {"legend": {"position": {"edge": "bottom"}}},
+                family: {"key": {"legend": legend}},
             }
         }
     )

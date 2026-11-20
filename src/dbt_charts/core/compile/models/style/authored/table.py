@@ -1,7 +1,6 @@
 """Table chart authored patch and table column configuration types.
 
-Types below (``EndpointLabelsConfig`` excluded — that one lives in ``_base.py``
-since it's shared across line/area/bar) live here rather than in
+Types below live here rather than in
 ``chart/authored.py`` so that ``TableChartStyle`` in ``style/theme.py`` can use
 ``TableColumnConfig`` without a circular import. ``chart/authored.py``
 re-imports them for external callers.

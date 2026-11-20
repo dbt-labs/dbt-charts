@@ -247,7 +247,12 @@ class TestRetiredTokensRespellOnDisk:
             "        static: category_dark[2]\n"
         )
 
-        assert 'static: "category[2].dark"' in migrate_board_yaml_text(text)
+        result = migrate_board_yaml_text(text)
+
+        assert (
+            '      marks:\n        bar:\n          color: "category[2].dark"' in result
+        )
+        assert "static:" not in result
 
     def test_dct_migrate_respells_scalar_tokens(self) -> None:
         text = _board(
@@ -273,7 +278,10 @@ class TestRetiredTokensRespellOnDisk:
         )
 
         assert 'single_series_palette: "category.blue.dark"' in result
-        assert 'static: "category[2].dark"' in result
+        assert (
+            '      marks:\n        bar:\n          color: "category[2].dark"' in result
+        )
+        assert "static:" not in result
 
     @pytest.mark.parametrize(
         ("retired", "replacement"),

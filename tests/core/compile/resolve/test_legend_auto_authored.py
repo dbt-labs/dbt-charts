@@ -1,4 +1,4 @@
-"""An authored ``legend.visible: auto`` or ``legend.title.visible: auto`` resolves
+"""An authored ``key.legend.title.visible: auto`` resolves
 at the chart and at the board's family tier, for every legend-drawing family."""
 
 from __future__ import annotations
@@ -38,7 +38,9 @@ _CHARTS: dict[str, dict[str, Any]] = {
     },
 }
 
-_AUTO_LEGEND = {"visible": "auto", "title": {"visible": "auto"}}
+_AUTO_LEGEND = {"title": {"visible": "auto"}}
+# A pie's key legend is its attached table: only its position is styled.
+_LEGEND_STYLED = [family for family in _CHARTS if family != "pie"]
 
 
 def _resolve(
@@ -50,42 +52,43 @@ def _resolve(
     return resolve(flat, _ROWS, chart_style_context=ctx)
 
 
-@pytest.mark.parametrize("family", list(_CHARTS))
+@pytest.mark.parametrize("family", _LEGEND_STYLED)
 def test_chart_level_auto_legend_resolves(family: str) -> None:
-    resolved = _resolve({**_CHARTS[family], "style": {"legend": _AUTO_LEGEND}})
+    resolved = _resolve({**_CHARTS[family], "style": {"key": {"legend": _AUTO_LEGEND}}})
     assert isinstance(resolved.legend.visible, bool)
 
 
-@pytest.mark.parametrize("family", list(_CHARTS))
+@pytest.mark.parametrize("family", _LEGEND_STYLED)
 def test_board_family_level_auto_legend_resolves(family: str) -> None:
     resolved = _resolve(
-        _CHARTS[family], {"charts": {family: {"legend": {"visible": "auto"}}}}
+        _CHARTS[family], {"charts": {family: {"key": {"legend": _AUTO_LEGEND}}}}
     )
     assert isinstance(resolved.legend.visible, bool)
 
 
 @pytest.mark.parametrize("visible", ["auto", False])
-@pytest.mark.parametrize("family", list(_CHARTS))
+@pytest.mark.parametrize("family", _LEGEND_STYLED)
 def test_board_family_level_title_visible_resolves(
     family: str, visible: bool | str
 ) -> None:
     resolved = _resolve(
         _CHARTS[family],
-        {"charts": {family: {"legend": {"title": {"visible": visible}}}}},
+        {"charts": {family: {"key": {"legend": {"title": {"visible": visible}}}}}},
     )
     assert isinstance(resolved.legend.visible, bool)
 
 
-@pytest.mark.parametrize("family", list(_CHARTS))
+@pytest.mark.parametrize("family", _LEGEND_STYLED)
 def test_board_family_level_legend_label_resolves(family: str) -> None:
     resolved = _resolve(
-        _CHARTS[family], {"charts": {family: {"legend": {"label": {"padding": 5}}}}}
+        _CHARTS[family],
+        {"charts": {family: {"key": {"legend": {"label": {"padding": 5}}}}}},
     )
     assert resolved.legend.label.padding == 5
 
 
 def test_board_family_level_false_hides_the_legend() -> None:
     resolved = _resolve(
-        _CHARTS["line"], {"charts": {"line": {"legend": {"visible": False}}}}
+        _CHARTS["line"], {"charts": {"line": {"key": {"visible": False}}}}
     )
     assert resolved.legend.visible is False

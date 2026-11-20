@@ -81,13 +81,14 @@ style:
           color: *value
       ticks:
         width: 1                   # the hairline this theme's grid is drawn at
-    legend:
-      label:
-        font:
-          color: *high
-      title:
-        font:
-          color: *high
+    key:
+      legend:
+        label:
+          font:
+            color: *high
+        title:
+          font:
+            color: *high
     bar:
       axis_x:                      # inward-align horizontal-bar row labels (resolve scopes to left/right edge)
         labels:
@@ -104,8 +105,9 @@ style:
         gradient:
           palette: sequence
     scatter:
-      legend:
-        visible: true              # scatter encodes color/size → needs legend
+      key:
+        visible: true
+        type: legend
       # Quant×quant keeps even grid weight. `_base` states that as its own 1.5
       # measure width, which stops tracking once a theme goes hairline — restate
       # it against this theme's width so both axes stay matched.

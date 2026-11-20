@@ -384,7 +384,8 @@ _SERIES_LABEL_D = {
     "pin_companions": [],
     "gap_px": 18.0,
 }
-_ENDPOINT_LABELS_D = {"visible": False, "label_offset": 8.0, "height": 20.0}
+_ENDPOINT_LABELS_D = {"visible": False, "label_offset": 8.0}
+_BAR_ENDPOINT_LABELS_D = {**_ENDPOINT_LABELS_D, "height": 20.0}
 # Table style has many required nested fields — dump the real cascade rather
 # than hand-enumerate them (TableChartStyle isn't constructible from {}).
 _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
@@ -402,7 +403,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                     "series_label": _SERIES_LABEL_D,
                     "mark": {},
                     "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
-                    "endpoint_labels": _ENDPOINT_LABELS_D,
+                    "endpoint_labels": _BAR_ENDPOINT_LABELS_D,
                     "single_series_fill": "#4C72B0",
                     "tooltip_format": "",
                     "label_font_size": 11.0,

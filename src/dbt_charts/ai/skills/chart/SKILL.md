@@ -137,7 +137,7 @@ For a shape no built-in type draws, read the custom-chart-build skill.
 - `label`: Name for this layer's measure wherever the layer is identified
 - `color`: Column whose values split this layer into colored series
 - `style` ({marks: {}}): Only `marks`: a line layer's color is `marks: {line: {stroke: {color: '#hex'}}}`, a scatter's `marks: {point: {color: '#hex'}}`
-Also exist: `axis_y`, `legend`, `y_start`.
+Also exist: `axis_y`, `key`, `y_start`.
 Layer types: `bar`, `line`, `area`, `scatter`.
 Several measures with the same mark on one axis are one `y:` list (`y: [a, b]`), each a series of the base chart. A layer is an overlay, named in the legend: use one for a different mark, another query, a reference such as a target, or a second axis.
 
@@ -172,7 +172,7 @@ A date range is one variable, not two `input: date` variables with hard-coded de
 
 `variables.<name>`:
 - `column`: A dropdown of this column's values, as 'table.column'
-- `options` ({static, query, column, label_column}): Dropdown values come from a query column, or (rarely) a written-out list
+- `options` ({static, query, column, count_column}): Dropdown values come from a query column, or (rarely) a written-out list
 - `default` (any): Value used when no URL param or --var sets one
 - `label`: Caption naming what this input sets
 - `required` (bool, default false): When True, a value must be provided before queries execute
@@ -187,7 +187,7 @@ Also exist: `notes`, `presets`, `placeholder`, `visible`, `enabled`, `query`, `o
 - `static` (list of text|list of int|number): Option values that are not in the data, written out
 - `query`: Query name whose result rows provide option values
 - `column`: Column in the query result to use as option values
-- `label_column`: Query column shown as the option text, apart from the value
+Also exist: `count_column`.
 
 ## Layout
 

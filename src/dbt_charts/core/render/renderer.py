@@ -281,38 +281,6 @@ def _collect_active_layout_charts(
     return charts
 
 
-def _collect_pie_placement_modes(
-    board: ResolvedBoard, variables: VariableValues
-) -> dict[str, tuple[PieMode, ...]]:
-    """Map chart_id -> the sized mode of every active placement of that pie.
-
-    ``_collect_active_layout_charts`` keeps one placement per id (the narrowest,
-    where crowding shows); a judgment that needs to know whether ANY placement
-    draws something (a legend only a direct pie has) reads them all.
-    """
-    modes: dict[str, list[PieMode]] = {}
-
-    def _walk(layout: ResolvedLayout) -> None:
-        items = layout.items
-        if layout.type == "tabs" and items:
-            active = resolve_active_tab_index(
-                len(items),
-                layout.tab_variable,
-                list(layout.tab_slugs),
-                layout.default_tab,
-                variables,
-            )
-            items = (items[active],)
-        for item in items:
-            if item.chart is not None and item.width and item.pie_mode is not None:
-                modes.setdefault(item.chart.id, []).append(item.pie_mode)
-            if item.board is not None:
-                _walk(item.board.layout)
-
-    _walk(board.layout)
-    return {chart_id: tuple(found) for chart_id, found in modes.items()}
-
-
 def _tab_variables(layout: Layout) -> set[str]:
     """Every tab variable in ``layout`` and the boards nested in it."""
     names = {layout.tab_variable} if layout.tab_variable else set()
@@ -518,7 +486,6 @@ def _collect_render_warnings(
         unattributed_truncations=unattributed_truncations,
         plot_width_share_warnings=plot_width_share_warnings,
         pie_total_overflows=pie_total_overflows,
-        pie_placement_modes=_collect_pie_placement_modes(board, variables),
         pie_modes={
             chart_id: mode
             for chart_id, (*_, mode) in active_charts.items()

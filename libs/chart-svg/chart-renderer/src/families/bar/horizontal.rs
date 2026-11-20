@@ -33,7 +33,7 @@ use super::bind::zero_label;
 use super::ribbons::{RibbonDraft, RibbonLabelCtx};
 use super::domain::{BarChartState, CenterStack, SegmentSpans, TopRail, bar_value_extent, base_series, build_chart_domains, build_data_map, Extras, category_totals, collapsed_authored_domain, grouped_spans, horizontal_min_height, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_spans, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
 use super::facet::color_1to1_with_cat;
-use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, mark_labels, plain_sites, value_label_layers};
+use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, LayerCaptions, category_clearance, mark_labels, plain_sites, value_label_layers};
 use super::layout::{Drawn, clipped_if, warn_band_too_narrow};
 use super::legend::{LayeredBarLegend, LegendState, bar_link_keys, build_legend_state, numeric_legends_of};
 use super::marks::{RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, capped_thickness, collapsed_bars, direction_layers, grouped_overlap_fraction, horizontal_bar_layer_marks, hover_band_for, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, touching_width, unity_rule};
@@ -2171,7 +2171,7 @@ pub(super) fn render_horizontal_panel(
                         }))
                     })?;
                     let under = crate::annotation::DataMark::plot_marks(&plot);
-                    plot.extend(mark_labels(ml, true, false, true, &points, 0, board_style, 0.0, 0.0, r.canvas.as_str(), &under, r.link_open)?);
+                    plot.extend(mark_labels(ml, true, false, true, &points, 0, board_style, 0.0, 0.0, r.canvas.as_str(), &under, &mut LayerCaptions::default(), r.link_open)?);
                 }
             }
             OverlayLayer::Scatter(sl) => {
@@ -2327,7 +2327,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
             )
         })?;
         tail.extend(mark_labels(&layer.spec.ml, true, layer.stacked, !layer.total, &points, painted_layers, board_style,
-            plot_left, plot_top, r.canvas.as_str(), &under, r.link_open)?);
+            plot_left, plot_top, r.canvas.as_str(), &under, &mut LayerCaptions::default(), r.link_open)?);
         if !layer.total {
             painted_layers += 1;
         }

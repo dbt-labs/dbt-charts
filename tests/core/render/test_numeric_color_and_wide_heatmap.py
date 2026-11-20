@@ -71,17 +71,16 @@ def test_a_multi_measure_heatmap_puts_each_measures_values_on_the_y_bands() -> N
 def test_an_authored_hidden_legend_stays_hidden_under_a_numeric_color_with_endpoint_labels() -> (
     None
 ):
-    def legend_marks(legend: str) -> int:
+    def legend_marks(key: str) -> int:
         svg = _render(
             "    type: bar\n    x: month\n    y: orders\n    color: score\n"
-            "    style:\n      legend:\n        position:\n          edge: endpoints\n"
-            f"        visible: {legend}",
+            f"    style:\n      key:\n{key}",
             _SCORES,
         )
         return svg.count("role-legend")
 
-    assert legend_marks("false") == 0
-    assert legend_marks("auto") > 0
+    assert legend_marks("        visible: false\n") == 0
+    assert legend_marks("        type: direct\n") > 0
 
 
 def test_a_numeric_color_bar_tooltip_prints_the_color_with_the_columns_format() -> None:

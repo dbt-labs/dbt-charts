@@ -1,3 +1,0 @@
-kind: Fixes
-body: dct describe finds a board by its title or file name despite stray whitespace, and suggests the nearest board paths when nothing matches.
-time: 2026-11-16T00:00:23.218071-08:00

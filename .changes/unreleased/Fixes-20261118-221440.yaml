@@ -1,3 +1,0 @@
-kind: Fixes
-body: In a table row where one cell wraps, every cell's first line now sits on the same baseline, and swatches and spark bars sit beside that first line.
-time: 2026-11-18T22:14:40.127578-08:00

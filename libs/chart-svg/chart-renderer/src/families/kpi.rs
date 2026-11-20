@@ -509,7 +509,7 @@ fn scale_color(
     let Some(numeric) = row.get(field).and_then(coerce_numeric_cell) else {
         return Ok(scale.null_color.clone().filter(|c| !c.is_empty()));
     };
-    let raw = compute_scale_domain(&[row], field, scale.min, scale.max);
+    let raw = compute_scale_domain(&[row], &[field], scale.min, scale.max);
     let (lo, hi) = nice_domain(scale.min, scale.max, scale.nice.unwrap_or(false), raw);
     let hinge = resolve_hinge(scale.hinge.as_ref(), raw.0, raw.1, col_format);
     let stops = resolve_palette_stops(scale)?;

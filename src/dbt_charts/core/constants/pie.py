@@ -15,6 +15,10 @@ INVISIBLE_SLICE_SHARE: Final[float] = 0.02
 # leaving the rest as whitespace.
 OUTER_FRACTION: Final[float] = 0.9
 ATTACHED_TABLE_GAP_PX: Final[float] = 12.0
+# A table beside the wheel sits this far past the wheel's ink (the disk, its
+# slice labels and the center total): text next to text needs more room than
+# the stacked gap.
+SIDE_TABLE_INK_GAP_PX: Final[float] = 24.0
 HYBRID_HEADING_GAP_PX: Final[float] = 6.0
 # Placement thresholds (right-of-wheel vs below): the table goes to the
 # RIGHT when the wheel region left over after reserving the table's

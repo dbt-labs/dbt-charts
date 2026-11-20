@@ -1,3 +1,0 @@
-kind: Fixes
-body: A scrolling table beside a wider or taller neighbor shows its full page of rows, and warns when its slot can't fit them.
-time: 2026-11-16T12:59:50.446008-08:00

@@ -61,15 +61,14 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
 )
 from dbt_charts.core.compile.resolve.chart._marks import _resolved_point_mark
 from dbt_charts.core.compile.resolve.chart._palette import (
-    _effective_requested_alias_palette,
     _effective_single_series_fill,
+    _effective_warned_palette,
     _with_color_tokens,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
-from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
@@ -375,10 +374,8 @@ def _resolve_geoshape(
             normalized,
             chart_style_context,
             channels,
-            geoshape.legend,
-            requested_alias_palette=_effective_requested_alias_palette(
-                chart_style_context, primary
-            ),
+            chart_local_style_context,
+            warned_palette=_effective_warned_palette(chart_style_context, primary),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=geoshape.padding,
             wrap_columns=legend_wrap_columns(
@@ -388,7 +385,7 @@ def _resolve_geoshape(
                     _resolve_choropleth_value_field(normalized, channels),
                 ),
                 width,
-                merge_legend(chart_style_context.legend, geoshape.legend),
+                chart_local_style_context.legend,
             ),
         ),
         **_geoshape_kwargs(
@@ -510,16 +507,14 @@ def _resolve_point_map(
             normalized,
             chart_style_context,
             channels,
-            point_map.legend,
-            requested_alias_palette=_effective_requested_alias_palette(
-                chart_style_context, primary
-            ),
+            chart_local_style_context,
+            warned_palette=_effective_warned_palette(chart_style_context, primary),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=point_map.padding,
             wrap_columns=legend_wrap_columns(
                 color_legend_entries(channels, data),
                 width,
-                merge_legend(chart_style_context.legend, point_map.legend),
+                chart_local_style_context.legend,
             ),
         ),
         **geo_kw,

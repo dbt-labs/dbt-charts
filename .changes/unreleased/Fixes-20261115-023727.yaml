@@ -1,3 +1,0 @@
-kind: Fixes
-body: A board that places the same file twice now stops with `ERR-BOARD-FILE-PLACED-TWICE`, naming the file and both placements, instead of a duplicate chart or query name error.
-time: 2026-11-15T02:37:27.52089-08:00

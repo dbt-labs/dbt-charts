@@ -1,3 +1,0 @@
-kind: Fixes
-body: A schema, table or column that a schema query cannot find now reports a coded error.
-time: 2026-11-09T11:10:37.784916-05:00

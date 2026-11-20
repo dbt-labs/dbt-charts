@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from dbt_charts.core.compile.models.palette import PALETTE_WARN_RECOMMENDATIONS
+
 from .._paths import DBT_CHARTS_PKG_DIR
 
 PALETTES_DIR = DBT_CHARTS_PKG_DIR / "core" / "defaults" / "palettes"
@@ -36,13 +38,19 @@ def _wcag_contrast(hex_a: str, hex_b: str) -> float:
     return (l1 + 0.05) / (l2 + 0.05)
 
 
+# Warned palettes (RdYlGn, parula) are third-party ramps drawn as written, so
+# the house-spine profile pinned below does not apply to them.
+def _house_only(paths: list[Path]) -> list[Path]:
+    return [p for p in paths if p.stem not in PALETTE_WARN_RECOMMENDATIONS]
+
+
 def _all_spine_paths() -> list[Path]:
     roots = [PALETTES_DIR / "sequential", PALETTES_DIR / "diverging"]
     spines: list[Path] = []
     for root in roots:
         for path in sorted(root.glob("*.yml")):
             spines.append(path)
-    return spines
+    return _house_only(spines)
 
 
 # ============================================================================
@@ -85,14 +93,22 @@ class TestSpineStructure:
 # ``test_dark_palette_forks.py``. The light-canvas profile pinned below does not
 # apply to them, so they are excluded here.
 def _all_sequential_paths() -> list[Path]:
-    return sorted(
-        p for p in (PALETTES_DIR / "sequential").glob("*.yml") if "-dark" not in p.stem
+    return _house_only(
+        sorted(
+            p
+            for p in (PALETTES_DIR / "sequential").glob("*.yml")
+            if "-dark" not in p.stem
+        )
     )
 
 
 def _all_diverging_paths() -> list[Path]:
-    return sorted(
-        p for p in (PALETTES_DIR / "diverging").glob("*.yml") if "-dark" not in p.stem
+    return _house_only(
+        sorted(
+            p
+            for p in (PALETTES_DIR / "diverging").glob("*.yml")
+            if "-dark" not in p.stem
+        )
     )
 
 

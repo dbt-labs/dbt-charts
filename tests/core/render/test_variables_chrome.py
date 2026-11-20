@@ -14,13 +14,18 @@ import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.variable.authored import Variable, VariableOptions
-from dbt_charts.core.compile.normalize.variables import OPTION_COUNT_COLUMN
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.compile.template.daterange import BoardClock, board_clock
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_VARIABLE_COUNT_COLUMN_MISSING,
+    ERR_VARIABLE_COUNT_NOT_A_NUMBER,
+)
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.render.board_variables import (
     daterange_presets,
     overridden_variables,
@@ -772,17 +777,18 @@ class _OptionRows:
 def _team_filter() -> dict[str, Variable]:
     return {
         "team": Variable(
-            input="multiselect", options=VariableOptions(query="_var_options_team")
+            input="multiselect",
+            options=VariableOptions(query="team_options", count_column="tickets"),
         )
     }
 
 
-def test_column_bound_options_publish_their_counts_beside_them() -> None:
-    """Each value's row count travels aligned with the values, as the number a
+def test_declared_option_counts_publish_beside_the_values() -> None:
+    """Each value's count travels aligned with the values, as the number a
     count sort compares and the text the menu draws in the board's format."""
     rows = [
-        {"team": "Menon", OPTION_COUNT_COLUMN: 3608},
-        {"team": "Bose", OPTION_COUNT_COLUMN: 2745},
+        {"team": "Menon", "tickets": 3608},
+        {"team": "Bose", "tickets": 2745},
     ]
     with interactive_controls(True):
         svg, _ = _strip(_team_filter(), executor=_OptionRows(rows))
@@ -800,7 +806,14 @@ def test_options_with_no_count_column_publish_no_counts() -> None:
     """An authored options query and a static list carry no count, and the menu
     must not be handed one to draw or sort by."""
     with interactive_controls(True):
-        queried, _ = _strip(_team_filter(), executor=_OptionRows([{"team": "Bose"}]))
+        queried, _ = _strip(
+            {
+                "team": Variable(
+                    input="multiselect", options=VariableOptions(query="team_options")
+                )
+            },
+            executor=_OptionRows([{"team": "Bose"}]),
+        )
         static, _ = _strip(
             {
                 "team": Variable(
@@ -813,9 +826,77 @@ def test_options_with_no_count_column_publish_no_counts() -> None:
     assert _groups(static)[0].get("data-dbt-option-counts") is None
 
 
+def test_an_options_query_publishes_the_counts_its_count_column_holds() -> None:
+    """An authored query supplies its own popularity measure, matched to the
+    result column however the warehouse cased it."""
+    variables = {
+        "team": Variable(
+            input="multiselect",
+            options=VariableOptions(query="team_options", count_column="accounts"),
+        )
+    }
+    rows = [{"team": "Menon", "ACCOUNTS": 41}, {"team": "Bose", "ACCOUNTS": 7}]
+    with interactive_controls(True):
+        svg, _ = _strip(variables, executor=_OptionRows(rows))
+
+    counts = json.loads(_groups(svg)[0].get("data-dbt-option-counts"))
+    assert [n for n, _ in counts] == [41, 7]
+
+
+def test_a_count_column_missing_from_the_rows_raises() -> None:
+    """A declared count the query does not return is an authoring mistake; a
+    menu quietly drawn without counts would hide it."""
+    variables = {
+        "team": Variable(
+            input="multiselect",
+            options=VariableOptions(query="team_options", count_column="accounts"),
+        )
+    }
+    with pytest.raises(QueryError) as caught:
+        _strip(variables, executor=_OptionRows([{"team": "Bose", "n": 3}]))
+
+    assert caught.value.code is ERR_VARIABLE_COUNT_COLUMN_MISSING
+
+
+def test_a_count_that_is_not_a_number_raises() -> None:
+    """A NULL or fractional count names the option, never crashes or truncates."""
+    variables = {
+        "team": Variable(
+            input="multiselect",
+            options=VariableOptions(query="team_options", count_column="accounts"),
+        )
+    }
+    for bad in (None, 2.5):
+        rows = [{"team": "Bose", "accounts": 3}, {"team": "Menon", "accounts": bad}]
+        with pytest.raises(QueryError) as caught:
+            _strip(variables, executor=_OptionRows(rows))
+
+        assert caught.value.code is ERR_VARIABLE_COUNT_NOT_A_NUMBER
+        assert "Menon" in str(caught.value)
+
+
+def test_an_undeclared_count_column_gets_no_counts() -> None:
+    """Counts come from a declared column only, never a column's name."""
+    variables = {
+        "team": Variable(
+            input="multiselect", options=VariableOptions(query="team_options")
+        )
+    }
+    rows = [{"team": "Bose", "tickets": 3}]
+    with interactive_controls(True):
+        svg, _ = _strip(variables, executor=_OptionRows(rows))
+
+    assert _groups(svg)[0].get("data-dbt-option-counts") is None
+
+
+def test_count_column_needs_an_options_query() -> None:
+    with pytest.raises(ValidationError, match="count_column"):
+        VariableOptions(static=["a"], count_column="n")
+
+
 def test_an_artifact_render_does_not_carry_the_option_counts() -> None:
     """Counts are part of the option list a static export leaves out."""
-    rows = [{"team": "Bose", OPTION_COUNT_COLUMN: 3}]
+    rows = [{"team": "Bose", "tickets": 3}]
     svg, _ = _strip(_team_filter(), executor=_OptionRows(rows))
 
     assert _groups(svg)[0].get("data-dbt-option-counts") is None

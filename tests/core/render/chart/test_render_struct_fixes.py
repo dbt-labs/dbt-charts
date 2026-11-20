@@ -240,7 +240,7 @@ def test_horizontal_stacked_bar_endpoint_labels_renders_at_slot_width(
         style=BarChartStylePatch(
             orientation="horizontal",
             stack="zero",
-            legend={"position": {"edge": "endpoints"}},
+            key={"type": "direct"},
         ),
     )
     board_style = resolve_style(get_theme_style())

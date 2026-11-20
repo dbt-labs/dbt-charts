@@ -60,6 +60,7 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
     build_resolved_axis,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import CartesianFamilyChart
+from dbt_charts.core.compile.resolve.style.chart_style import over_board_family_color
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.diagnostics.codes_compile import ERR_SCALE_TYPE_SCATTER_ONLY
 
@@ -123,7 +124,7 @@ class CartesianPlan:
     ``_CartesianChartStyle | None`` (the type ``_extract_axis_overrides``
     already uses for this same value): four shared helpers every family
     calls with ``primary``
-    (``_effective_palette``, ``_effective_requested_alias_palette``,
+    (``_effective_palette``, ``_effective_warned_palette``,
     ``_resolved_series_label``, ``_effective_single_series_fill``) instead
     take ``_HasColor | None``, and pyright's Protocol matching for a mutable
     attribute is invariant — ``_CartesianChartStyle.color: ColorStyle | None``
@@ -173,7 +174,10 @@ def plan_cartesian(
     ``_QuantitativeAxisChartStyleMixin`` in ``compile/models/style/theme/
     _chart_base.py``). Every other cartesian family keeps the default.
     """
-    primary = _with_color_tokens(normalized.style, chart_style_context)
+    primary = _with_color_tokens(
+        over_board_family_color(normalized, normalized.style, chart_style_context),
+        chart_style_context,
+    )
     channels = _channels_for(normalized, data)
     quantitative = (
         primary.axis_quantitative

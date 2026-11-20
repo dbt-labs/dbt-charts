@@ -8,7 +8,7 @@ one merged context and never the chart-local patch.
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
+from typing import Any, Literal, overload
 
 from pydantic import BaseModel
 
@@ -20,6 +20,12 @@ from dbt_charts.core.compile.models.style.authored import (
     ChartStylePatch,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
+from dbt_charts.core.compile.models.style.theme import (
+    BarKeyStyle,
+    LegendOnlyKeyStyle,
+    LineAreaKeyStyle,
+    PieKeyStyle,
+)
 from dbt_charts.core.compile.resolve.style.board import _seed_spark_colors
 from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
 from dbt_charts.core.compile.resolve.style.inherit_resolver import (
@@ -92,13 +98,30 @@ _BOARD_BACKGROUND_SLOT: dict[str, str] = {
 
 # Fields that cascade global -> theme family (picked by chart.type) -> chart-local.
 # Inherit can't express this: its source path is fixed, the family is runtime data.
-_FAMILY_THEN_LOCAL_FIELDS: tuple[str, ...] = ("legend", "title")
+_FAMILY_THEN_LOCAL_FIELDS: tuple[Literal["key", "title"], ...] = ("key", "title")
+_FamilyKey = LineAreaKeyStyle | BarKeyStyle | PieKeyStyle | LegendOnlyKeyStyle
+
+
+@overload
+def _family_field_patch(
+    chart_style_context: ChartStyleContext,
+    chart_type: str | None,
+    field: Literal["key"],
+) -> _FamilyKey | None: ...
+
+
+@overload
+def _family_field_patch(
+    chart_style_context: ChartStyleContext,
+    chart_type: str | None,
+    field: Literal["title"],
+) -> BaseModel | None: ...
 
 
 def _family_field_patch(
     chart_style_context: ChartStyleContext,
     chart_type: str | None,
-    field: str,  # type-state: optional — None for a chart type with no family slot
+    field: Literal["key", "title"],
 ) -> (
     BaseModel | None
 ):  # type-state: optional — None when the family sets no patch for the field
@@ -159,6 +182,46 @@ def _funnel_patch(
 ChartStyleOverrides = dict[str, Any]  # type-state: explicit_any — mixed field values
 
 
+# Families whose board-tier `color` reaches the chart only through this merge;
+# pie and the maps fold their whole board family in their resolvers.
+_FAMILY_COLOR_TYPES = frozenset(
+    {"bar", "funnel", "histogram", "line", "area", "scatter", "heatmap"}
+)
+
+
+def over_board_family_color(
+    chart: Chart,
+    style: Any,  # type-state: explicit_any — one of the per-family style patches
+    board_ctx: ChartStyleContext,
+) -> Any:  # type-state: explicit_any — the same per-family patch type
+    """``style`` over the board's ``style.charts.<type>.color``.
+
+    A chart's own color beats the board's per-type color, which beats the
+    board-wide palette. The chart's style context and its resolver both read
+    the result, so the marks and anything painted in series color agree.
+    """
+    if chart.type not in _FAMILY_COLOR_TYPES:
+        return style
+    from dbt_charts.core.compile.normalize.charts import (  # noqa: PLC0415
+        _AUTHORED_FAMILY_TO_MONOLITHIC_KEY,
+    )
+
+    if chart.type == "funnel":
+        family_color = funnel_context(board_ctx).bar.color
+    else:
+        family_color = getattr(board_ctx, chart.type).color
+    if family_color is None:
+        return style
+    key = _AUTHORED_FAMILY_TO_MONOLITHIC_KEY[chart.type]
+    layer = getattr(
+        ChartStylePatch.model_validate(
+            {key: {"color": family_color.model_dump(exclude_unset=True)}}
+        ),
+        key,
+    )
+    return layer if style is None else merge_patches(layer, style)
+
+
 def merge_chart_style(
     board_ctx: ChartStyleContext,
     chart: Chart,
@@ -206,6 +269,7 @@ def merge_chart_style(
     if isinstance(chart, BarChart) and chart.type == "funnel":
         per_family_patch = _funnel_patch(board_ctx, chart)
         chart_type = "bar"
+    per_family_patch = over_board_family_color(chart, per_family_patch, board_ctx)
 
     # Chart style is a per-family patch; wrap it into a monolithic ChartStylePatch
     # so the rest of this function (which iterates _ALL_FAMILY_KEYS) works. An
@@ -377,7 +441,7 @@ def merge_chart_style(
         if _categorical is not None:
             from dbt_charts.core.compile.resolve.style.palette import (
                 palette as resolve_palette,
-                resolve_palette_alias,
+                palette_with_warning,
             )  # noqa: PLC0415
 
             _palette = _categorical.palette
@@ -385,15 +449,15 @@ def merge_chart_style(
                 # _categorical is a synthesized CategoricalColorStylePatch (see
                 # build_patch_model) — it carries no validators, so a raw string
                 # here is still unresolved and must be run through
-                # resolve_palette_alias directly (not _categorical's own
-                # requested_alias_palette, which is always None on a patch).
+                # palette_with_warning directly (not _categorical's own
+                # warned_palette, which is always None on a patch).
                 if isinstance(_palette, str):
-                    overrides["palette"], overrides["requested_alias_palette"] = (
-                        resolve_palette_alias(_palette)
+                    overrides["palette"], overrides["warned_palette"] = (
+                        palette_with_warning(_palette)
                     )
                 else:
                     overrides["palette"] = list(_palette)
-                    overrides["requested_alias_palette"] = None
+                    overrides["warned_palette"] = None
             _ssp = _categorical.single_series_palette
             if _ssp is not None:
                 overrides["single_series_palette"] = (
@@ -443,9 +507,6 @@ def merge_chart_style(
         _global = getattr(base_charts, _field)
         _effective = _global
         _family_patch = _family_field_patch(base_charts, chart_type, _field)
-        if _field == "legend":
-            # Placement, direction and visibility are decided per chart (`_base_kwargs`).
-            _family_patch = without_engine_decided(_family_patch)
         if _family_patch is not None:
             _effective = merge_unset(_effective, _family_patch)
         _local = None
@@ -453,12 +514,19 @@ def merge_chart_style(
             _local = getattr(
                 primary, _field, None
             )  # type-state: silent_fallback — primary is a per-family patch union; see the support_table precedent above
-        if _field == "legend":
-            _local = without_engine_decided(_local)
         if _local is not None:
             _effective = merge_unset(_effective, _local)
         if _effective is not _global:
             overrides[_field] = _effective
+        if _field == "key":
+            # Placement, direction and visibility of the key's legend are decided
+            # per chart (`_base_kwargs`); the baked legend takes the rest.
+            _legend = base_charts.legend
+            for _tier in (_family_field_patch(base_charts, chart_type, "key"), _local):
+                if _tier is not None:
+                    _legend = merge_unset(_legend, without_engine_decided(_tier.legend))
+            if _legend is not base_charts.legend:
+                overrides["legend"] = _legend
 
     # --- Pagination (table charts expose this via TableChartStyle.pagination) ---
     # Chart-local pagination layers on top of the board default. ``enabled``

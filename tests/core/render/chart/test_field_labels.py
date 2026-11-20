@@ -96,7 +96,7 @@ def test_endpoint_rail_names_base_and_layer_by_field_label() -> None:
             **_DATE_LAYERED,
             "field_labels": {"revenue": "Rev LBL", "target": "Goal LBL"},
             "style": {
-                "legend": {"visible": False, "position": {"edge": "endpoints"}},
+                "key": {"type": "direct"},
             },
         },
         _DATE_LAYER_ROWS,
@@ -123,12 +123,17 @@ def test_legend_values_resolve_against_field_labels(
     rows = _DATE_LAYER_ROWS if chart is _DATE_LAYERED else _WIDE_ROWS
 
     def codes(legend_values: list[str]) -> set[str]:
-        legend = {"visible": True, "values": legend_values}
         result = _render(
             {
                 **chart,
                 "field_labels": labels,
-                "style": {"endpoint_labels": {"visible": False}, "legend": legend},
+                "style": {
+                    "key": {
+                        "visible": True,
+                        "type": "legend",
+                        "legend": {"values": legend_values},
+                    }
+                },
             },
             rows,
         )
@@ -255,19 +260,18 @@ def test_bar_layer_y_start_key_is_accepted() -> None:
     assert result.chart_errors == []
 
 
-def test_pie_legend_and_tooltip_rows_use_field_labels() -> None:
+def test_pie_tooltip_rows_use_field_labels() -> None:
     chart = _resolved(
         {
             "type": "pie",
             "theta": "MTok_cost",
             "color": "seg",
             "field_labels": _SEG_LABELS,
-            "style": {"legend": {"visible": True}},
+            "style": {"key": {"visible": True, "type": "legend"}},
         },
         _SEG_ROWS,
     )
     svg = render_pie_svg(chart, _SEG_ROWS, width=chart.resolution_width)
-    assert ">customer SEG</text>" in svg
     tooltips = re.findall(
         r'aria-label="([^"]+)"[^>]*aria-roledescription="arc mark"', svg
     )

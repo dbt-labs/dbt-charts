@@ -81,7 +81,7 @@ def merged_chart_style(
         "type": chart.type,
         "palette": context.palette,
         "single_series_palette": context.single_series_palette,
-        "requested_alias_palette": context.requested_alias_palette,
+        "warned_palette": context.warned_palette,
         "background": context.background,
         "ink_canvas": context.ink_canvas,
         "legend": context.legend,

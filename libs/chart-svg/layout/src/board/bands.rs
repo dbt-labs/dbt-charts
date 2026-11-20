@@ -26,10 +26,24 @@ static BRAND: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?<![A-Za-z0-9_])dbt charts(?![A-Za-z0-9_])").expect("the brand pattern compiles")
 });
 
-/// `_SAMPLE_TIMESTAMP` (`compile/sizing.py`), in milliseconds since the epoch: 2026-12-28 22:22 UTC. A
-/// fixed instant, so the floor never depends on when the board renders; late December is among the
-/// widest in month names.
-const SAMPLE_TIMESTAMP_MS: f64 = 1_798_496_520_000.0;
+/// Python's `\d`: any Unicode decimal digit, so a locale's own numerals (`ar-SY`'s `ت١`) swap too.
+static DIGIT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d").expect("the digit pattern compiles"));
+
+/// `_SAMPLE_TIMESTAMPS` (`compile/sizing.py`): fixed instants, so the floor never depends on when the
+/// board renders. Every month (both sides of any DST switch), a run of days covering every weekday,
+/// and two hours 12 apart (one AM, one PM in any zone), each at :22 UTC.
+static SAMPLE_INSTANTS: LazyLock<Vec<jiff::Timestamp>> = LazyLock::new(|| {
+    let mut out = Vec::new();
+    for month in 1..=12 {
+        for day in 22..=28 {
+            for hour in [10, 22] {
+                let at = jiff::civil::datetime(2026, month, day, hour, 22, 0, 0).to_zoned(jiff::tz::TimeZone::UTC);
+                out.push(at.expect("a 2026 instant converts").timestamp());
+            }
+        }
+    }
+    out
+});
 
 /// The brand `_bake_theme_words` (`resolve/style/board.py`) fills the `auto` words with.
 const BRAND_NAME: &str = "dbt Charts";
@@ -58,7 +72,7 @@ fn row_width(style: &Style, book: &FontBook) -> Result<f64, Diagnostic> {
     let stamp = &style.timestamp;
     if stamp.visible && stamp.position == TimestampPosition::Footer {
         width += stamp.gap.get();
-        width += advance(book, &sample_stamp(style)?, family, stamp.font.size, 400.0)?;
+        width += widest_stamp(style, book, family, stamp.font.size)?;
     }
     Ok(width)
 }
@@ -91,9 +105,23 @@ fn stamp_format(style: &Style) -> Result<String, Diagnostic> {
 /// print their modifier forms differently, so they are not in it.
 const SHARED_DIRECTIVES: &str = "aAbBcdeGHIjLmMpqQSuUVwWxXyY%";
 
-/// `portable_strftime(_SAMPLE_TIMESTAMP, format)`.
-fn sample_stamp(style: &Style) -> Result<String, Diagnostic> {
-    strftime(style, SAMPLE_TIMESTAMP_MS, "UTC")
+/// The widest the timestamp prints over [`SAMPLE_INSTANTS`] in the active board zone, each digit
+/// swapped for the face's widest one: digits are proportional, so no one instant is the widest.
+fn widest_stamp(style: &Style, book: &FontBook, family: &str, size: f64) -> Result<f64, Diagnostic> {
+    let mut digit = '0';
+    let mut digit_width = f64::NEG_INFINITY;
+    for d in '0'..='9' {
+        let w = advance(book, &d.to_string(), family, size, 400.0)?;
+        if w > digit_width {
+            (digit, digit_width) = (d, w);
+        }
+    }
+    let mut widest = f64::NEG_INFINITY;
+    for &at in SAMPLE_INSTANTS.iter() {
+        let swapped = DIGIT.replace_all(&stamp_text(style, at)?, digit.to_string()).into_owned();
+        widest = widest.max(advance(book, &swapped, family, size, 400.0)?);
+    }
+    Ok(widest)
 }
 
 /// The timestamp row's text for the render at `rendered_at`, printed in the active board zone

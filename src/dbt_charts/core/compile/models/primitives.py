@@ -1539,6 +1539,13 @@ class ResolvedNamedPaletteScaleTargetConfig(ResolvedScaleTargetConfig):
             "diverging ramp from a sequential one without reaching into compile."
         ),
     )
+    warned_palette: str | None = Field(
+        default=None,
+        description=(
+            "The palette's base name when it is on the WARN-PALETTE-UNSUPPORTED "
+            "list; None for any other palette."
+        ),
+    )
 
 
 # Union alias: every pydantic field that HOLDS a resolved scale target must use
@@ -1572,6 +1579,7 @@ def bake_scale_target_stops(target: ScaleTargetConfig) -> ResolvedScaleTargetCon
     from dbt_charts.core.compile.resolve.style.palette import (
         palette as resolve_palette,
         palette_family,
+        warned_palette_name,
     )  # noqa: PLC0415
 
     return ResolvedNamedPaletteScaleTargetConfig.model_validate(
@@ -1579,6 +1587,7 @@ def bake_scale_target_stops(target: ScaleTargetConfig) -> ResolvedScaleTargetCon
             **target.model_dump(exclude_unset=True),
             "resolved_stops": tuple(resolve_palette(target.palette)),
             "family": palette_family(target.palette),
+            "warned_palette": warned_palette_name(target.palette),
         }
     )
 
@@ -1638,8 +1647,8 @@ class CategoricalColorStyle(BaseModel):
         default=None,
         description="Ink without a color column: palette name, or colors list, even one: ['#2E6B4F'].",
     )
-    requested_alias_palette: Annotated[
-        str | None, Merge(Strategy.OVERRIDE), Absent("no flagged palette alias")
+    warned_palette: Annotated[
+        str | None, Merge(Strategy.OVERRIDE), Absent("no warned palette")
     ] = Field(
         default=None,
         exclude=True,
@@ -1647,7 +1656,7 @@ class CategoricalColorStyle(BaseModel):
         description=(
             "Internal: set when this layer authors palette/single_series_palette "
             "as a known WARN-PALETTE-UNSUPPORTED anti-pattern name (e.g. RdYlGn); "
-            "holds the originally-requested name for the render-stage detector. "
+            "holds that name for the render-stage detector. "
             "Computed by _expand_palette_names — not user-authorable."
         ),
     )
@@ -1658,18 +1667,18 @@ class CategoricalColorStyle(BaseModel):
         if not isinstance(data, dict):
             return data
         from dbt_charts.core.compile.resolve.style.palette import (  # noqa: PLC0415
-            is_warn_alias,
-            resolve_palette_alias,
+            is_warned_palette,
+            palette_with_warning,
         )
 
         # The merge cascade re-validates an already-compiled model through a
         # dict of every field, provenance included — so the key's presence
         # can't be the tell. Only a value this resolver would never produce is
         # one an author fabricated.
-        authored = data.get("requested_alias_palette")
-        if authored is not None and not is_warn_alias(authored):
+        authored = data.get("warned_palette")
+        if authored is not None and not is_warned_palette(authored):
             raise ValueError(
-                "requested_alias_palette is computed internally from an aliased "
+                "warned_palette is computed internally from a warned "
                 "palette/single_series_palette name and cannot be authored directly."
             )
 
@@ -1686,7 +1695,7 @@ class CategoricalColorStyle(BaseModel):
             if not isinstance(value, str):
                 continue
             try:
-                stops, requested = resolve_palette_alias(value)
+                stops, requested = palette_with_warning(value)
             except UnknownPaletteError as exc:
                 if not might_be_palette_role(value):
                     raise ERR_PALETTE_STYLE_INVALID.validation_error(
@@ -1704,7 +1713,7 @@ class CategoricalColorStyle(BaseModel):
                 ) from None
             data[field_name] = stops
             if requested is not None:
-                data["requested_alias_palette"] = requested
+                data["warned_palette"] = requested
         return data
 
 

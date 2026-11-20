@@ -126,8 +126,11 @@ class ResolvedPieChart(
     slice_label_indices: tuple[int, ...] = Field(
         description="Row indices whose mechanically rendered slice labels are visible.",
     )
-    labeled_mode: Literal["direct", "hybrid", "none"] = Field(
-        description="Labeled layout the data allows: 'direct', 'hybrid' or 'none'.",
+    labeled_mode: Literal["direct", "hybrid", "none", "bare"] = Field(
+        description=(
+            "Labeled layout the key allows: 'direct', 'hybrid', 'none' (the full "
+            "table alone) or 'bare' (a hidden key: the wheel, never a table)."
+        ),
     )
     hybrid_attachment: PieAttachment | None = Field(
         default=None,
@@ -143,9 +146,10 @@ class ResolvedPieChart(
         if (self.hybrid_attachment is not None) != (self.labeled_mode == "hybrid"):
             raise ValueError("a hybrid attachment goes with labeled_mode 'hybrid'")
         # A pie with no slice to show (no rows, a non-numeric or all-zero theta)
-        # resolves without a full-table candidate; any pie with a slice needs one.
+        # resolves without a full-table candidate, as does a bare one; any other
+        # pie with a slice needs one.
         if self.full_attachment is None and (
-            self.labeled_mode != "direct" or self.slice_label_indices
+            self.labeled_mode not in ("direct", "bare") or self.slice_label_indices
         ):
             raise ValueError("a pie with a slice to show needs a full-table attachment")
         return self

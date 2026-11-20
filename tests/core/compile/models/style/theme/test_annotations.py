@@ -130,14 +130,14 @@ def test_annotation_defaults_follow_the_design_brief(theme: str) -> None:
         assert mark.box.visible is False
     for mark in (note.line, note.circle, note.rect):
         assert mark.stroke.color == note.text.font.color
-    # A rule has its own ink: rung 7 by default, `auto` on neon, a theme's muted
+    # A rule has its own ink: rung 8 by default, `auto` on neon, a theme's muted
     # on paper and stark; its label follows the line.
     muted = note.text.font.color
     assert rule.rule.stroke.color == {
         "neon": "auto",
         "paper": muted,
         "stark": muted,
-    }.get(theme, "#8A8C8F")
+    }.get(theme, "#626366")
     assert rule.text.font.color == "line"
     frame = ann.note.frame.text.position
     assert (frame.edge, frame.align, frame.overlay) == ("bottom", "end", True)

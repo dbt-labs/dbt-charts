@@ -124,9 +124,9 @@ def test_style_board_and_interactive_legend_migrate_together(
 
     assert migrated["style"] == {"frame": {"min_height": 400}}
     assert migrated["width"] == 960
-    legend = migrated["charts"]["revenue"]["style"]["legend"]
-    assert "interactive_legend" not in legend
-    assert legend["visible"] is True
+    key = migrated["charts"]["revenue"]["style"]["key"]
+    assert "interactive_legend" not in key.get("legend", {})
+    assert key["visible"] is True
     AuthoredBoard.model_validate(migrated)
 
 

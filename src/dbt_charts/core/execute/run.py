@@ -73,6 +73,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_QUERY_DURATION_EXCEEDED,
     ERR_QUERY_FORMAT_COLUMN_MISSING,
 )
+from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.dialects import SQLDialect, get_dialect
 from dbt_charts.core.execute.backends.dbt_adapter_factory import ConnectionSetupFailed
@@ -384,7 +385,7 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
 
     # An options query's failure propagates: run() records it uncached, as
     # that query's failure, not this one's.
-    member_types = _option_member_types(ledger, planned)
+    member_types = _option_member_types(ctx, ledger, planned)
     try:
         query_plan = typed_plan(ctx.plan, member_types)
     except DbtChartsError as e:
@@ -478,13 +479,29 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
     )
 
 
-def _option_member_types(ledger: Ledger, planned: QueryRun) -> dict[str, str]:
+def _option_member_types(
+    ctx: ExecContext, ledger: Ledger, planned: QueryRun
+) -> dict[str, str]:
     """The member type each untyped choice variable *planned* binds takes from
     its options column; a text column types nothing."""
+    if not planned.option_types:
+        return {}
+    registry = ctx.board.variable_registry
+    if registry is None:
+        raise ExecutionError.from_code(
+            ERR_INTERNAL,
+            message=f"query {planned.name!r} binds variables no board declares",
+        )
     member_types: dict[str, str] = {}
     for variable, options in planned.option_types.items():
         result = _settled_rows(ledger, options)
-        column = option_value_column(list(result.schema), options.name)
+        declared = registry[variable].options
+        column = option_value_column(
+            list(result.schema),
+            options.name,
+            variable,
+            declared.column if declared else None,
+        )
         member_type = option_member_type(result.schema[column].kind)
         if member_type is not None:
             member_types[variable] = member_type

@@ -1284,7 +1284,7 @@ layers:
       title: "Target"
 ```
 
-The base chart (`type: bar`, `type: line`, or `type: area`) sets the primary mark, `x`, `y`, and `query`. Additional marks go in `layers:`. Each layer accepts: `type`, `y`, `label`, `color` (data channel, bare field name), `query` (overrides the base chart query for this layer), `x` (layer x-values extend the base x-scale), `axis_y`, `legend` (`false` drops the layer's legend entry and keeps the layer drawn; default `true`), and `style` (marks-only patch). A colorless line layer holding one value across its rows is a reference line: it draws no automatic point marks. Vega-Lite `encoding:` is not allowed inside a layer — use the typed channels.
+The base chart (`type: bar`, `type: line`, or `type: area`) sets the primary mark, `x`, `y`, and `query`. Additional marks go in `layers:`. Each layer accepts: `type`, `y`, `label`, `color` (data channel, bare field name), `query` (overrides the base chart query for this layer), `x` (layer x-values extend the base x-scale), `axis_y`, `key` (`false` drops the layer's key entry and keeps the layer drawn; default `true`), and `style` (marks-only patch). A colorless line layer holding one value across its rows is a reference line: it draws no automatic point marks. Vega-Lite `encoding:` is not allowed inside a layer — use the typed channels.
 
 ### Annotations
 
@@ -1432,8 +1432,6 @@ charts:
     x: month
     y: total
     style:
-      legend:
-        visible: false                # hide the legend
       axis_x:
         labels:
           angle: -45                  # rotate crowded x labels
@@ -1680,9 +1678,9 @@ variables:
     options:
       static: [All, Electronics, Clothing]    # Hardcoded list
       # OR
-      query: products_list                     # Query whose first column is the option list
-      column: product_name                     # Optional: which column in that query
-      label_column: product_label              # Optional: separate label column
+      query: products_list                     # Query that lists the options
+      column: product_name                     # Optional: the column holding them
+      count_column: product_orders             # Optional: count shown beside each option
 
   region:
     input: select

@@ -1,4 +1,4 @@
-//! Pie layout: every pixel decision. The wheel is the largest one whose labels, legend and
+//! Pie layout: every pixel decision. The wheel is the largest one whose labels and
 //! center total fit its box, solved in closed form (`d3rs::radial_fit`); the attached-table
 //! composition places the wheel's box beside or around the table, mirroring production's
 //! Python SVG composer. A pie has no height of its own and hugs nothing; only an attached
@@ -12,16 +12,12 @@ use scene::{Attrs, Chars, Escape, Extent, Node, Role, Run, Shape};
 
 use d3rs::radial_fit::{Ink, SolveError};
 
-use super::bind::{Align, Attached, Bound, LegendPlan, Placement, SliceLabel, Wheel};
+use super::bind::{Align, Attached, Bound, Placement, SliceLabel, Wheel};
 use super::{Parts, Resolved, WheelError, ALL_PARTS, BARE};
-use crate::common::{Font, MeasuredAs, TitleStyle};
+use crate::common::{Font, TitleStyle};
 use crate::contract::{self, Reads};
 use ::layout::contract::ItemRole;
 use diagnostic::Diagnostic;
-use crate::families::legend::{
-    drawn_symbol_legend, legend_edge_origin, legend_from_widths, legend_origin, legend_slide, limit_legend_text,
-    LegendEntry, LegendSymbol, VegaLegend, VEGA_LEGEND_OFFSET,
-};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::layout::{IntrinsicWidth, Layout, Rect};
 use crate::vega_fit;
@@ -73,7 +69,8 @@ fn compose(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Composed, Dia
     // The chart's OWN effective background — see `Resolved::background`.
     let frame = ChartFrame::at(cell.width, cell.height, payload.padding.as_ref(), r.background.as_str());
     let Some(attached) = &bound.attached else {
-        let drawn = wheel(&frame, r, r.title_style.as_ref(), &bound.wheel, &payload.rows, &bound.thetas, bound.total, measure, 0.0)?;
+        let drawn = wheel(&frame, r, r.title_style.as_ref(), &bound.wheel, &payload.rows, &bound.thetas, bound.total, measure)?;
+        let (data_box, title_pos) = (drawn.plot, drawn.title_pos);
         let body = if bound.faded {
             // `render_vega_spec`'s placeholder arm: the whole drawing faded under the overlay,
             // in the board's font.
@@ -90,77 +87,95 @@ fn compose(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Composed, Dia
                 .ok_or("pie: a placeholder chart needs board_style.placeholder.overlay.font.family")?;
             let (text, weight) = style.overlay_label(None)?;
             vec![
-                Node::group(Role::Chrome, Attrs::new().num("opacity", style.opacity), drawn.nodes),
+                Node::group(Role::Chrome, Attrs::new().num("opacity", style.opacity), drawn.nodes((0.0, 0.0))),
                 style.overlay_node(frame.w, frame.h, family, text, weight),
             ]
         } else {
-            drawn.nodes
+            drawn.nodes((0.0, 0.0))
         };
         return Ok(Composed {
             root: frame.root_node(body),
             canvas: Rect { x: 0.0, y: 0.0, width: frame.w, height: frame.h },
-            data_box: drawn.plot,
-            title_pos: drawn.title_pos,
+            data_box,
+            title_pos,
         });
     };
 
     let (w, (pad_l, pad_r, _, _)) = (frame.w, frame.pad);
     let gap = attached.gap;
-    let AttachedWheel { wheel_frame, wheel_h, title_style: pushed_title_style, table_nodes, table_h, top_table_y, title_dx } =
+    let AttachedWheel { wheel_frame, wheel_h, title_style: pushed_title_style, table_nodes, table_h, top_table_y } =
         attached_wheel(bound, attached, &frame, measure, true)?;
-    let drawn = wheel(
-        &wheel_frame,
-        r,
-        pushed_title_style.as_ref(),
-        &bound.wheel,
-        &payload.rows,
-        &bound.thetas,
-        bound.total,
-        measure,
-        title_dx,
-    )?;
+    let drawn = wheel(&wheel_frame, r, pushed_title_style.as_ref(), &bound.wheel, &payload.rows, &bound.thetas, bound.total, measure)?;
 
-    let (outer_h, donut_x, table_x, table_y) = match attached.placement {
+    let (outer_h, (donut_x, donut_y), table_x, table_y) = match attached.placement {
         Placement::Left | Placement::Right => {
-            // The table aligns down the wheel's disk, not the card, and never above the disk's top.
-            let diameter = 2.0 * drawn.radius;
-            let disk_top = ((wheel_h - diameter) / 2.0).max(0.0);
-            let table_y = disk_top.max(match attached.align {
-                Align::Start => disk_top,
-                Align::Center => disk_top + (diameter - table_h) / 2.0,
-                Align::End => disk_top + diameter - table_h,
-            });
-            let (donut_x, table_x) = if attached.placement == Placement::Right {
-                (0.0, attached.wheel_width + gap)
-            } else {
-                (attached.table_width + gap, pad_l)
+            // The table aligns down the wheel's ink box (disk, slice labels, total), not the card.
+            // One that would ride above the plot's top, into the title, stays there and the wheel
+            // moves down to align on it.
+            let table_y = match attached.align {
+                Align::Start => drawn.cy - drawn.ink.2,
+                Align::Center => drawn.cy + (drawn.ink.3 - drawn.ink.2) / 2.0 - table_h / 2.0,
+                Align::End => drawn.cy + drawn.ink.3 - table_h,
             };
-            (wheel_h.max(table_y + table_h), donut_x, table_x, table_y)
+            let donut_y = (drawn.plot.y - table_y).max(0.0);
+            let (center, table_x) =
+                beside(attached.placement == Placement::Right, w, (pad_l, pad_r), attached.table_width, (drawn.ink.0, drawn.ink.1));
+            let donut_x = center - drawn.cx;
+            ((wheel_h + donut_y).max(table_y + donut_y + table_h), (donut_x, donut_y), table_x, table_y + donut_y)
         }
         Placement::Top | Placement::Bottom => {
-            // Across the card inside its padding.
-            let across_x = match attached.align {
-                Align::Start => pad_l,
-                Align::Center => (w - attached.table_width) / 2.0,
-                Align::End => w - attached.table_width - pad_r,
-            };
+            // Across the wheel's ink box, as a table beside it aligns down it, inside the card's padding.
             let donut_x = (w - attached.wheel_width) / 2.0;
+            let cx = donut_x + drawn.cx;
+            let across_x = match attached.align {
+                Align::Start => cx - drawn.ink.0,
+                Align::Center => cx + (drawn.ink.1 - drawn.ink.0) / 2.0 - attached.table_width / 2.0,
+                Align::End => cx + drawn.ink.1 - attached.table_width,
+            }
+            .min(w - pad_r - attached.table_width)
+            .max(pad_l);
             if attached.placement == Placement::Top {
-                (wheel_h, donut_x, across_x, top_table_y)
+                (wheel_h, (donut_x, 0.0), across_x, top_table_y)
             } else {
-                (wheel_h + gap + table_h, donut_x, across_x, wheel_h + gap)
+                (wheel_h + gap + table_h, (donut_x, 0.0), across_x, wheel_h + gap)
             }
         }
     };
 
-    let donut = Node::group(Role::Chrome, Attrs::new(), drawn.nodes).translate(donut_x, 0.0);
+    let data_box = Rect { x: drawn.plot.x + donut_x, y: drawn.plot.y + donut_y, ..drawn.plot };
+    let title_pos = drawn.title_pos.map(|(x, y)| (x - donut_x, y - donut_y));
+    // The title stays on the card's own corner wherever the wheel's box goes.
+    let donut = Node::group(Role::Chrome, Attrs::new(), drawn.nodes((-donut_x, -donut_y))).translate(donut_x, donut_y);
     let table = Node::group(Role::Chrome, Attrs::new(), table_nodes).translate(table_x, table_y);
     Ok(Composed {
         root: frame.sized(w, outer_h).root_node(vec![donut, table]),
         canvas: Rect { x: 0.0, y: 0.0, width: w, height: outer_h },
-        data_box: Rect { x: drawn.plot.x + donut_x, ..drawn.plot },
-        title_pos: drawn.title_pos,
+        data_box,
+        title_pos,
     })
+}
+
+/// Where the wheel's center and a table beside it (on the `right`, else the left) sit across a
+/// canvas `w` wide inside its `pad` (left, right). The wheel centers in the canvas and the table
+/// sits `SIDE_TABLE_INK_GAP_PX` past the wheel's farther ink reach (`ink`: left, right of the
+/// center), so the two sides mirror. A table that would cross the padding stops there and takes
+/// the wheel along, but never past the wheel's far ink: on a card too tight for both, the gap
+/// shrinks.
+fn beside(right: bool, w: f64, pad: (f64, f64), table_w: f64, ink: (f64, f64)) -> (f64, f64) {
+    let gap = crate::constants::pie::SIDE_TABLE_INK_GAP_PX;
+    // Solved for a right table; a left one is its mirror image.
+    let solve = |(pad_far, pad_table): (f64, f64), (near, far): (f64, f64)| {
+        let half = near.max(far);
+        let edge = w - pad_table - table_w - gap;
+        let x = if w / 2.0 + half > edge { (edge - half).max(pad_far + far) } else { w / 2.0 };
+        (x, (x + half + gap).min(w - pad_table - table_w))
+    };
+    if right {
+        solve(pad, (ink.1, ink.0))
+    } else {
+        let (x, table_x) = solve((pad.1, pad.0), ink);
+        (w - x, w - table_x - table_w)
+    }
 }
 
 /// An attached-table pie's composition: its table and the frame the wheel renders in, a
@@ -173,8 +188,6 @@ struct AttachedWheel<'a> {
     table_nodes: Vec<Node>,
     table_h: f64,
     top_table_y: f64,
-    /// A left table slides the title back by the wheel's offset.
-    title_dx: f64,
 }
 
 /// The attached table laid out and the wheel's frame beside it. `report` forwards the
@@ -257,8 +270,6 @@ fn attached_wheel<'a>(
     } else {
         (base_h, pad_t, r.title_style.clone(), 0.0)
     };
-    // A left table pushes the wheel right by its own width and gap.
-    let title_dx = if attached.placement == Placement::Left { -(attached.table_width + gap) } else { 0.0 };
 
     let wheel_frame = ChartFrame::new(
         attached.wheel_width,
@@ -266,7 +277,7 @@ fn attached_wheel<'a>(
         (pad_l, pad_r, wheel_pad_t, pad_b),
         r.background.as_str(),
     );
-    Ok(AttachedWheel { wheel_frame, wheel_h, title_style, table_nodes, table_h, top_table_y, title_dx })
+    Ok(AttachedWheel { wheel_frame, wheel_h, title_style, table_nodes, table_h, top_table_y })
 }
 
 /// A wheel's solved outer radius, and the smallest one whose hole holds the center total.
@@ -335,59 +346,34 @@ fn vega_title_block_height(r: &Resolved) -> Result<f64, String> {
     Ok(rows + offset)
 }
 
-/// A pie's color legend as Vega lays it out: `(label, fill)` per entry plus the shared grid
-/// layout, and the slice stroke color the symbols carry.
-struct PieLegend {
-    entries: Vec<(String, String)>,
-    keys: Vec<Option<String>>,
-    layout: VegaLegend,
-    symbol_stroke: Option<String>,
-}
-
-impl PieLegend {
-    fn entries(&self) -> Vec<LegendEntry<'_>> {
-        self.entries
-            .iter()
-            .zip(&self.keys)
-            .map(|((label, fill), key)| LegendEntry { label, fill, symbol: key.is_none().then_some(LegendSymbol::Overflow), series_key: None, recede: None, action: None })
-            .collect()
-    }
-
-    /// A filled `arc` mark's legend symbol: Vega's default `circle` in the scale's fill,
-    /// stroked in the mark's own constant `stroke` (`legend/encode.ts` `symbols`: the mark
-    /// `stroke` flows, its width and join do not), unstroked when the mark has none.
-    fn symbol(&self) -> LegendSymbol<'_> {
-        match &self.symbol_stroke {
-            Some(stroke) => LegendSymbol::StrokedCircle(stroke),
-            None => LegendSymbol::FilledCircle,
-        }
-    }
-}
-
-/// The bound legend's text limited to its label and title widths, then laid out through the
-/// shared Vega layout.
-fn lay_out_legend(plan: &LegendPlan, r: &Resolved, measure: &Measure) -> Result<PieLegend, String> {
-    let cfg = &r.legend;
-    let mut entries = plan.entries.clone();
-    let limited =
-        limit_legend_text(entries.iter().map(|(label, _)| label.as_str()), &plan.title, cfg, measure.fonts, MeasuredAs::Painted)?;
-    for ((label, _), drawn) in entries.iter_mut().zip(limited.labels) {
-        *label = drawn;
-    }
-    let (label_ws, title, title_w) = (limited.label_ws, limited.title, limited.title_w);
-    // An unstroked symbol bounds the bare 10px glyph (no stroke ring), which tightens the row
-    // pitch; a stroked one is the grid's default entry.
-    let entry_symbol = plan.symbol_stroke.is_none().then_some(LegendSymbol::FilledCircle);
-    let symbols: Vec<_> = entries.iter().map(|(_, fill)| crate::families::legend::entry_symbol(fill, entry_symbol)).collect();
-    let layout = legend_from_widths(&label_ws, &symbols, false, &title, title_w, cfg)?;
-    Ok(PieLegend { entries, keys: plan.keys.clone(), layout, symbol_stroke: plan.symbol_stroke.clone() })
-}
-
 struct DrawnWheel {
+    /// The background, the pattern defs and the marks, without the title.
     nodes: Vec<Node>,
+    title: Vec<Node>,
+    /// Where `title` goes in `nodes`: after the background and the defs.
+    title_at: usize,
     radius: f64,
+    cx: f64,
+    cy: f64,
+    /// How far the wheel's ink (the disk, its slice labels and the center total) reaches left, right,
+    /// above and below its center. A table aligns on this box.
+    ink: (f64, f64, f64, f64),
     plot: Rect,
     title_pos: Option<(f64, f64)>,
+}
+
+impl DrawnWheel {
+    /// The wheel's nodes with its title moved by `offset`.
+    fn nodes(mut self, offset: (f64, f64)) -> Vec<Node> {
+        let marks = self.nodes.split_off(self.title_at);
+        if offset == (0.0, 0.0) || self.title.is_empty() {
+            self.nodes.extend(self.title);
+        } else {
+            self.nodes.push(Node::group(Role::Chrome, Attrs::new(), self.title).translate(offset.0, offset.1));
+        }
+        self.nodes.extend(marks);
+        self.nodes
+    }
 }
 
 /// A slice label placed: the angle it sits at and the widest of its lines.
@@ -416,18 +402,15 @@ fn text_font_as(attrs: Attrs, font: &Font, size: f64, default_family: &str, weig
 struct WheelLayout<'a> {
     title: FrameTitle,
     title_y: f64,
-    legend: Option<PieLegend>,
     /// The center total's value width and size, and its caption's, when drawn.
     total_ink: Option<(f64, f64, Option<(f64, f64)>)>,
     placed: Vec<Placed<'a>>,
     label_fs: f64,
     label_lh: f64,
     label_offset: f64,
-    /// The box the wheel and its ink fill: the padded card below the title, less a reserved
-    /// legend's strip.
+    /// The box the wheel and its ink fill: the padded card below the title.
     plot: Ink,
     wheel: d3rs::radial_fit::Wheel,
-    legend_xy: (f64, f64),
     /// The smallest radius whose hole holds the center total.
     min_radius: Option<f64>,
 }
@@ -447,7 +430,7 @@ fn frame_title(frame: &ChartFrame, r: &Resolved, title_style: Option<&TitleStyle
 }
 
 /// The wheel's layout in `frame` under `title`: the largest wheel whose labels, center
-/// total and legend (those `parts` names) all fit the box the title leaves, solved directly
+/// total (those `parts` names) all fit the box the title leaves, solved directly
 /// (`d3rs::radial_fit`). Fails when no positive radius fits.
 #[allow(clippy::too_many_arguments)]
 fn solve_wheel<'a>(
@@ -464,10 +447,6 @@ fn solve_wheel<'a>(
     let (w, h) = (frame.w, frame.h);
     let (pad_l, pad_r, pad_t, pad_b) = frame.pad;
 
-    let legend = match &wheel.legend {
-        Some(plan) if parts.legend => Some(lay_out_legend(plan, r, measure)?),
-        _ => None,
-    };
     let labels_cfg = r.style.slice_mark.labels.as_ref();
     // Per-visible-slice label geometry, fixed ahead of the solve.
     let mut placed: Vec<Placed> = Vec::new();
@@ -515,28 +494,15 @@ fn solve_wheel<'a>(
         _ => None,
     };
 
-    // The box the wheel and its ink fill: the padded card below the title, less the strip a
-    // reserved legend takes on its edge. The legend sits `VEGA_LEGEND_OFFSET` from the plot
-    // rect, as Vega places it.
+    // The box the wheel and its ink fill: the padded card below the title.
     let title_ink = title.ink();
     let title_y = title_ink.map_or(pad_t, |t| pad_t - t.dy_quirk);
-    let mut plot = Ink {
+    let plot = Ink {
         x1: pad_l,
         y1: title_ink.map_or(pad_t, |t| title_y + t.ink_h + t.offset),
         x2: w - pad_r,
         y2: h - pad_b,
     };
-    if let Some(lg) = &legend {
-        if !r.legend.position.overlay {
-            let (box_w, box_h) = (lg.layout.box_w, lg.layout.box_h());
-            match r.legend.position.edge.as_str() {
-                "left" => plot.x1 += box_w + VEGA_LEGEND_OFFSET,
-                "right" => plot.x2 -= box_w + VEGA_LEGEND_OFFSET,
-                "top" => plot.y1 += box_h + VEGA_LEGEND_OFFSET,
-                _ => plot.y2 -= box_h + VEGA_LEGEND_OFFSET,
-            }
-        }
-    }
     // The cap is the design value `outer_fraction`: a wheel with no label to make room for
     // leaves its box a tenth of whitespace.
     let cap = (plot.x2 - plot.x1).min(plot.y2 - plot.y1) / 2.0 * r.outer_fraction;
@@ -576,15 +542,6 @@ fn solve_wheel<'a>(
         )),
         SolveError::Inconsistent(why) => WheelError::from(format!("pie: {why}")),
     })?;
-    let (pw, ph) = (plot.x2 - plot.x1, plot.y2 - plot.y1);
-    // The strip was reserved against the plot's exact edge, so it is drawn from there; Vega's
-    // ceil of the view bound would push it past a fractional card.
-    let legend_size = legend.as_ref().map_or((0.0, 0.0), |lg| (lg.layout.box_w, lg.layout.box_h()));
-    let legend_xy = if r.legend.position.overlay {
-        legend_origin(&r.legend.position, (0.0, pw), (0.0, ph), (pw, ph), legend_size)
-    } else {
-        legend_edge_origin(&r.legend.position, (0.0, pw), (0.0, ph), legend_size)
-    };
     let min_radius = d3rs::radial_fit::min_radius_for_hole(
         &centered,
         crate::families::pie::HOLE_TOTAL_MARGIN_PX,
@@ -593,7 +550,6 @@ fn solve_wheel<'a>(
     Ok(WheelLayout {
         title,
         title_y,
-        legend,
         total_ink,
         placed,
         label_fs,
@@ -601,13 +557,11 @@ fn solve_wheel<'a>(
         label_offset,
         plot,
         wheel: solved,
-        legend_xy,
         min_radius,
     })
 }
 
-/// A pie laid out in its frame by the closed-form solve over the box the title and a
-/// reserved legend leave (`d3rs::radial_fit`), then drawn.
+/// A pie laid out in its frame by the closed-form solve over the box the title leaves (`d3rs::radial_fit`), then drawn.
 #[allow(clippy::too_many_arguments)]
 fn wheel(
     frame: &ChartFrame,
@@ -618,12 +572,10 @@ fn wheel(
     thetas: &[f64],
     total: f64,
     measure: &Measure,
-    title_dx: f64,
 ) -> Result<DrawnWheel, Diagnostic> {
     let WheelLayout {
         title,
         title_y,
-        legend,
         total_ink,
         placed,
         label_fs,
@@ -631,7 +583,6 @@ fn wheel(
         label_offset,
         plot,
         wheel: solved,
-        legend_xy,
         min_radius: _,
     } = {
         let title = frame_title(frame, r, title_style, measure)?;
@@ -662,16 +613,7 @@ fn wheel(
 
     let mut nodes = vec![frame.background_node()];
     let title_pos = title.ink().map(|_| (pad_l - plot.x1, title_y - plot.y1));
-    if title_pos.is_some() {
-        let title_nodes = title.nodes_at(pad_l, title_y);
-        // A left-placed table pushes the wheel right, and the title group slides back by that
-        // much so it stays on the card's own left edge.
-        if title_dx != 0.0 {
-            nodes.push(Node::group(Role::Chrome, Attrs::new(), title_nodes).translate(title_dx, 0.0));
-        } else {
-            nodes.extend(title_nodes);
-        }
-    }
+    let title_nodes = if title_pos.is_some() { title.nodes_at(pad_l, title_y) } else { Vec::new() };
 
     let gap = r.style.slice_mark.gap.unwrap_or(0.0);
     let corner = r.style.slice_mark.corner_radius.unwrap_or(0.0);
@@ -828,30 +770,59 @@ fn wheel(
         }
     }
 
-    // The legend group paints after every mark layer, slid along its strip for `align`
-    // center/end (`legend_align.py`), against the plot rect the strip was reserved beside.
-    if let Some(lg) = &legend {
-        let (dx, dy) = legend_slide(&r.id, &r.legend.position, &lg.layout, (pw, ph))?;
-        let keys: Vec<Option<&str>> = lg.keys.iter().map(Option::as_deref).collect();
-        nodes.extend(drawn_symbol_legend(
-            &r.selection.legend(lg.entries(), &keys),
-            &lg.layout,
-            &r.legend,
-            lg.symbol(),
-            plot.x1 + legend_xy.0 + dx,
-            plot.y1 + legend_xy.1 + dy,
-            false,
-            r.canvas.as_str(),
-        ));
-    }
-
+    let total = total_ink.as_ref().map_or(0.0, |(value_w, _, caption)| value_w.max(caption.map_or(0.0, |(w, _)| w)) / 2.0);
+    let ink = placed.iter().fold((radius.max(total), radius.max(total), radius, radius), |(left, right, top, bottom), sl| {
+        let reach = sl.mid.sin() * (radius + label_offset);
+        let lines = sl.label.lines.len() as f64;
+        let b = vega_fit::text_ink(0.0, 0.0, sl.max_w, label_fs, "left", "top");
+        let anchor = -sl.mid.cos() * (radius + label_offset) + if sl.mid.cos() >= 0.0 { -lines * label_lh } else { 0.0 };
+        let (top, bottom) = (top.max(-(anchor + b.y1)), bottom.max(anchor + b.y2 + (lines - 1.0) * label_lh));
+        if reach >= 0.0 { (left, right.max(reach + sl.max_w), top, bottom) } else { (left.max(sl.max_w - reach), right, top, bottom) }
+    });
+    let mut title_at = 1;
     if let Some(defs) = r.patterns.finish(true)? {
         nodes.insert(1, defs);
+        title_at += 1;
     }
     Ok(DrawnWheel {
         nodes,
+        title: title_nodes,
+        title_at,
         radius,
+        cx,
+        cy,
+        ink,
         plot: Rect { x: plot.x1, y: plot.y1, width: pw, height: ph },
         title_pos,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::beside;
+
+    /// The wheel centers on a card wide enough for it and its table, the table the gap past the
+    /// farther ink on either side.
+    #[test]
+    fn a_table_beside_a_centered_wheel_mirrors() {
+        let (pad, ink) = ((16.0, 16.0), (156.0, 246.0));
+        assert_eq!(beside(true, 1200.0, pad, 200.0, ink), (600.0, 870.0));
+        assert_eq!(beside(false, 1200.0, pad, 200.0, ink), (600.0, 130.0));
+    }
+
+    /// A table that would cross the padding stops there and takes the wheel along; when the mirrored
+    /// gap would then push the far ink out of the card, the wheel keeps the far ink in and the table
+    /// only the gap from the near ink: on 700px with a 246px reach away from a left table, the
+    /// wheel's center stops at 700 − 16 − 246 = 438, and its near ink (156) leaves 66 to the table.
+    #[test]
+    fn a_tight_card_keeps_the_wheel_s_far_ink_inside_it() {
+        let (pad, ink) = ((16.0, 16.0), (156.0, 246.0));
+        assert_eq!(beside(false, 700.0, pad, 200.0, ink), (438.0, 16.0));
+        assert_eq!(beside(true, 700.0, pad, 200.0, (246.0, 156.0)), (262.0, 484.0));
+        // With room for the far ink, only the shift: the wheel 246 + 24 past the table's end.
+        assert_eq!(beside(false, 800.0, pad, 200.0, ink), (486.0, 16.0));
+        // The far ink bounds the shift: the wheel stops at 680 − 16 − 246 = 418, its near ink
+        // 418 − 156 − 216 = 46 past the table's end.
+        assert_eq!(beside(false, 680.0, pad, 200.0, ink), (418.0, 16.0));
+    }
 }

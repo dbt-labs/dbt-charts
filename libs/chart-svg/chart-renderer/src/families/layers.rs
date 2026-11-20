@@ -1355,7 +1355,7 @@ pub(crate) fn line_layer_marks(
             Ok::<_, String>(crate::step_band::dasharray(&crate::step_band::parse("layer", raw, fit.is_some())?, fit))
         })
         .transpose()?;
-    let (curve, runs, area_runs, mark_points, mark_labels, mark_hrefs, run_hrefs): (_, Vec<Vec<(f64, f64)>>, Vec<Vec<(f64, f64, f64)>>, Vec<(f64, f64)>, Vec<Option<String>>, Vec<Option<String>>, Vec<Option<String>>) =
+    let (curve, runs, area_runs, mark_points, mark_labels, mark_hrefs, run_hrefs, plateau_labels): (_, Vec<Vec<(f64, f64)>>, Vec<Vec<(f64, f64, f64)>>, Vec<(f64, f64)>, Vec<Option<String>>, Vec<Option<String>>, Vec<Option<String>>, Vec<Option<String>>) =
         match band_step {
             Some(bw) => {
                 let (lo, hi) = crate::step_band::band_step_edges(plateau);
@@ -1396,7 +1396,14 @@ pub(crate) fn line_layer_marks(
                 } else {
                     vec![hrefs[0].clone()]
                 };
-                (d3rs::shape::Curve::StepAfter, runs, area_runs, flat, doubled_labels, doubled_hrefs, run_hrefs)
+                // A disconnected plateau names its row's hover point, so hover recedes it with
+                // the bars at its band (`data-dbt-plateau`).
+                let plateau_labels = if disconnected {
+                    bands.iter().map(|(_, at)| labels[at[0]].clone()).collect()
+                } else {
+                    vec![None; runs.len()]
+                };
+                (d3rs::shape::Curve::StepAfter, runs, area_runs, flat, doubled_labels, doubled_hrefs, run_hrefs, plateau_labels)
             }
             None => {
                 // Vega sorts a line/area mark's vertices along its dimension channel (the
@@ -1464,7 +1471,8 @@ pub(crate) fn line_layer_marks(
                     span_runs = vec![linked];
                     path_runs.truncate(1);
                 }
-                (curve, path_runs, span_runs, points.clone(), labels.clone(), hrefs.clone(), run_hrefs)
+                let plateau_labels = vec![None; path_runs.len()];
+                (curve, path_runs, span_runs, points.clone(), labels.clone(), hrefs.clone(), run_hrefs, plateau_labels)
             }
         };
     if let Some(area) = &l.area_mark {
@@ -1521,7 +1529,7 @@ pub(crate) fn line_layer_marks(
         }
     }
     // A disconnected plateau is its own path, never joined to its neighbors.
-    for (run, run_href) in runs.iter().zip(&run_hrefs) {
+    for ((run, run_href), plateau_label) in runs.iter().zip(&run_hrefs).zip(&plateau_labels) {
         let d = scene_path(&d3rs::shape::line_path(std::slice::from_ref(run), curve));
         let stroke = Attrs::new()
             .set("fill", "none")
@@ -1531,6 +1539,10 @@ pub(crate) fn line_layer_marks(
             .set("stroke-linejoin", join);
         let stroke = match &dash {
             Some(dash) => stroke.set("stroke-dasharray", dash.as_str()),
+            None => stroke,
+        };
+        let stroke = match plateau_label {
+            Some(label) => stroke.set("data-dbt-plateau", label.as_str()),
             None => stroke,
         };
         marks.push(crate::contract::connected_group(

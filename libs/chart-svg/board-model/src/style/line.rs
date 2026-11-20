@@ -1,10 +1,9 @@
 //! `style/theme/line.py`: the line chart family.
 
 use crate::style::chart_base::{
-    AnnotatedChartStyleMixin, CartesianChartStyle, LegendedChartStyleBase,
+    AnnotatedChartStyleMixin, CartesianChartStyle, LineAreaKeyedChartStyleBase,
     QuantitativeAxisChartStyleMixin,
 };
-use crate::style::endpoint_labels::EndpointLabelsConfig;
 use crate::chart::conditional_formatting::Predicate;
 use crate::style::axis::AxisXConditional;
 use crate::style::bar::misplaced_defaults;
@@ -86,11 +85,9 @@ pub struct LineChartStyle {
     #[flatten]
     pub quantitative: QuantitativeAxisChartStyleMixin,
     #[flatten]
-    pub legended: LegendedChartStyleBase,
+    pub keyed: LineAreaKeyedChartStyleBase,
     #[flatten]
     pub cartesian: CartesianChartStyle,
-    /// Series names printed at the end of each line instead of in a legend.
-    pub endpoint_labels: EndpointLabelsConfig,
     /// Line-family mark overrides.
     #[model(inherit_slot = "Style.charts.marks")]
     pub marks: LineChartMarksStyle,

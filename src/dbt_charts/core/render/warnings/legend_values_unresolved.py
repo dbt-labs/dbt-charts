@@ -22,7 +22,6 @@ from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.geoshape import ResolvedGeoshapeChart
 from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
-from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     wide_legend_aliases,
@@ -46,7 +45,6 @@ _CHANNEL_COLOR_FAMILIES = (
     *_CARTESIAN_WIDE_FAMILIES,
     ResolvedScatterChart,
     ResolvedHeatmapChart,
-    ResolvedPieChart,
 )
 _CheckedChart = (
     ResolvedBarChart
@@ -54,7 +52,6 @@ _CheckedChart = (
     | ResolvedLineChart
     | ResolvedScatterChart
     | ResolvedHeatmapChart
-    | ResolvedPieChart
     | ResolvedGeoshapeChart
 )
 
@@ -157,11 +154,10 @@ def _color_field_and_domain(
 ) -> tuple[str | None, list[str], dict[str, frozenset[str]] | None] | None:
     """(color_field, domain, aliases) for a chart's own legend, or None when
     this chart/family has nothing for this detector to check."""
-    if isinstance(chart, (ResolvedPieChart, ResolvedGeoshapeChart)):
-        # Both families normalize rows (Decimal -> float, date -> str)
-        # before building their own domain, unlike every other family
-        # here. Match that, or a Decimal/date color value folds
-        # differently on each side.
+    if isinstance(chart, ResolvedGeoshapeChart):
+        # A geoshape normalizes rows (Decimal -> float, date -> str) before
+        # building its own domain, unlike every other family here. Match that,
+        # or a Decimal/date color value folds differently on each side.
         rows = normalize_data_types(rows)
     if isinstance(chart, ResolvedGeoshapeChart):
         # Without this gate the emitter falls back to a neutral-fill map
@@ -272,16 +268,6 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             continue
         if chart_id not in ctx.chart_results:
             continue
-        # A pie draws its legend only in the direct mode: with every placement
-        # sized to a table there is no legend to warn about. A pie the layout
-        # never sized keeps the data check.
-        placements = ctx.pie_placement_modes.get(chart_id)
-        if (
-            isinstance(chart, ResolvedPieChart)
-            and placements
-            and all(mode != "direct" for mode in placements)
-        ):
-            continue
         rows = ctx.chart_results[chart_id]
         # A suppressed legend normally has nothing to warn about.
         # Exception: a non-wide, non-histogram grouped (stack: "none")
@@ -320,7 +306,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             Diagnostic.from_code(
                 WARN_LEGEND_VALUES_UNRESOLVED,
                 chart=chart_id,
-                path=f"charts.{chart_id}.style.legend.values",
+                path=f"charts.{chart_id}.style.key.legend.values",
                 field=color_field,
                 message=WARN_LEGEND_VALUES_UNRESOLVED.message_template.format(
                     chart_id=chart_id,

@@ -222,10 +222,8 @@ def test_resolve_keeps_fk_links_on_a_pivoting_chart_row_dimension() -> None:
     assert isinstance(resolved, ResolvedTableChart)
     assert resolved.columns is not None
     assert resolved.columns["region"].link == "/regions/{{ region }}"
-    # The measure has no key space at resolve — its own leaf columns only
-    # exist after render's pivot transform (column_defaults reaches them
-    # there instead; see test_table_column_defaults.py).
-    assert "amount" not in resolved.columns
+    # The measure resolves over all its values; render fans it to its leaves.
+    assert "amount" in resolved.columns
 
 
 def test_resolve_constructs_request_local_chart_text_without_mutating_normalized() -> (

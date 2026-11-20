@@ -204,8 +204,8 @@ class TestPreExecutionCacheHits:
         assert calls_after_pre_exec >= 1  # at least one query was pre-executed
 
         # Render walk: option query calls are cache hits — no new adapter calls
-        resolve_query_options("city", "city_opts", executor, variables={})
-        resolve_query_options("country", "country_opts", executor, variables={})
+        resolve_query_options("city", "city_opts", None, executor, variables={})
+        resolve_query_options("country", "country_opts", None, executor, variables={})
 
         assert backend_of(registry).execute.call_count == calls_after_pre_exec
 

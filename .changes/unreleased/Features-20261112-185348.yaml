@@ -1,3 +1,0 @@
-kind: Features
-body: dct cloud project set takes require_linked_author, which makes a pull request open only for a member with a linked GitHub account.
-time: 2026-11-12T18:53:48.677038-05:00

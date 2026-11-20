@@ -244,8 +244,8 @@ _OMITTED_FROM_PROJECTION = {
     # key no authored chart accepts.
     "category_colors": "board-level binding, narrowed per chart at resolve",
     "palette": "resolved palette",
-    "requested_alias_palette": "resolved palette input",
-    "requested_alias_substitute": "resolved palette input",
+    "warned_palette": "resolved palette input",
+    "warned_palette_recommendation": "resolved palette input",
     "resolved_channels": "internal channel bindings",
     "stacked_domain_max": "derived at resolve time",
     "torn_break": "derived at resolve time",

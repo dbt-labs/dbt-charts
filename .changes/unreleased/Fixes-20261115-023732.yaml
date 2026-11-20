@@ -1,3 +1,0 @@
-kind: Fixes
-body: A small-multiples chart with a layer now draws each panel's own rows in its base line instead of every panel's.
-time: 2026-11-15T02:37:32.247858-08:00

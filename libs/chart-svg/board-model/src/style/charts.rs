@@ -3,7 +3,7 @@
 //! `PieChartStylePatch` and `BarChartStylePatch` are not models: the donut slot is
 //! `Patch<PieChartStyle>` and the funnel slot `Patch<BarChartStyle>`. The `title` slot
 //! is the total [`ChartTitleStyle`]: Python's sparse patch only meant "copy `Style.title`". The root
-//! redeclares `padding` and `background` and takes `legend` as the total model, where a family
+//! redeclares `padding` and `background` and takes `key` as the total model, where a family
 //! holds a sparse override, so it lists the painted fields itself instead of flattening them.
 //! `_reject_legacy_mark_keys` dissolved into parse: `label` and `map` are unknown keys here,
 //! and the migration registry tells their story.
@@ -24,9 +24,9 @@ use crate::style::heatmap::HeatmapChartStyle;
 use crate::style::histogram::HistogramChartStyle;
 use crate::style::kpi::KpiChartStyle;
 use crate::style::layout::ViewStyle;
-use crate::style::legend::LegendStyle;
+use crate::style::key::ChartsKeyStyle;
 use crate::style::line::LineChartStyle;
-use crate::style::marks::{GlobalMarksStyle, SeriesLabelStyle};
+use crate::style::marks::GlobalMarksStyle;
 use crate::style::pie::PieChartStyle;
 use crate::style::point_map::PointMapChartStyle;
 use crate::style::scatter::ScatterChartStyle;
@@ -66,7 +66,7 @@ pub struct HoverEmphasisStyle {
 
 /// Registry of all chart-type styles plus shared chart configuration.
 ///
-/// Most shared chart fields (padding, aspect_ratio, min_height, max_height, legend) are
+/// Most shared chart fields (padding, aspect_ratio, min_height, max_height, key) are
 /// populated by theme YAML at the global `charts:` level and serve as the cascade source for
 /// per-family defaults. `font`/`border` are declared directly here: only families with a
 /// hand-drawn per-chart card render surface consume a per-family font/border. `tooltip` lives
@@ -76,8 +76,6 @@ pub struct HoverEmphasisStyle {
 /// The `marks:` block holds global mark defaults (tier 1 of the three-tier mark cascade).
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct ChartsStyle {
-    /// Chart legend style.
-    pub legend: LegendStyle,
     /// Preferred chart width in pixels.
     #[model(inherit = "Style.charts.preferred_width")]
     pub preferred_width: f64,
@@ -164,8 +162,8 @@ pub struct ChartsStyle {
     /// Donut overrides, applied over `pie`: a board's pie or donut style reaches every donut, and `donut` styles donuts only.
     #[model(absent = "no donut overrides: a donut is the plain pie", local)]
     pub donut: Option<Patch<PieChartStyle>>,
-    /// Shared series-label typography for endpoint and stack labels.
-    pub series_label: SeriesLabelStyle,
+    /// How every chart names its series.
+    pub key: ChartsKeyStyle,
     /// KPI card chart style.
     pub kpi: Box<KpiChartStyle>,
     /// Table chart style.

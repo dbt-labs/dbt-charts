@@ -742,14 +742,6 @@ pub fn err_legend_align_unsupported(chart_id: impl Into<Value>, reason: impl Int
     Diagnostic::new(&codes::ERR_LEGEND_ALIGN_UNSUPPORTED, [("chart_id", chart_id.into()), ("reason", reason.into())])
 }
 
-pub fn err_legend_align_with_endpoints() -> Diagnostic {
-    Diagnostic::new(&codes::ERR_LEGEND_ALIGN_WITH_ENDPOINTS, [])
-}
-
-pub fn err_legend_overlay_with_endpoints() -> Diagnostic {
-    Diagnostic::new(&codes::ERR_LEGEND_OVERLAY_WITH_ENDPOINTS, [])
-}
-
 pub fn err_legend_position_unsupported(chart_id: impl Into<Value>, edge: impl Into<Value>, align: impl Into<Value>, overlay: impl Into<Value>, supported: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_LEGEND_POSITION_UNSUPPORTED, [("chart_id", chart_id.into()), ("edge", edge.into()), ("align", align.into()), ("overlay", overlay.into()), ("supported", supported.into())])
 }
@@ -1434,12 +1426,24 @@ pub fn err_variable_column_invalid(field_path: impl Into<Value>, column: impl In
     Diagnostic::new(&codes::ERR_VARIABLE_COLUMN_INVALID, [("field_path", field_path.into()), ("column", column.into())])
 }
 
+pub fn err_variable_count_column_missing(variable: impl Into<Value>, count_column: impl Into<Value>, query_name: impl Into<Value>, columns: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_VARIABLE_COUNT_COLUMN_MISSING, [("variable", variable.into()), ("count_column", count_column.into()), ("query_name", query_name.into()), ("columns", columns.into())])
+}
+
+pub fn err_variable_count_not_a_number(variable: impl Into<Value>, count_column: impl Into<Value>, option: impl Into<Value>, count: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_VARIABLE_COUNT_NOT_A_NUMBER, [("variable", variable.into()), ("count_column", count_column.into()), ("option", option.into()), ("count", count.into())])
+}
+
 pub fn err_variable_cycle(cycle: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_VARIABLE_CYCLE, [("cycle", cycle.into())])
 }
 
 pub fn err_variable_default_invalid(name: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_VARIABLE_DEFAULT_INVALID, [("name", name.into()), ("reason", reason.into())])
+}
+
+pub fn err_variable_options_column_missing(variable: impl Into<Value>, column: impl Into<Value>, query_name: impl Into<Value>, columns: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_VARIABLE_OPTIONS_COLUMN_MISSING, [("variable", variable.into()), ("column", column.into()), ("query_name", query_name.into()), ("columns", columns.into())])
 }
 
 pub fn err_variable_options_failed(variable: impl Into<Value>, query_name: impl Into<Value>, cause: impl Into<Value>) -> Diagnostic {
@@ -1678,10 +1682,6 @@ pub fn warn_layout_min_exceeds_height(chart_id: impl Into<Value>, n_categories: 
     Diagnostic::new(&codes::WARN_LAYOUT_MIN_EXCEEDS_HEIGHT, [("chart_id", chart_id.into()), ("n_categories", n_categories.into()), ("min_height", min_height.into()), ("authored_height", authored_height.into())])
 }
 
-pub fn warn_legend_hidden_under_edge(chart_id: impl Into<Value>, edge: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::WARN_LEGEND_HIDDEN_UNDER_EDGE, [("chart_id", chart_id.into()), ("edge", edge.into())])
-}
-
 pub fn warn_legend_overlay_covers_marks(chart_id: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_LEGEND_OVERLAY_COVERS_MARKS, [("chart_id", chart_id.into())])
 }
@@ -1718,8 +1718,8 @@ pub fn warn_normalize_percent_format_reads_raw_value(chart_id: impl Into<Value>,
     Diagnostic::new(&codes::WARN_NORMALIZE_PERCENT_FORMAT_READS_RAW_VALUE, [("chart_id", chart_id.into()), ("format", format.into()), ("field", field.into()), ("total", total.into())])
 }
 
-pub fn warn_palette_unsupported(chart_id: impl Into<Value>, requested: impl Into<Value>, resolved: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::WARN_PALETTE_UNSUPPORTED, [("chart_id", chart_id.into()), ("requested", requested.into()), ("resolved", resolved.into())])
+pub fn warn_palette_unsupported(chart_id: impl Into<Value>, requested: impl Into<Value>, recommended: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_PALETTE_UNSUPPORTED, [("chart_id", chart_id.into()), ("requested", requested.into()), ("recommended", recommended.into())])
 }
 
 pub fn warn_parse_error(query_name: impl Into<Value>, message: impl Into<Value>) -> Diagnostic {

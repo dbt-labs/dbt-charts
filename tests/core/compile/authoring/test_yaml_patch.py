@@ -179,9 +179,9 @@ class TestDeleteEmptiedParents:
     def test_a_comment_under_the_parent_is_not_content(self) -> None:
         original = "style:\n  font:\n    # the only note\n    size: 12\ntitle: X\n"
         result = set_board_values(original, {"style.font.size": None})
-        # Kept, at its old indent: an orphaned comment is a smaller loss than
-        # deleting a line the author wrote.
-        assert result == "    # the only note\ntitle: X\n"
+        # Kept, at the level of the last key struck: an orphaned comment is a
+        # smaller loss than deleting a line the author wrote.
+        assert result == "# the only note\ntitle: X\n"
 
     def test_refuses_when_pruning_would_empty_a_sequence_item(self) -> None:
         original = "rows:\n  - style:\n      font:\n        size: 12\n"

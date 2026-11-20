@@ -1051,6 +1051,11 @@
             const kept = !!(keptLabels[el.getAttribute('data-dbt-ribbon-from')] || keptLabels[el.getAttribute('data-dbt-ribbon-to')]);
             emphasize(next, el, background, kept, soft);
         });
+        /*{# A disconnected step plateau names its datum's hover point: it #}*/
+        /*{# recedes with the bars at its band. A connected line stays lit. #}*/
+        panelScope(mark, chartEl).querySelectorAll('[data-dbt-plateau]').forEach(function (el) {
+            emphasize(next, el, background, !!keptLabels[el.getAttribute('data-dbt-plateau')], soft);
+        });
         /*{# Whatever else the selection receded -- a pie slice label, an area's #}*/
         /*{# endpoint label -- sits in the same flagged link as its mark, so #}*/
         /*{# hover restores it with the rest of the suspended selection. #}*/
@@ -1491,7 +1496,9 @@
 
     /*{# Line/area: a dot on each datum the tooltip is describing, plus one #}*/
     /*{# drop line at that x from the topmost of them down to the axis. #}*/
-    function drawDatumMarkers(overlay, chartEl, points, hovered) {
+    /*{# Hovering a bar keeps the dots and skips the drop line: the bar #}*/
+    /*{# already marks the x, and the line would only cross it. #}*/
+    function drawDatumMarkers(overlay, chartEl, points, hovered, dropLine) {
         const background = chartBackground(hovered);
         const spots = [];
         points.forEach(function (point) {
@@ -1548,7 +1555,7 @@
         } else if (bands.length === 1) {
             baselineY = overlayYFromScreen(bandFootAt(bands, datumScreenY), overlay);
         }
-        if (baselineY !== null) {
+        if (dropLine && baselineY !== null) {
             let top = spots[0].y;
             spots.forEach(function (spot) { if (spot.y < top) top = spot.y; });
             overlay.appendChild(svgNode('line', {
@@ -1638,7 +1645,7 @@
             /*{# there would put the drop line on the bar's edge and paint it the #}*/
             /*{# bar's color rather than the marked series'. Anchored on the #}*/
             /*{# point it lands on the band's center, which is the bar's center. #}*/
-            drawDatumMarkers(overlay, chartEl, points, hoveredPoint || points[0]);
+            drawDatumMarkers(overlay, chartEl, points, hoveredPoint || points[0], !isRecedableMark(mark));
         } else if (hoveredPoint) {
             drawPointRing(overlay, hoveredPoint);
         }

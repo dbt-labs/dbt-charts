@@ -28,9 +28,7 @@ from dbt_charts.core.compile.resolve.chart._annotations import (
     unfilled_ring,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
-    _NO_RAIL_ENDPOINT_LABELS,
     _bake_ay_position_right,
-    _cascaded_legend,
     cartesian_color_domain_values,
     cartesian_series_naming,
     estimate_cartesian_plot_height,
@@ -80,8 +78,8 @@ from dbt_charts.core.compile.resolve.chart._marks import (
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
-    _effective_requested_alias_palette,
     _effective_single_series_fill,
+    _effective_warned_palette,
 )
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
@@ -100,7 +98,9 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
-from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.resolve.style.legend_position import (
+    cascaded_key,
+)
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
@@ -191,11 +191,10 @@ def _resolve_scatter(
     naming = cartesian_series_naming(
         normalized,
         channels,
-        *_cascaded_legend(chart_style_context, scatter.legend),
-        merge_legend(chart_style_context.legend, scatter.legend),
+        cascaded_key(chart_local_style_context.key, direct=False),
+        chart_local_style_context.legend,
         width,
         no_rail,
-        _NO_RAIL_ENDPOINT_LABELS,
         endpoint_label_has_layers=False,
         has_layers=bool(normalized.layers),
         rail_eligible_for_suppression=False,
@@ -205,7 +204,7 @@ def _resolve_scatter(
         legend_entries=cartesian_color_domain_values(dataset, normalized.color),
         plot_height_estimate=estimate_cartesian_plot_height(normalized, scatter, width),
         left_axis_reserve_px=estimate_left_axis_reserve_px(
-            None, merge_legend(chart_style_context.legend, scatter.legend)
+            None, chart_local_style_context.legend
         ),
         # top_legend_series=None above means rung 2's floor check never runs
         # for this family -- these three are inert, not real facts.
@@ -445,11 +444,9 @@ def _resolve_scatter(
             normalized,
             chart_style_context,
             channels,
-            scatter.legend,
+            chart_local_style_context,
             _effective_palette(chart_style_context, primary),
-            requested_alias_palette=_effective_requested_alias_palette(
-                chart_style_context, primary
-            ),
+            warned_palette=_effective_warned_palette(chart_style_context, primary),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=scatter.padding,
             suppress_legend=naming.suppress_legend,

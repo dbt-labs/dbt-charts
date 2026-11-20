@@ -67,13 +67,14 @@ style:
         font:
           color: *color_ink
 
-    legend:
-      label:
-        font:
-          color: *color_ink
-      title:
-        font:
-          color: *color_ink
+    key:
+      legend:
+        label:
+          font:
+            color: *color_ink
+        title:
+          font:
+            color: *color_ink
 
     table:
       header:

@@ -657,7 +657,7 @@ def test_cascade_charts_font_intermediate_override(model_copy_at):
             "charts.axis.labels.font.color",
             None,
         ),
-        "charts.legend.label.font.color",
+        "charts.key.legend.label.font.color",
         None,
     )
     rs, ctx = resolve_style_and_context(seed)

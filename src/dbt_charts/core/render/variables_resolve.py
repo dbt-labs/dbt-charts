@@ -18,15 +18,16 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.compile.column_match import match_column
 from dbt_charts.core.compile.models.chart.normalized import CalloutChart
 from dbt_charts.core.compile.models.variable.authored import VariableInputType
 from dbt_charts.core.compile.normalize.variable_input_refinement import (
     RefinedType,
     refine_input_type_from_data,
 )
-from dbt_charts.core.compile.normalize.variables import OPTION_COUNT_COLUMN
 from dbt_charts.core.compile.resolve.style.board import resolve_cascaded_font
 from dbt_charts.core.compile.template.daterange import (
     current_board_clock,
@@ -41,7 +42,11 @@ from dbt_charts.core.compile.template.variables import (
     option_value_column,
     variable_value_is_absent,
 )
-from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_VARIABLE_COUNT_COLUMN_MISSING,
+    ERR_VARIABLE_COUNT_NOT_A_NUMBER,
+    ERR_VARIABLE_OPTIONS_FAILED,
+)
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.render.board_variables import (
     LinkedOptions,
@@ -401,10 +406,17 @@ def resolve_option_cells(
     """
     query = _option_query(var_def)
     if query is not None and results is not None:
-        return query_option_cells(name, query, results, dict(current_values))
+        return query_option_cells(
+            name, query, _option_column(var_def), results, dict(current_values)
+        )
     if var_def.options and var_def.options.static:
         return list(var_def.options.static)
     return []
+
+
+def _option_column(var_def: Variable) -> str | None:
+    """The value column ``options.column`` names for an options query."""
+    return var_def.options.column if var_def.options else None
 
 
 def _option_query(var_def: Variable) -> str | None:
@@ -520,6 +532,7 @@ def linked_variable_options(
 def resolve_query_options(
     name: str,
     query_ref: str,
+    column: str | None,
     results: ChartDataProvider,
     variables: VariableValues,
 ) -> list[str]:
@@ -528,13 +541,15 @@ def resolve_query_options(
     See ``query_option_cells`` for the failure contract.
     """
     return [
-        str(cell) for cell in query_option_cells(name, query_ref, results, variables)
+        str(cell)
+        for cell in query_option_cells(name, query_ref, column, results, variables)
     ]
 
 
 def query_option_cells(
     name: str,
     query_ref: str,
+    column: str | None,
     results: ChartDataProvider,
     variables: VariableValues,
 ) -> list[Any]:  # type-state: explicit_any — raw query cells
@@ -543,7 +558,7 @@ def query_option_cells(
     See ``query_option_rows`` for the failure contract.
     """
     return _option_cells(
-        query_option_rows(name, query_ref, results, variables), query_ref
+        query_option_rows(name, query_ref, results, variables), query_ref, name, column
     )
 
 
@@ -583,11 +598,23 @@ def query_option_rows(
 def _option_cells(
     rows: CacheRows,
     query: str,
+    name: str,
+    column: str | None,
 ) -> list[Any]:  # type-state: explicit_any — raw query cells
     if not rows:
         return []
-    value_key = option_value_column(list(rows[0]), query)
+    value_key = option_value_column(list(rows[0]), query, name, column)
     return [row[value_key] for row in rows if row.get(value_key) is not None]
+
+
+def _is_whole_number(
+    value: object,  # type-state: object_annotation — a raw query cell, narrowed here
+) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, (float, Decimal)) and value == int(value)
 
 
 def resolve_options(
@@ -596,26 +623,53 @@ def resolve_options(
     results: ChartDataProvider | None,
     current_values: VariableValues,
 ) -> tuple[list[str], tuple[int, ...]]:
-    """The option values as text, de-duplicated, and each one's row count.
+    """The option values as text, de-duplicated, and each one's count.
 
     One fetch serves both, so a control's values and counts come from the
     same rows. The counts are aligned with the values, and empty unless the
-    options query returns ``OPTION_COUNT_COLUMN``: only a column-bound
-    variable's generated query does.
+    variable declares ``options.count_column``.
+
+    Raises:
+        QueryError: ERR-VARIABLE-COUNT-COLUMN-MISSING when the rows lack the
+            declared count column; ERR-VARIABLE-COUNT-NOT-A-NUMBER when a count
+            is not a whole number.
     """
     query = _option_query(var_def)
     if query is None or results is None:
         return resolve_option_values(name, var_def, results, current_values), ()
     rows = query_option_rows(name, query, results, dict(current_values))
-    values = list(dict.fromkeys(str(cell) for cell in _option_cells(rows, query)))
-    if not rows or OPTION_COUNT_COLUMN not in rows[0]:
+    column = _option_column(var_def)
+    values = list(
+        dict.fromkeys(str(cell) for cell in _option_cells(rows, query, name, column))
+    )
+    count_column = var_def.options.count_column if var_def.options else None
+    if count_column is None or not rows:
         return values, ()
-    value_key = option_value_column(list(rows[0]), query)
-    counts = {
-        str(row[value_key]): int(row[OPTION_COUNT_COLUMN])
-        for row in rows
-        if row.get(value_key) is not None
-    }
+    columns = list(rows[0])
+    count_key = match_column(count_column, columns, f"variable {name!r}")
+    if count_key is None:
+        raise QueryError.from_code(
+            ERR_VARIABLE_COUNT_COLUMN_MISSING,
+            variable=name,
+            count_column=count_column,
+            query_name=query.replace("queries.", ""),
+            columns=", ".join(columns),
+        )
+    value_key = option_value_column(columns, query, name, column)
+    counts: dict[str, int] = {}
+    for row in rows:
+        if row.get(value_key) is None:
+            continue
+        count = row[count_key]
+        if not _is_whole_number(count):
+            raise QueryError.from_code(
+                ERR_VARIABLE_COUNT_NOT_A_NUMBER,
+                variable=name,
+                count_column=count_column,
+                option=str(row[value_key]),
+                count=count,
+            )
+        counts[str(row[value_key])] = int(count)
     return values, tuple(counts[value] for value in values)
 
 

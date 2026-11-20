@@ -84,13 +84,16 @@ def test_family_theme_slot_migrates_per_family(catalog: YamlSchemaCatalog) -> No
         "rows": ["c"],
     }
     legends = _migrate(raw, catalog)["style"]["charts"]
-    assert legends["legend"]["position"] == {"edge": "bottom", "overlay": False}
-    assert legends["bar"]["legend"]["position"] == {
+    assert legends["key"]["legend"]["position"] == {"edge": "bottom", "overlay": False}
+    assert legends["bar"]["key"]["legend"]["position"] == {
         "edge": "top",
         "align": "end",
         "overlay": True,
     }
-    assert legends["pie"]["legend"]["position"] == {"edge": "top", "align": "end"}
+    assert legends["pie"]["key"]["legend"]["position"] == {
+        "edge": "top",
+        "align": "end",
+    }
 
 
 def test_dropping_a_pie_corner_overlay_is_reported(
@@ -110,13 +113,18 @@ def test_a_pie_cardinal_drops_its_pinned_defaults_silently(
 
 
 def test_a_current_mapping_is_left_alone() -> None:
-    raw = _bar({"edge": "top", "align": "end", "overlay": True})
+    raw = _bar(None)
+    raw["charts"]["c"]["style"] = {
+        "key": {
+            "legend": {"position": {"edge": "top", "align": "end", "overlay": True}}
+        }
+    }
     assert prepare_board_mapping(raw) == raw
 
 
 def test_prepare_board_mapping_migrates_an_old_board_without_dct_migrate() -> None:
     migrated = prepare_board_mapping(_bar("top-left"))
-    assert migrated["charts"]["c"]["style"]["legend"]["position"] == {
+    assert migrated["charts"]["c"]["style"]["key"]["legend"]["position"] == {
         "edge": "top",
         "align": "start",
         "overlay": True,
@@ -142,7 +150,7 @@ def test_text_rewrite_expands_the_scalar_in_place(
         "  - c\n"
     )
     rewritten = migrate_yaml_text(text)
-    legend = load_yaml_mapping(rewritten)["charts"]["c"]["style"]["legend"]
+    legend = load_yaml_mapping(rewritten)["charts"]["c"]["style"]["key"]["legend"]
     assert legend["position"] == {"edge": "bottom", "align": "end", "overlay": True}
     assert legend["direction"] == "horizontal"
     assert "rows:\n  - c\n" in rewritten
@@ -165,7 +173,7 @@ def test_text_rewrite_of_a_pie_corner_writes_edge_and_align(
         "  - p\n"
     )
     rewritten = migrate_yaml_text(text)
-    assert load_yaml_mapping(rewritten)["charts"]["p"]["style"]["legend"] == {
+    assert load_yaml_mapping(rewritten)["charts"]["p"]["style"]["key"]["legend"] == {
         "position": {"edge": "top", "align": "start"}
     }
 
@@ -189,7 +197,7 @@ def test_a_chart_inside_a_sub_board_migrates(
         nesting: [{"title": "sub", nesting: [_chart("left")]}],
     }
     migrated = _migrate(raw, catalog)
-    legend = migrated[nesting][0][nesting][0]["style"]["legend"]
+    legend = migrated[nesting][0][nesting][0]["style"]["key"]["legend"]
     assert legend["position"] == {"edge": "left", "overlay": False}
 
 
@@ -205,7 +213,7 @@ def test_a_sub_boards_own_charts_map_migrates(catalog: YamlSchemaCatalog) -> Non
         ],
     }
     migrated = _migrate(raw, catalog)
-    position = migrated["rows"][0]["charts"]["c"]["style"]["legend"]["position"]
+    position = migrated["rows"][0]["charts"]["c"]["style"]["key"]["legend"]["position"]
     assert position == {"edge": "bottom", "align": "end", "overlay": True}
 
 
@@ -224,8 +232,8 @@ def test_a_sub_boards_theme_slot_migrates_once_per_family(
     }
     migrated = _migrate(raw, catalog)
     sub = migrated["rows"][0]
-    assert sub["style"]["charts"]["legend"]["position"]["edge"] == "top"
-    assert sub["rows"][0]["style"]["legend"]["position"] == {"edge": "right"}
+    assert sub["style"]["charts"]["key"]["legend"]["position"]["edge"] == "top"
+    assert sub["rows"][0]["style"]["key"]["legend"]["position"] == {"edge": "right"}
 
 
 def test_text_rewrite_reaches_a_sub_board(catalog: YamlSchemaCatalog) -> None:
@@ -243,7 +251,9 @@ def test_text_rewrite_reaches_a_sub_board(catalog: YamlSchemaCatalog) -> None:
         "            position: top-left\n"
     )
     rewritten = migrate_yaml_text(text)
-    legend = load_yaml_mapping(rewritten)["rows"][0]["rows"][0]["style"]["legend"]
+    legend = load_yaml_mapping(rewritten)["rows"][0]["rows"][0]["style"]["key"][
+        "legend"
+    ]
     assert legend["position"] == {"edge": "top", "align": "start", "overlay": True}
 
 

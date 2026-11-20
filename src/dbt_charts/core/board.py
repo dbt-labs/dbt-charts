@@ -21,8 +21,9 @@ import dataclasses
 import functools
 import logging
 import time
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Generator
+from concurrent.futures import ThreadPoolExecutor, wait
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal, ParamSpec, get_args
@@ -379,17 +380,19 @@ def plan_for_board(
     )
 
 
+@contextmanager
 def _compile_alongside(
     python_compile: Callable[[], CompileResult],
     engine_job: Callable[[], Planned],
     release_thread: Callable[[], None],
-) -> tuple[CompileResult, Callable[[], Planned]]:
+) -> Generator[tuple[CompileResult, Callable[[], Planned]]]:
     """Python's compile of a board, with the engine's compile and plan running beside it.
 
     They run concurrently, so a render's wall time is the slower of the two. The
-    second result gives the plan, or raises what the engine raised; a failed
-    Python compile does not wait for it. The engine's thread reads the project
-    through the host, so it calls *release_thread* when it is done.
+    second value gives the plan, or raises what the engine raised. The engine's
+    thread reads the project through the host, so it calls *release_thread* when
+    it is done, and leaving the block waits for it however the caller leaves:
+    a host must not see project reads after the render returns.
     """
 
     def job() -> Planned:
@@ -401,7 +404,10 @@ def _compile_alongside(
     pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dct-plan")
     future = pool.submit(job)
     pool.shutdown(wait=False)
-    return python_compile(), future.result
+    try:
+        yield python_compile(), future.result
+    finally:
+        wait([future])
 
 
 def prefetch_dashboard(
@@ -439,15 +445,17 @@ def prefetch_dashboard(
                 sources=env_sources(env),
             )
 
-        if compile_result is not None:
-            result, plan_of = compile_result, plan_job
-        else:
-            result, plan_of = _compile_alongside(
+        alongside = (
+            nullcontext((compile_result, plan_job))
+            if compile_result is not None
+            else _compile_alongside(
                 lambda: compile_file(board), plan_job, env.release_thread
             )
-        if not result.success or result.board is None:
-            raise CompilationError("; ".join(e.message for e in result.errors))
-        hidden = plan_of().plan["prefetch"]
+        )
+        with alongside as (result, plan_of):
+            if not result.success or result.board is None:
+                raise CompilationError("; ".join(e.message for e in result.errors))
+            hidden = plan_of().plan["prefetch"]
         # The active-tab plan omits the hidden tabs' queries; the plan that warms
         # them covers every tab under the same values and clock.
         every_tab = plan_for_board(
@@ -690,7 +698,7 @@ def render_dashboard(
             sources=env_sources(env),
         )
 
-    plan_of: Callable[[], Planned]
+    alongside: AbstractContextManager[tuple[CompileResult, Callable[[], Planned]]]
     if compile_result is not None:
         # validate_compiled_queries/check_manifest_refs below append to
         # errors/warnings/suppressed_warnings/diagnostics in place. A caller
@@ -706,7 +714,7 @@ def render_dashboard(
             suppressed_warnings=list(compile_result.suppressed_warnings),
             diagnostics=list(compile_result.diagnostics),
         )
-        plan_of = plan_job
+        alongside = nullcontext((result, plan_job))
     else:
 
         def python_compile() -> CompileResult:
@@ -724,48 +732,49 @@ def render_dashboard(
                 ),
             )
 
-        result, plan_of = _compile_alongside(
-            python_compile, plan_job, env.release_thread
-        )
-    _t_compile = time.perf_counter()
+        alongside = _compile_alongside(python_compile, plan_job, env.release_thread)
+    with alongside as (result, plan_of):
+        _t_compile = time.perf_counter()
 
-    if not result.success:
-        return _compile_failed(result, ignore_codes, _warnings_ignore)
+        if not result.success:
+            return _compile_failed(result, ignore_codes, _warnings_ignore)
 
-    validate_compiled_queries(result)
-    # Errors this appends are re-derived per chart by DbtRefResolver during
-    # execution, which contains them to the failing chart instead of failing the
-    # whole board; only WARN-DBT-MANIFEST-MISSING needs the board-level call.
-    _check_manifest_refs(result, project)
-    check_session_time_zones(result, project)
-    if file_path is not None:
-        if result.board is not None:
-            result.warnings += check_link_targets(
-                iter_board_links(result.board), project, file_path.relpath
-            )
-    compiled_board = result.board
-    if compiled_board is not None and chart is not None:
-        # Reuse-by-reference: render one existing chart (with its dependent
-        # variables) instead of the whole board. Unknown ids fail loudly with
-        # the available chart ids — never fall back to the full dashboard.
-        try:
-            compiled_board = focus_on_chart(compiled_board, chart)
-        except DbtChartsError as exc:
+        validate_compiled_queries(result)
+        # Errors this appends are re-derived per chart by DbtRefResolver during
+        # execution, which contains them to the failing chart instead of failing the
+        # whole board; only WARN-DBT-MANIFEST-MISSING needs the board-level call.
+        _check_manifest_refs(result, project)
+        check_session_time_zones(result, project)
+        if file_path is not None:
+            if result.board is not None:
+                result.warnings += check_link_targets(
+                    iter_board_links(result.board), project, file_path.relpath
+                )
+        compiled_board = result.board
+        if compiled_board is not None and chart is not None:
+            # Reuse-by-reference: render one existing chart (with its dependent
+            # variables) instead of the whole board. Unknown ids fail loudly with
+            # the available chart ids — never fall back to the full dashboard.
+            try:
+                compiled_board = focus_on_chart(compiled_board, chart)
+            except DbtChartsError as exc:
+                return BoardRenderResult(
+                    status="failed", validation_errors=[exc.to_diagnostic()]
+                )
+        if compiled_board is None:
             return BoardRenderResult(
-                status="failed", validation_errors=[exc.to_diagnostic()]
+                status="failed",
+                board_error=DbtChartsError.from_code(
+                    ERR_INTERNAL,
+                    message="Compilation did not produce a board",
+                ).to_diagnostic(
+                    file=file_path.relpath if file_path is not None else None
+                ),
             )
-    if compiled_board is None:
-        return BoardRenderResult(
-            status="failed",
-            board_error=DbtChartsError.from_code(
-                ERR_INTERNAL,
-                message="Compilation did not produce a board",
-            ).to_diagnostic(file=file_path.relpath if file_path is not None else None),
-        )
 
-    # `result.suppressed_warnings` matched a compile-time layer (query-level
-    # `ignore:` or meta.yml lint config); `compile_suppressed` matched a
-    # render-time layer. Both belong in the result.
+        # `result.suppressed_warnings` matched a compile-time layer (query-level
+        # `ignore:` or meta.yml lint config); `compile_suppressed` matched a
+        # render-time layer. Both belong in the result.
     compile_active, compile_suppressed = partition_compile_warnings(
         list(result.warnings),
         board_warning_codes(compiled_board),

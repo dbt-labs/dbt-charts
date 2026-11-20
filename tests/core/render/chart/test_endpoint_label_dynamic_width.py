@@ -30,10 +30,6 @@ _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 @pytest.fixture
 def make_resolved_chart(make_chart, model_copy_at):
     """Build a resolved line chart with endpoint_labels enabled and given series names."""
-    from dbt_charts.core.compile.models.style.authored import (
-        EndpointLabelsConfig,
-        LegendStylePatch,
-    )
 
     def _build(series_names: list[str], chart_width: int = 400):
         chart = make_chart("line", x="date", y="value", color="series")
@@ -46,16 +42,8 @@ def make_resolved_chart(make_chart, model_copy_at):
                 {"date": "2024-03-01", "value": 140, "series": name},
             ]
 
-        seed = model_copy_at(
-            get_theme_style(),
-            "charts.line.endpoint_labels",
-            EndpointLabelsConfig(label_offset=5.0, height=20.0),
-        )
-        seed = model_copy_at(
-            seed,
-            "charts.line.legend",
-            LegendStylePatch.model_validate({"position": {"edge": "endpoints"}}),
-        )
+        seed = model_copy_at(get_theme_style(), "charts.key.direct.offset", 5.0)
+        seed = model_copy_at(seed, "charts.key.type", "direct")
         board_style = resolve_chart_style_context(seed)
 
         resolved = resolve(chart, data, chart_style_context=board_style)

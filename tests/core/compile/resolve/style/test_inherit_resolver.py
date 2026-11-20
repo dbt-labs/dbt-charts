@@ -265,14 +265,24 @@ def test_none_stays_none_when_all_fallbacks_none():
 
 
 def test_graph_excluded_legend_field_sets_are_unchanged() -> None:
+    from dbt_charts.core.compile.models.style.authored import LegendStylePatch
+
     base = get_theme_style("clarity")
-    legend = base.charts.scatter.legend
+    scatter = base.charts.scatter
+    key = scatter.key.model_copy(
+        update={"legend": LegendStylePatch.model_validate({"columns": 3})}
+    )
+    charts = base.charts.model_copy(
+        update={"scatter": scatter.model_copy(update={"key": key})}
+    )
+    base = base.model_copy(update={"charts": charts})
+    legend = base.charts.scatter.key.legend
     assert legend is not None
     before = _field_set_tree(legend)
 
     result = apply_inherit(base, get_inherit_graph())
 
-    resolved_legend = result.charts.scatter.legend
+    resolved_legend = result.charts.scatter.key.legend
     assert resolved_legend is not None
     assert _field_set_tree(resolved_legend) == before
 

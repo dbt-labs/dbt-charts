@@ -1,6 +1,6 @@
 """Tests for the actionable error hint on chart-level style.legend for kpi/table charts.
 
-kpi and table charts never paint a legend. The chart-level ``style.legend`` key
+kpi and table charts never paint a legend. The chart-level ``style.key`` key
 was removed in the current (unreleased) cycle. Unlike the theme-level
 ``style.charts.kpi.legend`` path (which is auto-stripped by ``dct migrate``),
 the chart-level path cannot be expressed as a Deletion because the tail
@@ -26,8 +26,8 @@ charts:
     query: q
     value: revenue
     style:
-      legend:
-        position: bottom
+      key:
+        type: legend
 rows:
   - k
 """
@@ -46,15 +46,15 @@ charts:
     query: q
     columns: [a]
     style:
-      legend:
-        position: top
+      key:
+        type: legend
 rows:
   - t
 """
 
 
 def test_kpi_chart_style_legend_raises_with_hint() -> None:
-    """style.legend on a kpi chart raises with a hint naming the problem and fix."""
+    """style.key on a kpi chart raises with a hint naming the problem and fix."""
     result = compile_board(_board_with_kpi_style_legend())
 
     assert not result.success
@@ -65,7 +65,7 @@ def test_kpi_chart_style_legend_raises_with_hint() -> None:
 
 
 def test_table_chart_style_legend_raises_with_hint() -> None:
-    """style.legend on a table chart raises with a hint naming the problem and fix."""
+    """style.key on a table chart raises with a hint naming the problem and fix."""
     result = compile_board(_board_with_table_style_legend())
 
     assert not result.success

@@ -266,4 +266,4 @@ def test_an_overlay_legend_over_marks_anchors_on_the_legend_position() -> None:
     diagnostic = _only(
         legend_overlay_covers_marks.detect(_ctx(WARN_LEGEND_OVERLAY_COVERS_MARKS, {}))
     )
-    assert diagnostic.path == "charts.c1.style.legend.position"
+    assert diagnostic.path == "charts.c1.style.key.legend.position"

@@ -282,9 +282,9 @@ pub(crate) fn hint(path: &[String], allowed: &[&str], board: &Node) -> Option<St
             ));
         }
         let t = kind()?;
-        if field == "legend" && path.iter().any(|p| p == "style") && matches!(t, "kpi" | "table") {
+        if field == "key" && path.iter().any(|p| p == "style") && matches!(t, "kpi" | "table") {
             return Some(format!(
-                "`type: {t}` charts never paint a legend — the field has no effect and should \
+                "`type: {t}` charts never paint a legend — `key` has no effect and should \
                  be removed."
             ));
         }

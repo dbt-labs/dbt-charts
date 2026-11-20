@@ -70,18 +70,17 @@ def test_position_rejects_the_retired_scalar_and_unknown_values(
 
 @pytest.mark.parametrize("edge", ["left", "right", "top", "bottom"])
 def test_pie_position_accepts_an_edge(edge: str) -> None:
-    legend = PieLegendStyle.model_validate(
-        {
-            "position": {"edge": edge},
-            "direction": "vertical",
-            "columns": 0,
-            "compact_columns": 2,
-            "row": {"swatch_width": 10.0, "entry_gap": 16.0},
-            "label": {"padding": 8.0},
-            "title": {"padding": 0.0},
-        }
-    )
+    legend = PieLegendStyle.model_validate({"position": {"edge": edge}})
     assert legend.position.edge == edge
+
+
+@pytest.mark.parametrize("leaf", ["columns", "symbol_limit", "title", "direction"])
+def test_a_pie_legend_takes_only_its_position(leaf: str) -> None:
+    """The attached table is the pie's legend: no other leaf styles it."""
+    with pytest.raises(ValidationError):
+        PieLegendStyle.model_validate({"position": {"edge": "top"}, leaf: 2})
+    with pytest.raises(ValidationError):
+        PieLegendStylePatch.model_validate({leaf: 2})
 
 
 @pytest.mark.parametrize("align", ["start", "center", "end"])
@@ -98,7 +97,9 @@ def test_pie_legend_rejects_overlay() -> None:
             {"position": {"edge": "right", "overlay": False}}
         )
     with pytest.raises(ValidationError):
-        PieChartStylePatch.model_validate({"legend": {"position": {"overlay": True}}})
+        PieChartStylePatch.model_validate(
+            {"key": {"legend": {"position": {"overlay": True}}}}
+        )
 
 
 def test_cartesian_legend_patch_accepts_align_and_overlay() -> None:

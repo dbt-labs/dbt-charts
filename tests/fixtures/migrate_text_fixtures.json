@@ -132,12 +132,12 @@
  {
   "text": "charts:\n  sales:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n    style:\n      legend:\n        # keep this comment\n        interactive_legend: true\n        visible: true\nrows: [sales]\n",
   "stop": null,
-  "ok": "charts:\n  sales:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n    style:\n      legend:\n        # keep this comment\n        visible: true\nrows: [sales]\n"
+  "ok": "charts:\n  sales:\n    type: bar\n    query: revenue\n    x: month\n    y: amount\n    style:\n      # keep this comment\n      key:\n        visible: true\n        type: \"legend\"\nrows: [sales]\n"
  },
  {
   "text": "title: t\nrows:\n  - cols:\n      - charts:\n          s:\n            type: bar\n            query: q\n            x: a\n            y: b\n            style:\n              legend:\n                interactive_legend: true\n                visible: true\n",
   "stop": null,
-  "ok": "title: t\nrows:\n  - cols:\n      - charts:\n          s:\n            type: bar\n            query: q\n            x: a\n            y: b\n            style:\n              legend:\n                visible: true\n"
+  "ok": "title: t\nrows:\n  - cols:\n      - charts:\n          s:\n            type: bar\n            query: q\n            x: a\n            y: b\n            style:\n              key:\n                visible: true\n                type: \"legend\"\n"
  },
  {
   "text": "title: T\nqueries:\n  q1: {sql: \"select 1 as v, 0.1 as d\", source: test}\ncharts:\n  c1:\n    type: kpi\n    query: q1\n    value: v\n    variant: compact\n    support:\n      value: d\n      label: vs prior\n      format: percent_delta\n      tone: positive\n      glyph: \"▲\"\n    style:\n      glyph:\n        character: \"●\"\n        font:\n          size: 14\n      affix:\n        font:\n          size: 12\n      title:\n        overflow: wrap\nrows: [c1]\n",
@@ -172,17 +172,17 @@
  {
   "text": "title: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      legend:\n        position: bottom-right\n        direction: horizontal\nrows:\n  - c\n",
   "stop": null,
-  "ok": "title: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      legend:\n        direction: horizontal\n        position:\n          edge: \"bottom\"\n          align: \"end\"\n          overlay: true\nrows:\n  - c\n"
+  "ok": "title: t\ncharts:\n  c:\n    type: bar\n    query: q\n    x: a\n    y: b\n    style:\n      key:\n        legend:\n          position:\n            edge: \"bottom\"\n            align: \"end\"\n            overlay: true\n          direction: \"horizontal\"\nrows:\n  - c\n"
  },
  {
   "text": "title: t\ncharts:\n  p:\n    type: pie\n    query: q\n    theta: b\n    style:\n      legend:\n        position: top-left\nrows:\n  - p\n",
   "stop": null,
-  "ok": "title: t\ncharts:\n  p:\n    type: pie\n    query: q\n    theta: b\n    style:\n      legend:\n        position:\n          edge: \"top\"\n          align: \"start\"\nrows:\n  - p\n"
+  "ok": "title: t\ncharts:\n  p:\n    type: pie\n    query: q\n    theta: b\n    style:\n      key:\n        legend:\n          position:\n            edge: \"top\"\n            align: \"start\"\nrows:\n  - p\n"
  },
  {
   "text": "title: t\nrows:\n  - title: sub\n    rows:\n      - type: bar\n        query: q\n        x: a\n        y: b\n        style:\n          legend:\n            position: top-left\n",
   "stop": null,
-  "ok": "title: t\nrows:\n  - title: sub\n    rows:\n      - type: bar\n        query: q\n        x: a\n        y: b\n        style:\n          legend:\n            position:\n              edge: \"top\"\n              align: \"start\"\n              overlay: true\n"
+  "ok": "title: t\nrows:\n  - title: sub\n    rows:\n      - type: bar\n        query: q\n        x: a\n        y: b\n        style:\n          key:\n            legend:\n              position:\n                edge: \"top\"\n                align: \"start\"\n                overlay: true\n"
  },
  {
   "text": "charts:\n  k:\n    type: kpi\n    query: q\n    value: revenue\nstyle:\n  charts:\n    kpi:\n      legend:\n        position: bottom\n      preferred_width: 300\nrows: [k]\n",

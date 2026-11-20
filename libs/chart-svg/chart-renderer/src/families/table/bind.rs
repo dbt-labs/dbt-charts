@@ -20,6 +20,8 @@ use super::DimOrder;
 use super::Drawn;
 use super::EmptyResolved;
 use super::Look;
+use super::LeafKind;
+use super::PivotLeaf;
 use super::PivotLevel;
 use super::PivotResult;
 use super::Resolved;
@@ -439,13 +441,13 @@ pub(crate) fn interpolate_scale_color(
 }
 
 /// `compute_scale_domain`: explicit `min`/`max` win outright; otherwise the
-/// domain is `rows`' own numeric extent for `field` (`(0, 1)` when no row
+/// domain is `rows`' own numeric extent over `fields` (`(0, 1)` when no row
 /// has a numeric value — production's "no numerics" fallback). `rows` must
 /// already exclude summary/total rows (`scale_rows` in production — a
 /// grand-total value would otherwise skew the gradient toward one end).
 pub(crate) fn compute_scale_domain(
     rows: &[&serde_json::Map<String, Value>],
-    field: &str,
+    fields: &[impl AsRef<str>],
     min: Option<f64>,
     max: Option<f64>,
 ) -> (f64, f64) {
@@ -454,7 +456,8 @@ pub(crate) fn compute_scale_domain(
     }
     let values: Vec<f64> = rows
         .iter()
-        .filter_map(|r| coerce_numeric_cell(r.get(field)))
+        .flat_map(|r| fields.iter().map(move |f| coerce_numeric_cell(r.get(f.as_ref()))))
+        .flatten()
         .collect();
     if values.is_empty() {
         return (min.unwrap_or(0.0), max.unwrap_or(1.0));
@@ -564,7 +567,7 @@ pub(super) fn resolve_cell_style(
     if row_style.color.is_some() {
         scaled_color.clone_from(&row_style.color);
     }
-    if let (Some(scale), false) = (scale, is_summary_role(row_role)) {
+    if let Some(scale) = scale.filter(|_| !is_summary_role(row_role) && !col.is_total_leaf()) {
         for (target, slot) in [
             (scale.background.as_ref(), &mut background),
             (scale.color.as_ref(), &mut scaled_color),
@@ -580,7 +583,7 @@ pub(super) fn resolve_cell_style(
                     if let Some(num) = coerce_numeric_cell(Some(v)) {
                         let raw = compute_scale_domain(
                             scale_rows,
-                            col.name.as_str(),
+                            col.scale_fields(),
                             target.min,
                             target.max,
                         );
@@ -930,7 +933,10 @@ pub(super) fn format_numeric_col(
         }
         let text = match raw {
             Some(Value::String(s)) if s.trim().is_empty() => continue,
-            Some(Value::String(s)) => format_temporal_cell(col, s)?.unwrap_or_else(|| s.clone()),
+            Some(Value::String(s)) => {
+                format_temporal_cell(col.cfg.format.as_ref(), &col.kind, &col.name, s)?
+                    .unwrap_or_else(|| s.clone())
+            }
             Some(other) => py_str(other),
             None => continue,
         };
@@ -1154,13 +1160,8 @@ pub(super) fn is_plain_date_lane_cell(col: &ColMeta, raw: Option<&Value>) -> boo
 /// The strftime spec a temporal cell paints through: the authored `format:`
 /// (`date_short`/`time_short` are the engine's two predefined time specs,
 /// `PREDEFINED_TIME_SPECS`), else `date_short`.
-pub(super) fn temporal_spec(col: &ColMeta) -> Result<String, String> {
-    let authored = col
-        .cfg
-        .format
-        .as_ref()
-        .map(|f| f.spec.as_str())
-        .filter(|s| !s.is_empty());
+pub(super) fn temporal_spec(format: Option<&FormatSlot>) -> Result<String, String> {
+    let authored = format.map(|f| f.spec.as_str()).filter(|s| !s.is_empty());
     let name = authored.unwrap_or("date_short");
     let Some(engine_spec) = d3rs::format::predefined_time_spec(name) else {
         return Ok(name.to_string());
@@ -1174,16 +1175,16 @@ pub(super) fn temporal_spec(col: &ColMeta) -> Result<String, String> {
 /// spec meeting a temporal value is production's
 /// `ERR_TABLE_FORMAT_KIND_MISMATCH`; a directive `table_dates::strftime` does
 /// not reach errs by name.
-pub(super) fn format_temporal_cell(col: &ColMeta, s: &str) -> Result<Option<String>, Diagnostic> {
-    let spec_owned = temporal_spec(col)?;
+pub(super) fn format_temporal_cell(
+    format: Option<&FormatSlot>,
+    kind: &ColumnType,
+    name: &str,
+    s: &str,
+) -> Result<Option<String>, Diagnostic> {
+    let spec_owned = temporal_spec(format)?;
     let spec = spec_owned.as_str();
-    let refuse = |why: String| {
-        format!(
-            "table: column '{}' format {spec:?}: {why}",
-            col.name.as_str()
-        )
-    };
-    let parsed = table_dates::parse_temporal(s.trim(), &col.kind);
+    let refuse = |why: String| format!("table: column '{name}' format {spec:?}: {why}");
+    let parsed = table_dates::parse_temporal(s.trim(), kind);
     if matches!(parsed, Ok(None)) {
         return Ok(None);
     }
@@ -1191,9 +1192,8 @@ pub(super) fn format_temporal_cell(col: &ColMeta, s: &str) -> Result<Option<Stri
         return Err(format_kind_mismatch(spec, table_dates::STRFTIME_REMEDY));
     }
     // The format's own affixes ride around the date (`format_table_cell_value`).
-    let affixes = col.cfg.format.as_ref();
-    let prefix = affixes.map(|f| f.prefix.as_str()).unwrap_or("");
-    let suffix = affixes.map(|f| f.suffix.as_str()).unwrap_or("");
+    let prefix = format.map(|f| f.prefix.as_str()).unwrap_or("");
+    let suffix = format.map(|f| f.suffix.as_str()).unwrap_or("");
     table_dates::paint_cell(parsed, spec, prefix, suffix).map_err(|e| match e {
         table_dates::TemporalError::Invalid(reason) => Diagnostic::new(
             &codes::ERR_TABLE_TEMPORAL_FORMAT_INVALID,
@@ -1220,7 +1220,7 @@ pub(super) fn format_date_col(
     col: &ColMeta,
 ) -> Result<Vec<Cell>, Diagnostic> {
     let authored = col.cfg.format.as_ref();
-    let spec_owned = temporal_spec(col)?;
+    let spec_owned = temporal_spec(authored)?;
     let spec = spec_owned.as_str();
     let refuse = |why: String| {
         format!(
@@ -1232,7 +1232,7 @@ pub(super) fn format_date_col(
         .map(|row| -> Result<Cell, Diagnostic> {
             match row.get(col.name.as_str()) {
                 Some(Value::String(s)) if !s.trim().is_empty() => {
-                    let text = match format_temporal_cell(col, s)? {
+                    let text = match format_temporal_cell(authored, &col.kind, &col.name, s)? {
                         // A timestamp is not `is_date_like`, so under an authored
                         // format it takes the numeric lane's paint path, which
                         // this lane never draws.
@@ -1569,10 +1569,10 @@ pub(super) fn list_item_text(item: &Value) -> String {
     }
 }
 
-/// A typo'd `columns`/`values`/`rows`
-/// field or an empty measure set, raised before any reshape. With `values` omitted the measures are
-/// `infer_pivot_measure_names`'s: every field `rows`, `columns` and the role
-/// column leave unclaimed. Reshaping with them is refused by the caller.
+/// A typo'd `columns`/`values`/`rows` field or an empty measure set, raised
+/// before any reshape. With `values` omitted the measures are every field
+/// `rows`, `columns` and the role column leave unclaimed. Reshaping with them
+/// is refused by the caller.
 pub(super) fn validate_pivot_fields(
     data: &[serde_json::Map<String, Value>],
     rows: &[String],
@@ -1601,8 +1601,8 @@ pub(super) fn validate_pivot_fields(
     if let Some(field) = columns.iter().find(|c| !first.contains_key(*c)) {
         return Err(not_found("pivot.column", field));
     }
-    // `infer_pivot_measure_names`: explicit, else every query column that
-    // `rows`, `columns` and the role marker do not claim.
+    // Explicit, else every query column that `rows`, `columns` and the role
+    // marker do not claim.
     let claimed =
         |k: &String| rows.contains(k) || columns.contains(k) || Some(k.as_str()) == row_role;
     let effective_values: Vec<String> = match values {
@@ -1820,11 +1820,15 @@ pub(super) fn pivot_table_data(
     // Distinct col-tuples in first-seen order, then canonically ordered.
     let mut col_tuples: Vec<Vec<String>> = Vec::new();
     let mut seen: std::collections::HashSet<Vec<String>> = std::collections::HashSet::new();
+    let mut total_tuples: std::collections::HashSet<Vec<String>> = std::collections::HashSet::new();
     for (i, row) in data.iter().enumerate() {
         let tuple: Vec<String> = columns
             .iter()
             .map(|c| dim_str(row.get(c).unwrap_or(&Value::Null), tag_at(tags, i, c)))
             .collect();
+        if columns.iter().any(|c| row.get(c).is_none_or(Value::is_null)) {
+            total_tuples.insert(tuple.clone());
+        }
         if seen.insert(tuple.clone()) {
             col_tuples.push(tuple);
         }
@@ -1936,6 +1940,15 @@ pub(super) fn pivot_table_data(
             pivoted_types = pivoted_types.with(leaf, types.get(measure)?.clone());
         }
     }
+    let leaves = col_tuples
+        .iter()
+        .flat_map(|col_tuple| {
+            values.iter().map(|measure| LeafKind {
+                measure: measure.clone(),
+                total: total_tuples.contains(col_tuple),
+            })
+        })
+        .collect();
     let mut col_order = row_dims.to_vec();
     col_order.extend(leaf_cols);
 
@@ -1951,7 +1964,41 @@ pub(super) fn pivot_table_data(
             None
         },
         values: values.to_vec(),
+        leaves,
+        col_labels: col_tuples,
     })
+}
+
+/// A pivot dimension's values print as a flat column of that dimension would:
+/// a date through the dimension's own `format:`, else the date default; any
+/// other value verbatim. Rewrites `col_labels` and the group-header levels.
+fn label_column_dimensions(
+    pivot: &mut PivotResult,
+    r: &Resolved,
+    columns: &[String],
+    types: &ColumnTypes,
+) -> Result<(), Diagnostic> {
+    for (dim, name) in columns.iter().enumerate() {
+        let kind = types.get(name)?;
+        let format = match r.columns.get(name) {
+            Some(cfg) => Deserialize::deserialize(cfg)
+                .map(|cfg: ColConfig| cfg.format)
+                .map_err(|e| format!("table: column '{name}' config parse error: {e}"))?,
+            None => None,
+        };
+        for tuple in &mut pivot.col_labels {
+            if let Some(text) = format_temporal_cell(format.as_ref(), kind, name, &tuple[dim])? {
+                tuple[dim] = text;
+            }
+        }
+    }
+    let per_tuple = if pivot.values.len() > 1 { pivot.values.len() } else { 1 };
+    for (dim, level) in pivot.levels.iter_mut().enumerate() {
+        for (label, first_leaf, _) in level.iter_mut() {
+            label.clone_from(&pivot.col_labels[*first_leaf / per_tuple][dim]);
+        }
+    }
+    Ok(())
 }
 
 /// The cell's series as a `line` spark reads it:
@@ -2042,7 +2089,11 @@ pub(super) fn build_cell_data(
                 Ok(format_numeric_col(
                     rows,
                     col,
-                    column_symbol_mode(col.cfg.format.as_ref(), symbol_mode),
+                    column_symbol_mode(
+                        col.cfg.format.as_ref(),
+                        // A cross-tab has no top row to carry a unit down.
+                        if col.pivot_leaf.is_some() { "all" } else { symbol_mode },
+                    ),
                     row_roles,
                 )?)
             } else if col.is_date {
@@ -2055,7 +2106,9 @@ pub(super) fn build_cell_data(
                     .map(|row| {
                         Ok(match row.get(col.name.as_str()) {
                             Some(Value::String(v)) if !v.trim().is_empty() => {
-                                if let Some(text) = format_temporal_cell(col, v)? {
+                                if let Some(text) =
+                                    format_temporal_cell(col.cfg.format.as_ref(), &col.kind, &col.name, v)?
+                                {
                                     return Ok(Cell {
                                         text,
                                         ..Default::default()
@@ -2196,6 +2249,19 @@ pub(super) fn visible_columns<'a>(
     check_visible_addressable(chart_id, &r.columns, rows, row_role, &fanned_measures)?;
 
     let row_rules = std::rc::Rc::new(r.style.table.row.conditional.clone().unwrap_or_default());
+
+    // One scale and one spark max per measure: its non-total leaves.
+    let mut scale_leaves: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    if let Some(p) = &pivot {
+        for (leaf, kind) in col_names[p.n_row_dims..].iter().zip(&p.leaves) {
+            let measure_leaves = scale_leaves.entry(kind.measure.as_str()).or_default();
+            if !kind.total {
+                measure_leaves.push(leaf.to_string());
+            }
+        }
+    }
+    let scale_leaves: BTreeMap<&str, std::rc::Rc<[String]>> =
+        scale_leaves.into_iter().map(|(m, leaves)| (m, leaves.into())).collect();
 
     // Build column metadata.
     let cols: Vec<ColMeta> = col_names
@@ -2353,12 +2419,16 @@ pub(super) fn visible_columns<'a>(
             // label is not exempt from the header font case. An authored
             // `""` is an intentional blank header, as on a support table.
             // A leaf named by a dimension value (every single-measure leaf) heads
-            // with that value verbatim, as the group levels above it do.
-            let names_a_value = is_leaf && pivot.as_ref().is_some_and(|p| p.values.len() == 1);
-            let header = match cfg.label.clone() {
-                Some(l) => display_text::case::apply_case(&l, header_font_case)?,
-                None if names_a_value => config_key.to_string(),
-                None => display_text::case::apply_case(
+            // with that value as `label_column_dimensions` printed it, as the
+            // group levels above it do.
+            let value_label = pivot
+                .as_ref()
+                .filter(|p| is_leaf && p.values.len() == 1)
+                .and_then(|p| p.col_labels[idx - p.n_row_dims].last().cloned());
+            let header = match (cfg.label.clone(), value_label) {
+                (Some(l), _) => display_text::case::apply_case(&l, header_font_case)?,
+                (None, Some(label)) => label,
+                (None, None) => display_text::case::apply_case(
                     &display_text::slug_to_text(config_key)?,
                     header_font_case,
                 )?,
@@ -2374,6 +2444,13 @@ pub(super) fn visible_columns<'a>(
                 is_day,
                 when_rules,
                 row_rules: row_rules.clone(),
+                pivot_leaf: pivot.as_ref().filter(|_| is_leaf).map(|p| {
+                    let kind = &p.leaves[idx - p.n_row_dims];
+                    PivotLeaf {
+                        scale_leaves: scale_leaves[kind.measure.as_str()].clone(),
+                        total: kind.total,
+                    }
+                }),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -2457,9 +2534,10 @@ pub(super) fn pivot_for(
             if r.link.is_some() {
                 return Err("table: a chart-root link on a pivot table not supported".into());
             }
-            Ok(Some(pivot_table_data(
-                query_rows, types, cell_text, &row_dims, columns, &values, row_role,
-            )?))
+            let mut pivot =
+                pivot_table_data(query_rows, types, cell_text, &row_dims, columns, &values, row_role)?;
+            label_column_dimensions(&mut pivot, r, columns, types)?;
+            Ok(Some(pivot))
         }
         _ => Ok(None),
     }
@@ -2534,7 +2612,10 @@ pub(super) fn bind_chart(src: Source) -> Result<Chart, Diagnostic> {
             .iter()
             .zip(row_roles.iter())
             .filter(|(_, role)| !is_summary_role(**role))
-            .filter_map(|(row, _)| coerce_numeric_cell(row.get(col.name.as_str())))
+            .flat_map(|(row, _)| {
+                col.scale_fields().iter().map(|f| coerce_numeric_cell(row.get(f.as_str())))
+            })
+            .flatten()
             .collect();
         if detail_values.iter().any(|v| *v < 0.0) {
             signed_columns.insert(col.name.clone());

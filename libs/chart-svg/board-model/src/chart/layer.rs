@@ -113,9 +113,9 @@ pub struct LayerBase {
     /// This layer's own y axis: which side it sits on, its title, scale, ticks, grid.
     #[model(absent = "the layer shares the chart's y axis")]
     pub axis_y: Option<LayerAxisYStyle>,
-    /// Set false to drop this layer's legend entry.
+    /// Name this layer in the chart key; false drops it.
     #[model(fill = true)]
-    pub legend: bool,
+    pub key: bool,
 }
 
 /// A bar-type layer on a cartesian chart.

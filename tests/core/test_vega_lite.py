@@ -378,7 +378,7 @@ class TestRenderChart:
             "bar",
             x="category",
             y="value",
-            style={"legend": {"visible": False}},
+            style={"key": {"visible": False}},
         )
         data = [{"category": "A", "value": 10}]
 
@@ -392,7 +392,7 @@ class TestRenderChart:
 
         parsed = json.loads(result)
 
-        assert parsed["style"] == {"legend": {"visible": False}}
+        assert parsed["style"] == {"key": {"visible": False}}
 
     def test_render_json_empty_data_table(self, make_chart):
         """Test table chart JSON with empty data includes empty columns array."""

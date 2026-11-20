@@ -8,7 +8,7 @@ from dbt_charts.core.colors import VARIANT_WORDS
 from dbt_charts.core.compile.config import get_theme_style, list_built_in_themes
 from dbt_charts.core.compile.models.palette import (
     HARD_FAIL_PALETTE_NAMES,
-    PALETTE_WARN_ALIASES,
+    PALETTE_WARN_RECOMMENDATIONS,
 )
 from dbt_charts.core.compile.models.schema_names import (
     VEGA_SCHEME_NAMES,
@@ -54,10 +54,11 @@ def test_palette_name_is_every_palette_plus_categorical_variants():
     assert _names(PaletteName) == sorted({*list_palettes(), *variants})
 
 
-def test_palette_name_excludes_hard_fail_and_warn_alias_names():
-    names = set(_names(PaletteName))
+def test_palette_name_excludes_hard_fail_and_warned_names():
+    assert not set(_names(PaletteName)) & HARD_FAIL_PALETTE_NAMES
+    names = set(_names(ScalePaletteName))
     assert not (names & HARD_FAIL_PALETTE_NAMES)
-    assert not (names & set(PALETTE_WARN_ALIASES))
+    assert not (names & set(PALETTE_WARN_RECOMMENDATIONS))
 
 
 def test_stops_palette_name_holds_only_names_that_resolve_to_stops():
@@ -82,7 +83,7 @@ def test_stops_palette_name_holds_only_names_that_resolve_to_stops():
 def test_scale_palette_name_is_union_of_palettes_and_vega_schemes_minus_excluded():
     """VEGA_SCHEME_NAMES contains "rainbow", which is also a hard-fail
     anti-pattern — the union must not resurrect it into ScalePaletteName."""
-    excluded = HARD_FAIL_PALETTE_NAMES | set(PALETTE_WARN_ALIASES)
+    excluded = HARD_FAIL_PALETTE_NAMES | set(PALETTE_WARN_RECOMMENDATIONS)
     assert "rainbow" in VEGA_SCHEME_NAMES & excluded
     expected = (set(_names(StopsPaletteName)) | VEGA_SCHEME_NAMES) - excluded
     assert _names(ScalePaletteName) == sorted(expected)

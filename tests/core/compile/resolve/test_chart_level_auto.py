@@ -158,7 +158,9 @@ def test_chart_auto_reaches_the_family_context_unset() -> None:
 def test_chart_legend_direction_auto_resets_the_boards_pinned_direction() -> None:
     board = resolve_style_and_context(
         get_theme_style(get_default_theme_name()),
-        StylePatch.model_validate({"charts": {"legend": {"direction": "vertical"}}}),
+        StylePatch.model_validate(
+            {"charts": {"key": {"legend": {"direction": "vertical"}}}}
+        ),
     )[1]
     rows = [{"x": "a", "y": 1.0, "c": "p"}, {"x": "b", "y": 2.0, "c": "q"}]
 
@@ -172,7 +174,9 @@ def test_chart_legend_direction_auto_resets_the_boards_pinned_direction() -> Non
                 "x": "x",
                 "y": "y",
                 "color": "c",
-                "style": {"legend": {"position": {"edge": "bottom"}, **legend}},
+                "style": {
+                    "key": {"legend": {"position": {"edge": "bottom"}, **legend}}
+                },
             }
         )
         resolved = resolve(chart, rows, chart_style_context=board, width=600.0)

@@ -23,7 +23,7 @@ from importlib_resources import files
 from dbt_charts.core.colors import VARIANT_WORDS
 from dbt_charts.core.compile.models.palette import (
     HARD_FAIL_PALETTE_NAMES,
-    PALETTE_WARN_ALIASES,
+    PALETTE_WARN_RECOMMENDATIONS,
     PaletteIndexEntry,
     build_palette_index,
 )
@@ -214,7 +214,7 @@ PATTERN_GROUND_KEYWORDS = ("background", "tint", *sorted(_categorical))
 # would promote the exact name the resolver refuses.
 _scale_palette_names = sorted(
     {*_stops_palette_names, *VEGA_SCHEME_NAMES}
-    - (HARD_FAIL_PALETTE_NAMES | set(PALETTE_WARN_ALIASES))
+    - (HARD_FAIL_PALETTE_NAMES | set(PALETTE_WARN_RECOMMENDATIONS))
 )
 # A higher slot resolves under no shipped theme, so offering it would complete
 # authors straight into an UnknownColorError.

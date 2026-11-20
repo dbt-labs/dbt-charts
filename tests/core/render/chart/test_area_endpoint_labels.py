@@ -1,8 +1,8 @@
 """TDD tests for area chart endpoint labels and halo render order.
 
 These tests must FAIL until:
-- AreaStyle gains endpoint_labels: EndpointLabelsConfig
-- theme YAML gains area.endpoint_labels section
+- area style gains key.direct
+- theme YAML gains area.key.direct section
 - _maybe_wrap_endpoint_label_pane handles chart_type == "area"
 """
 
@@ -29,10 +29,6 @@ _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 @pytest.fixture
 def make_area_resolved_chart(make_chart, model_copy_at):
     """Build a resolved multi-series area chart with endpoint_labels configured."""
-    from dbt_charts.core.compile.models.style.authored import (
-        EndpointLabelsConfig,
-        LegendStylePatch,
-    )
 
     def _build(enabled: bool, chart_width: int = 400):
         chart = make_chart("area", x="date", y="value", color="series")
@@ -43,18 +39,8 @@ def make_area_resolved_chart(make_chart, model_copy_at):
             {"date": "2024-02-01", "value": 90, "series": "Costs"},
         ]
 
-        seed = model_copy_at(
-            get_theme_style(),
-            "charts.area.endpoint_labels",
-            EndpointLabelsConfig(label_offset=6.0, height=20.0),
-        )
-        seed = model_copy_at(
-            seed,
-            "charts.area.legend",
-            LegendStylePatch.model_validate(
-                {"position": {"edge": "endpoints" if enabled else "top"}}
-            ),
-        )
+        seed = model_copy_at(get_theme_style(), "charts.key.direct.offset", 6.0)
+        seed = model_copy_at(seed, "charts.key.type", "direct" if enabled else "legend")
         board_style = resolve_chart_style_context(seed)
 
         resolved = resolve(chart, data, chart_style_context=board_style)
@@ -75,23 +61,11 @@ def seed_with_area_endpoint_labels(model_copy_at):
     """Resolved style with area.endpoint_labels override applied, seeded from stark."""
 
     def _build(enabled: bool, label_offset: float = 5.0):
-        from dbt_charts.core.compile.models.style.authored import (
-            EndpointLabelsConfig,
-            LegendStylePatch,
-        )
 
         seed = model_copy_at(
-            get_theme_style("stark"),
-            "charts.area.endpoint_labels",
-            EndpointLabelsConfig(label_offset=label_offset, height=20.0),
+            get_theme_style("stark"), "charts.key.direct.offset", label_offset
         )
-        seed = model_copy_at(
-            seed,
-            "charts.area.legend",
-            LegendStylePatch.model_validate(
-                {"position": {"edge": "endpoints" if enabled else "top"}}
-            ),
-        )
+        seed = model_copy_at(seed, "charts.key.type", "direct" if enabled else "legend")
         return resolve_chart_style_context(seed)
 
     return _build

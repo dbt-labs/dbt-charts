@@ -64,11 +64,6 @@ ALLOWED: dict[str, str] = {
         "Rebuilt from rows by model_post_init on every validation, so the load "
         "recomputes it"
     ),
-    "ResolvedLegendStyle.hidden_under_edge": (
-        "Only the WARN-LEGEND-HIDDEN-UNDER-EDGE detector reads it, and detectors "
-        "run only through _collect_render_warnings (renderer.py), which replay "
-        "never calls"
-    ),
     **dict.fromkeys(
         [
             "ResolvedBoard.variable_defaults",

@@ -4,15 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-if TYPE_CHECKING:
-    # These authored types are injected into theme/__init__.py's module globals at
-    # runtime by dbt_charts.core.compile.models.style.authored (after authored.py
-    # finishes executing). The import here is TYPE_CHECKING-only to give pyright and
-    # ruff the static definitions they need without creating a circular import.
-    from dbt_charts.core.compile.models.style.authored import (  # noqa: PLC0415
-        EndpointLabelsConfig,
-    )
-
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.conditional_predicate import (
@@ -27,7 +18,7 @@ from dbt_charts.core.compile.models.markers import (
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
-    _LegendedChartStyleBaseAllOptional,
+    _LineAreaKeyedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
 )
 from dbt_charts.core.compile.models.style.theme.axis_conditional import (
@@ -78,7 +69,7 @@ class LineLayerStyle(BaseModel):
 
 class _LineChartStyleBase(
     _CartesianChartStyle,
-    _LegendedChartStyleBaseAllOptional,
+    _LineAreaKeyedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
     _AnnotatedChartStyleMixin,
 ):
@@ -86,9 +77,6 @@ class _LineChartStyleBase(
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    endpoint_labels: EndpointLabelsConfig = Field(
-        description="Styling of the series names printed at the end of each line (`legend.position.edge: endpoints`)."
-    )
     marks: Annotated[
         LineChartMarksStyle, InheritSlot(from_path="Style.charts.marks")
     ] = Field(

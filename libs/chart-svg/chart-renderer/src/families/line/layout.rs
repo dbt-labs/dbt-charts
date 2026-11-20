@@ -23,7 +23,7 @@ use crate::families::multiples;
 
 use serde_json::Value;
 
-use crate::common::{axis_title_band, axis_title_text, format_y_label, symbol_radius, unity_rule_fires, CaptionSpot, MarkLabels, MeasuredAs, FormatSlot, VALUE_AXIS_BREATHING_ROOM};
+use crate::common::{axis_title_band, axis_title_text, format_y_label, symbol_radius, unity_rule_fires, CaptionSpot, MarkLabels, FormatSlot, VALUE_AXIS_BREATHING_ROOM};
 use ::bind::rows::{dimension_sort_domain, is_year_shaped, row_num, row_str, SortAggregate};
 use crate::families::cartesian::{band_edge, vl_default_tick_count};
 use d3rs::scale::{Band, Continuous, Transform};
@@ -265,10 +265,11 @@ pub(super) fn fit(
     let dashed = is_multi && !draw_areas && r.wide_measures.is_empty() && !r.style.dashes.is_empty();
     // A colorless chart with layers names the base and every layer on the rail
     // (`layered_endpoint_rail_fires`): only when no layer splits by a color field.
+    let named_layers = || overlays.iter().filter(|o| o.legend());
     let layered_rail = !is_multi
         && r.style.endpoint_labels.visible
-        && !overlays.is_empty()
-        && overlays.iter().all(|o| o.color().is_none() || matches!(o, OverlayLayer::Scatter(_)));
+        && named_layers().next().is_some()
+        && named_layers().all(|o| o.color().is_none() || matches!(o, OverlayLayer::Scatter(_)));
     let show_rail = (is_multi || layered_rail) && r.style.endpoint_labels.visible;
     let has_per_series = support_table_config
         .as_ref()
@@ -1534,7 +1535,7 @@ pub(super) fn fit(
         // its first place and its last value.
         let mut entries: Vec<(String, &[serde_json::Map<String, Value>], &str, &str)> =
             vec![(y_title_text.clone(), domain_rows, x_field.as_str(), y_field.as_str())];
-        for overlay in overlays {
+        for overlay in named_layers() {
             let label = axis_title_text(overlay.y(), overlay.label(), &r.field_labels)?;
             let layer_rows = resolve_layer_rows(payload, overlay.query_name(), r.query_name.as_deref(), "line")?;
             entries.push((label, layer_rows, overlay.x().unwrap_or(x_field.as_str()), overlay.y()));
@@ -2183,7 +2184,7 @@ pub(super) fn fit(
     let series_keys = crate::selected::series_keys(&legend_entries, &series);
     let legend_entries = selection.legend(legend_entries, &series_keys);
     let limited_text = legend_active
-        .then(|| limit_legend_text(legend_entries.iter().map(|e| e.label), &legend_title, &r.legend, fonts, MeasuredAs::Vega))
+        .then(|| limit_legend_text(legend_entries.iter().map(|e| e.label), &legend_title, &r.legend, fonts))
         .transpose()?;
     let vega_legend_box = limited_text
         .as_ref()
@@ -2201,7 +2202,7 @@ pub(super) fn fit(
     // halo's canvas color (the strokeDash scale is encoded on the halo and the line alike).
     let root_dash_legend: Option<(VegaLegend, LegendConfig, Vec<String>)> = if dash_legend_at_root {
         let cfg = vega_default_legend(&r.legend);
-        let lt = limit_legend_text(legend_display_labels.iter().map(String::as_str), &legend_title, &cfg, fonts, MeasuredAs::Vega)?;
+        let lt = limit_legend_text(legend_display_labels.iter().map(String::as_str), &legend_title, &cfg, fonts)?;
         let symbols: Vec<Option<LegendSymbol>> =
             series_dashes.iter().map(|dash| Some(LegendSymbol::DashCircle(dash.as_str()))).collect();
         Some((legend_from_widths(&lt.label_ws, &symbols, false, &lt.title, lt.title_w, &cfg)?, cfg, lt.labels))
@@ -2209,7 +2210,7 @@ pub(super) fn fit(
         None
     };
     let facet_legend = if facet_legend_wanted {
-        let lt = limit_legend_text(legend_entries.iter().map(|e| e.label), &legend_title, &r.legend, fonts, MeasuredAs::Vega)?;
+        let lt = limit_legend_text(legend_entries.iter().map(|e| e.label), &legend_title, &r.legend, fonts)?;
         // Under a columns facet with shared scales Vega-Lite drops the line's own symbol stroke width.
         let default_circle = if !has_layers && !dashed && r.multiples.as_ref().is_some_and(|m| m.columns.is_some() && m.scale != "independent") && fam == "line" {
             LegendSymbol::ThinCircle
@@ -2482,6 +2483,8 @@ pub(super) fn fit(
         None
     };
     let bare_extent = label_extent.or(quant_extent);
+    // A data value's written day: a band's `to` on the data's weekday stops before its week.
+    let first_mark = x_dates.date.iter().flatten().next().map(|&(y, m, d)| d3rs::calendar::days_from_civil(y, m, d) as f64);
     let utc_fracs: Option<Vec<f64>> = match (utc_fracs, label_extent, authored_extent) {
         (Some(_), Some(extent), _) if authored_extent.is_some() || crate::annotation::x_day_bounds(&r.annotations).next().is_some() => {
             let time = x_time_ext.as_ref().expect("a time scale reads parsed instants");
@@ -3107,7 +3110,7 @@ pub(super) fn fit(
             // The inset range, as a widened extent over the whole plot: an open band or a rule reaches the plot edge.
             Some((lo, hi)) => {
                 let per_px = (hi - lo) / (pw - 2.0 * x_scale_pad).max(f64::MIN_POSITIVE);
-                AxisMap::Time { extent: (lo - x_scale_pad * per_px, hi + x_scale_pad * per_px), range: (0.0, pw), grain: detected_data_tu }
+                AxisMap::Time { extent: (lo - x_scale_pad * per_px, hi + x_scale_pad * per_px), range: (0.0, pw), grain: detected_data_tu.zip(first_mark) }
             }
             None => {
                 let points = Band::point(x_domain.len(), [x_scale_pad, pw - x_scale_pad], 0.0, 0.5, false);

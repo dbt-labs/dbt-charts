@@ -20,7 +20,6 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, ResolvedFormat
-from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
 
 from ._base import ResolvedAxisStyle
 from ._marks import ResolvedSeriesLabelStyle
@@ -53,10 +52,23 @@ class _CartesianResolvedStyle(BaseModel):
     )
 
 
-class ResolvedEndpointLabelsConfig(EndpointLabelsConfig):
-    """The endpoint-label config once the engine has decided ``auto``."""
+class ResolvedEndpointLabelsConfig(BaseModel):
+    """The direct-label config once the engine has decided ``auto``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     visible: bool = Field(description="Whether the series names print on the chart.")
+    label_offset: float = Field(
+        description="Gap in pixels between the plot and the series labels."
+    )
+
+
+class ResolvedBarEndpointLabelsConfig(ResolvedEndpointLabelsConfig):
+    """A bar's direct-label config, which also sizes the strip above a horizontal stack."""
+
+    height: float = Field(
+        description="Height in pixels of the label strip above a horizontal stacked bar."
+    )
 
 
 class _SeriesCartesianResolvedStyle(_CartesianResolvedStyle):
@@ -85,6 +97,7 @@ class _SeriesCartesianResolvedStyle(_CartesianResolvedStyle):
 
 
 __all__ = [
+    "ResolvedBarEndpointLabelsConfig",
     "ResolvedEndpointLabelsConfig",
     "_CartesianResolvedStyle",
     "_SeriesCartesianResolvedStyle",

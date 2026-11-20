@@ -221,24 +221,24 @@ _NOT_DESIGN_PATHS = ("style.charts", "style.color.gradient")
 #
 # The guard is what the flat lists could not do. That rule has two branches: it
 # fires only when the variable names no query of its own, and *with* one a bare
-# column name is exactly what the field wants — a wrong one leaves the option
-# list empty rather than breaking the board. So `options.column` is a hazard on
+# column name is exactly what the field wants — a wrong one stops the render
+# with an error naming the columns the query returns. So `options.column` is a hazard on
 # one branch and a real control on the other, and a name that is simply in or
 # out gets one of the two wrong.
 # GATED — the render sweep walks every Variable control in full. `histogram`'s
 # entry is a field one `type:` of a shared model refuses outright: `BarChart`
 # declares `y_start`, `pattern` and `style.torn_outlier` for both tags, and the
-# histogram rules refuse them, since its bars count from zero and bin rows — no
-# value a text box can produce compiles there. The legend edge is the exception: only `endpoints` is
+# histogram rules refuse them, since its bars count from zero and bin rows, so no
+# value a text box can produce compiles there. The key type is the exception: only `direct` is
 # refused (a histogram has one series to name), but this table drops a key, not
-# one value, so the sides go with it.
+# one value, so `legend` and `auto` go with it.
 # GATED (histogram) — the parse sweep (`histogram-no-x`, `histogram-multi-metric`).
 _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
     "Variable": (
         ("column", None),
         ("options.query", None),
         ("options.column", "options.query"),
-        ("options.label_column", "options.query"),
+        ("options.count_column", "options.query"),
     ),
     "histogram": (
         ("y_start", None),
@@ -252,7 +252,7 @@ _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("style.torn_outlier.at", None),
         ("style.torn_outlier.band", None),
         ("style.torn_outlier.cap", None),
-        ("style.legend.position.edge", None),
+        ("style.key.type", None),
     ),
 }
 

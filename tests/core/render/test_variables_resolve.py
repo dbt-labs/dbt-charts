@@ -749,7 +749,8 @@ def test_an_options_query_value_column_is_found_ignoring_case() -> None:
     from dbt_charts.core.render.variables_resolve import _option_cells
 
     rows = [{"Label": "East", "Value": "e"}, {"Label": "West", "Value": "w"}]
-    assert _option_cells(rows, "regions") == ["e", "w"]
+    assert _option_cells(rows, "regions", "region", None) == ["e", "w"]
+    assert _option_cells(rows, "regions", "region", "label") == ["East", "West"]
 
 
 _FILTERED_BOARD = """

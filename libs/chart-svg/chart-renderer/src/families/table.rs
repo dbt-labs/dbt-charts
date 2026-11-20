@@ -1157,6 +1157,31 @@ struct ColMeta {
     when_rules: Vec<WhenRule>,
     /// The table's `style.row.conditional`, shared by every column.
     row_rules: std::rc::Rc<RowRules>,
+    /// Set on a pivot leaf only.
+    pivot_leaf: Option<PivotLeaf>,
+}
+
+/// A pivot leaf's place in its measure: every leaf of one measure shares a
+/// cell scale and a spark maximum, and a total leaf (a NULL column-dimension
+/// value) feeds neither and is never shaded, as a `row_role` total row.
+struct PivotLeaf {
+    /// The measure's non-total leaves: the columns its scale and spark max read.
+    scale_leaves: std::rc::Rc<[String]>,
+    total: bool,
+}
+
+impl ColMeta {
+    /// The columns whose values set this column's scale domain and spark max.
+    fn scale_fields(&self) -> &[String] {
+        match &self.pivot_leaf {
+            Some(leaf) => &leaf.scale_leaves,
+            None => std::slice::from_ref(&self.name),
+        }
+    }
+
+    fn is_total_leaf(&self) -> bool {
+        self.pivot_leaf.as_ref().is_some_and(|leaf| leaf.total)
+    }
 }
 
 /// Per-row semantic role from `style.row.role`, collapsed to the two bits
@@ -1245,6 +1270,17 @@ struct PivotResult {
     /// The declared type of each column of `rows`: a row dimension keeps its
     /// source's, a leaf holds its measure's cells.
     types: ColumnTypes,
+    /// What each leaf column is, in `col_order`'s leaf order.
+    leaves: Vec<LeafKind>,
+    /// The column-dimension values of each column tuple as headers print them,
+    /// in tuple order (`label_column_dimensions`).
+    col_labels: Vec<Vec<String>>,
+}
+
+struct LeafKind {
+    measure: String,
+    /// Some column-dimension value is NULL: a GROUPING SETS total column.
+    total: bool,
 }
 
 /// Painted swatch square size;
@@ -2305,6 +2341,131 @@ pub(crate) mod tests {
         assert!(!svg.contains("2026 07") && !svg.contains(">Ae<"), "{svg}");
     }
 
+    fn month_rows(n_by_team: [[f64; 2]; 2]) -> Vec<Value> {
+        ["Team A", "Team B"]
+            .iter()
+            .zip(n_by_team)
+            .flat_map(|(team, by_month)| {
+                ["2026-06-01", "2026-07-01"]
+                    .iter()
+                    .zip(by_month)
+                    .map(move |(month, n)| json!({"team": team, "month": month, "n": n}))
+            })
+            .collect()
+    }
+
+    // A pivot header names a dimension value as the flat column would print it:
+    // through the dimension's own format, else the date default.
+    #[test]
+    fn pivot_date_headers_print_through_the_dimensions_format() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let rows = month_rows([[1.0, 2.0], [3.0, 4.0]]);
+        let authored = json!({"team": {}, "month": {"format": "%b %Y"}});
+        let payload = make_pivot_payload(authored, rows.clone(), vec!["team"], vec!["month"], vec!["n"]);
+        let svg = render(&payload, &test_fonts()).expect("pivot renders");
+        assert!(svg.contains(">Jun 2026<") && svg.contains(">Jul 2026<"), "{svg}");
+        assert!(!svg.contains("2026-06-01"), "{svg}");
+
+        let unformatted = make_pivot_payload(json!({"team": {}}), rows, vec!["team"], vec!["month"], vec!["n"]);
+        let svg = render(&unformatted, &test_fonts()).expect("pivot renders");
+        assert!(svg.contains(">1 Jun 2026<") && svg.contains(">1 Jul 2026<"), "{svg}");
+    }
+
+    #[test]
+    fn pivot_group_headers_print_through_the_dimensions_format() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let rows: Vec<Value> = month_rows([[1.0, 2.0], [3.0, 4.0]])
+            .into_iter()
+            .map(|mut row| {
+                row["m"] = row["n"].clone();
+                row
+            })
+            .collect();
+        let columns = json!({"team": {}, "month": {"format": "%b %Y"}});
+        let payload = make_pivot_payload(columns, rows, vec!["team"], vec!["month"], vec!["n", "m"]);
+        let svg = render(&payload, &test_fonts()).expect("pivot renders");
+        assert!(svg.contains(">Jun 2026<") && !svg.contains("2026-06-01"), "{svg}");
+    }
+
+    // One measure, one scale: the lightest cell is the measure's own maximum
+    // across every leaf, not the maximum of its month.
+    fn scaled_pivot(rows: Vec<Value>) -> String {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let columns = json!({"team": {}, "n": {"scale": {"background": {
+            "palette": "seq",
+            "domain": "data",
+            "arm_mode": "asymmetric",
+            "resolved_stops": ["#000000", "#ffffff"]
+        }}}});
+        let payload = make_pivot_payload(columns, rows, vec!["team"], vec!["month"], vec!["n"]);
+        render(&payload, &test_fonts()).expect("pivot renders")
+    }
+
+    #[test]
+    fn pivot_scale_domain_spans_every_leaf_of_the_measure() {
+        // Domain [2, 10]: 6 sits at the midpoint. On its own leaf's [6, 10] it
+        // would be the darkest cell.
+        let svg = scaled_pivot(month_rows([[2.0, 6.0], [4.0, 10.0]]));
+        assert!(svg.contains("fill=\"#808080\""), "{svg}");
+        assert_eq!(svg.matches("fill=\"#000000\"").count(), 1, "{svg}");
+    }
+
+    #[test]
+    fn pivot_null_column_leaf_is_unshaded_and_outside_the_domain() {
+        let mut rows = month_rows([[2.0, 6.0], [4.0, 10.0]]);
+        rows.push(json!({"team": "Team A", "month": null, "n": 1000.0}));
+        let svg = scaled_pivot(rows);
+        assert!(svg.contains("fill=\"#808080\""), "total leaf skewed the domain:\n{svg}");
+        assert_eq!(svg.matches("fill=\"#ffffff\"").count(), 1, "total leaf was shaded:\n{svg}");
+    }
+
+    // Unit symbols print on every cell of a pivot measure; a cross-tab has no
+    // single top row to carry them. An authored `repeat: anchor` still wins.
+    #[test]
+    fn pivot_symbols_print_on_every_measure_cell() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let columns = json!({"team": {}, "n": {"format": "percent"}});
+        let rows = month_rows([[0.5, 0.6], [0.7, 0.8]]);
+        let mut payload = make_pivot_payload(columns, rows.clone(), vec!["team"], vec!["month"], vec!["n"]);
+        payload.resolved["style"]["table"]["symbol_mode"] = json!("anchors");
+        let svg = render(&payload, &test_fonts()).expect("pivot renders");
+        assert_eq!(svg.matches(">%</tspan>").count(), 4, "{svg}");
+
+        let anchored = json!({"team": {}, "n": {"format": {"spec": "percent", "repeat": "anchor"}}});
+        let mut payload = make_pivot_payload(anchored, rows, vec!["team"], vec!["month"], vec!["n"]);
+        payload.resolved["style"]["table"]["symbol_mode"] = json!("anchors");
+        let svg = render(&payload, &test_fonts()).expect("pivot renders");
+        assert_eq!(svg.matches(">%</tspan>").count(), 2, "{svg}");
+    }
+
+    // Spark bars scale to the measure's largest value across every leaf, and a
+    // NULL-column total leaf stays out of that maximum.
+    #[test]
+    fn pivot_spark_bar_max_spans_the_measure_and_skips_the_total_leaf() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let spark_bar_widths = |rows: Vec<Value>| -> Vec<f64> {
+            let columns = json!({"team": {}, "n": {"spark": {"type": "bar"}}});
+            let payload = make_pivot_payload(columns, rows, vec!["team"], vec!["month"], vec!["n"]);
+            let svg = render(&payload, &test_fonts()).expect("pivot renders");
+            svg.split("<g transform=\"translate(")
+                .skip(1)
+                .map(|g| attr_after(g, "<rect", "width"))
+                .collect()
+        };
+        let widths = spark_bar_widths(vec![
+            json!({"team": "A", "month": "2026-06-01", "n": 5.0}),
+            json!({"team": "A", "month": "2026-07-01", "n": 40.0}),
+        ]);
+        assert_eq!(widths.len(), 2);
+        assert!((widths[1] / widths[0] - 8.0).abs() < 0.05, "{widths:?}");
+        let with_total = spark_bar_widths(vec![
+            json!({"team": "A", "month": "2026-06-01", "n": 5.0}),
+            json!({"team": "A", "month": "2026-07-01", "n": 40.0}),
+            json!({"team": "A", "month": null, "n": 1000.0}),
+        ]);
+        assert!((with_total[1] / with_total[0] - 8.0).abs() < 0.05, "{with_total:?}");
+    }
+
     // `revenue_units_cross_tab` shape: single pivot dimension, two measures —
     // leaf columns fan the measure-keyed style.columns config, and a group
     // header row labels each category span.
@@ -2739,6 +2900,7 @@ pub(crate) mod tests {
 
     /// The leaf columns a pivot header draws, in order.
     fn pivot_header_order(month_values: &[Value]) -> Vec<String> {
+        let _locale = ::bind::time_locale::en_us_scope();
         let rows: Vec<Value> = month_values
             .iter()
             .map(|m| json!({"region": "East", "month": m, "revenue": 1.0}))
@@ -7914,6 +8076,7 @@ pub(crate) mod tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let row_roles = [
             RowRole::Value,
@@ -8580,6 +8743,7 @@ mod conditional_formatting_tests {
             is_day: false,
             when_rules: vec![rule(json!({"in": [["nested"]], "glyph": "x"}))],
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let row = serde_json::Map::new();
         let err = resolve_cell_glyph(&col, &row, Some(&json!("nested"))).unwrap_err();
@@ -8880,7 +9044,7 @@ mod conditional_formatting_tests {
             json!({"v": 9.0}).as_object().unwrap().clone(),
         ];
         let refs: Vec<&serde_json::Map<String, Value>> = rows.iter().collect();
-        assert_eq!(compute_scale_domain(&refs, "v", None, None), (3.0, 9.0));
+        assert_eq!(compute_scale_domain(&refs, &["v"], None, None), (3.0, 9.0));
     }
 
     #[test]
@@ -8888,13 +9052,13 @@ mod conditional_formatting_tests {
         let rows: Vec<serde_json::Map<String, Value>> =
             vec![json!({"v": "n/a"}).as_object().unwrap().clone()];
         let refs: Vec<&serde_json::Map<String, Value>> = rows.iter().collect();
-        assert_eq!(compute_scale_domain(&refs, "v", None, None), (0.0, 1.0));
+        assert_eq!(compute_scale_domain(&refs, &["v"], None, None), (0.0, 1.0));
     }
 
     #[test]
     fn compute_scale_domain_explicit_min_max_wins_outright() {
         let refs: Vec<&serde_json::Map<String, Value>> = Vec::new();
-        assert_eq!(compute_scale_domain(&refs, "v", Some(-1.0), Some(1.0)), (-1.0, 1.0));
+        assert_eq!(compute_scale_domain(&refs, &["v"], Some(-1.0), Some(1.0)), (-1.0, 1.0));
     }
 
     // ── full render(): paint-site strings + measurement-site width ─────
@@ -9546,6 +9710,7 @@ mod conditional_formatting_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let glyph_col = ColMeta {
             name: "v".to_string(),
@@ -9557,6 +9722,7 @@ mod conditional_formatting_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let plain = column_demand(&cells, &rows, &plain_col, &fonts, &MeasureFonts { body: "Inter", header: "Inter", numeral: "Inter" }, 11.0, 8.0).unwrap();
         let widened =
@@ -10515,6 +10681,7 @@ mod demand_affix_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"days_since_close": 45.0})]
             .into_iter()
@@ -10547,6 +10714,7 @@ mod demand_affix_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"amt": 45.0})]
             .into_iter()
@@ -10580,6 +10748,7 @@ mod demand_affix_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"amt": 45.0})]
             .into_iter()
@@ -10614,6 +10783,7 @@ mod demand_affix_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let maps: Vec<serde_json::Map<String, Value>> =
             values.iter().map(|v| json!({"v": v}).as_object().unwrap().clone()).collect();
@@ -10701,6 +10871,7 @@ mod demand_affix_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"amount": 24_730_000.0})]
             .into_iter()
@@ -10816,6 +10987,7 @@ mod demand_affix_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let maps = vec![json!({"amt": 0.67}).as_object().unwrap().clone()];
         let cells = format_numeric_col(&maps, &col, "all", &[RowRole::Value]).expect("formats");
@@ -10833,6 +11005,7 @@ mod demand_affix_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         }
     }
 
@@ -10905,6 +11078,7 @@ mod demand_affix_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let cols = [col("balance", None), col("budget", Some("every"))];
         let rows: Vec<serde_json::Map<String, Value>> = [(168000.0, 150000.0), (-41500.0, -30000.0), (-12000.0, -10000.0)]
@@ -11994,6 +12168,7 @@ mod header_font_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let rows = vec![json!({"quarterly": "Al"}).as_object().unwrap().clone()];
         let cells = vec![vec![Cell { text: "Al".into(), ..Default::default() }]];
@@ -12041,6 +12216,7 @@ mod padded_column_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         }
     }
 
@@ -12465,6 +12641,7 @@ mod board_format_tests {
                 is_day: false,
                 when_rules: Vec::new(),
                 row_rules: Default::default(),
+            pivot_leaf: None,
             };
             let rows = vec![json!({"v": 1.5}).as_object().unwrap().clone()];
             format_numeric_col(&rows, &col, "all", &[RowRole::Value])
@@ -12564,6 +12741,7 @@ mod shared_scale_register_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> = values
             .iter()
@@ -12593,6 +12771,7 @@ mod shared_scale_register_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> = values
             .iter()
@@ -12690,6 +12869,7 @@ mod shared_scale_register_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> = values
             .iter()
@@ -12762,6 +12942,7 @@ mod shared_scale_register_tests {
                     is_day: false,
                     when_rules: Vec::new(),
                     row_rules: Default::default(),
+            pivot_leaf: None,
                 };
                 let rows = vec![json!({"amount": value}).as_object().unwrap().clone()];
                 format_numeric_col(&rows, &col, "all", &[RowRole::Value]).map(|_| ()).unwrap_err().to_string()
@@ -12818,6 +12999,7 @@ mod shared_scale_register_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let rows = vec![json!({"amount": 24_730_000.0}).as_object().unwrap().clone()];
         let cell = ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
@@ -12853,6 +13035,7 @@ mod shared_scale_register_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> = values
             .iter()
@@ -12929,6 +13112,7 @@ mod shared_scale_register_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let rows = vec![json!({"amount": 4_820_000.0}).as_object().unwrap().clone()];
         let cell = ::bind::formats::locale::with_number_locale(&::bind::formats::locale::de_de(), || {
@@ -13004,6 +13188,7 @@ mod notation_and_shared_scale_lane_tests {
             is_day: false,
             when_rules: Vec::new(),
             row_rules: Default::default(),
+            pivot_leaf: None,
         };
         let rows = vec![json!({"v": value}).as_object().unwrap().clone()];
         let _scope = super::tests::en_us_scope();

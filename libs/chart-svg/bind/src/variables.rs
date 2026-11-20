@@ -503,9 +503,28 @@ fn iso_date(iso: &str) -> Result<jiff::civil::Date, Diagnostic> {
 }
 
 
-/// Checks a select whose options a query answers, as `resolve_options` reads them: the first of the
-/// `value`, `label`, `name` and `id` columns the rows have (`_option_value_key`), else the first
-/// column, each cell as Python's `str` spells it, repeats dropped. The band never prints the options,
+/// Python's `option_value_column`: the column an options query's values come from. `options.column`
+/// when set, refused when the rows lack it; else the first of `value`, `label`, `name` and `id`,
+/// else the first column.
+pub fn option_value_column<'a>(columns: &[&'a str], query: &str, variable: &str, column: Option<&str>) -> Result<Option<&'a str>, Diagnostic> {
+    if let Some(column) = column {
+        let found = crate::column_refs::match_column(column, columns, &format!("variable {}", diagnostic::py_str_repr(variable)))?;
+        return match found {
+            Some(found) => Ok(Some(found)),
+            None => Err(diag::err_variable_options_column_missing(variable, column, query, columns.join(", "))),
+        };
+    }
+    let at = format!("options query {}", diagnostic::py_str_repr(query));
+    for wanted in ["value", "label", "name", "id"] {
+        if let Some(found) = crate::column_refs::match_column(wanted, columns, &at)? {
+            return Ok(Some(found));
+        }
+    }
+    Ok(columns.first().copied())
+}
+
+/// Checks a select whose options a query answers, as `resolve_options` reads them: the
+/// `option_value_column` of the rows, each cell as Python's `str` spells it, repeats dropped. The band never prints the options,
 /// so only what they would do to the control is kept: options that would turn it into another input
 /// (dates, booleans, a numeric range: `refine_options`) are refused, since an authored select and a
 /// detected one are no longer told apart.
@@ -525,16 +544,8 @@ fn check_options(name: &str, variable: &Variable, run: &RunResult, queries: &BTr
         return Ok(());
     };
     let columns: Vec<&str> = first.keys().map(String::as_str).collect();
-    let at = format!("options query {}", diagnostic::py_str_repr(key));
-    let mut column = None;
-    for wanted in ["value", "label", "name", "id"] {
-        if let Some(found) = crate::column_refs::match_column(wanted, &columns, &at)? {
-            column = Some(found);
-            break;
-        }
-    }
-    let column = column
-        .or_else(|| columns.first().copied())
+    let declared = variable.options.as_ref().and_then(|o| o.column.as_deref());
+    let column = option_value_column(&columns, key, name, declared)?
         .ok_or_else(|| diag::err_internal(format!("the options query {key} of variable {name} returned a row with no columns")))?;
     let mut values: Vec<String> = Vec::new();
     for row in dataset.rows.iter() {
@@ -635,5 +646,24 @@ mod multiselect_tests {
         assert!(selection(None).is_empty());
         assert_eq!(selection(Some(&list)), vec![Some(&text("a")), None]);
         assert_eq!(member_text(&None), "None");
+    }
+}
+
+#[cfg(test)]
+mod option_value_column_tests {
+    use super::*;
+
+    const COLUMNS: [&str; 2] = ["status_name", "status_id"];
+
+    #[test]
+    fn the_declared_column_wins_over_the_guess() {
+        assert_eq!(option_value_column(&COLUMNS, "q", "status", Some("STATUS_ID")).unwrap(), Some("status_id"));
+        assert_eq!(option_value_column(&COLUMNS, "q", "status", None).unwrap(), Some("status_name"));
+    }
+
+    #[test]
+    fn a_declared_column_the_query_lacks_is_refused() {
+        let err = option_value_column(&COLUMNS, "q", "status", Some("status_code")).unwrap_err();
+        assert_eq!(err, diag::err_variable_options_column_missing("status", "status_code", "q", "status_name, status_id"));
     }
 }

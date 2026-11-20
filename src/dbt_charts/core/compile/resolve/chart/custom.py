@@ -17,7 +17,6 @@ from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.authored import (
     LegendStylePatch,
     PieLegendStylePatch,
-    SideLegendStylePatch,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.theme import (
@@ -91,8 +90,6 @@ def _concrete(node: JsonValue, path: tuple[str, ...] = ()) -> JsonValue:
         out["visible"] = False
     if path[-1:] == ("labels",) and out.get("format") == AUTO_AXIS_FORMAT:
         out["format"] = None
-    if path[-1:] == ("legend",) and out.get("visible") == "auto":
-        out["visible"] = True
     if path[-2:] == ("legend", "title") and out.get("visible") == "auto":
         out["visible"] = None
     return out
@@ -135,17 +132,21 @@ def _style_tree(context: ChartStyleContext) -> dict[str, JsonValue]:
     assert isinstance(concrete, dict)
     tree_charts = concrete["charts"]
     assert isinstance(tree_charts, dict)
-    general = cascaded.charts.legend
-    general_node = tree_charts["legend"]
+    general = cascaded.charts.key.legend
+    general_key_node = tree_charts["key"]
+    assert isinstance(general_key_node, dict)
+    general_node = general_key_node["legend"]
     assert isinstance(general_node, dict)
     general_node["position"] = _decided_position(general.position, None)
     for name, family in charts:
-        legend = dict(family).get("legend") if isinstance(family, BaseModel) else None
+        key = dict(family).get("key") if isinstance(family, BaseModel) else None
         node = tree_charts[name]
-        legend_node = node.get("legend") if isinstance(node, dict) else None
-        if isinstance(
-            legend, (LegendStylePatch, SideLegendStylePatch, PieLegendStylePatch)
-        ) and isinstance(legend_node, dict):
+        key_node = node.get("key") if isinstance(node, dict) else None
+        legend = None if key is None else key.legend
+        legend_node = key_node.get("legend") if isinstance(key_node, dict) else None
+        if isinstance(legend, (LegendStylePatch, PieLegendStylePatch)) and isinstance(
+            legend_node, dict
+        ):
             legend_node["position"] = _decided_position(
                 general.position, legend, radial=name == "pie"
             )
@@ -218,7 +219,8 @@ def _resolve_custom(
             normalized,
             chart_style_context,
             {},
-            requested_alias_palette=chart_style_context.requested_alias_palette,
+            local_context,
+            warned_palette=chart_style_context.warned_palette,
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=chart_style_context.padding,
             wrap_columns=None,  # a custom chart draws no color legend

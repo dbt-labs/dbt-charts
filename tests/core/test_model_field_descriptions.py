@@ -31,9 +31,6 @@ from dbt_charts.core.compile.models.query.normalized import (
     SqlQuery,
     ValuesQuery,
 )
-from dbt_charts.core.compile.models.style.authored._base import (
-    EndpointLabelsConfig,
-)
 from dbt_charts.core.compile.models.variable.authored import Variable
 
 
@@ -214,47 +211,34 @@ class TestDescriptionContent:
             offenders
         )
 
-    def test_legend_edge_states_the_shipped_default(self) -> None:
-        """Pinned against the themes, so the prose cannot drift from the value."""
-        from typing import get_args
+    def test_key_type_help_carries_the_words_a_user_searches(self) -> None:
+        from dbt_charts.core.compile.models.style.theme import ChartsKeyStyle
 
-        from dbt_charts.core.compile.config import get_theme_style
-        from dbt_charts.core.compile.models.schema_names import ThemeName
-
-        shipped = {
-            get_theme_style(name).charts.legend.position.edge
-            for name in get_args(ThemeName)
-        }
-        assert shipped == {"auto"}
-        assert "'auto' (engine decides)" in self._edge_description()
-
-    def test_legend_edge_description_is_one_short_sentence(self) -> None:
-        """The detail (which shapes get a rail, which refuse `endpoints`) is in the docs."""
-        text = self._edge_description()
-        assert len(text.split()) <= 12
-        assert text.count(". ") == 0
-        assert text.endswith(".")
-
-    def test_legend_edge_names_endpoint_labels(self) -> None:
-        """A reader hunting "endpoint labels" has to land on the edge that sets them."""
-        assert "endpoints" in self._edge_description()
-
-    @staticmethod
-    def _edge_description() -> str:
-        from dbt_charts.core.compile.models.style.theme import LegendPositionStyle
-
-        return (LegendPositionStyle.model_fields["edge"].description or "").lower()
-
-    def test_endpoint_labels_help_carries_the_words_a_user_searches(self) -> None:
         blob = " ".join(
-            [EndpointLabelsConfig.__doc__ or ""]
-            + [f.description or "" for f in EndpointLabelsConfig.model_fields.values()]
+            [ChartsKeyStyle.__doc__ or ""]
+            + [f.description or "" for f in ChartsKeyStyle.model_fields.values()]
         ).lower()
-        for term in ("series", "legend", "label"):
-            assert term in blob, f"endpoint_labels help never says {term!r}"
+        for term in ("series", "legend", "direct"):
+            assert term in blob, f"style.key help never says {term!r}"
 
-    def test_endpoint_labels_help_uses_no_em_dash(self) -> None:
-        strings = [EndpointLabelsConfig.__doc__ or ""] + [
-            f.description or "" for f in EndpointLabelsConfig.model_fields.values()
+    def test_key_field_help_is_at_most_twelve_words(self) -> None:
+        from dbt_charts.core.compile.models.style.theme import key
+
+        too_long = [
+            f"{name}.{field}"
+            for name, model in vars(key).items()
+            if isinstance(model, type)
+            and issubclass(model, BaseModel)
+            and model.__module__ == key.__name__
+            for field, info in model.model_fields.items()
+            if len((info.description or "").split()) > 12
+        ]
+        assert not too_long
+
+    def test_key_help_uses_no_em_dash(self) -> None:
+        from dbt_charts.core.compile.models.style.theme import ChartsKeyStyle
+
+        strings = [ChartsKeyStyle.__doc__ or ""] + [
+            f.description or "" for f in ChartsKeyStyle.model_fields.values()
         ]
         assert not [s for s in strings if "—" in s]

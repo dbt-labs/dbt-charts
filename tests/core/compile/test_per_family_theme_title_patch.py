@@ -2,7 +2,7 @@
 
 Mirrors ``test_per_family_theme_legend_patch.py``'s "family theme ->
 chart-local" merge order and fast-path bypass; both fields share the
-``_FAMILY_THEN_LOCAL_FIELDS`` cascade.
+cascade in ``merge_chart_style``.
 
 No built-in theme currently authors a per-family ``title`` override, so these
 use a synthetic ``StylePatch`` instead of a real theme (unlike the legend

@@ -330,7 +330,7 @@ def test_style_slot_graph_is_compact():
     # Container-level entries exist
     assert slot_graph.get("Style.charts.font") == "Style.font"
     assert slot_graph.get("Style.title.font") == "Style.font"
-    assert slot_graph.get("Style.charts.legend.label.font") == "Style.charts.font"
+    assert slot_graph.get("Style.charts.key.legend.label.font") == "Style.charts.font"
 
     # No leaf-level entries
     assert "Style.charts.font.color" not in slot_graph
@@ -351,8 +351,8 @@ def test_style_font_chains_in_graph():
       Style.layout.details.font.* ← Style.font.*
       Style.text.font.* ← Style.font.*
       Style.placeholder.overlay.font.* ← Style.font.*
-      Style.charts.legend.label.font.* ← Style.charts.font.*
-      Style.charts.legend.title.font.* ← Style.charts.font.*
+      Style.charts.key.legend.label.font.* ← Style.charts.font.*
+      Style.charts.key.legend.title.font.* ← Style.charts.font.*
     """
     from dbt_charts.core.compile.models.style.theme import Style
 
@@ -382,15 +382,19 @@ def test_style_font_chains_in_graph():
     # layout.details.font inherits from root font
     assert graph.get("Style.layout.details.font.color") == "Style.font.color"
 
-    # charts.legend.label.font inherits from charts.font (single parent link)
+    # charts.key.legend.label.font inherits from charts.font (single parent link)
     assert (
-        graph.get("Style.charts.legend.label.font.color") == "Style.charts.font.color"
+        graph.get("Style.charts.key.legend.label.font.color")
+        == "Style.charts.font.color"
     )
-    assert graph.get("Style.charts.legend.label.font.size") == "Style.charts.font.size"
-
-    # charts.legend.title.font inherits from charts.font
     assert (
-        graph.get("Style.charts.legend.title.font.color") == "Style.charts.font.color"
+        graph.get("Style.charts.key.legend.label.font.size") == "Style.charts.font.size"
+    )
+
+    # charts.key.legend.title.font inherits from charts.font
+    assert (
+        graph.get("Style.charts.key.legend.title.font.color")
+        == "Style.charts.font.color"
     )
 
 

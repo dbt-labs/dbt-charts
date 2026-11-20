@@ -107,13 +107,14 @@ style:
     axis_quantitative:
       grid:
         color: chrome[5]
-    legend:
-      label:
-        font:
-          color: chrome[8]
-      title:
-        font:
-          color: chrome[10]
+    key:
+      legend:
+        label:
+          font:
+            color: chrome[8]
+        title:
+          font:
+            color: chrome[10]
     # Themed sequential default for heatmap/geoshape gradient color — _base's
     # `blues` measures 1.08:1 contrast against the cream canvas at its light
     # end (WCAG floor is 3:1), so low-value cells are effectively invisible.

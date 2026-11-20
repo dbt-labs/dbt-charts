@@ -8,7 +8,7 @@ user inputs (select, slider, etc.) or have static default values.
 """
 
 import math
-from typing import Annotated, Any, Literal, TypeVar
+from typing import Annotated, Any, Literal, Self, TypeVar
 
 from pydantic import (
     BaseModel,
@@ -17,6 +17,7 @@ from pydantic import (
     Field,
     StringConstraints,
     field_validator,
+    model_validator,
 )
 
 from dbt_charts.core.compile.models.markers import DisplayText, Exclusive
@@ -90,10 +91,20 @@ class VariableOptions(BaseModel):
     column: str | None = Field(
         default=None, description="Column in the query result to use as option values."
     )
-    label_column: str | None = Field(
+    count_column: str | None = Field(
         default=None,
-        description="Query column shown as the option text, apart from the value.",
+        description=(
+            "Query column holding each option's count, shown beside the option and "
+            "used to sort the menu by count. Write the count you mean in the query, "
+            "such as COUNT(DISTINCT id) over a recent window."
+        ),
     )
+
+    @model_validator(mode="after")
+    def _count_column_needs_query(self) -> Self:
+        if self.count_column is not None and self.query is None:
+            raise ValueError("options.count_column needs options.query to read it from")
+        return self
 
 
 class SingleRowBoolProbe(BaseModel):

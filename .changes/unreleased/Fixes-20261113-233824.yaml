@@ -1,3 +1,0 @@
-kind: Fixes
-body: A replayed board artifact now draws its KPI and callouts as a live render does; artifacts written by earlier releases no longer load, so run `dct artifact emit` again.
-time: 2026-11-13T23:38:24.585400814Z

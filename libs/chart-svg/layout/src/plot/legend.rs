@@ -38,7 +38,7 @@ use board_model::rule::Auto;
 use board_model::style::board::EmojiMode;
 use board_model::style::font::{FontSlant, FontStyle, TextDecoration};
 use board_model::facet::FontWeightValue;
-use board_model::style::legend::{LegendAlign, LegendDirection, LegendEdge, LegendPlacementEdge, LegendStyleBase};
+use board_model::style::legend::{LegendAlign, LegendDirection, LegendEdge, LegendStyleBase};
 use d3rs::vega_symbol::{Extents, VegaSymbol};
 use diagnostic::{diag, refuse, Diagnostic};
 use measure::shaped::FontBook;
@@ -79,8 +79,8 @@ fn points_only(plot: &Plane) -> Result<(), Diagnostic> {
 }
 
 /// How far a swatch reaches from the center of its cell, sideways and above and below it: the
-/// disc a filled mark's entry draws (`half_extent_x` and `extent_y` of `legend_grid`), the disc and
-/// its stroke (a pie's key), or a ring's own symbol and stroke.
+/// disc a filled mark's entry draws (`half_extent_x` and `extent_y` of `legend_grid`), or a ring's own
+/// symbol and stroke.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Reach {
     x: f64,
@@ -91,8 +91,6 @@ pub struct Reach {
 impl Reach {
     /// A filled symbol of the default size: its half side, whatever the symbol (`FilledGlyph`).
     const FILLED: Reach = Reach { x: HALF, up: HALF, down: HALF };
-    /// The default disc and its stroke (`HALF_STROKED`).
-    const STROKED: Reach = Reach { x: HALF_STROKED, up: HALF_STROKED, down: HALF_STROKED };
 
     /// A default-size `symbol` and the stroke around it (`LegendSymbol::Glyph` and `Ring`).
     fn ringed(symbol: VegaSymbol) -> Reach {
@@ -101,66 +99,47 @@ impl Reach {
     }
 }
 
-/// The half extent of a default disc: `HALF` bare, `HALF_STROKED` with a stroke on it.
+/// The half extent of a default disc.
 const HALF: f64 = 5.0;
-const HALF_STROKED: f64 = HALF + STROKE;
 
-/// `legend_grid` over `entries` at `font_size`: per grid slot, its label advance and the reach of its swatch.
+/// `legend_grid` over `entries` at `font_size`: per row, its label advance and the reach of its swatch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Grid {
     /// The swatch cell's side.
     pub size: f64,
     /// The label's x within the cell: `size + labelOffset`.
     pub label_x: f64,
-    /// Each column's left.
-    pub col_x: Vec<f64>,
     /// Each row's top.
     pub rows: Vec<f64>,
     pub height: f64,
-    /// The entries' ink width: the widest `col_x + label_x + width`, unceiled.
+    /// The entries' ink width: the widest `label_x + width`, unceiled.
     pub width: f64,
 }
 
-/// `VEGA_COLUMN_PADDING`: the gap between two columns of entries.
-const COLUMN_PADDING: f64 = 10.0;
-
-/// The cell is the default symbol and its stroke, at least the font size; `columns` is how many columns the
-/// slots fill row by row (0 is one row of them all). A row is as tall as its swatches or label text reach
-/// (`y1`, `y2` of `legend_grid`), a row a `ROW_PADDING` and the part of its top above the cell from the
-/// last, a column a `COLUMN_PADDING` (and its swatches' overhang behind the cell) past the widest label of
-/// the last, and only a grid of several columns centers its first row.
-pub fn grid(font_size: f64, label_offset: f64, entries: &[(f64, Reach)], columns: usize) -> Grid {
-    let n = entries.len();
+/// The cell is the default symbol and its stroke, at least the font size, one entry per row. A row is as
+/// tall as its swatch or label text reaches (`y1`, `y2` of `legend_grid`), a row a `ROW_PADDING` and the
+/// part of its top above the cell from the last.
+pub fn grid(font_size: f64, label_offset: f64, entries: &[(f64, Reach)]) -> Grid {
     let size = (SYMBOL_SIZE.sqrt() + STROKE).ceil().max(font_size);
     let c = size / 2.0;
     let text_top = c + (0.3 * font_size).round() - (0.8 * font_size).round();
     let label_x = size + label_offset;
-    if n == 0 {
-        return Grid { size, label_x, col_x: Vec::new(), rows: Vec::new(), height: 0.0, width: 0.0 };
+    if entries.is_empty() {
+        return Grid { size, label_x, rows: Vec::new(), height: 0.0, width: 0.0 };
     }
-    let columns = if columns == 0 { n } else { columns.min(n) };
-    let rows = n.div_ceil(columns);
     let behind = |edge: f64| if edge < 0.0 { (-edge).ceil() } else { 0.0 };
-    let row_of = |row: usize| entries.iter().skip(row * columns).take(columns);
-    let column_of = |col: usize| entries.iter().skip(col).step_by(columns);
-    let top = |row: usize| row_of(row).map(|(_, reach)| (c - reach.up).min(text_top)).fold(f64::INFINITY, f64::min);
-    let bottom = |row: usize| row_of(row).map(|(_, reach)| (c + reach.down).max(text_top + font_size)).fold(f64::NEG_INFINITY, f64::max);
-    let mut col_x = vec![0.0; columns];
-    for col in 1..columns {
-        let last = column_of(col - 1).map(|(width, _)| (label_x + width).ceil()).fold(0.0, f64::max);
-        let overhang = column_of(col).map(|(_, reach)| behind(c - reach.x)).fold(0.0, f64::max);
-        col_x[col] = col_x[col - 1] + COLUMN_PADDING + overhang + last;
-    }
-    let first = if columns == 1 { 0.0 } else { (bottom(0).ceil() - bottom(0)) / 2.0 };
-    let mut row_y = vec![first; rows];
+    let top = |row: usize| (c - entries[row].1.up).min(text_top);
+    let bottom = |row: usize| (c + entries[row].1.down).max(text_top + font_size);
+    let mut rows = vec![0.0; entries.len()];
     let mut at = 0.0;
-    for row in 1..rows {
+    for row in 1..entries.len() {
         at += ROW_PADDING + behind(top(row)) + bottom(row - 1).ceil();
-        row_y[row] = at;
+        rows[row] = at;
     }
-    let height = (row_y[rows - 1] + bottom(rows - 1)).ceil();
-    let width = entries.iter().enumerate().map(|(slot, (width, _))| col_x[slot % columns] + label_x + width).fold(0.0, f64::max);
-    Grid { size, label_x, col_x, rows: row_y, height, width }
+    let last = entries.len() - 1;
+    let height = (rows[last] + bottom(last)).ceil();
+    let width = entries.iter().map(|(width, _)| label_x + width).fold(0.0, f64::max);
+    Grid { size, label_x, rows, height, width }
 }
 
 /// The legend box: `ceil(max(title, entries))` wide, the entries under a band of
@@ -175,24 +154,6 @@ pub fn boxed(grid: &Grid, title: Option<(f64, f64)>) -> (f64, f64, f64) {
 pub enum Side {
     Left,
     Right,
-    Top,
-    Bottom,
-}
-
-/// How a legend's text is measured: as Vega shapes it (a cartesian plot's legend), or at the weight it paints
-/// at (a pie's own layout, `MeasuredAs::Painted`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Measure {
-    Shaped,
-    Painted,
-}
-
-/// How the entries fill the grid: `columns` of them per row (0 is every entry in one row), and whether a
-/// vertical legend fills its columns top to bottom (`entry_columns`, `legend_from_widths`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Flow {
-    pub columns: usize,
-    pub vertical: bool,
 }
 
 /// Why a strip does not lay out; each caller words the ones it can reach.
@@ -202,8 +163,6 @@ pub enum Unfit {
     Empty,
     /// Taller than the card it was asked to fit.
     TooTall,
-    /// A font weight that names no axis value, which a painted measure needs.
-    Weight,
     Failed(Diagnostic),
 }
 
@@ -214,7 +173,6 @@ impl Unfit {
             Unfit::Cut => Diagnostic::refused("a side legend with a label or title cut at its limit is not supported"),
             Unfit::Empty => Diagnostic::refused("a side legend with no entries is not supported"),
             Unfit::TooTall => Diagnostic::refused("a side legend taller than its card is not supported"),
-            Unfit::Weight => Diagnostic::refused("a side legend font weight that names no axis value is not supported"),
             Unfit::Failed(error) => error,
         }
     }
@@ -239,16 +197,8 @@ pub struct SideLegend {
     /// Whether each label carries its series name as its join key.
     stamps_series: bool,
     grid: Grid,
-    /// The entry each grid slot draws: legend order, except a vertical legend over several columns, which
-    /// fills column by column (`legend_from_widths`).
-    order: Vec<usize>,
-    /// The entry that is the "+N more" note a folded legend closes on: no swatch, its label at the column's edge.
-    note: Option<usize>,
     width: f64,
     band: f64,
-    /// The stroke color of each swatch; none draws the bare disc (`LegendSymbol::StrokedCircle` or
-    /// `FilledCircle`).
-    stroke: Option<String>,
     swatch: Swatch,
 }
 
@@ -278,11 +228,10 @@ impl Swatch {
         Swatch { symbol, ring: style.unfilled.as_ref().map(|Unfilled { interior, .. }| (interior.clone(), style.opacity)) }
     }
 
-    fn reach(&self, stroked: bool) -> Reach {
-        match (&self.ring, stroked) {
-            (Some(_), _) => Reach::ringed(self.symbol),
-            (None, true) => Reach::STROKED,
-            (None, false) => Reach::FILLED,
+    fn reach(&self) -> Reach {
+        match self.ring {
+            Some(_) => Reach::ringed(self.symbol),
+            None => Reach::FILLED,
         }
     }
 }
@@ -304,19 +253,14 @@ pub(super) fn ink(font: &FontStyle, emoji: &EmojiMode) -> Result<Ink, Diagnostic
 /// The strip an authored legend sits on, and its style: a left or right edge, not floating, aligned to
 /// the start.
 fn strip(authored: &AuthoredLegend) -> Result<(&LegendStyleBase, Side), Diagnostic> {
-    let (base, leaves, edge) = match authored {
-        AuthoredLegend::Side(style) => (&style.base, &style.position.leaves, match &style.position.edge {
-            Engine::Value(LegendEdge::Left) => Some(Side::Left),
-            Engine::Value(LegendEdge::Right) | Engine::Rule(Auto::Auto) => Some(Side::Right),
-            Engine::Value(_) => None,
-        }),
-        AuthoredLegend::Endpoints(style) => (&style.base, &style.position.leaves, match &style.position.edge {
-            Engine::Value(LegendPlacementEdge::Left) => Some(Side::Left),
-            Engine::Value(LegendPlacementEdge::Right) | Engine::Rule(Auto::Auto) => Some(Side::Right),
-            Engine::Value(_) => None,
-        }),
+    let style = &authored.style;
+    let (base, leaves) = (&style.base, &style.position.leaves);
+    let edge = match &style.position.edge {
+        Engine::Value(LegendEdge::Left) => Some(Side::Left),
+        Engine::Value(LegendEdge::Right) | Engine::Rule(Auto::Auto) => Some(Side::Right),
+        Engine::Value(_) => None,
     };
-    let Some(side) = edge else { return Err(Diagnostic::refused("a side legend with a top, bottom or endpoint placement is not supported")) };
+    let Some(side) = edge else { return Err(Diagnostic::refused("a side legend with a top or bottom placement is not supported")) };
     if leaves.overlay == Engine::Value(true) {
         return Err(Diagnostic::refused("a side legend with a floating placement is not supported"));
     }
@@ -334,13 +278,13 @@ impl SideLegend {
             return if plot.legends().is_empty() { Ok(None) } else { Err(Diagnostic::refused("a side legend with several legends is not supported")) };
         };
         let (base, side) = strip(authored)?;
+        if !authored.visible {
+            return Err(Diagnostic::refused("a hidden side legend is not supported"));
+        }
         Self::lay_out(plot, legend, base, side, emoji, book, card_height).map(Some)
     }
 
     fn lay_out(plot: &Plane, legend: &Legend, base: &LegendStyleBase, side: Side, emoji: &EmojiMode, book: &FontBook, card_height: f64) -> Result<Self, Diagnostic> {
-        if base.visible == Engine::Value(false) {
-            return Err(Diagnostic::refused("a hidden side legend is not supported"));
-        }
         if base.direction == Engine::Value(LegendDirection::Horizontal) || base.columns != 0 {
             return Err(Diagnostic::refused("a side legend with a horizontal direction or an authored column count is not supported"));
         }
@@ -367,12 +311,12 @@ impl SideLegend {
                 .collect()
         };
         let clicks = legend.toggle.as_ref().map(clicks).unwrap_or_default();
-        Self::build(side, &labels, legend.title.as_deref().filter(|_| base.title.visible != Engine::Value(false)), base, emoji, book, card_height, (Swatch::of(plot), None), Flow { columns: 1, vertical: true }, Measure::Shaped, false, clicks, legend.stamps_series, swatches).map_err(Unfit::side)
+        Self::build(side, &labels, legend.title.as_deref().filter(|_| base.title.visible != Engine::Value(false)), base, emoji, book, card_height, Swatch::of(plot), clicks, legend.stamps_series, swatches).map_err(Unfit::side)
     }
 
     /// A strip over `labels` and their swatch fills (`swatches`, read once the texts are measured), under
     /// an optional `title`: each label and the title measured whole (one cut at its limit is refused),
-    /// the grid and the box laid out. `stroked` is the stroke color a pie's swatches carry.
+    /// the grid and the box laid out.
     #[allow(clippy::too_many_arguments)]
     fn build(
         side: Side,
@@ -382,65 +326,35 @@ impl SideLegend {
         emoji: &EmojiMode,
         book: &FontBook,
         card_height: f64,
-        (swatch, stroke): (Swatch, Option<String>),
-        flow: Flow,
-        measured: Measure,
-        note: bool,
+        swatch: Swatch,
         clicks: Vec<(String, String)>,
         stamps_series: bool,
         swatches: impl FnOnce() -> Result<Vec<String>, Diagnostic>,
     ) -> Result<Self, Unfit> {
         let ink_of = ink(&base.label.element.font, emoji)?;
         let label_limit = base.label.max_width.unwrap_or(LABEL_LIMIT);
-        let measure = |text: &str, font: &FontStyle, ink: &Ink, limit: f64| -> Result<f64, Unfit> {
-            let width = match measured {
-                Measure::Shaped => book.run(text, &ink.font()).map_err(diag::err_internal)?.advance,
-                Measure::Painted => {
-                    let axis = measure::fonts::css_weight_axis(&crate::families::failed::Weight::of(&font.weight).attr()).map_err(diag::err_internal)?;
-                    let axis = axis.ok_or(Unfit::Weight)?;
-                    let family = measure::stand_in_family(font.family.as_ref());
-                    book.weighted_advance(text, &measure::shaped::Font { family: &family, size: ink.size, weight: axis, italic: false }).map_err(diag::err_internal)?
-                }
-            };
+        let measure = |text: &str, ink: &Ink, limit: f64| -> Result<f64, Unfit> {
+            let width = book.run(text, &ink.font()).map_err(diag::err_internal)?.advance;
             if width > limit {
                 return Err(Unfit::Cut);
             }
             Ok(width)
         };
-        let widths = labels.iter().map(|label| measure(label, &base.label.element.font, &ink_of, label_limit)).collect::<Result<Vec<_>, _>>()?;
+        let widths = labels.iter().map(|label| measure(label, &ink_of, label_limit)).collect::<Result<Vec<_>, _>>()?;
         let title = title.map(|text| Ok::<_, Diagnostic>((ink(&base.title.element.font, emoji)?, text.to_string()))).transpose()?;
-        let title_width = title.as_ref().map(|(face, text)| Ok::<_, Unfit>((measure(text, &base.title.element.font, face, TITLE_LIMIT)?, face.size))).transpose()?;
+        let title_width = title.as_ref().map(|(face, text)| Ok::<_, Unfit>((measure(text, face, TITLE_LIMIT)?, face.size))).transpose()?;
         if widths.is_empty() {
             return Err(Unfit::Empty);
         }
         let fills = swatches()?;
-        // `legend_from_widths`: a vertical legend over several columns fills them column by column (entries
-        // sorted by `[index % rows, index]`); a horizontal one keeps legend order.
-        let mut order: Vec<usize> = (0..widths.len()).collect();
-        if flow.columns > 1 && flow.vertical {
-            let rows = widths.len().div_ceil(flow.columns.min(widths.len()));
-            order.sort_by_key(|&idx| (idx % rows, idx));
-        }
-        let reach = swatch.reach(stroke.is_some());
-        let slots: Vec<(f64, Reach)> = order.iter().map(|&idx| (widths[idx], reach)).collect();
-        // The pie lays the note out as any entry, swatch offset included; only its drawing leaves the swatch out.
-        let note = note.then_some(widths.len() - 1);
-        let grid = grid(ink_of.size, base.label.element.padding, &slots, flow.columns);
+        let slots: Vec<(f64, Reach)> = widths.iter().map(|&width| (width, swatch.reach())).collect();
+        let grid = grid(ink_of.size, base.label.element.padding, &slots);
         let (width, height, band) = boxed(&grid, title_width);
         let entries = fills.into_iter().zip(labels).map(|(fill, label)| (fill, label.to_string())).collect();
         if height > card_height {
             return Err(Unfit::TooTall);
         }
-        Ok(Self { side, labels: ink_of, title, entries, clicks, stamps_series, grid, order, note, width, band, stroke, swatch })
-    }
-
-    /// A pie's key: `entries` (label, fill hex) under an optional `title` on `side`, swatches stroked in
-    /// `stroke`, laid out as Vega lays any symbol legend over `flow`'s columns (`legend_from_widths`). A legend
-    /// taller than the card is still drawn, as production draws it.
-    pub fn key(side: Side, entries: &[(String, String)], note: bool, title: Option<&str>, base: &LegendStyleBase, stroke: &str, flow: Flow, emoji: &EmojiMode, book: &FontBook) -> Result<Self, Unfit> {
-        let labels: Vec<&str> = entries.iter().map(|(label, _)| label.as_str()).collect();
-        let fills = || Ok(entries.iter().map(|(_, fill)| fill.clone()).collect());
-        Self::build(side, &labels, title, base, emoji, book, f64::INFINITY, (Swatch::DISC, Some(stroke.to_string())), flow, Measure::Painted, note, Vec::new(), false, fills)
+        Ok(Self { side, labels: ink_of, title, entries, clicks, stamps_series, grid, width, band, swatch })
     }
 
     /// The strip's box.
@@ -455,7 +369,6 @@ impl SideLegend {
         match self.side {
             Side::Right => (right_origin(plot, axis), 0.0),
             Side::Left => ((-axis.left.max(0.0)).floor() - OFFSET - self.width, 0.0),
-            Side::Top | Side::Bottom => unreachable!("a cartesian plot's legend is a side strip"),
         }
     }
 
@@ -466,7 +379,6 @@ impl SideLegend {
         match self.side {
             Side::Right => right_reach(gutters, axis, self.width),
             Side::Left => Insets { left: gutters.left.max(-self.origin(plot, axis).0), ..gutters },
-            Side::Top | Side::Bottom => unreachable!("a cartesian plot's legend is a side strip"),
         }
     }
 
@@ -481,11 +393,8 @@ impl SideLegend {
         let c = self.grid.size / 2.0;
         let disc = scene_path(&self.swatch.symbol.draw(SYMBOL_SIZE));
         let mut cells = Vec::new();
-        let columns = self.grid.col_x.len().max(1);
-        for (slot, &idx) in self.order.iter().enumerate() {
-            let (fill, label) = &self.entries[idx];
-            let (x, y) = (at.0 + self.grid.col_x[slot % columns], top + self.grid.rows[slot / columns]);
-            let noted = self.note == Some(idx);
+        for (idx, (fill, label)) in self.entries.iter().enumerate() {
+            let (x, y) = (at.0, top + self.grid.rows[idx]);
             let paint = match &self.swatch.ring {
                 Some((interior, opacity)) => Attrs::new()
                     .set("fill", interior.as_str())
@@ -493,13 +402,11 @@ impl SideLegend {
                     .num("stroke-width", STROKE)
                     .set_if(miter_limit(self.swatch.symbol).is_some(), "stroke-miterlimit", miter_limit(self.swatch.symbol).unwrap_or_default())
                     .num("opacity", *opacity),
-                None => Attrs::new().set("fill", fill.as_str()).set_if(self.stroke.is_some(), "stroke", self.stroke.as_deref().unwrap_or("")).num("stroke-width", STROKE),
+                None => Attrs::new().set("fill", fill.as_str()).num("stroke-width", STROKE),
             };
-            if !noted {
-                let symbol = Node::path(Role::Legend, disc.clone(), paint).translate(x + c, y + c);
-                cells.push(Node::group(Role::Legend, legend_symbol_attrs(false), vec![symbol]));
-            }
-            let text_at = (x + if noted { 0.0 } else { self.grid.label_x }, y + c + baseline_shift("middle", self.labels.size));
+            let symbol = Node::path(Role::Legend, disc.clone(), paint).translate(x + c, y + c);
+            cells.push(Node::group(Role::Legend, legend_symbol_attrs(false), vec![symbol]));
+            let text_at = (x + self.grid.label_x, y + c + baseline_shift("middle", self.labels.size));
             let text = Node::text(Role::Legend, text_at, self.labels.attrs(Some("start")), label.as_str());
             let key = self.stamps_series.then_some(label.as_str());
             let button = match self.clicks.get(idx) {
@@ -599,7 +506,7 @@ impl ShapeLegend {
         let advance = |text: &str, ink: &Ink| book.run(text, &ink.font()).map(|run| run.advance).map_err(diag::err_internal);
         let entries: Vec<(VegaSymbol, String)> = scale.domain.iter().enumerate().map(|(index, label)| (scale.symbol(index), label.clone())).collect();
         let rows = entries.iter().map(|(symbol, label)| Ok((advance(label, &labels_ink)?, Reach::ringed(*symbol)))).collect::<Result<Vec<_>, Diagnostic>>()?;
-        let grid = grid(SHAPE_LABEL_SIZE, SHAPE_LABEL_OFFSET, &rows, 1);
+        let grid = grid(SHAPE_LABEL_SIZE, SHAPE_LABEL_OFFSET, &rows);
         // The title is measured at the default weight: vl-convert's layout does not re-instance a
         // variable font for its bold.
         let (width, _, band) = boxed(&grid, Some((advance(&scale.title, &title_ink)?, SHAPE_TITLE_SIZE)));
@@ -688,7 +595,7 @@ mod tests {
     /// line below it grows to 13.5.
     #[test]
     fn rows_pitch_by_the_swatch_or_the_text_line_that_reaches_further() {
-        let at = |size| grid(size, 6.0, &[(10.0, Reach::FILLED); 3], 1);
+        let at = |size| grid(size, 6.0, &[(10.0, Reach::FILLED); 3]);
         let small = at(11.0);
         assert_eq!((small.size, small.rows.clone(), small.height), (12.0, vec![0.0, 13.0, 26.0], 37.0));
         let big = at(13.0);
@@ -702,25 +609,25 @@ mod tests {
     fn a_ringed_row_pitches_by_its_symbol_s_reach() {
         let ring = Reach::ringed(VegaSymbol::Circle);
         assert_eq!(ring, Reach { x: 6.5, up: 6.5, down: 6.5 });
-        let laid = grid(11.0, 6.0, &[(10.0, ring); 3], 1);
+        let laid = grid(11.0, 6.0, &[(10.0, ring); 3]);
         assert_eq!((laid.rows, laid.height), (vec![0.0, 16.0, 32.0], 45.0));
-        let mixed = grid(11.0, 6.0, &[(10.0, Reach::FILLED), (10.0, ring), (10.0, Reach::FILLED)], 1);
+        let mixed = grid(11.0, 6.0, &[(10.0, Reach::FILLED), (10.0, ring), (10.0, Reach::FILLED)]);
         assert_eq!(mixed.rows, vec![0.0, 14.0, 29.0]);
     }
 
     /// The label starts `labelOffset` after the cell and the ink is the widest label's end.
     #[test]
     fn labels_start_after_the_cell_and_the_widest_one_sets_the_width() {
-        let laid = grid(11.0, 6.0, &[(30.5, Reach::FILLED), (44.25, Reach::FILLED)], 1);
+        let laid = grid(11.0, 6.0, &[(30.5, Reach::FILLED), (44.25, Reach::FILLED)]);
         assert_eq!((laid.label_x, laid.width), (18.0, 62.25));
-        assert_eq!(grid(11.0, 6.0, &[], 1).height, 0.0);
+        assert_eq!(grid(11.0, 6.0, &[]).height, 0.0);
     }
 
     /// The box is `ceil(max(title, entries))` wide: a 55.45 px column makes 56 (probe-pinned), a
     /// wider title wins; a title adds `size + 5` (17 under a 12 px title, 19 under 14 px).
     #[test]
     fn the_box_takes_the_wider_of_title_and_entries_under_a_title_band() {
-        let laid = Grid { size: 12.0, label_x: 18.0, col_x: vec![0.0], rows: vec![0.0], height: 11.0, width: 55.45 };
+        let laid = Grid { size: 12.0, label_x: 18.0, rows: vec![0.0], height: 11.0, width: 55.45 };
         assert_eq!(boxed(&laid, None), (56.0, 11.0, 0.0));
         assert_eq!(boxed(&laid, Some((30.0, 12.0))), (56.0, 28.0, 17.0));
         assert_eq!(boxed(&laid, Some((160.2, 14.0))), (161.0, 30.0, 19.0));
@@ -728,7 +635,7 @@ mod tests {
 
     fn legend(side: Side, width: f64) -> SideLegend {
         let ink = Ink::of(&Face { family: "x".into(), size: 11.0, weight: board_model::facet::FontWeightValue::Number(400.0), color: "#000".into() }, &EmojiMode::Disabled).unwrap();
-        SideLegend { side, labels: ink, title: None, entries: vec![], clicks: vec![], stamps_series: false, grid: grid(11.0, 6.0, &[], 1), width, band: 0.0, stroke: None, order: Vec::new(), note: None, swatch: Swatch::DISC }
+        SideLegend { side, labels: ink, title: None, entries: vec![], clicks: vec![], stamps_series: false, grid: grid(11.0, 6.0, &[]), width, band: 0.0, swatch: Swatch::DISC }
     }
 
     /// A right strip is drawn 18 px past the ceiled plot-and-axis edge but fits at the unceiled one

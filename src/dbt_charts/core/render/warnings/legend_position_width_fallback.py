@@ -56,15 +56,20 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             resolved_edge = chart.legend.position.edge
         else:
             continue
+        authored = (
+            "key.type: direct"
+            if authored_edge == "direct"
+            else f"key.legend.position.edge: {authored_edge}"
+        )
         warnings.append(
             Diagnostic.from_code(
                 WARN_LEGEND_POSITION_WIDTH_FALLBACK,
                 chart=chart_id,
-                path=f"charts.{chart_id}.style.legend.position.edge",
-                field="legend",
+                path=f"charts.{chart_id}.style.key",
+                field="key",
                 message=WARN_LEGEND_POSITION_WIDTH_FALLBACK.message_template.format(
                     chart_id=chart_id,
-                    authored_edge=authored_edge,
+                    authored_edge=authored,
                     resolved_edge=resolved_edge,
                 ),
                 fix=WARN_LEGEND_POSITION_WIDTH_FALLBACK.fix_template,

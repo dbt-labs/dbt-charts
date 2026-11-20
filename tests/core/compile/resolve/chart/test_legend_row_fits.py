@@ -85,16 +85,17 @@ class TestLegendRowFits:
 class TestLegendRowChromeFromTheme:
     def test_authored_row_chrome_moves_the_fit_threshold(self) -> None:
         base = get_theme_style()
-        assert base.charts.legend.row.swatch_width == 10.0
-        assert base.charts.legend.row.entry_gap == 16.0
+        assert base.charts.key.legend.row.swatch_width == 10.0
+        assert base.charts.key.legend.row.entry_gap == 16.0
         entries = ("Alpha", "Beta", "Gamma")
         default = _legend()
 
         def legend_with(**row: float) -> ResolvedLegendStyle:
-            legend = base.charts.legend.model_copy(
-                update={"row": base.charts.legend.row.model_copy(update=row)}
+            legend = base.charts.key.legend.model_copy(
+                update={"row": base.charts.key.legend.row.model_copy(update=row)}
             )
-            charts = base.charts.model_copy(update={"legend": legend})
+            key = base.charts.key.model_copy(update={"legend": legend})
+            charts = base.charts.model_copy(update={"key": key})
             style = base.model_copy(update={"charts": charts})
             return resolve_chart_style_context(style).legend
 

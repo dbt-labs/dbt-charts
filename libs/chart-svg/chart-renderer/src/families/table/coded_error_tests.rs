@@ -259,7 +259,7 @@ fn a_pivot_with_no_measures() {
     );
 }
 
-/// `values` omitted: `infer_pivot_measure_names` leaves no
+/// `values` omitted: the inferred measures leave no
 /// field once `rows` and `columns` claim them all.
 #[test]
 fn a_pivot_whose_inferred_measures_are_empty() {

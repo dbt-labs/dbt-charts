@@ -125,11 +125,6 @@ class VariableReferenceErrors(CompilationError):
 _QUERY_NAME_RE = re.compile(r"^(?:queries\.)?[a-zA-Z_][a-zA-Z0-9_]*$")
 _SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-# The row count a column-bound options query returns beside each value, for the
-# menu to draw and sort by. Lowercase, as every adapter reports an unquoted alias.
-# Never one of the names the option reader takes for the value column.
-OPTION_COUNT_COLUMN = "dbt_option_count"
-
 
 def synthetic_query_name(kind: str, *parts: str | int) -> str:
     """Return a unique name for a compiler-generated query.
@@ -320,7 +315,7 @@ def promote_column_option_queries(
     - ``var.column = "table.col"`` — top-level column shorthand
 
     For each valid binding, synthesizes:
-    ``SELECT col, COUNT(*) AS dbt_option_count FROM tbl GROUP BY col ORDER BY col``
+    ``SELECT DISTINCT col FROM tbl ORDER BY col``
     as a ``SqlQuery`` under the key ``_var_options_{name}``, then rewrites
     the variable's option-query pointer (``var.options.query``) to point at it
     and clears the ``column`` field so the render layer uses the named-query path.
@@ -388,10 +383,7 @@ def promote_column_option_queries(
                 column=column_name,
             )
 
-        sql = (
-            f"SELECT {column_name}, COUNT(*) AS {OPTION_COUNT_COLUMN} "
-            f"FROM {table_name} GROUP BY {column_name} ORDER BY {column_name}"
-        )
+        sql = f"SELECT DISTINCT {column_name} FROM {table_name} ORDER BY {column_name}"
         sname = synthetic_query_name("var_options", var_name)
         if default_source is None:
             raise CompilationError.from_code(ERR_SOURCE_REQUIRED, query_name=sname)

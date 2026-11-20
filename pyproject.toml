@@ -25,12 +25,12 @@ dev = [
     "dbt-databricks==1.12.6",  # Databricks credential-isolation tests
     "dbt-bigquery==1.11.1",  # BigQuery profile and adapter tests
     "dbt-postgres==1.10.0",  # PostgreSQL adapter tests
-    "dbt-redshift==1.11.1",  # Redshift adapter tests
-    "dbt-snowflake==1.12.4",  # Snowflake adapter tests
+    "dbt-redshift==1.11.2",  # Redshift adapter tests
+    "dbt-snowflake==1.12.5",  # Snowflake adapter tests
     "trino==0.338.0",  # Trino driver tests
     # Excluded on Windows: it pins mmh3<4.2, which has no cp313 Windows wheel
     # and would compile from source (minutes); the Windows subset needs no Athena.
-    "dbt-athena==1.10.2; sys_platform != 'win32'",  # Athena adapter tests
+    "dbt-athena==1.11.1; sys_platform != 'win32'",  # Athena adapter tests
     "dbt-clickhouse==1.10.3",  # ClickHouse adapter tests
     "dbt-sqlserver==1.11.0",  # SQL Server adapter tests (needs dbt-adapters>=1.24.1)
     "dbt-fabric==1.10.0",  # Fabric adapter tests

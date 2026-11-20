@@ -13,7 +13,7 @@ from dbt_charts.core.compile.models.style.theme.bar import (
     BarGroupedStyle,
 )
 
-from ._cartesian import _SeriesCartesianResolvedStyle
+from ._cartesian import ResolvedBarEndpointLabelsConfig, _SeriesCartesianResolvedStyle
 
 
 class ResolvedBarTornOutlierStyle(BaseModel):
@@ -37,6 +37,9 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    endpoint_labels: ResolvedBarEndpointLabelsConfig = Field(
+        description="Cascade-merged direct-label config (visible, label_offset, height).",
+    )
     stack_order: Literal["value", "data", "alphabetical"] | None = Field(
         default=None,
         description=(

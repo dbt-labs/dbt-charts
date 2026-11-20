@@ -503,11 +503,11 @@ rows: []
             == "Unknown field 'statc' at variables.region.options. Full path: variables.region.options.statc."
         )
         assert error.hint is not None
-        assert "Allowed keys: column, label_column, query, static." in error.hint
+        assert "Allowed keys: column, count_column, query, static." in error.hint
         assert "Did you mean 'static'?" in error.hint
         assert error.fields["allowed_keys"] == [
             "column",
-            "label_column",
+            "count_column",
             "query",
             "static",
         ]
@@ -576,8 +576,9 @@ charts:
     x: x
     y: x
     style:
-      legend:
-        disable: true
+      key:
+        legend:
+          disable: true
 rows:
   - c1
 """
@@ -588,12 +589,11 @@ rows:
 
         assert (
             error.message
-            == "Unknown field 'disable' at charts.c1.style.legend. Full path: charts.c1.style.legend.disable."
+            == "Unknown field 'disable' at charts.c1.style.key.legend. Full path: charts.c1.style.key.legend.disable."
         )
         assert error.hint is not None
         assert "Allowed keys:" in error.hint
-        assert "visible" in error.hint
-        assert "Did you mean 'visible'?" in error.hint
+        assert "position" in error.hint
         assert "See: https://docs.dbtcharts.com/reference/yaml-reference/" in error.hint
 
     def test_line_format_at_chart_root_points_at_the_axis_slot(self):
@@ -1969,10 +1969,10 @@ class TestMisplacedKeyNamesItsBlock:
         assert "`x_label` belongs at `charts.rev`, not at `charts.rev.style`" in hint
 
     def test_style_key_on_the_chart_names_the_style_block(self) -> None:
-        result = compile(_CHART_BOARD.format(extra="    legend: right"))
+        result = compile(_CHART_BOARD.format(extra="    axis_x: {}"))
 
-        hint = _hint_for(result.errors, "legend")
-        assert "`legend` belongs at `charts.rev.style`, not at `charts.rev`" in hint
+        hint = _hint_for(result.errors, "axis_x")
+        assert "`axis_x` belongs at `charts.rev.style`, not at `charts.rev`" in hint
 
     def test_key_valid_nowhere_nearby_names_no_block(self) -> None:
         result = compile(_CHART_BOARD.format(extra="    zzz_unknown: 1"))

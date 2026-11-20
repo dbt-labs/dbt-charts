@@ -786,9 +786,8 @@ def test_wide_tabled_pie_places_table_to_the_right(make_chart):
     """A wide card (900px) with a table-triggering distribution places the
     table beside the wheel rather than stacking beneath it — the composed
     card stays short instead of ballooning tall. The outer SVG spans the
-    full card width (900px); the [donut | gap | table] group is LEFT-ANCHORED
-    to the card edge (donut_x = 0), with the table beside the wheel
-    (table_x > 0) and trailing whitespace filling the rest of the wide card.
+    full card width (900px); the wheel centers in the card and the table sits
+    beside it.
     """
     chart = make_chart("pie", x="series", y="value")
     data = [{"series": f"S{i}", "value": v} for i, v in enumerate(_HYBRID_TAIL_VALUES)]
@@ -806,21 +805,12 @@ def test_wide_tabled_pie_places_table_to_the_right(make_chart):
     offsets = _group_offsets(svg)
     assert len(offsets) == 2, f"expected donut + table groups, got {offsets}"
     (donut_x, _donut_y), (table_x, _table_y) = offsets
-    assert donut_x == 0.0, (
-        "in 'right' placement the content group is left-anchored to the card "
-        f"edge; expected donut_x=0.0, got {donut_x}"
-    )
-    assert table_x > donut_x, (
-        f"table must sit to the right of the wheel; got table_x={table_x}, "
-        f"donut_x={donut_x}"
-    )
+    assert 0.0 < donut_x < table_x, f"donut_x={donut_x} table_x={table_x}"
     assert table_x > 0.5 * w, (
         f"the table should sit past the card's own midpoint; table_x={table_x} w={w}"
     )
-    assert table_x <= donut_x + RIGHT_PLACEMENT_MAX_WHEEL_PX + _PIE_GAP, (
-        f"the wheel region before the table must not exceed the cap; "
-        f"table_x={table_x} donut_x={donut_x}"
-    )
+    # The (capped) wheel box's middle is the card's.
+    assert donut_x + RIGHT_PLACEMENT_MAX_WHEEL_PX / 2 == w / 2, (donut_x, w)
     # Side-by-side keeps the card short — well under a stacked donut+table
     # height, and nowhere near square.
     assert h < 0.6 * w, f"expected a short, wide card; got h={h} at w={w}"
@@ -857,17 +847,16 @@ def test_narrow_tabled_pie_places_table_below(make_chart):
 
 
 def test_attached_table_modes_suppress_builtin_color_legend(make_chart, model_copy_at):
-    """Hybrid and full-table modes suppress the donut's built-in color legend —
-    the attached table IS the legend, so on a theme that enables it
-    (``legend.visible=True``) it must not double up (and, in hybrid, alongside
-    the direct labels too). Direct-label pies keep the theme's legend untouched.
+    """A pie never draws the classic color legend: on a theme whose
+    ``key.type`` is ``legend`` the attached table (or, with room, nothing but
+    the labels) is the key in every mode.
 
     No shipped theme defaults to a visible legend (every built-in suppresses
     it for direct labeling), so this forces the override on a real theme
     rather than depending on a theme's default posture.
     """
     themed_rs, themed_ctx = resolve_style_and_context(
-        model_copy_at(get_theme_style("clarity"), "charts.legend.visible", True)
+        model_copy_at(get_theme_style("clarity"), "charts.key.type", "legend")
     )
     assert themed_ctx.legend.visible is True  # guards the premise below
 
@@ -878,10 +867,7 @@ def test_attached_table_modes_suppress_builtin_color_legend(make_chart, model_co
             chart, themed_rs, themed_ctx, rows_result(data), format="svg", width=760.0
         )
 
-    # Direct-label pie: dark keeps its built-in color legend (unchanged).
-    assert "role-legend" in render([("A", 40), ("B", 35), ("C", 25)])
-    # Hybrid (a sub-2% slice) and full-table (nothing clears the 8% floor):
-    # the attached table replaces the legend, so no built-in legend is emitted.
+    assert "role-legend" not in render([("A", 40), ("B", 35), ("C", 25)])
     assert "role-legend" not in render(
         [
             ("Direct", 45),
@@ -920,7 +906,7 @@ def _composed(
         theta="sessions",
         color="segment",
         query_name="q",
-        style={"legend": {"position": {"edge": edge, "align": align}}},
+        style={"key": {"legend": {"position": {"edge": edge, "align": align}}}},
     )
     svg = render_pie_svg(chart, rows, width=1000.0)
     return svg, _group_offsets(svg)
@@ -939,10 +925,9 @@ def test_a_left_table_sits_before_the_wheel():
     assert table_x < wheel_x
 
 
-def test_a_right_table_sits_after_the_left_anchored_wheel():
+def test_a_right_table_sits_after_the_centered_wheel():
     svg, [(wheel_x, _), (table_x, _)] = _composed("right", "start")
-    assert wheel_x == 0.0
-    assert table_x > wheel_x
+    assert 0.0 < wheel_x < table_x
     assert re.match(r'<svg [^>]*width="1000(\.0)?"', svg)
 
 
@@ -957,7 +942,7 @@ def test_a_bottom_table_sits_below_the_wheel():
 
 
 @pytest.mark.parametrize("edge", ["top", "bottom"])
-def test_a_vertical_table_aligns_across_the_card(edge: str) -> None:
+def test_a_vertical_table_aligns_across_the_disk(edge: str) -> None:
     xs = [_composed(edge, align)[1][1][0] for align in ("start", "center", "end")]
     assert xs[0] < xs[1] < xs[2], xs
 
@@ -970,12 +955,12 @@ def test_a_side_table_aligns_down_the_wheels_disk(edge: str) -> None:
 
 @pytest.mark.parametrize("align", ["center", "end"])
 @pytest.mark.parametrize("edge", ["left", "right"])
-def test_a_side_table_taller_than_the_disk_falls_back_to_the_disks_top(
+def test_a_side_table_taller_than_the_disk_moves_the_wheel_down(
     edge: str, align: str
 ) -> None:
-    [(wheel_x, _), (table_x, start_y)] = _composed(edge, "start", _MANY_ROWS)[1]
+    [(wheel_x, wheel_y), (table_x, _)] = _composed(edge, align, _MANY_ROWS)[1]
     assert (table_x > wheel_x) == (edge == "right"), "the table must stay beside"
-    assert _composed(edge, align, _MANY_ROWS)[1][1][1] == start_y
+    assert wheel_y > 0.0
 
 
 def test_a_hybrid_heading_heads_the_table():

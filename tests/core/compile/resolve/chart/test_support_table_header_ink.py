@@ -40,7 +40,13 @@ def _inks(
             "query_name": "q",
             "support_table": {"entries": [{"source": "after"}, {"source": "before"}]},
             "layers": [layer or {"type": "bar", "y": "before"}],
-            "style": {"legend": {"visible": legend_visible}, **(style or {})},
+            "style": {
+                "key": {
+                    "visible": legend_visible,
+                    **({"type": "legend"} if legend_visible else {}),
+                },
+                **(style or {}),
+            },
         }
     )
     resolved = resolve(chart, _DATA, chart_style_context=_CONTEXT)

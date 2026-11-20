@@ -427,7 +427,7 @@ class TestAuthoredLegendPositionResolvesVisible:
         chart = _BUILDERS[family](
             color="series",
             style=_STYLE_PATCHES[family].model_validate(
-                {"legend": {"position": {"edge": "bottom"}}}
+                {"key": {"legend": {"position": {"edge": "bottom"}}}}
             ),
         )
         resolved = resolve(chart, _SERIES_DATA, _board())
@@ -467,7 +467,7 @@ class TestAuthoredLegendPositionSurvivesTopLegendRoutes:
             color="series",
             multiples=MultiplesConfig(rows="facet"),
             style=_STYLE_PATCHES[family].model_validate(
-                {"legend": {"position": {"edge": "bottom"}}}
+                {"key": {"legend": {"position": {"edge": "bottom"}}}}
             ),
         )
         resolved = resolve(chart, _SERIES_DATA, _board())
@@ -508,7 +508,7 @@ class TestAuthoredLegendPositionSurvivesTopLegendRoutes:
         chart = _BUILDERS[family](
             layers=[LineLayer(type="line", y="target")],
             style=_STYLE_PATCHES[family].model_validate(
-                {"legend": {"position": {"edge": "bottom"}}}
+                {"key": {"legend": {"position": {"edge": "bottom"}}}}
             ),
         )
         resolved = resolve(chart, _LAYER_DATA, _board())
@@ -532,7 +532,7 @@ class TestAuthoredLegendPositionSurvivesTopLegendRoutes:
         chart = _BUILDERS[family](
             color="series",
             style=_STYLE_PATCHES[family].model_validate(
-                {"legend": {"position": {"edge": "bottom"}}}
+                {"key": {"legend": {"position": {"edge": "bottom"}}}}
             ),
         )
         resolved = resolve(chart, _SERIES_DATA, _board(), width=_TINY_WIDTH)
@@ -1056,29 +1056,31 @@ class TestSortFieldMissingRaises:
             resolve(chart, _SERIES_DATA, _board())
 
 
-def _board_with_legend(legend: dict[str, Any]) -> Any:
+def _board_with_key(key: dict[str, Any]) -> Any:
     from dbt_charts.core.compile.models.style.authored import StylePatch
 
     return resolve_chart_style_context(
         get_theme_style(),
-        StylePatch.model_validate({"charts": {"legend": legend}}),
+        StylePatch.model_validate({"charts": {"key": key}}),
     )
 
 
 class TestBoardLegendSettingsApply:
-    """A board-level ``charts.legend`` value is as concrete as a chart-local one:
+    """A board-level ``charts.key`` value is as concrete as a chart-local one:
     the engine's legend policies only decide what the cascade left ``auto``."""
 
     def test_board_visible_false_hides_a_top_legend_shape(self) -> None:
         chart = _line(layers=[LineLayer(type="line", y="target")])
-        resolved = resolve(chart, _LAYER_DATA, _board_with_legend({"visible": False}))
+        resolved = resolve(chart, _LAYER_DATA, _board_with_key({"visible": False}))
         assert resolved.legend.visible is False
 
     def test_board_visible_true_keeps_the_legend_and_drops_the_endpoint_labels(
         self,
     ) -> None:
         chart = _line(color="series")
-        resolved = resolve(chart, _SERIES_DATA, _board_with_legend({"visible": True}))
+        resolved = resolve(
+            chart, _SERIES_DATA, _board_with_key({"visible": True, "type": "legend"})
+        )
         assert resolved.legend.visible is True
         assert resolved.style.endpoint_labels.visible is False
 
@@ -1087,7 +1089,7 @@ class TestBoardLegendSettingsApply:
         resolved = resolve(
             chart,
             _SERIES_DATA,
-            _board_with_legend({"position": {"edge": "bottom"}}),
+            _board_with_key({"legend": {"position": {"edge": "bottom"}}}),
         )
         assert resolved.legend.visible is True
         assert resolved.legend.position.edge == "bottom"
@@ -1097,7 +1099,9 @@ class TestBoardLegendSettingsApply:
         resolved = resolve(
             chart,
             _SERIES_DATA,
-            _board_with_legend({"position": {"edge": "auto", "align": "auto"}}),
+            _board_with_key(
+                {"legend": {"position": {"edge": "auto", "align": "auto"}}}
+            ),
         )
         assert resolved.legend.visible is False
         assert resolved.legend.position.edge == "right"

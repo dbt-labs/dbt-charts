@@ -184,10 +184,11 @@ style:
         rule:
           opacity: 1
           stroke:
-            # Scaffold rung 7: quiet, and 3:1 against a light canvas. A theme with
-            # its own rule ink sets the color; `auto` picks a gray per rule from
-            # the canvas and the marks it crosses.
-            color: chrome[7]
+            # Scaffold rung 8: one rung louder than the axis baseline's rung 7, so a
+            # rule never reads as an axis line, and 6:1 against a light canvas. A
+            # theme with its own rule ink sets the color; `auto` picks a gray per
+            # rule from the canvas and the marks it crosses, never a gridline's.
+            color: chrome[8]
             width: 1.5
         text:
           font:
@@ -453,7 +454,7 @@ style:
       # block at resolve time, so board-level patches on
       # `style.axis.*` reach axis_y through the same path.
       # "auto" → "right" by default; flips to "left" when endpoint labels are
-      # on the right edge (line charts with legend.position.edge: endpoints).
+      # on the right edge (line charts with key.type: direct).
       # Also serves the categorical-orient role for horizontal bar's swapped
       # categorical axis (categorical_orient was deleted 2026-08 trim).
       position: auto
@@ -522,39 +523,48 @@ style:
       recede_contrast: 1.5
 
 
-    legend:
-      # `auto`: shown unless direct labeling retires it. A concrete value from
-      # any tier wins.
-      visible: auto
-      position:
-        edge: auto
-        align: auto
-        overlay: auto
-      direction: auto
-      symbol_shape: auto
-      symbol_fill: auto
-      columns: 0
-      # The most columns a wrapped legend takes; it takes fewer when its
-      # labels would not fit the card.
-      compact_columns: 6
-      symbol_limit: 20
-      row:
-        swatch_width: 10.0
-        entry_gap: 16.0
-      label:
-        font: label
-        max_width: 200
-        # Gap between a legend symbol and its label text (VL labelOffset).
-        # Must clear wide stroke symbols (target lines in mixed bar+line
-        # legends), which overflow VL's default offset of 4.
-        padding: 8.0
-      title:
-        visible: auto
+    # `auto` shows a legend unless direct labels name the series; a concrete
+    # type from any tier wins.
+    key:
+      visible: true
+      type: auto
+      direct:
+        offset: 6.0
+        height: 20.0
         font:
-          extends: label
-          size: 12
-          weight: *weight_bold
-        padding: 0.0
+          size: 14
+          compact_size: 11
+          compact_weight: 500
+      legend:
+        position:
+          edge: auto
+          align: auto
+          overlay: auto
+        direction: auto
+        symbol_shape: auto
+        symbol_fill: auto
+        columns: 0
+        # The most columns a wrapped legend takes; it takes fewer when its
+        # labels would not fit the card.
+        compact_columns: 6
+        symbol_limit: 20
+        row:
+          swatch_width: 10.0
+          entry_gap: 16.0
+        label:
+          font: label
+          max_width: 200
+          # Gap between a legend symbol and its label text (VL labelOffset).
+          # Must clear wide stroke symbols (target lines in mixed bar+line
+          # legends), which overflow VL's default offset of 4.
+          padding: 8.0
+        title:
+          visible: auto
+          font:
+            extends: label
+            size: 12
+            weight: *weight_bold
+          padding: 0.0
 
     view:
       continuous_width: 360
@@ -909,13 +919,6 @@ style:
       # Authors who want a stacked bar chart opt in via ``chart.style.stack: "zero"``.
       # Side-by-side (grouped) is the default when a color channel is present.
       stack: none
-      # A vertical bar's labels anchor to the last column's per-series stack
-      # midpoints; a horizontal bar's take the top-row rail instead. Resolve
-      # turns this back off wherever the rail cannot name every series — see
-      # _bar_rail_for_stack.
-      endpoint_labels:
-        label_offset: 6.0
-        height: 20.0
       grouped:
         padding_inner: 0.2
         padding_outer: 0.2
@@ -953,22 +956,13 @@ style:
         grid:
           visible: false
 
-    # Direct-label multi-series lines/areas at their endpoints rather than
-    # leaning on a side legend.
-    line:
-      endpoint_labels:
-        label_offset: 6.0
-        height: 20.0
-
+    line: {}
     area:
       pattern:
         ground: background
         inverse: false
       # Authors who want a stacked area chart opt in via ``chart.style.stack: "zero"``.
       stack: none
-      endpoint_labels:
-        label_offset: 6.0
-        height: 20.0
       axis_y:
         ticks:
           visible: true
@@ -1173,9 +1167,10 @@ style:
         title:
           visible: true
       # Categorical color on scatter needs a key: a board-wide
-      # `legend.visible: false` does not reach it.
-      legend:
+      # `key.type: direct` does not reach it.
+      key:
         visible: true
+        type: legend
       marks:
         point:
           # Global marks.point.size is unset (a line's points are density-
@@ -1222,9 +1217,10 @@ style:
           palette: blues
       # Choropleth color channel carries the whole measure — a reader can't
       # decode dark-vs-light without a key: a board-wide
-      # `legend.visible: false` does not reach it.
-      legend:
+      # `key.type: direct` does not reach it.
+      key:
         visible: true
+        type: legend
 
     # Point map (scatter over geography) — renamed from 'geoshape'.
     point_map:
@@ -1272,20 +1268,10 @@ style:
           visible: false
       # Heatmap's color channel carries the whole measure — a reader can't
       # decode dark-vs-light without a key: a board-wide
-      # `legend.visible: false` does not reach it.
-      legend:
+      # `key.type: direct` does not reach it.
+      key:
         visible: true
-
-    # Series-label primitive. Typography for Cartesian text marks that name a
-    # data series — endpoint labels and direct stack labels. Placement is
-    # family-specific; typography is shared.
-    # font.family + font.weight cascade from charts.font; font.color is
-    # filled per-series by the renderer's dark-companion palette pairing.
-    series_label:
-      font:
-        size: 14
-        compact_size: 11
-        compact_weight: 500
+        type: legend
 
     # `by_tone` is the tone's color.
     callout:

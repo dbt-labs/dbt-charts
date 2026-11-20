@@ -1,5 +1,0 @@
-kind: Features
-body: Readers can sort and filter pivot tables from the column header menu.
-time: 2026-11-17T12:17:45.651208-08:00
-custom:
-    DbtChartsIssue: "101"

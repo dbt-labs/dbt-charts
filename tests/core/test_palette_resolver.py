@@ -33,7 +33,8 @@ from dbt_charts.core.compile.resolve.style.palette import (
     label_ink,
     list_palettes,
     palette,
-    resolve_palette_alias,
+    palette_family,
+    palette_with_warning,
     variant,
 )
 from dbt_charts.core.constants.color import DARK_K, DARK_POLE
@@ -410,7 +411,7 @@ class TestAntiPatterns:
     def test_rdylgn_resolves_without_warning(self):
         """palette() resolves anti-pattern aliases silently — the
         WARN-PALETTE-UNSUPPORTED nudge is now a render-stage detector over the
-        compiled board's requested_alias_palette, not an inline emit here."""
+        compiled board's warned_palette, not an inline emit here."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             stops = palette("RdYlGn")
@@ -424,29 +425,43 @@ class TestAntiPatterns:
             assert len(stops) > 0
             assert not w, f"palette() must not warn directly; got {w}"
 
+    def test_rdylgn_draws_its_own_colorbrewer_stops(self):
+        assert palette("RdYlGn") == [
+            "#a50026", "#d73027", "#f46d43", "#fdae61", "#fee08b", "#ffffbf",
+            "#d9ef8b", "#a6d96a", "#66bd63", "#1a9850", "#006837",
+        ]  # fmt: skip
+        assert palette_family("RdYlGn") == "diverging"
+
+    def test_parula_draws_its_own_stops(self):
+        assert palette("parula") == [
+            "#352a87", "#0363e1", "#1485d4", "#06a7c6", "#38b99e",
+            "#92bf73", "#d9ba56", "#fcce2e", "#f9fb0e",
+        ]  # fmt: skip
+        assert palette_family("parula") == "sequential"
+
     def test_hard_fail_error_message_points_at_palette_resolver(self):
         with pytest.raises(UnknownPaletteError) as excinfo:
             palette("jet")
         assert "/guides/palette-resolver/#anti-patterns" in str(excinfo.value)
 
 
-class TestResolvePaletteAlias:
-    """resolve_palette_alias() is the single source of anti-pattern detection
+class TestPaletteWithWarning:
+    """palette_with_warning() is the single source of anti-pattern detection
     the CategoricalColorStyle model_validator uses to retain the requested
     name for the render-stage detector."""
 
-    def test_warn_alias_name_reports_original_name(self):
-        stops, requested = resolve_palette_alias("RdYlGn")
+    def test_warned_name_reports_original_name(self):
+        stops, requested = palette_with_warning("RdYlGn")
         assert len(stops) > 0
         assert requested == "RdYlGn"
 
-    def test_warn_alias_shorthand_still_reports_base_name(self):
-        stops, requested = resolve_palette_alias("RdYlGn:5")
+    def test_warned_shorthand_still_reports_base_name(self):
+        stops, requested = palette_with_warning("RdYlGn:5")
         assert len(stops) == 5
         assert requested == "RdYlGn"
 
     def test_non_alias_name_reports_none(self):
-        stops, requested = resolve_palette_alias("dbt-seq-blue")
+        stops, requested = palette_with_warning("dbt-seq-blue")
         assert len(stops) > 0
         assert requested is None
 

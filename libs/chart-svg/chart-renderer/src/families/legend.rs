@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use diagnostic::codes;
 use diagnostic::Diagnostic;
-use crate::common::{field_display_text, truncate_label, truncate_label_with, FieldLabels, Font, MeasuredAs};
+use crate::common::{field_display_text, truncate_label, truncate_label_with, FieldLabels, Font};
 use crate::pattern::library;
 use measure::baseline_shift;
 use scene::{Attrs, Chars, Escape, Node, PathData, Role, Run, Shape};
@@ -64,9 +64,8 @@ pub struct LegendConfig {
     pub symbol_fill: Option<bool>,
 }
 
-/// Where along its edge a reserved legend strip sits. `End` is a pie key's
-/// alone (`PiePositionStyle` takes `start|center|end`; a cartesian strip
-/// refuses it, `refuse_unmodeled_slide`).
+/// Where along its edge a reserved legend strip sits. A reserved cartesian strip
+/// refuses `End` (`refuse_unmodeled_slide`); a floating legend takes it as its corner.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LegendAlign {
     Start,
@@ -86,8 +85,7 @@ pub struct LegendPosition {
 
 /// Deserializes `ResolvedLegendPosition`. A floating legend on a side edge
 /// is centered or nothing (`validate_cartesian_position`,
-/// `compile/resolve/style/legend_position.py`); a pie never floats
-/// (`decide_legend_position`'s `radial`).
+/// `compile/resolve/style/legend_position.py`).
 pub(crate) fn legend_position<'de, D: serde::Deserializer<'de>>(d: D) -> Result<LegendPosition, D::Error> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -129,9 +127,7 @@ pub(crate) fn legend_position<'de, D: serde::Deserializer<'de>>(d: D) -> Result<
 /// production's resolve raises `ERR-LEGEND-POSITION-UNSUPPORTED` for a strip
 /// with it (`validate_cartesian_position`,
 /// `compile/resolve/style/legend_position.py:110-128`), so the families that
-/// draw a cartesian legend refuse it. A pie's own `PiePositionStyle` never
-/// overlays, so its `end` is a reserved strip slid to the far end
-/// (`legend_align.py:100-103`); a family that draws no legend (table, kpi) is
+/// draw a cartesian legend refuse it. A family that draws no legend (table, kpi, pie) is
 /// `legendless` in the resolver, which leaves a board-wide `end` default
 /// unvalidated on its payload, and production renders it.
 pub fn refuse_unmodeled_slide(chart_type: &str, resolved: &serde_json::Value) -> Result<(), String> {
@@ -367,7 +363,7 @@ pub fn legend_grid(
     let mixed = mixed_marks
         || symbols
             .iter()
-            .any(|s| matches!(s, Some(LegendSymbol::Stroke(_) | LegendSymbol::StrokedCircle(_))));
+            .any(|s| matches!(s, Some(LegendSymbol::Stroke(_))));
     let stroke_w = if symbols.iter().any(|s| matches!(s, Some(LegendSymbol::ThinCircle))) { 1.0 } else { VEGA_SYMBOL_STROKE_WIDTH };
     let widest_dash = symbols.iter().filter_map(|s| match s { Some(LegendSymbol::Dash(pattern)) => Some(dash_swatch_len(pattern)), _ => None }).fold(None, |widest: Option<f64>, len| Some(widest.map_or(len, |w| w.max(len))));
     let size = if let Some(len) = widest_dash {
@@ -912,11 +908,10 @@ pub fn limit_legend_text<'a>(
     title: &str,
     cfg: &LegendConfig,
     fonts: &FontBook,
-    how: MeasuredAs,
 ) -> Result<LimitedLegendText, String> {
     let (label_font, size) = (&cfg.label.font, cfg.label.font.size_or(11.0));
     let limit = cfg.label.max_width.unwrap_or(VEGA_LEGEND_LABEL_LIMIT);
-    let measure_label = |s: &str| label_font.measure_as(how, fonts, s, size);
+    let measure_label = |s: &str| fonts.measure_shaped(s, label_font.family_or("sans-serif"), size);
     let (mut drawn, mut label_ws) = (Vec::new(), Vec::new());
     for label in labels {
         label_ws.push(measure_label(label)?.min(limit));
@@ -926,7 +921,7 @@ pub fn limit_legend_text<'a>(
         return Ok(LimitedLegendText { labels: drawn, label_ws, title: String::new(), title_w: 0.0 });
     }
     let (title_font, title_size) = (&cfg.title.font, cfg.title.font.size_or(12.0));
-    let measure_title = |s: &str| title_font.measure_as(how, fonts, s, title_size);
+    let measure_title = |s: &str| fonts.measure_shaped(s, title_font.family_or("sans-serif"), title_size);
     let title_w = measure_title(title)?.min(VEGA_LEGEND_TITLE_LIMIT);
     let title = truncate_label_with(title, VEGA_LEGEND_TITLE_LIMIT, measure_title)?;
     Ok(LimitedLegendText { labels: drawn, label_ws, title, title_w })
@@ -1139,14 +1134,9 @@ pub enum LegendSymbol<'a> {
     /// [`LegendSymbol::Circle`] with a 1px stroke: a line's legend under a columns facet with shared scales,
     /// where Vega-Lite drops the mark's own symbol stroke width.
     ThinCircle,
-    /// A circle stroked in the mark's own constant `stroke` color: a filled
-    /// `arc` mark's legend symbol takes the mark's `stroke` and keeps
-    /// Vega's `symbolStrokeWidth` 1.5 (`symbols` in Vega-Lite's
-    /// `legend/encode.ts` forwards the mark `stroke` value, not its width).
-    StrokedCircle(&'a str),
     /// A default circle ringed in a constant `stroke`, as a bar's own squares
-    /// are: a point layer's entries beside bars. Unlike [`LegendSymbol::StrokedCircle`]
-    /// it keeps the legend's uniform cell, as a square and circle always do.
+    /// are: a point layer's entries beside bars. It keeps the legend's uniform cell,
+    /// as a square and circle always do.
     BorderedCircle(&'a str),
     FilledCircle,
     /// A [`LegendSymbol::FilledCircle`] that an authored `symbol_shape` turns into a fill-only glyph: the
@@ -1215,7 +1205,6 @@ fn authored_glyph(cfg: &LegendConfig, symbol: Option<LegendSymbol>) -> Option<(P
         LegendSymbol::Square(_) | LegendSymbol::SquareInFill | LegendSymbol::FilledSquare => named("square", 1.0),
         LegendSymbol::Circle
         | LegendSymbol::ThinCircle
-        | LegendSymbol::StrokedCircle(_)
         | LegendSymbol::FilledCircle => named("circle", 1.0),
         LegendSymbol::FadedCircle(opacity) => named("circle", opacity),
         LegendSymbol::FilledGlyph(d) => Some((d.clone(), scatter_shape::half_extents("circle", 5.0), 1.0)),
@@ -1404,7 +1393,7 @@ fn symbol_node(symbol: LegendSymbol, fill: &str, (cx, cy): (f64, f64)) -> Node {
             disc(),
             Attrs::new().set("fill", fill).set("stroke", fill).num("stroke-width", 1.5).num("opacity", opacity),
         ),
-        LegendSymbol::StrokedCircle(stroke) | LegendSymbol::BorderedCircle(stroke) => {
+        LegendSymbol::BorderedCircle(stroke) => {
             path(disc(), Attrs::new().set("fill", fill).set("stroke", stroke).num("stroke-width", 1.5))
         }
         LegendSymbol::FilledCircle => path(disc(), Attrs::new().set("fill", fill).num("stroke-width", 1.5)),
@@ -1761,7 +1750,7 @@ mod tests {
     /// family's own gate (`refuse_unmodeled_slide`): production's cartesian
     /// resolve raises for it, a pie key slides to the far end.
     #[test]
-    fn an_end_aligned_strip_reads_and_only_a_pie_may_draw_it() {
+    fn an_end_aligned_strip_reads_and_only_the_cartesian_families_refuse_it() {
         let end = serde_json::json!({"edge": "top", "align": "end", "overlay": false});
         assert_eq!(legend_position(end).unwrap().align, LegendAlign::End);
         let resolved = serde_json::json!({"legend": {"position": {"align": "end"}}, "multiples": null});
@@ -1983,14 +1972,13 @@ mod tests {
     }
 
     /// A circle ringed in the bars' border is a point layer's legend glyph beside
-    /// a bar's square: unlike an arc's stroked circle it keeps the uniform cell.
+    /// a bar's square: it keeps the uniform cell.
     #[test]
-    fn a_square_and_a_bordered_circle_keep_the_uniform_cell_a_stroked_circle_collapses() {
+    fn a_square_and_a_bordered_circle_keep_the_uniform_cell() {
         let size = |circle| {
             legend_grid(&[70.0, 90.0], &[Some(LegendSymbol::Square("#fff")), Some(circle)], false, 11.0, 0, 8.0).size
         };
         assert_eq!(size(LegendSymbol::BorderedCircle("#fff")), 12.0);
-        assert_eq!(size(LegendSymbol::StrokedCircle("#fff")), 11.0);
     }
 
     #[test]
@@ -2377,7 +2365,6 @@ mod tests {
             LegendSymbol::SquareInFill,
             LegendSymbol::Circle,
             LegendSymbol::ThinCircle,
-            LegendSymbol::StrokedCircle("#123456"),
             LegendSymbol::BorderedCircle("#654321"),
             LegendSymbol::FilledCircle,
             LegendSymbol::ShortStroke,

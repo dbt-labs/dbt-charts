@@ -2515,7 +2515,6 @@ def test_a_variables_option_column_returns_once_it_has_a_query_to_read() -> None
     props = _flat(build_design_target(_QUERY_OPTIONS_BOARD, "variables.region"))
 
     assert "options.column" in props
-    assert "options.label_column" in props
     assert "options.query" not in props
 
     # The validator tests `not var.options.query`, so the guard has to as well:

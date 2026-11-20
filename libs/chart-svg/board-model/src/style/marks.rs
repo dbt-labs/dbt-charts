@@ -339,16 +339,6 @@ pub struct SeriesLabelFontStyle {
     pub compact_weight: FontWeightValue,
 }
 
-/// Typography for any text mark that names a data series, wherever it sits.
-///
-/// No `align`: alignment is a placement decision owned by the family renderer.
-#[derive(Debug, Clone, PartialEq, Model)]
-pub struct SeriesLabelStyle {
-    /// Series label font style overrides; cascade fills missing fields from charts.font.
-    #[model(inherit_slot = "Style.charts.font")]
-    pub font: SeriesLabelFontStyle,
-}
-
 /// Theme slot for one text element of the donut center total.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct TotalSlotStyle {

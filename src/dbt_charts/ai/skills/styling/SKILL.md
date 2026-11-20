@@ -90,7 +90,7 @@ Also exist: `sign_placement`, `repeat`.
 - `default_table_height` (number): Placeholder table height in pixels
 - `marks` (mapping): Global mark defaults (tier-1 of the marks cascade)
 - `font` (mapping): Chart-level font overrides
-Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`, `min_height`, `max_height`, `color`, `title`, `hover_emphasis`, `dashes`, `label_usable_ratio`, `axis`, `axis_x`, `axis_y`, `axis_quantitative`, `axis_band`, `view`, `bar`, `funnel`, `line`, `area`, `scatter`, `histogram`, `heatmap`, `geoshape`, `point_map`, `pie`, `donut`, `series_label`, `kpi`, `table`, `spark_bar`, `support_table`, `callout`.
+Also exist: `preferred_width`, `padding`, `background`, `aspect_ratio`, `min_height`, `max_height`, `color`, `title`, `hover_emphasis`, `dashes`, `label_usable_ratio`, `axis`, `axis_x`, `axis_y`, `axis_quantitative`, `axis_band`, `view`, `bar`, `funnel`, `line`, `area`, `scatter`, `histogram`, `heatmap`, `geoshape`, `point_map`, `pie`, `donut`, `key`, `kpi`, `table`, `spark_bar`, `support_table`, `callout`.
 
 `style.charts.bar, a bar chart's style`:
 - `background`: Chart-local background color override; None inherits from theme
@@ -99,11 +99,10 @@ Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`
 - `color` ({gradient: {palette, domain, min, max, nice, null_color, hinge, arm_mode}, categorical: {palette, single_series_palette}}): Chart color scales: categorical palette and/or gradient
 - `axis_x` (mapping): The category or time axis, in either orientation (a horizontal bar's category axis is still `axis_x`). Inherits the global axis_x
 - `axis_y` (mapping): The measure axis, in either orientation: its number format goes here, a horizontal bar's too. Inherits the global axis_y
-- `legend` (mapping): Chart legend style
+- `key` ({visible, type, legend: {}, direct: {offset, font: {}, height}}): How the chart names its series
 - `marks` ({bar: {}, text: {font: {}, align}}): Bar-family mark overrides
 - `stack` (none|zero|normalize|center): Default stack mode for bar charts; none renders side-by-side columns
 - `orientation` (horizontal|vertical|auto): Preferred bar orientation
-- `endpoint_labels` ({label_offset, height}): Styling of the series names printed on stacked bars (`legend.position.edge: endpoints`)
 Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `torn_outlier`, `pattern`, `conditional`.
 
 ### Axes
@@ -159,11 +158,16 @@ Also exist: `connect`, `disconnected_cap`, `disconnected_width`, `halo_multiplie
 
 `marks.area`: `color`, `opacity`, `curve`, `backdrop`, `stacked`.
 
-### Legend and color
+### Key and color
 
-`legend`:
-- `visible` (bool|auto): Show the legend
-- `position` ({align, overlay, edge}): Legend edge (or `endpoints`), align along it, overlay or reserve
+`key`:
+- `visible` (bool): Name the series at all; false hides the key
+- `type` (auto|legend|direct): Legend, direct labels, or `auto` to let the engine pick
+- `legend` (mapping): Legend style
+- `direct` ({offset, font: {}, height}): Direct label style
+
+`key.legend`:
+- `position` ({align, overlay, edge}): Legend edge, align along it, overlay or reserve
 - `values` (list of text): Explicit legend entry order/filter
 - `label` ({font: {}, padding, max_width}): Legend label style
 Also exist: `direction`, `columns`, `compact_columns`, `row`, `title`, `symbol_limit`, `symbol_shape`, `symbol_fill`.

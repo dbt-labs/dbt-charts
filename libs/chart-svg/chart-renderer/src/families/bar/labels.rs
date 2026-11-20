@@ -7,11 +7,11 @@ use crate::families::cartesian::{BandScale};
 use d3rs::scale::Continuous;
 use crate::families::span::RangedBars;
 use crate::annotation::DataMark;
-use crate::placement::{EPS, Obstacle};
+use crate::placement::{EPS, LABEL_PAD, Obstacle};
 use crate::vega_fit;
 
 use measure::FontBook;
-use scene::{Attrs, Node, Role};
+use scene::{Attrs, Node, Role, Shape};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -74,6 +74,9 @@ pub(super) struct LabelPoint {
     /// The bar's drawn `(base, tip)` along the measure axis, in pixels clamped to the plot:
     /// where a label blocked by a layer line can go past the bar's other end.
     pub(super) ends: Option<(f64, f64)>,
+    /// A stack's segment below its outermost one: it has no outside to move its label to, so the
+    /// label keeps its place in the segment.
+    pub(super) inner_segment: bool,
     /// How a ranged bar's label reads its span; `None` on any other bar.
     pub(super) span: Option<SpanLabel>,
     /// The printed text (`LabelSpec::text`).
@@ -911,7 +914,7 @@ impl LabelLayer {
         if let (Some(funnel), Some((start, end)), "middle") = (&self.spec.funnel, site.segment, self.spec.position.as_str()) {
             return Some(self.funnel_place(funnel, (start, end), width, center, geom));
         }
-        let inner = self.stacked && !self.total && !site.outermost;
+        let inner = self.inner_segment(site);
         let inside = matches!(self.spec.position.as_str(), "top" | "middle" | "bottom");
         let need = label_need(self.horizontal, width, self.font.size);
         if let (true, Some((base, tip))) = (inner && inside, site.segment) {
@@ -966,6 +969,11 @@ impl LabelLayer {
         }
     }
 
+    /// A stack's segment below its outermost one, which has no outside.
+    fn inner_segment(&self, site: &LabelSite) -> bool {
+        self.stacked && !self.total && !site.outermost
+    }
+
     /// The points `mark_labels` paints, in site order. `decor` is each
     /// site's description and inherited fill.
     pub(super) fn points(
@@ -995,6 +1003,7 @@ impl LabelLayer {
                 blank,
                 side,
                 ends,
+                inner_segment: self.inner_segment(site),
                 span: site.span,
                 text: site.text.clone(),
                 href: site.href.clone(),
@@ -1293,6 +1302,7 @@ pub(super) fn mark_labels(
     plot_top: f64,
     canvas: &str,
     under: &[crate::annotation::DataMark],
+    captions: &mut LayerCaptions,
     link_open: crate::href::LinkOpen,
 ) -> Result<Vec<Node>, String> {
     let style = LabelStyle::new(ml, horizontal, stacked, board_style)?;
@@ -1307,14 +1317,19 @@ pub(super) fn mark_labels(
         .flat_map(DataMark::boxes)
         .collect();
     for point in points {
-        let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, ends, span, ref text, ref href, recede, ink, ref font_color, ref font_weight } = *point;
+        let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, ends, inner_segment, span, ref text, ref href, recede, ink, ref font_color, ref font_weight } = *point;
         let anchor = link_open.anchor(href.as_deref()).map(|anchor| crate::href::Anchor { recede, ..anchor });
         let mut spot = label_spot(ml, &style.position, style.horizontal_offset, center, extent, span, side);
         let mut over_bar = style.inside_bar && !matches!(side, Some(LabelSide::Out(_) | LabelSide::Bare));
         let mut ink = ink;
-        if let (Some(at), None, false) = (ink, span, blank) {
+        if let (Some(at), None, false, false) = (ink, span, blank, inner_segment) {
             if let Some((swapped, swapped_ink, now_over_bar)) = other_side_of_the_bar_end(ml, &style, &spot, over_bar, center, (extent, ends), at, &lines, &bars) {
                 (spot, ink, over_bar) = (swapped, Some(swapped_ink), now_over_bar);
+            }
+        }
+        if let (Some(at), Some(ends), None, false) = (ink, ends, span, blank) {
+            if let Some((stacked_spot, stacked_ink)) = captions.stack(ml, &style, center, ends, inner_segment, at) {
+                (spot, ink, over_bar) = (stacked_spot, Some(stacked_ink), false);
             }
         }
         let color = match font_color.as_deref().or(style.font.color.as_deref()) {
@@ -1404,6 +1419,156 @@ fn other_side_of_the_bar_end(
     None
 }
 
+/// Calls `visit` on every value label under `nodes`, in paint order.
+fn visit_labels(nodes: &mut [Node], visit: &mut impl FnMut(&mut Node)) {
+    for node in nodes {
+        if matches!(node.shape, Shape::Text { .. }) {
+            if node.role == Role::Label {
+                visit(node);
+            }
+        } else if let Shape::Group(children) | Shape::Link(children) = &mut node.shape {
+            visit_labels(children, visit);
+        }
+    }
+}
+
+/// A value label's ink box: the box layout measured for it, else the text's own, set on
+/// the alphabetic baseline its node anchors at. `None` for a label with no text.
+fn label_ink(node: &Node, fonts: &FontBook) -> Result<Option<vega_fit::Bounds>, String> {
+    let Shape::Text { at, bounds, .. } = &node.shape else { unreachable!("visit_labels keeps text nodes") };
+    let Some(text) = node.text_content().filter(|t| !t.is_empty()) else { return Ok(None) };
+    if let Some(b) = bounds {
+        return Ok(Some(vega_fit::Bounds::new(b.x1, b.y1, b.x2, b.y2)));
+    }
+    let family = node.attrs.get("font-family").ok_or("a value label carries its font-family")?;
+    let size = node.attrs.get_num("font-size").ok_or("a value label carries its font-size")?;
+    let align = match node.attrs.get("text-anchor") {
+        Some("start") => "left",
+        Some("end") => "right",
+        _ => "center",
+    };
+    Ok(Some(vega_fit::text_ink(at.0, at.1, fonts.measure_shaped(&text, family, size)?, size, align, "alphabetic")))
+}
+
+/// Where a layer's value label ends up once a bar's label claims its spot.
+#[derive(Clone, Copy, Default)]
+enum Moved {
+    #[default]
+    Stays,
+    By(f64),
+    Dropped,
+}
+
+/// The layers' value labels (ink boxes, plot frame) that the bar labels of the same chart
+/// are placed against: a bar label whose ink meets one stacks with it above the group,
+/// or below it on a bar that falls, the higher label on top, a [`LABEL_PAD`] apart.
+/// A stack that leaves the plot (`0` to `plot_h`) drops the layer's label, never the bar's.
+/// A pair that does not meet does not move.
+#[derive(Default)]
+pub(super) struct LayerCaptions {
+    inks: Vec<Option<vega_fit::Bounds>>,
+    moved: Vec<Moved>,
+    plot_h: f64,
+}
+
+impl LayerCaptions {
+    /// The value labels among `plot[span]` for each of the layers' `spans`.
+    pub(super) fn read(plot: &mut [Node], spans: &[std::ops::Range<usize>], plot_h: f64, fonts: &FontBook) -> Result<Self, String> {
+        let mut inks = Vec::new();
+        for span in spans {
+            let mut failed = None;
+            visit_labels(&mut plot[span.clone()], &mut |node| match label_ink(node, fonts) {
+                Ok(ink) => inks.push(ink),
+                Err(e) => failed = Some(e),
+            });
+            if let Some(e) = failed {
+                return Err(e);
+            }
+        }
+        Ok(LayerCaptions { moved: vec![Moved::Stays; inks.len()], inks, plot_h })
+    }
+
+    /// Moves the labels a bar label stacked with, blanks the ones it dropped.
+    pub(super) fn apply(&self, plot: &mut [Node], spans: &[std::ops::Range<usize>]) {
+        let mut moved = self.moved.iter();
+        for span in spans {
+            visit_labels(&mut plot[span.clone()], &mut |node| {
+                let Shape::Text { at, bounds, runs } = &mut node.shape else { unreachable!("visit_labels keeps text nodes") };
+                match moved.next().expect("read counted the same labels") {
+                    Moved::Stays => {}
+                    Moved::By(dy) => {
+                        at.1 += dy;
+                        if let Some(b) = bounds {
+                            b.y1 += dy;
+                            b.y2 += dy;
+                        }
+                    }
+                    Moved::Dropped => runs.clear(),
+                }
+            });
+        }
+    }
+
+    /// Where a bar label (`ink`, anchored at `center` with its bar's `(base, tip)`) goes
+    /// when it meets a layer label: outside its bar's tip, stacked with that label, and the
+    /// layer label's own move is noted. An `inner_segment`'s label has no outside, so it keeps
+    /// its place and every layer label it meets drops. `None` leaves the bar label where it is.
+    fn stack(&mut self, ml: &MarkLabels, style: &LabelStyle, center: f64, (base, tip): (f64, f64), inner_segment: bool, ink: vega_fit::Bounds) -> Option<(LabelSpot, vega_fit::Bounds)> {
+        let meets = |l: &Option<vega_fit::Bounds>| l.is_some_and(|l| crate::placement::intersection(&ink, &l) > 0.0);
+        if inner_segment {
+            for at in 0..self.inks.len() {
+                if meets(&self.inks[at]) {
+                    self.drop_label(at);
+                }
+            }
+            return None;
+        }
+        let at = self.inks.iter().position(meets)?;
+        let l = self.inks[at].expect("matched above");
+        let dir = (tip - base).signum();
+        if dir == 0.0 {
+            return None;
+        }
+        let spot = label_spot(ml, &style.position, style.horizontal_offset, center, tip, None, Some(LabelSide::Out(dir)));
+        let out = vega_fit::text_ink(spot.x, spot.y, ink.x2 - ink.x1, style.font.size, spot.align(), spot.baseline);
+        let (hb, hl) = (out.y2 - out.y1, l.y2 - l.y1);
+        let bar_on_top = out.y1 + out.y2 <= l.y1 + l.y2;
+        let (hu, hd) = if bar_on_top { (hb, hl) } else { (hl, hb) };
+        let (upper_to, lower_to) = if dir > 0.0 {
+            let upper_to = out.y1.max(l.y1);
+            (upper_to, upper_to + hu + LABEL_PAD)
+        } else {
+            let lower_to = out.y2.min(l.y2) - hd;
+            (lower_to - LABEL_PAD - hu, lower_to)
+        };
+        if upper_to < 0.0 || lower_to + hd > self.plot_h {
+            self.drop_label(at);
+            return None;
+        }
+        let (bar_to, layer_to) = if bar_on_top { (upper_to, lower_to) } else { (lower_to, upper_to) };
+        self.move_to(at, layer_to);
+        let spot = LabelSpot { y: spot.y + bar_to - out.y1, ..spot };
+        Some((spot, vega_fit::Bounds::new(out.x1, bar_to, out.x2, bar_to + hb)))
+    }
+
+    fn drop_label(&mut self, at: usize) {
+        self.moved[at] = Moved::Dropped;
+        self.inks[at] = None;
+    }
+
+    /// Moves layer label `at` so its ink's top is `to`. `apply` moves each node once from where
+    /// it was read, so a label stacked twice keeps the sum of its moves.
+    fn move_to(&mut self, at: usize, to: f64) {
+        let l = self.inks[at].expect("only a drawn label moves");
+        let prior = match self.moved[at] {
+            Moved::By(dy) => dy,
+            _ => 0.0,
+        };
+        self.moved[at] = Moved::By(prior + to - l.y1);
+        self.inks[at] = Some(vega_fit::Bounds::new(l.x1, to, l.x2, to + (l.y2 - l.y1)));
+    }
+}
+
 /// Of the canvas color and `ink`, the one that contrasts more with the color painted at `at`;
 /// the canvas on a tie.
 pub(crate) fn knockout_ink(canvas: &str, ink: &str, under: &[crate::annotation::DataMark], at: (f64, f64)) -> Result<String, String> {
@@ -1419,6 +1584,22 @@ pub(crate) fn ground_at(canvas: &str, under: &[crate::annotation::DataMark], at:
     let ground = crate::annotation::rule_gray::color_under(under, parsed, at, 0.0).map_err(|e| e.to_string())?.unwrap_or(parsed);
     let [r, g, b] = ground.c.map(|v| v.round().clamp(0.0, 255.0) as u8);
     Ok(format!("#{r:02x}{g:02x}{b:02x}"))
+}
+
+#[cfg(test)]
+mod layer_caption_tests {
+    use super::{LayerCaptions, Moved};
+    use crate::vega_fit::Bounds;
+
+    #[test]
+    fn a_layer_label_stacked_twice_moves_by_the_sum_of_both_stacks() {
+        let mut captions = LayerCaptions { inks: vec![Some(Bounds::new(0.0, 50.0, 20.0, 60.0))], moved: vec![Moved::Stays], plot_h: 100.0 };
+        captions.move_to(0, 40.0);
+        captions.move_to(0, 25.0);
+        let Moved::By(dy) = captions.moved[0] else { panic!("the label moved") };
+        assert_eq!(dy, -25.0, "apply moves from the read position to the last stack's spot");
+        assert_eq!(captions.inks[0].map(|b| (b.y1, b.y2)), Some((25.0, 35.0)));
+    }
 }
 
 #[cfg(test)]

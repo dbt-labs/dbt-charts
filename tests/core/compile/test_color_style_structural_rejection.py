@@ -90,46 +90,46 @@ def test_gradient_color_style_accepts_gradient_and_rejects_static() -> None:
         GradientColorStyle.model_validate({"static": "#ff0000"})
 
 
-def test_categorical_color_style_records_requested_alias_palette() -> None:
+def test_categorical_color_style_records_warned_palette() -> None:
     """Authoring a WARN-PALETTE-UNSUPPORTED anti-pattern alias (e.g. RdYlGn)
     retains the originally-requested name on the model, so a render-stage
     detector can surface the nudge without palette() emitting inline."""
     from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
 
     c = CategoricalColorStyle(palette="RdYlGn")
-    assert c.requested_alias_palette == "RdYlGn"
+    assert c.warned_palette == "RdYlGn"
     assert c.palette is not None and len(c.palette) > 0
 
 
-def test_categorical_color_style_non_alias_leaves_requested_alias_none() -> None:
+def test_categorical_color_style_non_warned_leaves_warned_palette_none() -> None:
     from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
 
     c = CategoricalColorStyle(palette="dbt-seq-blue")
-    assert c.requested_alias_palette is None
+    assert c.warned_palette is None
 
 
-def test_categorical_color_style_unauthored_palette_leaves_requested_alias_none() -> (
+def test_categorical_color_style_unauthored_palette_leaves_warned_palette_none() -> (
     None
 ):
     """A layer that doesn't author palette at all must not fabricate a
-    requested_alias_palette value — it needs to fall through to a lower
+    warned_palette value — it needs to fall through to a lower
     layer's merged value untouched."""
     from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
 
     c = CategoricalColorStyle(single_series_palette=["#0000ff"])
-    assert c.requested_alias_palette is None
+    assert c.warned_palette is None
 
 
-def test_categorical_color_style_rejects_authored_requested_alias_palette() -> None:
-    """requested_alias_palette is an internal provenance field computed by
+def test_categorical_color_style_rejects_authored_warned_palette() -> None:
+    """warned_palette is an internal provenance field computed by
     _expand_palette_names — a YAML author fabricating it directly must be
     rejected loudly, not silently accepted and then honored or ignored
     depending on cascade layer (see WARN-PALETTE-UNSUPPORTED fabrication bug)."""
     from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
 
-    with pytest.raises(ValidationError, match="requested_alias_palette"):
+    with pytest.raises(ValidationError, match="warned_palette"):
         CategoricalColorStyle(
-            palette=["#aabbcc", "#112233"], requested_alias_palette="totally-made-up"
+            palette=["#aabbcc", "#112233"], warned_palette="totally-made-up"
         )
 
 
@@ -141,30 +141,30 @@ def test_categorical_color_style_revalidates_its_own_computed_provenance() -> No
     from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
 
     resolved = CategoricalColorStyle(palette="RdYlGn")
-    assert resolved.requested_alias_palette == "RdYlGn"
+    assert resolved.warned_palette == "RdYlGn"
 
     assert (
         CategoricalColorStyle.model_validate(
             {
                 "palette": resolved.palette,
                 "single_series_palette": None,
-                "requested_alias_palette": resolved.requested_alias_palette,
+                "warned_palette": resolved.warned_palette,
             }
-        ).requested_alias_palette
+        ).warned_palette
         == "RdYlGn"
     )
 
 
-def test_categorical_color_style_requested_alias_palette_excluded_from_schema() -> None:
+def test_categorical_color_style_warned_palette_excluded_from_schema() -> None:
     """The field must not appear in the authorable JSON Schema / yaml-reference —
     otherwise IDE autocomplete offers it and a user can author a bogus value."""
     from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
 
-    field_info = CategoricalColorStyle.model_fields["requested_alias_palette"]
+    field_info = CategoricalColorStyle.model_fields["warned_palette"]
     assert field_info.exclude is True
 
 
-def test_categorical_color_style_patch_omits_requested_alias_palette() -> None:
+def test_categorical_color_style_patch_omits_warned_palette() -> None:
     """The generated chart-local style patch must not carry the internal
     provenance field either — exclude=True fields must not leak into
     build_patch_model()-generated overlay types."""
@@ -172,4 +172,4 @@ def test_categorical_color_style_patch_omits_requested_alias_palette() -> None:
     from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
 
     patch_cls = build_patch_model(CategoricalColorStyle)
-    assert "requested_alias_palette" not in patch_cls.model_fields
+    assert "warned_palette" not in patch_cls.model_fields

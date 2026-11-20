@@ -56,7 +56,9 @@ def _ctx(chart: Any, rows: list[dict[str, Any]] = _ROWS) -> WarningContext:
 
 def test_fires_when_an_authored_entry_matches_no_series() -> None:
     chart = _bar(
-        style=BarChartStylePatch.model_validate({"legend": {"values": ["A", "C"]}})
+        style=BarChartStylePatch.model_validate(
+            {"key": {"legend": {"values": ["A", "C"]}}}
+        )
     )
     warnings = detector.detect(_ctx(chart))
     assert len(warnings) == 1
@@ -70,7 +72,9 @@ def test_fires_when_an_authored_entry_matches_no_series() -> None:
 
 def test_silent_when_every_authored_entry_resolves() -> None:
     chart = _bar(
-        style=BarChartStylePatch.model_validate({"legend": {"values": ["B", "A"]}})
+        style=BarChartStylePatch.model_validate(
+            {"key": {"legend": {"values": ["B", "A"]}}}
+        )
     )
     assert detector.detect(_ctx(chart)) == []
 
@@ -91,7 +95,9 @@ def test_fires_on_wide_chart_when_an_entry_matches_no_measure() -> None:
         query_name="q",
         x="cat",
         y=["named", "non_named"],
-        style=BarChartStylePatch.model_validate({"legend": {"values": ["nope"]}}),
+        style=BarChartStylePatch.model_validate(
+            {"key": {"legend": {"values": ["nope"]}}}
+        ),
     )
     rows = [{"cat": "a", "named": 1, "non_named": 2}]
     warnings = detector.detect(_ctx(chart, rows))
@@ -107,7 +113,7 @@ def test_silent_on_wide_chart_when_every_entry_resolves() -> None:
         x="cat",
         y=["named", "non_named"],
         style=BarChartStylePatch.model_validate(
-            {"legend": {"values": ["Non Named", "named"]}}
+            {"key": {"legend": {"values": ["Non Named", "named"]}}}
         ),
     )
     rows = [{"cat": "a", "named": 1, "non_named": 2}]
@@ -130,7 +136,7 @@ def test_fires_on_wide_chart_with_a_dimension_when_a_composite_matches_nothing()
         y=["messages", "fixes"],
         color="list",
         style=BarChartStylePatch.model_validate(
-            {"legend": {"values": ["bugs - messages", "nope"]}}
+            {"key": {"legend": {"values": ["bugs - messages", "nope"]}}}
         ),
     )
     rows = [
@@ -152,13 +158,15 @@ def test_silent_on_wide_chart_with_a_dimension_when_every_composite_resolves() -
         color="list",
         style=BarChartStylePatch.model_validate(
             {
-                "legend": {
-                    "values": [
-                        "bugs - messages",
-                        "bugs - fixes",
-                        "chores - messages",
-                        "chores - fixes",
-                    ]
+                "key": {
+                    "legend": {
+                        "values": [
+                            "bugs - messages",
+                            "bugs - fixes",
+                            "chores - messages",
+                            "chores - fixes",
+                        ]
+                    }
                 }
             }
         ),
@@ -177,7 +185,7 @@ def test_fires_on_layered_field_colored_base_when_entry_matches_nothing() -> Non
 
     chart = _bar(
         style=BarChartStylePatch.model_validate(
-            {"legend": {"values": ["A", "B", "TOTALLY_BOGUS"]}}
+            {"key": {"legend": {"values": ["A", "B", "TOTALLY_BOGUS"]}}}
         ),
         layers=[LineLayer(type="line", y="target")],
     )
@@ -200,7 +208,7 @@ def test_layered_field_colored_base_resolves_a_layer_label_by_y_column_name() ->
 
     chart = _bar(
         style=BarChartStylePatch.model_validate(
-            {"legend": {"values": ["A", "B", "target"]}}
+            {"key": {"legend": {"values": ["A", "B", "target"]}}}
         ),
         layers=[LineLayer(type="line", y="target")],
     )
@@ -217,9 +225,9 @@ def test_a_layer_declining_its_legend_entry_cannot_be_named_by_legend_values() -
 
     chart = _bar(
         style=BarChartStylePatch.model_validate(
-            {"legend": {"values": ["A", "B", "target"]}}
+            {"key": {"legend": {"values": ["A", "B", "target"]}}}
         ),
-        layers=[LineLayer(type="line", y="target", legend=False)],
+        layers=[LineLayer(type="line", y="target", key=False)],
     )
     rows = [
         {"cat": "a", "series": "A", "val": 1, "target": 5},
@@ -228,21 +236,6 @@ def test_a_layer_declining_its_legend_entry_cannot_be_named_by_legend_values() -
     warnings = detector.detect(_ctx(chart, rows))
     assert len(warnings) == 1
     assert "target" in warnings[0].message
-
-
-def _pie(**kwargs: Any) -> Any:
-    from dbt_charts.core.compile.models.chart.normalized import PieChart
-
-    return PieChart(
-        **{
-            "id": "c1",
-            "type": "pie",
-            "query_name": "q",
-            "theta": "val",
-            "color": "series",
-            **kwargs,
-        }
-    )
 
 
 def _scatter(**kwargs: Any) -> Any:
@@ -283,25 +276,18 @@ _HEATMAP_ROWS: list[dict[str, Any]] = [
 ]
 
 
-def test_fires_on_pie_when_an_entry_matches_no_series() -> None:
-    from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
-
-    chart = _pie(
-        style=PieChartStylePatch.model_validate(
-            {"legend": {"visible": True, "values": ["A", "bogus"]}}
-        )
-    )
-    warnings = detector.detect(_ctx(chart))
-    assert len(warnings) == 1
-    assert "bogus" in warnings[0].message
-
-
 def test_fires_on_scatter_when_an_entry_matches_no_series() -> None:
     from dbt_charts.core.compile.models.style.authored import ScatterChartStylePatch
 
     chart = _scatter(
         style=ScatterChartStylePatch.model_validate(
-            {"legend": {"visible": True, "values": ["A", "bogus"]}}
+            {
+                "key": {
+                    "visible": True,
+                    "type": "legend",
+                    "legend": {"values": ["A", "bogus"]},
+                }
+            }
         )
     )
     warnings = detector.detect(_ctx(chart))
@@ -327,7 +313,9 @@ def test_fires_on_wide_scatter_when_an_entry_matches_no_measure() -> None:
         query_name="q",
         x="cat",
         y=["named", "non_named"],
-        style=ScatterChartStylePatch.model_validate({"legend": {"values": ["nope"]}}),
+        style=ScatterChartStylePatch.model_validate(
+            {"key": {"legend": {"values": ["nope"]}}}
+        ),
     )
     rows = [{"cat": "a", "named": 1, "non_named": 2}]
     warnings = detector.detect(_ctx(chart, rows))
@@ -351,7 +339,7 @@ def test_silent_on_wide_scatter_when_every_entry_resolves() -> None:
         x="cat",
         y=["named", "non_named"],
         style=ScatterChartStylePatch.model_validate(
-            {"legend": {"values": ["non named", "named"]}}
+            {"key": {"legend": {"values": ["non named", "named"]}}}
         ),
     )
     rows = [{"cat": "a", "named": 1, "non_named": 2}]
@@ -373,7 +361,7 @@ def test_fires_on_field_colored_overlay_with_non_quantitative_base_y() -> None:
     chart = _scatter(
         y="cat",  # non-numeric base y: infers nominal, not quantitative
         style=ScatterChartStylePatch.model_validate(
-            {"legend": {"values": ["A", "B", "target"]}}
+            {"key": {"legend": {"values": ["A", "B", "target"]}}}
         ),
         layers=[LineLayer(type="line", y="target")],
     )
@@ -407,7 +395,7 @@ def test_fires_on_field_colored_overlay_with_non_quantitative_base_y_and_layer_c
     chart = _scatter(
         y="cat",  # non-numeric base y: infers nominal, not quantitative
         style=ScatterChartStylePatch.model_validate(
-            {"legend": {"values": ["A", "B", "X"]}}
+            {"key": {"legend": {"values": ["A", "B", "X"]}}}
         ),
         layers=[LineLayer(type="line", y="target", color="kind")],
     )
@@ -425,7 +413,13 @@ def test_fires_on_heatmap_when_an_entry_matches_no_series() -> None:
 
     chart = _heatmap(
         style=HeatmapChartStylePatch.model_validate(
-            {"legend": {"visible": True, "values": ["A", "bogus"]}}
+            {
+                "key": {
+                    "visible": True,
+                    "type": "legend",
+                    "legend": {"values": ["A", "bogus"]},
+                }
+            }
         )
     )
     warnings = detector.detect(_ctx(chart, _HEATMAP_ROWS))
@@ -443,7 +437,7 @@ def test_layered_chart_uses_a_layers_own_color_field_not_its_label() -> None:
 
     chart = _bar(
         style=BarChartStylePatch.model_validate(
-            {"legend": {"values": ["A", "B", "East"]}}
+            {"key": {"legend": {"values": ["A", "B", "East"]}}}
         ),
         layers=[LineLayer(type="line", y="target", color="region")],
     )
@@ -466,7 +460,7 @@ def test_fires_on_a_pure_author_derived_base_label_overlay() -> None:
     chart = _bar(
         color=None,
         style=BarChartStylePatch.model_validate(
-            {"legend": {"values": ["val", "bogus"]}}
+            {"key": {"legend": {"values": ["val", "bogus"]}}}
         ),
         layers=[LineLayer(type="line", y="target")],
     )
@@ -484,7 +478,9 @@ def test_silent_on_a_pure_author_derived_base_label_overlay_when_resolved() -> N
 
     chart = _bar(
         color=None,
-        style=BarChartStylePatch.model_validate({"legend": {"values": ["val"]}}),
+        style=BarChartStylePatch.model_validate(
+            {"key": {"legend": {"values": ["val"]}}}
+        ),
         layers=[LineLayer(type="line", y="target")],
     )
     rows = [
@@ -509,7 +505,7 @@ def test_silent_on_a_base_label_overlay_with_zero_rows() -> None:
     chart = _bar(
         color=None,
         style=BarChartStylePatch.model_validate(
-            {"legend": {"values": ["val", "target"]}}
+            {"key": {"legend": {"values": ["val", "target"]}}}
         ),
         layers=[LineLayer(type="line", y="target")],
     )
@@ -538,7 +534,13 @@ def test_silent_on_a_base_with_a_non_series_color_channel() -> None:
         y="value",
         color=None,
         style=BarChartStylePatch.model_validate(
-            {"legend": {"visible": True, "values": ["Gamma", "value"]}}
+            {
+                "key": {
+                    "visible": True,
+                    "type": "legend",
+                    "legend": {"values": ["Gamma", "value"]},
+                }
+            }
         ),
         layers=[LineLayer(type="line", y="target", color="kind")],
     )
@@ -582,7 +584,7 @@ def test_silent_when_the_legend_is_suppressed() -> None:
         style=BarChartStylePatch.model_validate(
             {
                 "stack": "zero",
-                "legend": {"visible": False, "values": ["A", "C"]},
+                "key": {"visible": False, "legend": {"values": ["A", "C"]}},
             }
         )
     )
@@ -602,7 +604,7 @@ def test_fires_on_a_grouped_bar_even_when_the_legend_is_suppressed() -> None:
         style=BarChartStylePatch.model_validate(
             {
                 "stack": "none",
-                "legend": {"visible": False, "values": ["A", "C"]},
+                "key": {"visible": False, "legend": {"values": ["A", "C"]}},
             }
         )
     )
@@ -625,7 +627,10 @@ def test_silent_on_a_wide_grouped_bar_with_a_suppressed_legend() -> None:
         style=BarChartStylePatch.model_validate(
             {
                 "stack": "none",
-                "legend": {"visible": False, "values": ["revenue_usd", "bogus"]},
+                "key": {
+                    "visible": False,
+                    "legend": {"values": ["revenue_usd", "bogus"]},
+                },
             }
         ),
     )
@@ -645,7 +650,7 @@ def test_silent_on_a_histogram_with_a_suppressed_legend() -> None:
         y=None,
         style=BarChartStylePatch.model_validate(
             {
-                "legend": {"visible": False, "values": ["A", "bogus"]},
+                "key": {"visible": False, "legend": {"values": ["A", "bogus"]}},
             }
         ),
     )
@@ -667,7 +672,7 @@ def test_silent_on_an_ordinal_color_grouped_bar_with_a_suppressed_legend() -> No
         style=BarChartStylePatch.model_validate(
             {
                 "stack": "none",
-                "legend": {"visible": False, "values": ["2024-Q1", "bogus"]},
+                "key": {"visible": False, "legend": {"values": ["2024-Q1", "bogus"]}},
             }
         )
     )
@@ -683,7 +688,7 @@ def test_layered_chart_flags_a_layers_never_rendered_label() -> None:
 
     chart = _bar(
         style=BarChartStylePatch.model_validate(
-            {"legend": {"values": ["A", "B", "Target"]}}
+            {"key": {"legend": {"values": ["A", "B", "Target"]}}}
         ),
         layers=[LineLayer(type="line", y="target", color="region")],
     )
@@ -709,7 +714,13 @@ def test_silent_on_a_colorless_overlay_with_non_quantitative_base_y() -> None:
         color=None,
         y="cat",
         style=ScatterChartStylePatch.model_validate(
-            {"legend": {"visible": True, "values": ["target"]}}
+            {
+                "key": {
+                    "visible": True,
+                    "type": "legend",
+                    "legend": {"values": ["target"]},
+                }
+            }
         ),
         layers=[LineLayer(type="line", y="target")],
     )
@@ -733,7 +744,7 @@ def test_layer_whose_own_query_diverges_from_the_base_reads_layer_results() -> N
 
     chart = _bar(
         style=BarChartStylePatch.model_validate(
-            {"legend": {"values": ["A", "B", "Diverging"]}}
+            {"key": {"legend": {"values": ["A", "B", "Diverging"]}}}
         ),
         layers=[LineLayer(type="line", y="target", color="region", query="layer_q")],
     )
@@ -775,7 +786,7 @@ def test_geoshape_normalizes_before_building_its_domain_like_geo_py_does() -> No
         lookup="state",
         value="tier",
         style=GeoshapeChartStylePatch.model_validate(
-            {"legend": {"values": ["2024-01-01"]}}
+            {"key": {"legend": {"values": ["2024-01-01"]}}}
         ),
     )
     rows = [
@@ -799,7 +810,7 @@ def test_fires_on_geoshape_nominal_choropleth_when_entry_matches_nothing() -> No
         lookup="state",
         value="tier",
         style=GeoshapeChartStylePatch.model_validate(
-            {"legend": {"values": ["west", "bogus"]}}
+            {"key": {"legend": {"values": ["west", "bogus"]}}}
         ),
     )
     rows = [
@@ -825,7 +836,7 @@ def test_silent_on_geoshape_when_every_entry_resolves() -> None:
         lookup="state",
         value="tier",
         style=GeoshapeChartStylePatch.model_validate(
-            {"legend": {"values": ["WEST", "south"]}}
+            {"key": {"legend": {"values": ["WEST", "south"]}}}
         ),
     )
     rows = [
@@ -848,7 +859,13 @@ def test_fires_on_single_series_base_overlay_whose_layer_binds_its_own_color() -
         y="value",
         color=None,
         style=BarChartStylePatch.model_validate(
-            {"legend": {"visible": True, "values": ["Gamma", "value"]}}
+            {
+                "key": {
+                    "visible": True,
+                    "type": "legend",
+                    "legend": {"values": ["Gamma", "value"]},
+                }
+            }
         ),
         layers=[LineLayer(type="line", y="target", color="kind")],
     )
@@ -868,7 +885,13 @@ def test_silent_on_single_series_base_overlay_when_every_entry_resolves() -> Non
         y="value",
         color=None,
         style=BarChartStylePatch.model_validate(
-            {"legend": {"visible": True, "values": ["value", "alpha"]}}
+            {
+                "key": {
+                    "visible": True,
+                    "type": "legend",
+                    "legend": {"values": ["value", "alpha"]},
+                }
+            }
         ),
         layers=[LineLayer(type="line", y="target", color="kind")],
     )
@@ -893,7 +916,13 @@ def test_fires_on_single_series_base_overlay_whose_layer_color_is_all_null() -> 
         y="value",
         color=None,
         style=BarChartStylePatch.model_validate(
-            {"legend": {"visible": True, "values": ["Alpha", "Beta"]}}
+            {
+                "key": {
+                    "visible": True,
+                    "type": "legend",
+                    "legend": {"values": ["Alpha", "Beta"]},
+                }
+            }
         ),
         layers=[LineLayer(type="line", y="target", color="kind", label="Alpha")],
     )
@@ -919,7 +948,13 @@ def test_silent_on_a_quantitative_gradient_legend_with_an_authored_tick_ladder()
 
     chart = _heatmap(
         style=HeatmapChartStylePatch.model_validate(
-            {"legend": {"visible": True, "values": ["0", "5000", "10000"]}}
+            {
+                "key": {
+                    "visible": True,
+                    "type": "legend",
+                    "legend": {"values": ["0", "5000", "10000"]},
+                }
+            }
         ),
     )
     rows = [
@@ -938,7 +973,7 @@ def test_fires_on_an_ordinal_date_like_color_when_an_entry_matches_nothing() -> 
     chart = _bar(
         color="cohort",
         style=BarChartStylePatch.model_validate(
-            {"legend": {"values": ["2024-Q1", "NOT_A_COHORT"]}}
+            {"key": {"legend": {"values": ["2024-Q1", "NOT_A_COHORT"]}}}
         ),
     )
     rows = [

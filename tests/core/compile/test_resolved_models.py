@@ -327,9 +327,7 @@ def test_resolved_area_style_uses_resolved_mark_types():
         area_mark=area_mark,
         line_mark=line_mark,
         point_mark=ResolvedPointMarkStyle(),
-        endpoint_labels=ResolvedEndpointLabelsConfig(
-            visible=False, label_offset=8.0, height=20.0
-        ),
+        endpoint_labels=ResolvedEndpointLabelsConfig(visible=False, label_offset=8.0),
         single_series_fill="#aaa",
         tooltip_format="",
         label_usable_ratio=0.8,
@@ -375,9 +373,7 @@ def test_resolved_line_style_uses_resolved_mark_type():
         ),
         line_mark=line_mark,
         point_mark=ResolvedPointMarkStyle(),
-        endpoint_labels=ResolvedEndpointLabelsConfig(
-            visible=False, label_offset=8.0, height=20.0
-        ),
+        endpoint_labels=ResolvedEndpointLabelsConfig(visible=False, label_offset=8.0),
         single_series_fill="#aaa",
         tooltip_format="",
         label_usable_ratio=0.8,

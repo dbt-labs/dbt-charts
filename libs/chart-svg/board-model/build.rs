@@ -40,8 +40,8 @@ const PATTERN_ROLES: &[&str] = &[
 ];
 /// `palette.HARD_FAIL_PALETTE_NAMES`.
 const HARD_FAIL_PALETTE_NAMES: &[&str] = &["hsv", "jet", "rainbow"];
-/// The keys of `palette.PALETTE_WARN_ALIASES`.
-const PALETTE_WARN_ALIASES: &[&str] = &["RdYlGn", "parula"];
+/// The keys of `palette.PALETTE_WARN_RECOMMENDATIONS`.
+const PALETTE_WARN_RECOMMENDATIONS: &[&str] = &["RdYlGn", "parula"];
 /// `codes_retired.RETIRED_WARNING_CODES`.
 const RETIRED_WARNING_CODES: &[&str] = &[
     "WARN-FANOUT-RISK",
@@ -182,7 +182,7 @@ fn main() {
         .chain(VEGA_SCHEME_NAMES.iter().map(|s| s.to_string()))
         .filter(|n| {
             !HARD_FAIL_PALETTE_NAMES.contains(&n.as_str())
-                && !PALETTE_WARN_ALIASES.contains(&n.as_str())
+                && !PALETTE_WARN_RECOMMENDATIONS.contains(&n.as_str())
         })
         .collect();
     let slots = category_slots(&defaults, &themes);
@@ -213,7 +213,7 @@ fn main() {
         ("VARIANT_WORDS", VARIANT_WORDS),
         ("PATTERN_ROLES", PATTERN_ROLES),
         ("HARD_FAIL_PALETTE_NAMES", HARD_FAIL_PALETTE_NAMES),
-        ("PALETTE_WARN_ALIASES", PALETTE_WARN_ALIASES),
+        ("PALETTE_WARN_RECOMMENDATIONS", PALETTE_WARN_RECOMMENDATIONS),
         ("VEGA_SCHEME_NAMES", VEGA_SCHEME_NAMES),
         ("RETIRED_WARNING_CODES", RETIRED_WARNING_CODES),
     ] {

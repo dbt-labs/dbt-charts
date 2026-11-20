@@ -1,3 +1,0 @@
-kind: Fixes
-body: A `support_table` strip row prints one unit and one decimal grid, as a table column does, with `<0.01` for values too small for it.
-time: 2026-11-16T15:39:19.175668-08:00

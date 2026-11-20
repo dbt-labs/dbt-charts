@@ -1,6 +1,6 @@
 //! Pie bind: what the rows and the authored style decide before any pixel is placed.
 //! The slices' fills, descriptions and links, the slice labels' text and ink, the center
-//! total's text, the legend's entries and the attached table's rows. It measures nothing.
+//! total's text and the attached table's rows. It measures nothing.
 
 use serde_json::Value;
 
@@ -9,9 +9,6 @@ use crate::conditional::{MarkKind, MarkPatch};
 use crate::common::{category_color, category_ink, category_scale_for, CategoryColorScale};
 use ::bind::rows::{row_str};
 use diagnostic::Diagnostic;
-use crate::families::table::bind::is_date_text;
-use crate::families::legend::{legend_title_text, VEGA_LEGEND_SYMBOL_LIMIT};
-use ::bind::legend::{fold_symbol_limit, resolve_legend_values};
 use ::bind::label_template::{Scope, Template};
 use ::bind::formats::locale::d3_format;
 use crate::Payload;
@@ -38,7 +35,6 @@ pub(crate) struct Wheel {
     pub(crate) labels: Vec<SliceLabel>,
     /// The center total's text when the total is visible.
     pub(crate) center: Option<String>,
-    pub(crate) legend: Option<LegendPlan>,
 }
 
 pub(crate) struct Slice {
@@ -56,16 +52,6 @@ pub(crate) struct SliceLabel {
     pub(crate) lines: Vec<String>,
     pub(crate) fill: String,
     pub(crate) weight: Option<String>,
-}
-
-/// The color legend as the rows decide it; layout limits its text and lays it out.
-pub(crate) struct LegendPlan {
-    /// `(label, fill)` per drawn entry, the folded overflow row included.
-    pub(crate) entries: Vec<(String, String)>,
-    /// Per entry, the raw color value its slice links by; `None` for the "+N more" fold note.
-    pub(crate) keys: Vec<Option<String>>,
-    pub(crate) title: String,
-    pub(crate) symbol_stroke: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,7 +93,7 @@ pub(crate) struct Attached {
 }
 
 /// The pie as `mode` draws it: a table attached in the hybrid and full-table modes, the
-/// labels and legend only where the mode draws them.
+/// labels only where the mode draws them.
 pub fn bind(payload: &Payload, mode: Mode) -> Result<Bound<'_>, Diagnostic> {
     let r = Resolved::of(payload)?;
     let (thetas, total) = super::pie_totals(&r.theta, &payload.rows)?;
@@ -145,7 +131,6 @@ fn bind_wheel(
     // The board's plan for this field, if it binds one (#7167): the arc fill defers to it
     // over the local `slice.index % palette.len()`.
     let category_scale = color_field.and_then(|cf| category_scale_for(&r.category_colors, cf));
-    let legend = if parts.legend { plan_legend(r, rows, types, category_scale)? } else { None };
     let patches = (0..thetas.len())
         .map(|idx| MarkPatch::of(r.style.conditional.as_ref(), &rows[idx], MarkKind::Slice).map_err(|e| format!("pie: {e}")))
         .collect::<Result<Vec<_>, String>>()?;
@@ -156,7 +141,7 @@ fn bind_wheel(
     };
     let center = bind_center(r, total)?.filter(|_| parts.total);
     let slices = bind_slices(r, rows, types, thetas, total, color_field, category_scale, patches)?;
-    Ok(Wheel { slices, labels, center, legend })
+    Ok(Wheel { slices, labels, center })
 }
 
 fn bind_center(r: &Resolved, total: f64) -> Result<Option<String>, String> {
@@ -396,112 +381,6 @@ fn identity_string(row: &serde_json::Map<String, Value>, field: Option<&String>)
             other => other.to_string(),
         })
         .unwrap_or_default()
-}
-
-/// The pie's color legend over the color scale's domain, up to the text a layout still
-/// has to limit and lay out. `None` when no legend is drawn. Every legend shape this port
-/// does not draw refuses by name.
-fn plan_legend(
-    r: &Resolved,
-    rows: &[serde_json::Map<String, Value>],
-    types: &column_types::ColumnTypes,
-    category_scale: Option<&CategoryColorScale>,
-) -> Result<Option<LegendPlan>, String> {
-    let Some(color_field) = color_field_of(r).filter(|_| r.legend.visible) else {
-        return Ok(None);
-    };
-    let cfg = &r.legend;
-    let channel = &r.resolved_channels["color"];
-    // A non-series channel is a gradient legend; a series over numeric data
-    // is a quantitative scale, which draws a gradient bar, not symbols.
-    if channel.mode != "series" {
-        return Err(format!("pie: a legend over a {:?} color channel (gradient legend) is not ported", channel.mode));
-    }
-    match channel.quantitative_data {
-        Some(false) => {}
-        Some(true) => return Err("pie: a legend over a quantitative color field (gradient legend) is not ported".into()),
-        None => return Err("pie: a visible legend needs the color channel's quantitative_data flag (resolver required)".into()),
-    }
-    if cfg.symbol_shape.is_some() {
-        return Err("pie: legend.symbol_shape (VL symbolType) is not ported".into());
-    }
-    if cfg.symbol_fill.is_some() {
-        return Err("pie: legend.symbol_fill (VL symbolFillColor) is not ported".into());
-    }
-    if cfg.values.as_ref().is_some_and(Vec::is_empty) {
-        return Err("pie: legend.values: [] (an empty legend) is not ported".into());
-    }
-    if r.style.slice_mark.opacity.is_some() {
-        return Err("pie: slice opacity under a visible legend (the symbols carry it) is not ported".into());
-    }
-    if !matches!(cfg.direction.as_str(), "vertical" | "horizontal") {
-        return Err(format!("pie: legend.direction {:?} is not vertical or horizontal", cfg.direction));
-    }
-    if !matches!(cfg.position.edge.as_str(), "right" | "left" | "top" | "bottom") {
-        return Err(format!("pie: legend.position edge {:?} is not a side of the plot", cfg.position.edge));
-    }
-
-    // The scale's domain: the color values in row order, each once; a null
-    // draws no entry.
-    let color_kind = types.get(color_field)?;
-    let mut domain: Vec<&str> = Vec::new();
-    for row in rows {
-        match row.get(color_field) {
-            None | Some(Value::Null) => {}
-            Some(value @ Value::String(text)) => {
-                if color_kind.is_temporal() || is_date_text(color_kind, Some(value)) {
-                    return Err("pie: a legend over a date-like color field (temporal scale) is not ported".into());
-                }
-                if !domain.contains(&text.as_str()) {
-                    domain.push(text);
-                }
-            }
-            Some(other) => {
-                return Err(format!("pie: a legend over the non-string color value {other} is not ported"));
-            }
-        }
-    }
-    // A linked legend lists the options of its variable, whether or not a slice holds them.
-    if let Some(options) = r.legend_view.as_ref().and_then(|view| view.series()) {
-        domain = options.iter().map(String::as_str).collect();
-    }
-    let fills: Vec<String> = domain
-        .iter()
-        .enumerate()
-        .map(|(idx, value)| {
-            let paint = match category_scale {
-                Some(scale) => crate::common::category_paint(scale, value, &r.palette, &r.patterns)?,
-                None => r.patterns.category(idx, &r.palette[idx % r.palette.len()])?,
-            };
-            Ok(paint.swatch("none", 0.0).fill)
-        })
-        .collect::<Result<_, String>>()?;
-
-    if domain.is_empty() {
-        return Err("pie: a legend over a color field with no values is not ported".into());
-    }
-    // The scale's domain stays in row order; an authored `legend.values`
-    // (`apply_legend_entry_order`) picks and orders the entries drawn, each
-    // keeping its own swatch.
-    let order: Vec<usize> = match &cfg.values {
-        None => (0..domain.len()).collect(),
-        Some(authored) => resolve_legend_values(authored, &domain, None),
-    };
-
-    let limit = cfg.symbol_limit.unwrap_or(VEGA_LEGEND_SYMBOL_LIMIT) as usize;
-    let mut entries: Vec<(String, String)> =
-        order.iter().map(|&idx| (domain[idx].to_string(), fills[idx].clone())).collect();
-    let mut keys: Vec<Option<String>> = order.iter().map(|&idx| Some(domain[idx].to_string())).collect();
-    if let Some((kept, label)) = fold_symbol_limit(entries.len(), limit) {
-        let folded = (label, entries[kept].1.clone());
-        entries.truncate(kept);
-        entries.push(folded);
-        keys.truncate(kept);
-        keys.push(None);
-    }
-    let title = legend_title_text(color_field, cfg, &r.field_labels)?;
-    let symbol_stroke = r.style.slice_mark.stroke.as_ref().and_then(|s| s.color.clone());
-    Ok(Some(LegendPlan { entries, keys, title, symbol_stroke }))
 }
 
 fn bind_attached(

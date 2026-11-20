@@ -1,7 +1,7 @@
 //! `style/theme/pie.py`: the pie and donut chart family.
 
 use crate::primitives::{ColorStyle, PatternStyle};
-use crate::style::chart_base::{ChartStyleBase, PieLegendedChartStyleBase, TitledChartStyleBase};
+use crate::style::chart_base::{ChartStyleBase, PieKeyedChartStyleBase, TitledChartStyleBase};
 use crate::style::marks::TotalStyle;
 use crate::chart::conditional_formatting::Predicate;
 use crate::style::bar::misplaced_defaults;
@@ -61,7 +61,7 @@ pub struct PieChartStyle {
     #[flatten]
     pub titled: TitledChartStyleBase,
     #[flatten]
-    pub legended: PieLegendedChartStyleBase,
+    pub keyed: PieKeyedChartStyleBase,
     #[flatten]
     pub base: ChartStyleBase,
     /// Aspect ratio (width/height) of the pie chart viewport.

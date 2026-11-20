@@ -71,7 +71,7 @@ def _endpoint_labels(visible: bool = False):
         ResolvedEndpointLabelsConfig,
     )
 
-    return ResolvedEndpointLabelsConfig(visible=visible, label_offset=8.0, height=20.0)
+    return ResolvedEndpointLabelsConfig(visible=visible, label_offset=8.0)
 
 
 def fixture_chart_for_type(chart_type: str):
@@ -146,6 +146,9 @@ def bar_style() -> ResolvedBarStyle:
     unconditionally (``continuous_bar_size_prop``).
     """
     from dbt_charts.core.compile.models.style.resolved import ResolvedBarMarkStyle
+    from dbt_charts.core.compile.models.style.resolved._cartesian import (
+        ResolvedBarEndpointLabelsConfig,
+    )
     from dbt_charts.core.compile.models.style.resolved.bar import (
         ResolvedBarTornOutlierStyle,
     )
@@ -155,7 +158,9 @@ def bar_style() -> ResolvedBarStyle:
     return ResolvedBarStyle(
         series_label=_series_label(),
         mark=ResolvedBarMarkStyle(gap=3.0, min_size=4.0, max_size=20.0),
-        endpoint_labels=_endpoint_labels(),
+        endpoint_labels=ResolvedBarEndpointLabelsConfig(
+            visible=False, label_offset=8.0, height=20.0
+        ),
         single_series_fill=SINGLE_SERIES_FILL,
         tooltip_format=ResolvedFormat(spec=""),
         label_font_size=11.0,

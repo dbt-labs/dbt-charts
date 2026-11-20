@@ -21,7 +21,10 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedPieChart,
 )
 from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, resolved_as
-from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
+from dbt_charts.core.compile.models.style.authored import (
+    LegendStylePatch,
+    TableChartStylePatch,
+)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPieStyle,
@@ -31,10 +34,6 @@ from dbt_charts.core.compile.models.style.resolved import (
 from dbt_charts.core.compile.models.style.theme import (
     SliceLabelsStyle,
     SliceMarkStyle,
-)
-from dbt_charts.core.compile.resolve.chart._axes import (
-    color_legend_entries,
-    legend_wrap_columns,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _channels_for,
@@ -52,8 +51,8 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
-    _effective_requested_alias_palette,
     _effective_single_series_fill,
+    _effective_warned_palette,
     _pin_companions,
     _unchanneled_fill,
     _with_color_tokens,
@@ -90,8 +89,8 @@ from dbt_charts.core.compile.resolve.style.inherit_resolver import (
     settled,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import (
-    merge_authored_position,
-    merge_legend,
+    cascaded_key,
+    decide_legend_position,
     placed_align,
     placed_edge,
 )
@@ -331,9 +330,8 @@ def _resolve_pie(
     # The key's edge as authored at any tier; None leaves the attached table to
     # the width heuristic. (The resolved legend always carries a concrete edge,
     # which cannot say whether anyone chose it.)
-    authored_position = merge_authored_position(
-        chart_style_context.cascaded.charts.legend.position, pie.legend
-    )
+    key = cascaded_key(chart_local_style_context.key, direct=True)
+    authored_position = key.position
     authored_edge = placed_edge(authored_position.edge)
 
     slice_authored = (
@@ -415,9 +413,21 @@ def _resolve_pie(
     # What the data alone allows: whether any slice clears the label floor and
     # whether a slice is too small to draw. Whether the box lets the labels
     # stand is the size stage's call (`pie_layout`), never made here.
-    labeled_mode: Literal["direct", "hybrid", "none"]
+    # The key decides first: `legend` is the full table alone (nothing labeled),
+    # `direct` resolves to wedge labels, not the full table, a hidden key is the
+    # bare wheel (nothing labeled, no table). The size stage may still fall back
+    # when the labels do not fit.
+    labeled_mode: Literal["direct", "hybrid", "none", "bare"]
     if not shares:
         labeled_mode = "direct"
+    elif not key.visible:
+        labeled_mode = "bare"
+    elif key.type == "legend":
+        labeled_mode = "none"
+    elif key.type == "direct":
+        # Names ride on the wedges; every slice too small to label goes in the
+        # overflow table, not the full table.
+        labeled_mode = "hybrid" if min(shares) <= WEDGE_LABEL_MIN_SHARE else "direct"
     elif not any(share > WEDGE_LABEL_MIN_SHARE for share in shares):
         labeled_mode = "none"
     elif min(shares) < INVISIBLE_SLICE_SHARE:
@@ -425,7 +435,10 @@ def _resolve_pie(
     else:
         labeled_mode = "direct"
     hybrid_attachment = attachment_for("hybrid") if labeled_mode == "hybrid" else None
-    full_attachment = attachment_for("full_table") if shares else None
+    full_attachment = (
+        attachment_for("full_table") if shares and labeled_mode != "bare" else None
+    )
+    labels_shown = key.visible and key.type != "legend"
 
     slice_mark = pie.marks.slice
     effective_slice_mark = SliceMarkStyle(
@@ -441,27 +454,28 @@ def _resolve_pie(
         if title_font is ...
         else title_font
     )
+    base_kwargs = _base_kwargs(
+        normalized,
+        chart_style_context,
+        channels,
+        chart_local_style_context,
+        palette=eff_palette,
+        warned_palette=_effective_warned_palette(chart_style_context, pie),
+        automatic_link_candidate=automatic_link_candidate,
+        layout_padding=pie.padding,
+        suppress_legend=True,
+        legendless=True,
+        wrap_columns=None,
+    )
+    # A pie draws no legend; the resolved one carries where its table sits.
+    placed = decide_legend_position(authored_position, top_strip=False, radial=True)
+    base_kwargs["legend"] = merge_unset(
+        base_kwargs["legend"],
+        LegendStylePatch.model_validate({"position": placed.model_dump()}),
+    )
     return ResolvedPieChart(
         pattern=pattern,
-        **_base_kwargs(
-            normalized,
-            chart_style_context,
-            channels,
-            pie.legend,
-            eff_palette,
-            requested_alias_palette=_effective_requested_alias_palette(
-                chart_style_context, pie
-            ),
-            automatic_link_candidate=automatic_link_candidate,
-            layout_padding=pie.padding,
-            suppress_legend=True,
-            radial_legend=True,
-            wrap_columns=legend_wrap_columns(
-                color_legend_entries(channels, data, resolved_color_field),
-                width,
-                merge_legend(chart_style_context.legend, pie.legend),
-            ),
-        ),
+        **base_kwargs,
         **_shared_kwargs(normalized, display_text, chart_local_style_context),
         tooltip=resolve_tooltip(normalized, data, chart_style_context.formats),
         chart_type="pie",
@@ -492,7 +506,9 @@ def _resolve_pie(
         hybrid_heading_gap=HYBRID_HEADING_GAP_PX,
         presentation_fingerprint=pie_presentation_fingerprint(data),
         slice_label_indices=tuple(
-            index for index, lines in enumerate(slice_label_lines) if lines
+            index
+            for index, lines in enumerate(slice_label_lines)
+            if lines and labels_shown
         ),
         labeled_mode=labeled_mode,
         hybrid_attachment=hybrid_attachment,

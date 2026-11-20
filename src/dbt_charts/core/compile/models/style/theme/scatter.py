@@ -19,8 +19,8 @@ from dbt_charts.core.compile.models.primitives import SizeScaleStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
+    _LegendKeyedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
-    _SideLegendedChartStyleBaseAllOptional,
 )
 from dbt_charts.core.compile.models.style.theme.axis_conditional import (
     AxisConditionalPredicate,
@@ -58,7 +58,7 @@ class ScatterLayerStyle(BaseModel):
 
 class _ScatterChartStyleBase(
     _CartesianChartStyle,
-    _SideLegendedChartStyleBaseAllOptional,
+    _LegendKeyedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
     _AnnotatedChartStyleMixin,
 ):

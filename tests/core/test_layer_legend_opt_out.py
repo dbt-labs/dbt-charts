@@ -1,4 +1,4 @@
-"""A layer can decline its legend entry (`legend: false`), and a reference line
+"""A layer can decline its key entry (`key: false`), and a reference line
 (a layer whose y never changes) draws no automatic point marks."""
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def _target_dots(svg: str) -> int:
 def test_layer_legend_defaults_to_true() -> None:
     layer = _layer_ta.validate_python({"type": "line", "y": "goal"})
     assert isinstance(layer, LineLayer)
-    assert layer.legend is True
+    assert layer.key is True
 
 
 def test_a_layer_takes_a_legend_entry_by_default() -> None:
@@ -99,7 +99,7 @@ def test_a_layer_takes_a_legend_entry_by_default() -> None:
 
 def test_legend_false_drops_the_entry_and_keeps_the_mark() -> None:
     with_entry = render_board_to_svg(_board(layer=_target()))
-    declined = render_board_to_svg(_board(layer=_target("        legend: false\n")))
+    declined = render_board_to_svg(_board(layer=_target("        key: false\n")))
     assert legend_label_order(declined) == ["North", "South"]
     assert _lines(declined) == _lines(with_entry)
 
@@ -152,7 +152,7 @@ def test_a_declined_layer_on_a_bar_base_draws_no_entry(x: str, layer_type: str) 
     layer = f"      - type: {layer_type}\n        y: goal\n        label: Goal\n"
     kept = render_board_to_svg(_bar_board(x=x, layer=layer))
     declined = render_board_to_svg(
-        _bar_board(x=x, layer=layer + "        legend: false\n")
+        _bar_board(x=x, layer=layer + "        key: false\n")
     )
     assert "Goal" in legend_label_order(kept)
     assert legend_label_order(declined) == ["Revenue"]
@@ -162,7 +162,7 @@ def test_a_numerically_colored_layer_declines_its_gradient_legend() -> None:
     layer = "      - type: scatter\n        y: goal\n        color: grade\n"
     kept = render_board_to_svg(_bar_board(x="name", layer=layer))
     declined = render_board_to_svg(
-        _bar_board(x="name", layer=layer + "        legend: false\n")
+        _bar_board(x="name", layer=layer + "        key: false\n")
     )
     assert "layer_grad" in kept
     assert "layer_grad" not in declined
@@ -207,16 +207,17 @@ rows:
 
 
 def test_a_field_colored_layer_declines_its_values() -> None:
-    svg = render_board_to_svg(_field_colored("        legend: false", ""))
+    svg = render_board_to_svg(_field_colored("        key: false", ""))
     assert legend_label_order(svg) == ["North", "Plan"]
     svg = render_board_to_svg(
-        _field_colored("        legend: false", "        legend: false")
+        _field_colored("        key: false", "        key: false")
     )
-    assert legend_label_order(svg) == ["North"]
+    # Every layer declined: only the base series is left to name, and the rail does.
+    assert legend_label_order(svg) == []
 
 
 def test_a_later_layer_keeping_its_entries_restores_a_declined_value() -> None:
-    svg = render_board_to_svg(_field_colored("        legend: false", ""))
+    svg = render_board_to_svg(_field_colored("        key: false", ""))
     assert "Plan" in legend_label_order(svg)
 
 
@@ -256,6 +257,6 @@ rows:
 """
 
     kept = render_board_to_svg(board(""))
-    declined = render_board_to_svg(board("        legend: false"))
+    declined = render_board_to_svg(board("        key: false"))
     assert "role-legend-title" in kept
     assert "role-legend-title" not in declined

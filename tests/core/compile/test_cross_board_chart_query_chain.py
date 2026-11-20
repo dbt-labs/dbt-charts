@@ -829,7 +829,7 @@ rows:
 
         assert result.success, [str(e) for e in result.errors]
         assert result.board is not None
-        legend = result.board.charts["mqls_by_week"].style.legend
+        legend = result.board.charts["mqls_by_week"].style.key.legend
         assert legend.position.edge == "bottom"
         assert any(
             w.code == "WARN-SCHEMA-MIGRATED"

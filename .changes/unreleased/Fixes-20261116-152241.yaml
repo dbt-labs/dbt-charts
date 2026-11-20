@@ -1,3 +1,0 @@
-kind: Fixes
-body: A paged table on a live board is sized to the page it shows, and a taller page scrolls inside it instead of leaving blank space under every page.
-time: 2026-11-16T15:22:41.251661-08:00

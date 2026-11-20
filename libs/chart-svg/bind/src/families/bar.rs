@@ -107,7 +107,7 @@ fn refuse_layers(chart: &BarChart) -> Result<(), Diagnostic> {
             ("`query:`", base.query.is_some()),
             ("`x:`", base.x.is_some()),
             ("`color:`", base.color.is_some()),
-            ("`legend: false`", !base.legend),
+            ("`key: false`", !base.key),
         ];
         if let Some((field, _)) = unported.into_iter().find(|(_, set)| *set) {
             return Err(unsupported(refuse!("a bar line layer with {field} is not supported")));
@@ -478,7 +478,7 @@ pub fn bind(
             rail: None,
             entries: Vec::new(),
             asks_top_strip: false,
-            authored: AuthoredLegend::Side(bars.derived.legend.clone()),
+            authored: AuthoredLegend { style: bars.derived.legend.clone(), visible: bars.derived.key_visible },
         },
         legends: bars.legend.into_iter().collect(),
         support: None,

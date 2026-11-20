@@ -199,15 +199,13 @@ class TestColumnDefaultsMaterializedAtResolve:
         assert resolved.columns["c2"].width == 120
         assert resolved.columns["c2"].max_width is None
 
-    def test_pivot_with_no_explicit_columns_excludes_measure_but_keeps_row_dims(
+    def test_pivot_with_no_explicit_columns_resolves_measure_and_row_dims(
         self,
     ) -> None:
-        """A pivoting chart's measure column ("amount") has no key space at
-        resolve — its real leaf/value columns only exist after render's pivot
-        transform, so column_defaults is applied to it there instead (see
-        render-side coverage below). Row/pivot-dimension columns that survive
-        pivoting unchanged ("region", "month") are ordinary inferred columns
-        and get column_defaults here like any other."""
+        """A pivoting chart's measure ("amount") resolves like any column,
+        over every value it holds; render fans that entry to its leaf
+        columns. Row/pivot-dimension columns ("region", "month") are ordinary
+        inferred columns too."""
         chart = TableChart(
             id="pivoted",
             type="table",
@@ -225,7 +223,7 @@ class TestColumnDefaultsMaterializedAtResolve:
             chart_style_context=_BOARD_STYLE,
         )
         assert resolved.columns is not None
-        assert set(resolved.columns) == {"region", "month"}
+        assert set(resolved.columns) == {"region", "month", "amount"}
         assert resolved.columns["region"].align == "center"
         assert resolved.columns["month"].align == "center"
 
@@ -289,13 +287,11 @@ class TestColumnDefaultsMaterializedAtResolve:
         assert "Amount" in svg and "Orders" in svg
         assert "#123456" in svg
 
-    def test_pivot_values_omitted_still_excludes_inferred_measures(self) -> None:
-        """Omitting `values:` (inferred from data shape) must not change
-        which columns resolve treats as measures — an inferred measure gets
-        no key space at resolve either, same as an explicit one, so render's
-        leaf-key expansion still finds no pre-existing label-less entry to
-        wrongly reuse (which would leak the raw leaf key, including the
-        `\\x1e` separator, into the rendered header)."""
+    def test_pivot_values_omitted_resolves_inferred_measures(self) -> None:
+        """Omitting `values:` (inferred from data shape) resolves the
+        inferred measures like explicit ones; the fanned entry must not leak
+        the raw leaf key, including the `\\x1e` separator, into the
+        rendered header."""
         data = [
             {"region": "US", "month": "Jan", "amount": 100, "orders": 5},
             {"region": "EU", "month": "Jan", "amount": 150, "orders": 7},
@@ -309,9 +305,7 @@ class TestColumnDefaultsMaterializedAtResolve:
         )
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         assert resolved.columns is not None
-        assert "amount" not in resolved.columns
-        assert "orders" not in resolved.columns
-        assert set(resolved.columns) == {"region", "month"}
+        assert set(resolved.columns) == {"region", "month", "amount", "orders"}
 
         svg = render_table_svg(
             resolved, data, board_style=resolve_style(get_theme_style())
@@ -341,7 +335,13 @@ class TestColumnDefaultsMaterializedAtResolve:
         )
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         assert resolved.columns is not None
-        assert set(resolved.columns) == {"row_sort", "cell_column", "c1", "c2"}
+        assert set(resolved.columns) == {
+            "row_sort",
+            "cell_column",
+            "cell_value",
+            "c1",
+            "c2",
+        }
 
         svg = render_table_svg(
             resolved, data, board_style=resolve_style(get_theme_style())

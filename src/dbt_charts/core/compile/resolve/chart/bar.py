@@ -27,7 +27,7 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedBarTotalLabel,
 )
 from dbt_charts.core.compile.models.style.resolved._cartesian import (
-    ResolvedEndpointLabelsConfig,
+    ResolvedBarEndpointLabelsConfig,
 )
 from dbt_charts.core.compile.models.style.theme import (
     AxisXStyle,
@@ -46,7 +46,6 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     _apply_multiples_mirror,
     _bake_ay_orient,
     _bake_ay_position_left,
-    _cascaded_legend,
     _edge_or_none,
     _rail_off_for_layers,
     _rail_off_for_multiples,
@@ -114,8 +113,8 @@ from dbt_charts.core.compile.resolve.chart._marks import (
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
-    _effective_requested_alias_palette,
     _effective_single_series_fill,
+    _effective_warned_palette,
     _resolved_series_label,
 )
 from dbt_charts.core.compile.resolve.chart._pattern import (
@@ -161,7 +160,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.compile.resolve.style.chart_style import funnel_context
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset, settled
 from dbt_charts.core.compile.resolve.style.legend_position import (
-    merge_legend,
+    cascaded_key,
 )
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
@@ -215,8 +214,8 @@ def _bar_rail_for_stack(
 ) -> RailRequest:
     """Direct labeling is what ``auto`` means; the disqualifiers below turn it off.
 
-    A requested rail (``edge: endpoints``) or a ruled-out one (a placed legend)
-    is returned untouched: with ``endpoints``, grouped bars label at their bar
+    A requested rail (``type: direct``) or a ruled-out one (a placed legend)
+    is returned untouched: with ``direct``, grouped bars label at their bar
     tops, and the shapes render refuses (a negative measure, a sorted or
     center-stacked horizontal rail, ``multiples:``) raise there naming the
     conflict. A horizontal grouped bar has no rail to draw, so it keeps a
@@ -304,7 +303,7 @@ def _every_series_reaches_the_anchor_row(
     of the data going forward.
 
     Steering the default back to a legend is the honest treatment. An explicit
-    ``edge: endpoints`` still reaches the seam math, which is
+    ``type: direct`` still reaches the seam math, which is
     correct and tested — it is only unsafe to *choose* unprompted.
     """
     color = normalized.color
@@ -758,16 +757,11 @@ def _resolve_bar(
         )
     _check_funnel_labels(normalized, bar.marks.bar)
     bar_conditional = resolve_mark_conditional(bar.conditional, data, y=normalized.y)
-    # Computed here (rather than at their original, later call sites) because
-    # the plot-height floor check below needs both before axes are built:
-    # the legend the classifier judges must be the legend that actually
-    # renders — chart_style_context.legend (board+chart-level style.legend)
-    # merged with bar.legend (family-scoped style.bar.legend), the same merge
-    # _base_kwargs performs internally. Neither depends on axis/tick
-    # resolution, so hoisting them is a pure reordering. Reused below by the
-    # fit-rule call, `_stack_legend_should_yield`, and the floor check --
-    # one estimate for all three, never recomputed.
-    merged_legend = merge_legend(chart_style_context.legend, bar.legend)
+    # The plot-height floor check below needs both before axes are built, and
+    # the legend it judges must be the one that renders: the chart-local
+    # context's, the one `_base_kwargs` reads. Reused by
+    # the fit-rule call, `_stack_legend_should_yield` and the floor check.
+    merged_legend = chart_local_style_context.legend
     plot_height_estimate = estimate_cartesian_plot_height(normalized, bar, width)
     # Flat chart.stack overrides style.bar.stack; fall through to the merged bar
     # style (which already applied style.bar.stack → board theme cascade) so that
@@ -870,13 +864,13 @@ def _resolve_bar(
         orientation != "horizontal"
         and layered_endpoint_rail_fires(
             layered_endpoint_rail_shape(normalized.x, normalized.y),
-            [layer.color is None for layer in normalized.layers],
+            [layer.color is None for layer in normalized.layers if layer.key],
         )
     )
     # A horizontal bar's color-series rail (EndpointLabelFeature.applies_to()'s
     # horizontal branch) only fires on a genuinely stacked chart: a grouped
     # (stack: none) horizontal bar never gets a rail, even with a color series
-    # and an authored `edge: endpoints`. Suppressing the legend off the
+    # and an authored `type: direct`. Suppressing the legend off the
     # color-series term there would leave the series named nowhere.
     _horizontal_is_grouped = orientation == "horizontal" and resolved_stack in (
         None,
@@ -898,17 +892,16 @@ def _resolve_bar(
     eff_palette = inked_palette(
         _effective_palette(chart_style_context, primary), pattern
     )
+    direct = chart_local_style_context.key.direct
     series_label = _resolved_series_label(
         chart_style_context,
+        direct.font,
         eff_palette,
         width,
         chart_local_style_context.ink_canvas,
     )
     # Resolved after orientation: the disqualifier chain below is specific to
-    # the horizontal rail. `merged_legend` was hoisted above (with
-    # `plot_height_estimate`) for the floor check; `_base_kwargs` further
-    # down still takes the unmerged `bar.legend` patch (as every other family
-    # resolver does) and repeats the same merge internally.
+    # the horizontal rail.
     # Bar wants a top legend whenever it isn't stacked -- its own long-
     # standing default, unconditional, even with an overlay layer to name: a
     # stacked bar's segments read better against a side legend, and stacking
@@ -972,9 +965,7 @@ def _resolve_bar(
     _subtitle_height_px = subtitle_cost_px(
         normalized.subtitle, chart_style_context.title.subtitle.font
     )
-    authored_position, authored_visible = _cascaded_legend(
-        chart_style_context, bar.legend
-    )
+    key = cascaded_key(chart_local_style_context.key, direct=True)
 
     def rail_for(request: RailRequest) -> RailRequest:
         return _bar_rail_for_stack(
@@ -994,14 +985,12 @@ def _resolve_bar(
     naming = cartesian_series_naming(
         normalized,
         channels,
-        authored_position,
-        authored_visible,
+        key,
         merged_legend,
         width,
         rail_for,
-        bar.endpoint_labels,
         endpoint_label_has_layers=endpoint_label_has_layers,
-        has_layers=bool(normalized.layers),
+        has_layers=any(layer.key for layer in normalized.layers),
         rail_eligible_for_suppression=_horizontal_series_rail_fires,
         suppress_wide_measure_series=wide_measure_series,
         multiples_wide_measure_series=wide_measure_series,
@@ -1080,7 +1069,7 @@ def _resolve_bar(
     # keeps this a miss rather than a false positive, the direction this
     # check errs in everywhere else.
     _unlabeled_layers = sum(
-        1 for layer in normalized.layers if layer.color is None and layer.legend
+        1 for layer in normalized.layers if layer.color is None and layer.key
     )
     if legend_entry_count:
         _floor_entry_count = legend_entry_count + _unlabeled_layers
@@ -1146,7 +1135,11 @@ def _resolve_bar(
         axis_title_height_px=_axis_title_height_px,
     )
     plot_starved = estimated_plot_height < plot_height_floor_px(floor_card_height)
-    endpoint_labels = naming.endpoint_labels
+    endpoint_labels = ResolvedBarEndpointLabelsConfig(
+        visible=naming.rail,
+        label_offset=direct.offset,
+        height=direct.height,
+    )
     _reject_dual_axis_layered_endpoint_labels(
         normalized.id,
         normalized.layers,
@@ -1348,11 +1341,9 @@ def _resolve_bar(
         normalized,
         chart_style_context,
         channels,
-        bar.legend,
+        chart_local_style_context,
         eff_palette,
-        requested_alias_palette=_effective_requested_alias_palette(
-            chart_style_context, primary
-        ),
+        warned_palette=_effective_warned_palette(chart_style_context, primary),
         automatic_link_candidate=automatic_link_candidate,
         layout_padding=bar.padding,
         suppress_legend=naming.suppress_legend,
@@ -1360,7 +1351,6 @@ def _resolve_bar(
         top_legend=naming.top_legend,
         wrap_columns=naming.wrap_columns,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
-        legend_hidden_under_edge=naming.hidden_under_edge,
     )
     resolved_layers = _resolve_layer_list(
         normalized.layers,
@@ -1611,6 +1601,7 @@ def _resolve_histogram(
     # histogram reuses ResolvedBarStyle; these bar-only fields are unread by
     # the histogram emit path (no stack, no endpoint labels, no grouped x offset).
     _tf = resolve_title_font(chart_local_style_context, width)
+    hist_direct = chart_local_style_context.key.direct
     hist_labels, hist_label_is_house = _label_format_fallback(
         hist.marks.bar.labels,
         ResolvedBarLabels,
@@ -1633,11 +1624,9 @@ def _resolve_histogram(
             normalized,
             chart_style_context,
             channels,
-            hist.legend,
+            chart_local_style_context,
             _effective_palette(chart_style_context, primary),
-            requested_alias_palette=_effective_requested_alias_palette(
-                chart_style_context, primary
-            ),
+            warned_palette=_effective_warned_palette(chart_style_context, primary),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=hist.padding,
             wrap_columns=None,  # a histogram has one series, no legend entries
@@ -1665,6 +1654,7 @@ def _resolve_histogram(
         style=ResolvedBarStyle(
             series_label=_resolved_series_label(
                 chart_style_context,
+                hist_direct.font,
                 _effective_palette(chart_style_context, primary),
                 width,
                 chart_local_style_context.ink_canvas,
@@ -1682,11 +1672,10 @@ def _resolve_histogram(
             # per-row value for a rail to anchor to — it would place labels
             # against a measure the chart never plots. Bar's slot supplies the
             # rest of the style; this one field is off for the family.
-            endpoint_labels=ResolvedEndpointLabelsConfig.model_validate(
-                {
-                    **chart_style_context.bar.endpoint_labels.model_dump(),
-                    "visible": False,
-                }
+            endpoint_labels=ResolvedBarEndpointLabelsConfig(
+                visible=False,
+                label_offset=hist_direct.offset,
+                height=hist_direct.height,
             ),
             label_is_house=hist_label_is_house,
             # Read, but it can never produce a threshold: a histogram emits

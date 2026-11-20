@@ -188,11 +188,11 @@ def _area(
     return resolved
 
 
-# dbt-grays rung 7 on the light themes that set no rule ink of their own; paper
+# dbt-grays rung 8 on the light themes that set no rule ink of their own; paper
 # and stark keep theirs (a cream, and stark's near-black).
 RULE_INK = {
-    "clarity": "#8A8C8F",
-    "vivid": "#8A8C8F",
+    "clarity": "#626366",
+    "vivid": "#626366",
     "paper": "#6F685D",
     "stark": "#313233",
 }

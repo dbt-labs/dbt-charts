@@ -49,7 +49,7 @@ class TestEditorialThemeBarLegend:
         )
 
         resolved = resolve_chart_style_context(get_theme_style("clarity"))
-        assert resolved.pre_style.charts.legend.visible == "auto"
+        assert resolved.pre_style.charts.key.type == "auto"
 
     def test_editorial_bar_legend_inherits_auto(self):
         """bar charts in editorial theme inherit the global `auto` legend."""
@@ -110,8 +110,11 @@ class TestEditorialThemeBarLegend:
 
         board = resolve_chart_style_context(get_theme_style("clarity"))
         effective = build_chart_style_context(board, LineChart(id="t", type="line"))
-        assert effective.pre_style.charts.line.legend is None
-        assert board.pre_style.charts.legend.visible == "auto"
+        assert (
+            effective.pre_style.charts.line.key is None
+            or effective.pre_style.charts.line.key.legend is None
+        )
+        assert board.pre_style.charts.key.type == "auto"
 
     def test_no_chart_type_returns_base_charts(self):
         """Without per-family legend overrides and no style, returns board.charts unchanged."""

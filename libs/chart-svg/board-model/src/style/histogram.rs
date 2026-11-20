@@ -4,7 +4,7 @@
 //! `heatmap`, its `None` only meant "copy the global rule mark", so the field is the total model.
 
 use crate::style::chart_base::{
-    CartesianChartStyle, QuantitativeAxisChartStyleMixin, SideLegendedChartStyleBase,
+    CartesianChartStyle, QuantitativeAxisChartStyleMixin, LegendKeyedChartStyleBase,
 };
 use crate::style::marks::{BarMarkStyle, RuleMarkStyle};
 use model_derive::Model;
@@ -24,7 +24,7 @@ pub struct HistogramChartStyle {
     #[flatten]
     pub quantitative: QuantitativeAxisChartStyleMixin,
     #[flatten]
-    pub legended: SideLegendedChartStyleBase,
+    pub keyed: LegendKeyedChartStyleBase,
     #[flatten]
     pub cartesian: CartesianChartStyle,
     /// Maximum number of bins for auto-binning.

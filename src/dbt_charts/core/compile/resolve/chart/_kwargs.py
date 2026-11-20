@@ -43,7 +43,6 @@ from dbt_charts.core.compile.models.style.resolved import ResolvedChartDefaults
 from dbt_charts.core.compile.models.style.theme import (
     AxisLabelStyle,
     BarChartStyle,
-    ChartLegendStyle,
     LegendEdge,
     PaddingStyle,
     PieChartStyle,
@@ -64,16 +63,12 @@ from dbt_charts.core.compile.resolve.style.category_colors import (
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.legend_position import (
+    cascaded_key,
     decide_legend_direction,
     decide_legend_position,
-    merge_authored_direction,
-    merge_authored_position,
-    merge_authored_title_visible,
-    merge_authored_visible,
-    merge_legend,
     validate_cartesian_position,
 )
-from dbt_charts.core.compile.resolve.style.palette import substitute_for_alias
+from dbt_charts.core.compile.resolve.style.palette import recommended_palette_for
 from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.compile.template.display_text import (
     ChartDisplayText,
@@ -99,23 +94,22 @@ __all__ = [
 AutomaticLinkCandidate = str | None
 
 
-class _LegendPositionOverridePatch(BaseModel):
-    """All-Optional carrier for ``ResolvedLegendStyle.position_overridden_by_width``
-    and ``hidden_under_edge`` -- the legend folds below with no
-    ``LegendStylePatch`` to ride: those fields are resolved-only (declared on
-    ``ResolvedLegendStyle``, not on ``LegendStyle``/``LegendStylePatch``, the
-    authored surface), so an author can never set them even through this carrier. Exists purely so
-    ``_base_kwargs`` can fold it in through the same construction-final
-    ``merge_onto_base`` path as every other legend decision below, instead of
-    a post-hoc ``model_copy(update=...)`` on the already-built
+class _ResolvedLegendFacts(BaseModel):
+    """All-Optional carrier for the resolved-only legend facts: ``visible``,
+    and ``position_overridden_by_width``. They are
+    declared on ``ResolvedLegendStyle``, not on ``LegendStyle``/``LegendStylePatch``
+    (the authored surface), so an author can never set them even through this
+    carrier. Exists so ``_base_kwargs`` folds them in through the same
+    construction-final ``merge_onto_base`` path as every other legend decision,
+    instead of a post-hoc ``model_copy(update=...)`` on the built
     ``ResolvedLegendStyle`` (banned -- see ``compile/models/AGENTS.md`` and
     ``tests/test_no_replace_on_resolved.py``).
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    position_overridden_by_width: LegendEdge | Literal["endpoints"] | None = None
-    hidden_under_edge: LegendEdge | None = None
+    visible: bool | None = None
+    position_overridden_by_width: LegendEdge | Literal["direct"] | None = None
 
 
 def _bound_scales(
@@ -154,20 +148,16 @@ def _base_kwargs(
     normalized: _BaseChartFields,
     chart_style_context: ChartStyleContext,
     channels: dict[str, Any],
-    legend_patch: ChartLegendStyle | None = None,
+    key_context: ChartStyleContext,
     palette: list[str] | None = None,
     *,
-    requested_alias_palette: str | None,
+    warned_palette: str | None,
     automatic_link_candidate: AutomaticLinkCandidate,
     layout_padding: PaddingStyle | PaddingStylePatch,
     suppress_legend: bool = False,
     drop_legend: bool = False,
     top_legend: Literal["compact", "row", "off"] = "off",
-    legend_position_overridden_by_width: LegendEdge
-    | Literal["endpoints"]
-    | None = None,
-    legend_hidden_under_edge: LegendEdge | None = None,
-    radial_legend: bool = False,
+    legend_position_overridden_by_width: LegendEdge | Literal["direct"] | None = None,
     legendless: bool = False,
     wrap_columns: int | None,
 ) -> dict[str, Any]:
@@ -178,28 +168,23 @@ def _base_kwargs(
     ChartStyleContext bag is NOT passed through — only palette, channels,
     and the pre-merged legend are projected.
 
-    legend: caller passes merge_unset(chart_style_context.legend, family.legend)
-    where family is already the result of merge_unset(chart_style_context.<type>, primary).
-    The merge layer handles family→chart-local legend cascade declaratively;
-    _base_kwargs receives the final resolved value.
+    key_context: the chart-local context (``build_chart_style_context``): its
+    ``key`` and ``legend`` carry the board, family and chart tiers.
     palette: when a chart-local palette override is in effect, pass it here;
     otherwise falls back to chart_style_context.palette.
-    requested_alias_palette: pass _effective_requested_alias_palette(chart_style_context,
+    warned_palette: pass _effective_warned_palette(chart_style_context,
     primary) — required, no fallback, so a forgotten call site is a type error
     rather than a silently-lost WARN-PALETTE-UNSUPPORTED detector signal.
     layout_padding: pass the caller's already-merged per-family padding (e.g.
     ``bar.padding``) — the same object build_chart_style_context/merge_onto_base
     produced for the rest of that family's style slice.
     suppress_legend: True when direct labels (endpoint labels, pie slice labels)
-    replace the color legend. Hides the legend only where ``visible`` is still
-    ``auto``; a concrete value from any tier keeps it.
+    replace the color legend.
     drop_legend: True when an attached table replaces the legend. Hides it
     whatever ``visible`` says: both would name the same series twice.
     top_legend: force the legend above the plot, reading left to right like the
     marks it names. "compact" wraps at wrap_columns for cards too narrow to
     hold a row; "row" leaves the entry count to the renderer.
-    radial_legend: True for pie and donut, whose key never overlays
-    (``decide_legend_position``'s ``radial``).
     wrap_columns: the columns ``legend_wrap_columns`` fits the entries into,
     None when one horizontal row holds them all; wraps an
     inferred-horizontal legend at that count. An authored direction or
@@ -214,21 +199,14 @@ def _base_kwargs(
     the authored surface, declare no such field), but it still goes through
     the same merge_onto_base construction as every other legend decision here,
     not a post-hoc patch on the finished ResolvedLegendStyle.
-    legend_hidden_under_edge: the authored side the legend is hidden under when
-    that leaves the chart's series named nowhere
-    (SeriesNaming.hidden_under_edge), folded in the same way.
     """
-    legend = merge_legend(chart_style_context.legend, legend_patch)
-    board_legend = chart_style_context.cascaded.charts.legend
-    visible = merge_authored_visible(board_legend, legend_patch)
-    title_visible = merge_authored_title_visible(board_legend, legend_patch)
-    if (
-        legend_position_overridden_by_width is not None
-        or legend_hidden_under_edge is not None
-    ):
-        overridden = _LegendPositionOverridePatch(
-            position_overridden_by_width=legend_position_overridden_by_width,
-            hidden_under_edge=legend_hidden_under_edge,
+    legend = key_context.legend
+    authored_legend = key_context.key.legend
+    key = cascaded_key(key_context.key, direct=True)
+    title_visible = authored_legend.title.visible
+    if legend_position_overridden_by_width is not None:
+        overridden = _ResolvedLegendFacts(
+            position_overridden_by_width=legend_position_overridden_by_width
         )
         legend = merge_unset(legend, overridden)
     if top_legend != "off":
@@ -241,30 +219,21 @@ def _base_kwargs(
         )
         legend = merge_unset(legend, top)
     if not legendless:
-        authored_position = merge_authored_position(
-            chart_style_context.cascaded.charts.legend.position, legend_patch
-        )
+        authored_position = key.position
         # Validated before the top strip rewrites the edge: width never decides.
-        if not radial_legend:
-            validate_cartesian_position(
-                decide_legend_position(authored_position, top_strip=False),
-                normalized.id,
-            )
+        validate_cartesian_position(
+            decide_legend_position(authored_position, top_strip=False),
+            normalized.id,
+        )
         decided = decide_legend_position(
-            authored_position, top_strip=top_legend != "off", radial=radial_legend
+            authored_position, top_strip=top_legend != "off"
         )
         # The top strip ignores an authored direction.
         direction = decide_legend_direction(
-            "horizontal"
-            if top_legend != "off"
-            else merge_authored_direction(
-                chart_style_context.cascaded.charts.legend, legend_patch
-            ),
+            "horizontal" if top_legend != "off" else authored_legend.direction,
             decided.edge,
         )
-        authored_direction = merge_authored_direction(
-            chart_style_context.cascaded.charts.legend, legend_patch
-        )
+        authored_direction = authored_legend.direction
         wrap = (
             wrap_columns is not None
             and top_legend == "off"
@@ -283,8 +252,7 @@ def _base_kwargs(
                 }
             ),
         )
-    if drop_legend or (suppress_legend and visible == "auto"):
-        visible = False
+    visible = key.visible and not (drop_legend or suppress_legend)
     if (
         legend.position.edge == "top"
         and legend.direction == "horizontal"
@@ -292,12 +260,10 @@ def _base_kwargs(
     ):
         title_visible = False
     decided_visibility = LegendStylePatch.model_validate(
-        {
-            "visible": visible is not False,
-            "title": {"visible": title_visible is not False},
-        }
+        {"title": {"visible": title_visible is not False}}
     )
     legend = merge_unset(legend, decided_visibility)
+    legend = merge_unset(legend, _ResolvedLegendFacts(visible=visible))
     # link: false is the authored `links.auto` opt-out: no link at all.
     link = None if normalized.link is False else normalized.link
     if normalized.link is None:
@@ -315,10 +281,10 @@ def _base_kwargs(
         "link": link,
         "link_open": normalized.link_open,
         "palette": tuple(effective_palette),
-        "requested_alias_palette": requested_alias_palette,
-        "requested_alias_substitute": (
-            substitute_for_alias(requested_alias_palette)
-            if requested_alias_palette is not None
+        "warned_palette": warned_palette,
+        "warned_palette_recommendation": (
+            recommended_palette_for(warned_palette)
+            if warned_palette is not None
             else None
         ),
         "category_colors": category_colors,

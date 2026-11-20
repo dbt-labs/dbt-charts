@@ -1,3 +1,0 @@
-kind: Fixes
-body: A JOIN without ON warns about the missing join predicate again with sqlglot 30.32 and later, and a BigQuery comma join now warns too.
-time: 2026-11-19T09:09:37.055338-08:00

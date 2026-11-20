@@ -1,3 +1,0 @@
-kind: Fixes
-body: Board SQL translated into BigQuery works again with sqlglot 30.29 and later.
-time: 2026-11-04T16:58:36.812357-09:00

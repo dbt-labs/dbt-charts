@@ -1,0 +1,18 @@
+# Sequential palette — parula
+#
+# MATLAB parula, sampled at nine stops (dark blue to yellow).
+
+name: parula
+family: sequential
+description: MATLAB parula, drawn as written. A discouraged rainbow-like ramp; dbt-seq-blue is the recommended alternative.
+
+colors:
+  - "#352a87"
+  - "#0363e1"
+  - "#1485d4"
+  - "#06a7c6"
+  - "#38b99e"
+  - "#92bf73"
+  - "#d9ba56"
+  - "#fcce2e"
+  - "#f9fb0e"

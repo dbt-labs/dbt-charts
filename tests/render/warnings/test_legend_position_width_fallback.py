@@ -61,7 +61,7 @@ def _ctx(chart: Any, width: float | None) -> WarningContext:
 def test_fires_when_tiny_width_overrides_authored_position() -> None:
     chart = _bar(
         style=BarChartStylePatch.model_validate(
-            {"legend": {"position": {"edge": "bottom"}}}
+            {"key": {"legend": {"position": {"edge": "bottom"}}}}
         )
     )
     warnings = detector.detect(_ctx(chart, _TINY_WIDTH))
@@ -77,7 +77,7 @@ def test_fires_when_tiny_width_overrides_authored_position() -> None:
 def test_silent_at_a_width_that_fits_a_side_legend() -> None:
     chart = _bar(
         style=BarChartStylePatch.model_validate(
-            {"legend": {"position": {"edge": "bottom"}}}
+            {"key": {"legend": {"position": {"edge": "bottom"}}}}
         )
     )
     assert detector.detect(_ctx(chart, _WIDE_WIDTH)) == []
@@ -95,7 +95,7 @@ def test_silent_when_authored_position_already_top() -> None:
     override happened."""
     chart = _bar(
         style=BarChartStylePatch.model_validate(
-            {"legend": {"position": {"edge": "top"}}}
+            {"key": {"legend": {"position": {"edge": "top"}}}}
         )
     )
     assert detector.detect(_ctx(chart, _TINY_WIDTH)) == []
@@ -111,7 +111,7 @@ def test_silent_when_chart_absent_from_layout_charts() -> None:
     layout_charts -- the detector must skip them."""
     chart = _bar(
         style=BarChartStylePatch.model_validate(
-            {"legend": {"position": {"edge": "bottom"}}}
+            {"key": {"legend": {"position": {"edge": "bottom"}}}}
         )
     )
     resolved = make_test_resolved_chart(chart, _ROWS, width=_TINY_WIDTH)

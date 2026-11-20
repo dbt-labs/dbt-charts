@@ -23,7 +23,6 @@ from dbt_charts.core.compile.models.chart.resolved import (
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     AreaChartStylePatch,
-    LegendStylePatch,
     LineChartStylePatch,
     StylePatch,
 )
@@ -174,9 +173,7 @@ def test_layered_line_labels_directly_when_the_author_asks_for_it() -> None:
         x="month",
         y="baseline",
         layers=[LineLayer(type="line", y="overlay")],
-        style=LineChartStylePatch(
-            legend=LegendStylePatch.model_validate({"position": {"edge": "endpoints"}})
-        ),
+        style=LineChartStylePatch(key={"type": "direct"}),
     )
     resolved = resolve(
         chart, _DATA, resolve_chart_style_context(get_theme_style()), width=_WIDTH
@@ -202,7 +199,7 @@ def test_board_level_opt_in_keeps_the_rail_on_a_layered_line() -> None:
         layers=[LineLayer(type="line", y="overlay")],
     )
     board_patch = StylePatch.model_validate(
-        {"charts": {"line": {"legend": {"position": {"edge": "endpoints"}}}}}
+        {"charts": {"line": {"key": {"type": "direct"}}}}
     )
     resolved = resolve(
         chart,
@@ -228,9 +225,7 @@ def test_layered_area_labels_directly_when_the_author_asks_for_it() -> None:
         x="month",
         y="baseline",
         layers=[LineLayer(type="line", y="overlay")],
-        style=AreaChartStylePatch(
-            legend=LegendStylePatch.model_validate({"position": {"edge": "endpoints"}})
-        ),
+        style=AreaChartStylePatch(key={"type": "direct"}),
     )
     resolved = resolve(
         chart, _DATA, resolve_chart_style_context(get_theme_style()), width=_WIDTH
@@ -258,9 +253,7 @@ def test_dual_axis_layer_with_opt_in_raises_at_resolve() -> None:
         x="month",
         y="baseline",
         layers=[LineLayer(type="line", y="overlay", axis_y={"position": "right"})],
-        style=LineChartStylePatch(
-            legend=LegendStylePatch.model_validate({"position": {"edge": "endpoints"}})
-        ),
+        style=LineChartStylePatch(key={"type": "direct"}),
     )
     with pytest.raises(ChartDataError, match="axis_y.position"):
         resolve(

@@ -1,9 +1,7 @@
 //! A line's authored `stroke.dasharray` as production paints it, and the fit
 //! a disconnected band-step plateau applies to it. Production reads the string
 //! through `_dasharray_to_vl` (`vl_field_maps.py:132`) and, on a disconnected
-//! step band, rewrites it with `fit_dash_to_plateau` (`step_band.py:80`).
-
-use d3rs::js_math::js_round;
+//! step band, rewrites it with `fit_dash_to_plateau` (`step_band.py:80`); `layout::dash::fit` is that fit.
 
 /// Where a band-step row's two vertices sit across its band: the whole band,
 /// or — `connect: false` — each plateau's inset share of it
@@ -51,26 +49,6 @@ pub(crate) fn parse(family: &str, raw: &str, fit: bool) -> Result<Vec<f64>, Stri
     Ok(lengths)
 }
 
-/// `fit_dash_to_plateau`: the dashes rescaled so a plateau `span` pixels wide
-/// (`bandwidth * line_mark.disconnected_width`) holds `n` periods less the trailing gap — ink
-/// on both its edges. An odd list repeats first (SVG repeats it, so its last
-/// entry is a gap); a list with no ink is returned as repeated. Production
-/// emits `d*span/(n*period-last)` as one Vega expression, which evaluates left
-/// to right: `(d*span)/(n*period-last)`, in JavaScript's arithmetic (`max`
-/// and `round` pass a NaN on).
-pub(crate) fn fit_to_plateau(dashes: &[f64], span: f64) -> Vec<f64> {
-    let repeated: Vec<f64> = if dashes.len() % 2 == 1 { [dashes, dashes].concat() } else { dashes.to_vec() };
-    if repeated.iter().step_by(2).sum::<f64>() == 0.0 {
-        return repeated;
-    }
-    let period: f64 = repeated.iter().sum();
-    let last = repeated[repeated.len() - 1];
-    let rounded = js_round((span + last) / period);
-    let periods = if rounded.is_nan() { rounded } else { rounded.max(1.0) };
-    let scaled_period = periods * period - last;
-    repeated.iter().map(|d| d * span / scaled_period).collect()
-}
-
 /// A dash length as JavaScript prints it: `String(number)`, with `NaN` and
 /// `Infinity` spelled out and negative zero as `0`.
 fn js_length(v: f64) -> String {
@@ -101,7 +79,7 @@ pub(crate) fn dasharray(dashes: &[f64], plateau_span: Option<f64>) -> String {
     // A list with no ink is not rescaled, so its authored lengths cross JSON as they are.
     let computed = plateau_span.is_some() && dashes.iter().step_by(2).sum::<f64>() != 0.0;
     match plateau_span {
-        Some(span) => svg_value(&fit_to_plateau(dashes, span), computed),
+        Some(span) => svg_value(&::layout::dash::fit(dashes, span, false), computed),
         None => svg_value(dashes, false),
     }
 }
@@ -116,7 +94,7 @@ mod tests {
     fn a_plateau_holds_n_dashes_and_n_less_one_gaps() {
         let bandwidth = 122.352_941_176_470_59;
         let span = bandwidth * 0.9;
-        let fitted = fit_to_plateau(&[5.0, 4.0], span);
+        let fitted = ::layout::dash::fit(&[5.0, 4.0], span, false);
         let n = 13.0; // round((span + 4) / 9) = round(12.68)
         assert_eq!(fitted, [5.0 * span / (n * 9.0 - 4.0), 4.0 * span / (n * 9.0 - 4.0)]);
         assert!((n * (fitted[0] + fitted[1]) - fitted[1] - span).abs() < 1e-9);
@@ -124,15 +102,15 @@ mod tests {
 
     #[test]
     fn a_plateau_shorter_than_one_period_still_holds_one_dash() {
-        let fitted = fit_to_plateau(&[5.0, 4.0], 1.8);
+        let fitted = ::layout::dash::fit(&[5.0, 4.0], 1.8, false);
         assert!((fitted[0] - 5.0 * 1.8 / (9.0 - 4.0)).abs() < 1e-12, "{fitted:?}");
     }
 
     #[test]
     fn an_odd_list_repeats_and_a_zero_ink_list_stays_as_repeated() {
-        assert_eq!(fit_to_plateau(&[6.0, 2.0, 1.0], 90.0).len(), 6);
-        assert_eq!(fit_to_plateau(&[0.0, 8.0], 90.0), [0.0, 8.0]);
-        assert_eq!(fit_to_plateau(&[0.0, 8.0, 0.0], 90.0).len(), 6);
+        assert_eq!(::layout::dash::fit(&[6.0, 2.0, 1.0], 90.0, false).len(), 6);
+        assert_eq!(::layout::dash::fit(&[0.0, 8.0], 90.0, false), [0.0, 8.0]);
+        assert_eq!(::layout::dash::fit(&[0.0, 8.0, 0.0], 90.0, false).len(), 6);
     }
 
     #[test]
@@ -166,7 +144,7 @@ mod tests {
         for raw in ["", "-1 1", "-5 1", "0 -2", "0 inf"] {
             assert!(parse("line", raw, true).is_ok(), "{raw}");
         }
-        assert_eq!(fit_to_plateau(&[-1.0, 1.0], 90.0).iter().map(|v| v.is_nan()).collect::<Vec<_>>(), [true, true]);
+        assert_eq!(::layout::dash::fit(&[-1.0, 1.0], 90.0, false).iter().map(|v| v.is_nan()).collect::<Vec<_>>(), [true, true]);
     }
 
     /// `d * span / den` is `(d * span) / den`: on this band `5 * (span / den)`
@@ -175,7 +153,7 @@ mod tests {
     fn a_dash_is_scaled_as_d_times_span_then_divided() {
         let bandwidth = 129.338_839_331_346_83;
         let span = bandwidth * 0.9;
-        let fitted = fit_to_plateau(&[5.0, 6.0], span);
+        let fitted = ::layout::dash::fit(&[5.0, 6.0], span, false);
         let den = 11.0 * 11.0 - 6.0;
         assert_ne!(5.0 * span / den, 5.0 * (span / den));
         assert_eq!(fitted[0], 5.061_085_017_313_572);
@@ -186,7 +164,7 @@ mod tests {
     /// plateau still holds one dash.
     #[test]
     fn a_plateau_below_half_a_period_rounds_up_to_one_dash() {
-        let fitted = fit_to_plateau(&[5.0, 1.0], 0.9);
+        let fitted = ::layout::dash::fit(&[5.0, 1.0], 0.9, false);
         assert_eq!(fitted, [5.0 * 0.9 / 5.0, 1.0 * 0.9 / 5.0]);
     }
 }

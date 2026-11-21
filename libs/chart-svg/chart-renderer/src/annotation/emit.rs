@@ -19,16 +19,19 @@ fn d3_curve(curve: Curve) -> D3Curve {
     }
 }
 
-fn stroked(attrs: Attrs, stroke: &Stroke) -> Attrs {
+/// `attrs` stroked in `stroke`, its dash fitted to the `length` of the outline it strokes (`closed`
+/// when that outline is a loop).
+fn stroked(attrs: Attrs, stroke: &Stroke, length: f64, closed: bool) -> Attrs {
     let attrs = attrs.set("stroke", stroke.color.as_str()).num("stroke-width", stroke.width);
     match &stroke.dasharray {
-        Some(dash) => attrs.set("stroke-dasharray", dash.as_str()),
+        Some(dash) => attrs.set("stroke-dasharray", ::layout::dash::fit_pattern(dash, length, closed)),
         None => attrs,
     }
 }
 
 fn rule_line(a: (f64, f64), b: (f64, f64), opacity: f64, stroke: &Stroke) -> Node {
-    Node::line(Role::Annotation, a, b, stroked(Attrs::new().set("fill", "none").num("opacity", opacity), stroke))
+    let length = (b.0 - a.0).hypot(b.1 - a.1);
+    Node::line(Role::Annotation, a, b, stroked(Attrs::new().set("fill", "none").num("opacity", opacity), stroke, length, false))
 }
 
 /// The gray an `auto` rule draws its line and label in; `None` on a fixed
@@ -53,16 +56,16 @@ fn mark(m: &Mark, style: &Style) -> Node {
         Mark::Rect { x, y, w, h } => {
             let attrs = Attrs::new().set("fill", style.rect().fill.as_str()).num("opacity", style.rect().opacity);
             let attrs = match &style.rect().stroke {
-                Some(stroke) => stroked(attrs, stroke),
+                Some(stroke) => stroked(attrs, stroke, ::layout::dash::rect_perimeter(*w, *h, 0.0), true),
                 None => attrs,
             };
             Node::rect(Role::Annotation, (*x, *y, *w, *h), attrs)
         }
-        Mark::Polyline(points) => Node::path(
-            Role::Annotation,
-            scene_path(&line_path(&[points.clone()], d3_curve(style.line().curve))),
-            stroked(Attrs::new().set("fill", "none").num("opacity", style.line().opacity), &style.line().stroke),
-        ),
+        Mark::Polyline(points) => {
+            let d = scene_path(&line_path(&[points.clone()], d3_curve(style.line().curve)));
+            let attrs = stroked(Attrs::new().set("fill", "none").num("opacity", style.line().opacity), &style.line().stroke, d.length(), false);
+            Node::path(Role::Annotation, d, attrs)
+        }
         Mark::Area { hi, lo } => {
             let curve = d3_curve(style.line().curve);
             let back: Vec<(f64, f64)> = lo.iter().rev().copied().collect();
@@ -79,7 +82,7 @@ fn mark(m: &Mark, style: &Style) -> Node {
             Role::Annotation,
             *c,
             *r,
-            stroked(Attrs::new().set("fill", "none").num("opacity", style.circle().opacity), &style.circle().stroke),
+            stroked(Attrs::new().set("fill", "none").num("opacity", style.circle().opacity), &style.circle().stroke, std::f64::consts::TAU * *r, true),
         ),
     }
 }
@@ -95,7 +98,7 @@ fn connector(c: &Connector, style: &Style) -> Vec<Node> {
         }
         None => start.line_to(c.to.0, c.to.1),
     };
-    let line = stroked(Attrs::new().set("fill", "none").num("opacity", style.line().opacity), &style.line().stroke)
+    let line = stroked(Attrs::new().set("fill", "none").num("opacity", style.line().opacity), &style.line().stroke, d.length(), false)
         .set("aria-hidden", "true");
     let mut nodes = vec![Node::path(Role::Annotation, d, line)];
     if let Some([a, b, t]) = c.arrow {

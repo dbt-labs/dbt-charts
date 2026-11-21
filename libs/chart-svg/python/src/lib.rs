@@ -191,6 +191,25 @@ fn split_line_gaps(runs: Vec<Vec<f64>>, extent: f64) -> Vec<Vec<f64>> {
     chart_renderer::families::line::gaps::split_runs(runs, true, extent)
 }
 
+/// A dashed border's pattern stretched so a closed outline `length` px long holds whole periods
+/// (an open stroke, `closed` false, starts and ends on ink): the engine's `layout::dash` law.
+#[pyfunction]
+fn fit_dash(dashes: Vec<f64>, length: f64, closed: bool) -> Vec<f64> {
+    layout::dash::fit_list(&dashes, length, closed)
+}
+
+/// [`fit_dash`] over an authored `stroke-dasharray` string, printed as the engine prints it.
+#[pyfunction]
+fn fit_dash_pattern(pattern: &str, length: f64, closed: bool) -> String {
+    layout::dash::fit_pattern(pattern, length, closed)
+}
+
+/// The outline length of a `w` by `h` rect with corner radius `rx`, as SVG draws it.
+#[pyfunction]
+fn rect_perimeter(w: f64, h: f64, rx: f64) -> f64 {
+    layout::dash::rect_perimeter(w, h, rx)
+}
+
 /// Parse a custom chart template in the engine that renders it; the error
 /// message names the line. Compile runs this so a template the engine cannot
 /// parse fails at compile, not at render.
@@ -316,6 +335,9 @@ fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(geometry_decodes, m)?)?;
     m.add_function(wrap_pyfunction!(check_template, m)?)?;
     m.add_function(wrap_pyfunction!(split_line_gaps, m)?)?;
+    m.add_function(wrap_pyfunction!(fit_dash, m)?)?;
+    m.add_function(wrap_pyfunction!(fit_dash_pattern, m)?)?;
+    m.add_function(wrap_pyfunction!(rect_perimeter, m)?)?;
     m.add_function(wrap_pyfunction!(languages, m)?)?;
     m.add_function(wrap_pyfunction!(language_for_time_locale, m)?)?;
     m.add_function(wrap_pyfunction!(number_locales, m)?)?;

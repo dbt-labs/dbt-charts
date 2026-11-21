@@ -319,24 +319,24 @@ fn de_dasharray<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>
 
 impl Divider {
     /// ` stroke-dasharray="…"` for a line production draws itself
-    /// (`svg_utils.divider_dash_attr`): the compiled pattern verbatim, `""`
-    /// when solid.
-    pub fn dash_attr(&self) -> String {
+    /// (`svg_utils.divider_dash_attr`): the compiled pattern fitted to the
+    /// line's `length`, `""` when solid.
+    pub fn dash_attr(&self, length: f64) -> String {
         match &self.dasharray {
             None => String::new(),
-            Some(dasharray) => format!(" stroke-dasharray=\"{}\"", xml_escape_attr(dasharray)),
+            Some(dasharray) => format!(" stroke-dasharray=\"{}\"", xml_escape_attr(&::layout::dash::fit_pattern(dasharray, length, false))),
         }
     }
 
     /// `6,3` for a line Vega serializes (a Vega-Lite `rule` mark's `strokeDash`,
-    /// joined by commas), `None` when solid.
-    pub fn vega_dash(&self) -> Option<String> {
+    /// joined by commas) fitted to the line's `length`, `None` when solid.
+    pub fn vega_dash(&self, length: f64) -> Option<String> {
         let dasharray = self.dasharray.as_ref()?;
         let parts: Vec<String> = dasharray
             .split(' ')
             .map(|part| part.parse::<f64>().expect("validated in de_dasharray").to_string())
             .collect();
-        Some(parts.join(","))
+        Some(::layout::dash::fit_pattern(&parts.join(","), length, false))
     }
 }
 
@@ -5590,7 +5590,7 @@ mod format_slot_tests {
             "format": "$.2~r", "si_format": "$.2~s", "scientific_format": "$.2~e",
         }))
         .unwrap();
-        let notated = slot(json!({"spec": "$.2~s", "notation": "analytic", "raw": "currency_compact"}));
+        let notated = slot(json!({"spec": "$.3~s", "notation": "analytic", "raw": "currency_compact"}));
         let paint = |value: f64, format: Option<&FormatSlot>| {
             format_y_label(value, None, Some(&tick_label), format, 0, 1).unwrap()
         };
@@ -5930,14 +5930,22 @@ mod estimated_gutter_tests {
 /// width. Otherwise `stroke-dasharray`, then `stroke-linecap` and
 /// `stroke-dashoffset` when set. Dashes and the offset print as `{:g}`
 /// (`format_g`).
-pub fn border_dash_pairs(dash_array: Option<&[f64]>, line_cap: Option<&str>, dash_offset: Option<f64>) -> Vec<(&'static str, String)> {
+pub fn border_dash_pairs(
+    dash_array: Option<&[f64]>,
+    line_cap: Option<&str>,
+    dash_offset: Option<f64>,
+    perimeter: Option<f64>,
+) -> Vec<(&'static str, String)> {
     let Some(dash_array) = dash_array else {
         return Vec::new();
     };
-    let mut pairs = vec![(
-        "stroke-dasharray",
-        dash_array.iter().map(|v| d3rs::py_float::format_g(*v)).collect::<Vec<_>>().join(","),
-    )];
+    // A closed outline's pattern is stretched to whole periods around its `perimeter`; `None` is a
+    // stroke that is not a closed box (a tab bar's rail), which keeps the authored pattern.
+    let dashes = match perimeter {
+        Some(perimeter) => ::layout::dash::fit_list(dash_array, perimeter, true),
+        None => dash_array.to_vec(),
+    };
+    let mut pairs = vec![("stroke-dasharray", dashes.iter().map(|v| d3rs::py_float::format_g(*v)).collect::<Vec<_>>().join(","))];
     if let Some(line_cap) = line_cap {
         pairs.push(("stroke-linecap", line_cap.to_string()));
     }
@@ -5949,8 +5957,8 @@ pub fn border_dash_pairs(dash_array: Option<&[f64]>, line_cap: Option<&str>, das
 
 /// [`border_dash_pairs`] as attribute text for hand-written markup, each
 /// pair with a leading space so the string follows a rect's `stroke-width`.
-pub fn border_dash_attrs(dash_array: Option<&[f64]>, line_cap: Option<&str>, dash_offset: Option<f64>) -> String {
-    border_dash_pairs(dash_array, line_cap, dash_offset)
+pub fn border_dash_attrs(dash_array: Option<&[f64]>, line_cap: Option<&str>, dash_offset: Option<f64>, perimeter: Option<f64>) -> String {
+    border_dash_pairs(dash_array, line_cap, dash_offset, perimeter)
         .into_iter()
         .map(|(name, value)| format!(r#" {name}="{}""#, print::xml_escape_attr(&value)))
         .collect()

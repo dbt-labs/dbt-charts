@@ -3080,6 +3080,14 @@ fn a_hidden_horizontal_rule_keeps_its_space_and_paints_nothing() {
 }
 
 #[test]
+fn a_dash_fit_restretches_the_rule_to_its_width() {
+    let style = Style { hr_dasharray: "6 3".to_string(), ..Style::default() };
+    let renderer = SVGRenderer::new(style, test_fonts()).unwrap().with_dash_fit(|dashes, length| format!("{dashes}@{length}"));
+    let svg = svg_string(&renderer.render_content(&parse_markdown(HR_MARKDOWN), 300.0, 20.0).unwrap());
+    assert!(svg.contains(r#"stroke-dasharray="6 3@260""#), "{svg}");
+}
+
+#[test]
 fn a_dashed_horizontal_rule_is_a_stroked_line_centered_on_its_band() {
     let style = Style {
         hr_dasharray: "6 3".to_string(),
@@ -3656,6 +3664,12 @@ fn laid_out(markdown: &str) -> RenderResult {
     super::render(markdown, 400.0, 0.0, Style::default(), test_fonts()).unwrap()
 }
 
+fn laid_out_with(tweak: impl FnOnce(&mut Style), markdown: &str) -> RenderResult {
+    let mut style = Style::default();
+    tweak(&mut style);
+    super::render(markdown, 400.0, 0.0, style, test_fonts()).unwrap()
+}
+
 /// An attribute as `print` writes it: its text, or its number at a hundredth.
 fn attr(element: &Element, name: &str) -> String {
     let (_, value, _) = element
@@ -3754,9 +3768,9 @@ fn inline_code_is_a_chip_rect_then_a_text_with_a_monospace_tspan() {
 #[test]
 fn the_style_block_is_an_element_of_one_rule_line_per_class() {
     let result = laid_out("x");
-    assert_eq!(result.style.tag, "style");
-    let rules: Vec<&str> = result
-        .style
+    let style = result.style();
+    assert_eq!(style.tag, "style");
+    let rules: Vec<&str> = style
         .children
         .iter()
         .filter_map(|child| match child {
@@ -3765,7 +3779,25 @@ fn the_style_block_is_an_element_of_one_rule_line_per_class() {
         })
         .collect();
     assert_eq!(rules.len(), 6);
+    assert_eq!(rules, result.rules);
     assert!(rules[0].starts_with("    .md-") && rules[0].contains("-text { font-family: "), "{}", rules[0]);
+}
+
+#[test]
+fn a_scope_prints_each_rule_once() {
+    let (first, again) = (laid_out("x"), laid_out("y"));
+    let mut scope = crate::renderer::StyleScope::default();
+    assert_eq!(scope.style(&first.rules), Some(first.style()));
+    assert_eq!(scope.style(&again.rules), None);
+}
+
+#[test]
+fn a_scope_prints_the_rules_of_a_style_it_has_not_seen() {
+    let (first, other) = (laid_out("x"), laid_out_with(|style| style.text_color = "#123456".into(), "x"));
+    let mut scope = crate::renderer::StyleScope::default();
+    scope.note(&first.rules);
+    assert_eq!(scope.style(&first.rules), None);
+    assert_eq!(scope.style(&other.rules), Some(other.style()));
 }
 
 #[test]

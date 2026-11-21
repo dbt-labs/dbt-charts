@@ -46,6 +46,7 @@ from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.svg_utils import (
     divider_dash_attr,
     escape_attr,
+    fit_rule_dashes,
     format_svg_numeric,
     px,
     translate_group,
@@ -387,6 +388,7 @@ def _prose_flow(
         style=style,
         fonts=fonts,
         allow_raw_html=allow_raw_html,
+        dash_fitter=fit_rule_dashes,
     )
 
     blocks = style_prose_headings(
@@ -707,7 +709,7 @@ def _column_divider_line(x: float, height: float, divider: DividerStyle) -> str:
     sw_s = format_svg_numeric(divider.width)
     return (
         f'<line x1="{escape_attr(x_snapped)}" y1="0" x2="{escape_attr(x_snapped)}" y2="{escape_attr(h_s)}"'
-        f' stroke="{escape_attr(divider.color)}" stroke-width="{escape_attr(sw_s)}"{divider_dash_attr(divider.dasharray)}/>'
+        f' stroke="{escape_attr(divider.color)}" stroke-width="{escape_attr(sw_s)}"{divider_dash_attr(divider.dasharray, height)}/>'
     )
 
 
@@ -879,6 +881,7 @@ def _goes_multi_column(
         style=style,
         fonts=fonts,
         allow_raw_html=block.html_policy == "trusted-raw",
+        dash_fitter=fit_rule_dashes,
     )
     text = resolve_display_text_from_provider(
         block.text, variable_values, resolved_style=rs, base_dir=block.base_dir

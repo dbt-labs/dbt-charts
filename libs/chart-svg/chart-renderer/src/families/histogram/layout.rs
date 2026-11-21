@@ -461,7 +461,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                     (0.5, plot_w + 0.5)
                 };
                 let (x1, x2) = crate::common::reach_label_edges((x1, x2), &y_label_edges);
-                Node::line(Role::Grid, (x1, gy), (x2, gy), ax_y.grid.stroke(gc, gw).num("opacity", go))
+                crate::dash::line(Role::Grid, (x1, gy), (x2, gy), ax_y.grid.stroke(gc, gw).num("opacity", go))
             })
             .collect();
         plot.push(::layout::contract::grid_group(lines));

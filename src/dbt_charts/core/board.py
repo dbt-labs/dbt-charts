@@ -44,7 +44,7 @@ from dbt_charts.core.compile.config import (
     resolve_max_template_output_bytes,
 )
 from dbt_charts.core.compile.engine import (
-    engine_compile_recorded,
+    engine_compile,
     refusal_diagnostics,
 )
 from dbt_charts.core.compile.errors import CompilationError
@@ -353,7 +353,7 @@ def plan_for_board(
 
     Raises ``_engine.CompileError`` when the engine refuses the board and
     ``ExecutionError`` when it refuses the values."""
-    compiled, record = engine_compile_recorded(
+    compiled = engine_compile(
         board.path,
         board.named,
         board.content,
@@ -366,7 +366,6 @@ def plan_for_board(
     )
     return Planned(
         compiled,
-        record,
         plan_board(
             compiled,
             variables,

@@ -272,7 +272,7 @@ impl Torn {
                 } else {
                     ((along + CRISP, tear), (along + CRISP, zero_px + CRISP))
                 };
-                Node::line(Role::Grid, from, to, attrs.clone())
+                crate::dash::line(Role::Grid, from, to, attrs.clone())
             })
             .collect()
     }

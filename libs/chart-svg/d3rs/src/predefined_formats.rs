@@ -13,7 +13,7 @@ pub const PREDEFINED_SPECS: &[PredefinedSpec] = &[
     PredefinedSpec { name: "currency", d3: "$.3~s", suffix: "" },
     PredefinedSpec { name: "currency_whole", d3: "$,.0f", suffix: "" },
     PredefinedSpec { name: "currency_full", d3: "$,.2f", suffix: "" },
-    PredefinedSpec { name: "currency_compact", d3: "$.2~s", suffix: "" },
+    PredefinedSpec { name: "currency_compact", d3: "$.3~s", suffix: "" },
     PredefinedSpec { name: "percent", d3: ".1%", suffix: "" },
     PredefinedSpec { name: "percent_whole", d3: ".0%", suffix: "" },
     PredefinedSpec { name: "percent_delta", d3: "+.1%", suffix: "" },

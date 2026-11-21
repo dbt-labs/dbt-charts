@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from dbt_charts import _engine
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.board.normalized import (
     NO_TITLE_SHIFT,
@@ -191,10 +192,13 @@ def render_layout_item(
                 px(summary_height + details_config.content_y_offset)
                 + board_actual_height
             )
+            section_perimeter = _engine.rect_perimeter(
+                width, actual_height, details_config.border.radius
+            )
             section_border = (
                 f'<rect x="0" y="0" width="{escape_attr(width)}" height="{escape_attr(actual_height)}" '
                 f'fill="none" stroke="{escape_attr(resolved_style.border.color)}" stroke-width="{escape_attr(details_config.border.width)}"'
-                f"{border_dash_attrs(details_config.border)} "
+                f"{border_dash_attrs(details_config.border, section_perimeter)} "
                 f'rx="{escape_attr(details_config.border.radius)}"'
                 f"{flow_bg_attr(ships_page_runtime())}/>"
             )

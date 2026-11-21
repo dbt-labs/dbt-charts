@@ -808,10 +808,12 @@ mod tests {
     #[test]
     fn a_dashed_divider_paints_its_own_width_color_and_dash() {
         let out = rendered(&divider_style(true, 2.0, "#cc7700", Some("6 3")));
-        assert!(
-            out.contains("stroke=\"#cc7700\" stroke-width=\"2\" stroke-dasharray=\"6,3\"/>"),
-            "{out}"
-        );
+        assert!(out.contains("stroke=\"#cc7700\" stroke-width=\"2\" stroke-dasharray=\""), "{out}");
+        let dashed = crate::dash_probe::dashed_strokes(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\">{out}</svg>"));
+        assert!(!dashed.is_empty(), "{out}");
+        for rule in &dashed {
+            rule.assert_fits();
+        }
     }
 
     /// `visible: false` switches the line off whatever width or color it carries.

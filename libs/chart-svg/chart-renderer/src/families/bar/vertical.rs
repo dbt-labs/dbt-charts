@@ -3864,7 +3864,7 @@ pub(crate) fn render_vertical_panel(
             if y < -0.5 || y > plot_h + 1.0 {
                 continue;
             }
-            lines.push(Node::line(Role::Grid, (grid_x1, y), (grid_x2, y), grid.faded_stroke(gc, gw)));
+            lines.push(crate::dash::line(Role::Grid, (grid_x1, y), (grid_x2, y), grid.faded_stroke(gc, gw)));
         }
         plot.push(::layout::contract::grid_group(lines));
     }
@@ -3908,7 +3908,7 @@ pub(crate) fn render_vertical_panel(
                 if y < -0.5 || y > plot_h + 1.0 {
                     continue;
                 }
-                lines.push(Node::line(Role::Grid, (layer_x1, y), (layer_x2, y), la.layer_grid_attrs(gc, gw)));
+                lines.push(crate::dash::line(Role::Grid, (layer_x1, y), (layer_x2, y), la.layer_grid_attrs(gc, gw)));
             }
             plot.push(::layout::contract::grid_group(lines));
         }

@@ -152,14 +152,14 @@ class PredefinedTextFormat(StrEnum):
 # The SI members carry an explicit `.3` because d3's `s` type defaults to six
 # significant digits and `~` only trims trailing zeros -- a bare `~s` renders
 # 50752.9 as `50.7529K`, six significant figures under a name that promises
-# brevity. Three, not two: `.2~s` rounds 999 up to a false `1K`. The `compact`
-# members are the deliberate two-figure exception: "1.2M" and "45K" for a
-# headline where the third digit is noise.
+# brevity. Three, not two: `.2~s` rounds 999 up to a false `1K`, and prints
+# 412K and 406K both as `410K`. `compact` is the deliberate two-figure
+# exception: "1.2M" and "45K" for a headline where the third digit is noise.
 PREDEFINED_SPECS: dict[str, PredefinedSpec] = {
     PredefinedNumberFormat.currency: PredefinedSpec("$.3~s"),
     PredefinedNumberFormat.currency_whole: PredefinedSpec("$,.0f"),
     PredefinedNumberFormat.currency_full: PredefinedSpec("$,.2f"),
-    PredefinedNumberFormat.currency_compact: PredefinedSpec("$.2~s"),
+    PredefinedNumberFormat.currency_compact: PredefinedSpec("$.3~s"),
     PredefinedNumberFormat.percent: PredefinedSpec(".1%"),
     PredefinedNumberFormat.percent_whole: PredefinedSpec(".0%"),
     PredefinedNumberFormat.percent_delta: PredefinedSpec("+.1%"),

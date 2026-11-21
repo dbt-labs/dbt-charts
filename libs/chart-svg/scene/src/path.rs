@@ -87,6 +87,73 @@ impl PathData {
     }
 }
 
+/// The stroke length of the longest subpath. SVG restarts the dash pattern at
+/// every `M`, so one dasharray can fit only one subpath; the longest is the one
+/// whose ends a reader sees. Curves are measured, not flattened to a fixed
+/// grid: cubics by Gravesen's adaptive chord/control-polygon estimate (error
+/// under 1e-6 px), arcs by 512 chords of the ellipse (relative error ~1e-6).
+impl PathData {
+    pub fn length(&self) -> f64 {
+        let (mut longest, mut run) = (0.0_f64, 0.0_f64);
+        let mut at = (0.0, 0.0);
+        let mut start = at;
+        for command in &self.0 {
+            let to = match *command {
+                PathCommand::M(x, y) => {
+                    longest = longest.max(run);
+                    run = 0.0;
+                    start = (x, y);
+                    (x, y)
+                }
+                PathCommand::L(x, y) => {
+                    run += distance(at, (x, y));
+                    (x, y)
+                }
+                PathCommand::C(x1, y1, x2, y2, x, y) => {
+                    run += cubic_length([at, (x1, y1), (x2, y2), (x, y)]);
+                    (x, y)
+                }
+                PathCommand::A { rx, ry, rot, large, sweep, x, y } => {
+                    run += arc_length(at, rx, ry, rot, large, sweep, (x, y));
+                    (x, y)
+                }
+                PathCommand::Z => {
+                    run += distance(at, start);
+                    start
+                }
+            };
+            at = to;
+        }
+        longest.max(run)
+    }
+}
+
+fn distance(a: (f64, f64), b: (f64, f64)) -> f64 {
+    (a.0 - b.0).hypot(a.1 - b.1)
+}
+
+fn cubic_length(p: [(f64, f64); 4]) -> f64 {
+    let chord = distance(p[0], p[3]);
+    let polygon = distance(p[0], p[1]) + distance(p[1], p[2]) + distance(p[2], p[3]);
+    if polygon - chord < 1e-7 {
+        return (2.0 * chord + polygon) / 3.0;
+    }
+    let mid = |a: (f64, f64), b: (f64, f64)| ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+    let (p01, p12, p23) = (mid(p[0], p[1]), mid(p[1], p[2]), mid(p[2], p[3]));
+    let (p012, p123) = (mid(p01, p12), mid(p12, p23));
+    let p0123 = mid(p012, p123);
+    cubic_length([p[0], p01, p012, p0123]) + cubic_length([p0123, p123, p23, p[3]])
+}
+
+fn arc_length(from: (f64, f64), rx: f64, ry: f64, rot: f64, large: bool, sweep: bool, to: (f64, f64)) -> f64 {
+    let Some(arc) = ArcCenter::of(from, rx, ry, rot, large, sweep, to) else {
+        return distance(from, to);
+    };
+    const CHORDS: usize = 512;
+    let point = |i: usize| arc.at(arc.theta1 + arc.delta * i as f64 / CHORDS as f64);
+    (0..CHORDS).map(|i| distance(point(i), point(i + 1))).sum()
+}
+
 fn cubic_at(p0: f64, p1: f64, p2: f64, p3: f64, t: f64) -> f64 {
     let u = 1.0 - t;
     u * u * u * p0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * p3
@@ -109,49 +176,71 @@ fn cubic_extrema(p0: f64, p1: f64, p2: f64, p3: f64) -> [Option<f64>; 2] {
     [inside((-b + root) / (2.0 * a)), inside((-b - root) / (2.0 * a))]
 }
 
-/// The points of an elliptical arc where it is extreme along x or y (SVG 1.1
-/// F.6.5: the endpoint form to the center form).
+/// An elliptical arc in center form (SVG 1.1 F.6.5, from the endpoint form).
+struct ArcCenter {
+    cx: f64,
+    cy: f64,
+    rx: f64,
+    ry: f64,
+    sin: f64,
+    cos: f64,
+    theta1: f64,
+    delta: f64,
+}
+
+impl ArcCenter {
+    /// `None` for a degenerate arc, which SVG draws as the straight line.
+    fn of(from: (f64, f64), rx: f64, ry: f64, rot: f64, large: bool, sweep: bool, to: (f64, f64)) -> Option<Self> {
+        let (mut rx, mut ry) = (rx.abs(), ry.abs());
+        if rx == 0.0 || ry == 0.0 || from == to {
+            return None;
+        }
+        let (sin, cos) = rot.to_radians().sin_cos();
+        let (dx, dy) = ((from.0 - to.0) / 2.0, (from.1 - to.1) / 2.0);
+        let (x1p, y1p) = (cos * dx + sin * dy, -sin * dx + cos * dy);
+        let lambda = (x1p / rx).powi(2) + (y1p / ry).powi(2);
+        if lambda > 1.0 {
+            rx *= lambda.sqrt();
+            ry *= lambda.sqrt();
+        }
+        let num = (rx * ry).powi(2) - (rx * y1p).powi(2) - (ry * x1p).powi(2);
+        let den = (rx * y1p).powi(2) + (ry * x1p).powi(2);
+        let factor = if large == sweep { -1.0 } else { 1.0 } * (num / den).max(0.0).sqrt();
+        let (cxp, cyp) = (factor * rx * y1p / ry, -factor * ry * x1p / rx);
+        let (cx, cy) = (cos * cxp - sin * cyp + (from.0 + to.0) / 2.0, sin * cxp + cos * cyp + (from.1 + to.1) / 2.0);
+        let angle = |ux: f64, uy: f64| uy.atan2(ux);
+        let theta1 = angle((x1p - cxp) / rx, (y1p - cyp) / ry);
+        let theta2 = angle((-x1p - cxp) / rx, (-y1p - cyp) / ry);
+        let mut delta = theta2 - theta1;
+        if sweep && delta < 0.0 {
+            delta += std::f64::consts::TAU;
+        } else if !sweep && delta > 0.0 {
+            delta -= std::f64::consts::TAU;
+        }
+        Some(Self { cx, cy, rx, ry, sin, cos, theta1, delta })
+    }
+
+    fn at(&self, theta: f64) -> (f64, f64) {
+        let (ex, ey) = (self.rx * theta.cos(), self.ry * theta.sin());
+        (self.cos * ex - self.sin * ey + self.cx, self.sin * ex + self.cos * ey + self.cy)
+    }
+}
+
+/// The points of an elliptical arc where it is extreme along x or y.
 fn arc_extrema(from: (f64, f64), rx: f64, ry: f64, rot: f64, large: bool, sweep: bool, to: (f64, f64)) -> Vec<(f64, f64)> {
-    let (mut rx, mut ry) = (rx.abs(), ry.abs());
-    if rx == 0.0 || ry == 0.0 || from == to {
+    let Some(arc) = ArcCenter::of(from, rx, ry, rot, large, sweep, to) else {
         return Vec::new();
-    }
-    let (sin, cos) = rot.to_radians().sin_cos();
-    let (dx, dy) = ((from.0 - to.0) / 2.0, (from.1 - to.1) / 2.0);
-    let (x1p, y1p) = (cos * dx + sin * dy, -sin * dx + cos * dy);
-    let lambda = (x1p / rx).powi(2) + (y1p / ry).powi(2);
-    if lambda > 1.0 {
-        rx *= lambda.sqrt();
-        ry *= lambda.sqrt();
-    }
-    let num = (rx * ry).powi(2) - (rx * y1p).powi(2) - (ry * x1p).powi(2);
-    let den = (rx * y1p).powi(2) + (ry * x1p).powi(2);
-    let factor = if large == sweep { -1.0 } else { 1.0 } * (num / den).max(0.0).sqrt();
-    let (cxp, cyp) = (factor * rx * y1p / ry, -factor * ry * x1p / rx);
-    let (cx, cy) = (cos * cxp - sin * cyp + (from.0 + to.0) / 2.0, sin * cxp + cos * cyp + (from.1 + to.1) / 2.0);
-    let angle = |ux: f64, uy: f64| uy.atan2(ux);
-    let theta1 = angle((x1p - cxp) / rx, (y1p - cyp) / ry);
-    let theta2 = angle((-x1p - cxp) / rx, (-y1p - cyp) / ry);
-    let mut delta = theta2 - theta1;
-    if sweep && delta < 0.0 {
-        delta += std::f64::consts::TAU;
-    } else if !sweep && delta > 0.0 {
-        delta -= std::f64::consts::TAU;
-    }
-    let at = |theta: f64| {
-        let (ex, ey) = (rx * theta.cos(), ry * theta.sin());
-        (cos * ex - sin * ey + cx, sin * ex + cos * ey + cy)
     };
-    let along_x = (-ry * sin).atan2(rx * cos);
-    let along_y = (ry * cos).atan2(rx * sin);
     let within = |theta: f64| {
-        let turn = (theta - theta1) * delta.signum();
+        let turn = (theta - arc.theta1) * arc.delta.signum();
         let turn = turn.rem_euclid(std::f64::consts::TAU);
-        turn <= delta.abs()
+        turn <= arc.delta.abs()
     };
+    let along_x = (-arc.ry * arc.sin).atan2(arc.rx * arc.cos);
+    let along_y = (arc.ry * arc.cos).atan2(arc.rx * arc.sin);
     [along_x, along_x + std::f64::consts::PI, along_y, along_y + std::f64::consts::PI]
         .into_iter()
         .filter(|&theta| within(theta))
-        .map(at)
+        .map(|theta| arc.at(theta))
         .collect()
 }

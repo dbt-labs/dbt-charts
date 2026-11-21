@@ -1538,7 +1538,9 @@ pub(crate) fn line_layer_marks(
             .set("stroke-linecap", cap)
             .set("stroke-linejoin", join);
         let stroke = match &dash {
-            Some(dash) => stroke.set("stroke-dasharray", dash.as_str()),
+            // A disconnected plateau's pattern is already fitted to it.
+            Some(dash) if disconnected => stroke.set("stroke-dasharray", dash.as_str()),
+            Some(dash) => stroke.set("stroke-dasharray", ::layout::dash::fit_pattern(dash, d.length(), false)),
             None => stroke,
         };
         let stroke = match plateau_label {
@@ -2646,7 +2648,7 @@ pub(crate) fn layer_grids(
             .iter()
             .map(|&tv| {
                 let gy = crate::common::tick_round(scale.scale(tv));
-                Node::line(
+                crate::dash::line(
                     Role::Grid,
                     (span.0, gy),
                     (span.1, gy),

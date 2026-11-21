@@ -41,7 +41,6 @@ from dbt_charts.cli._parsing import cwd_first_all, parse_var_options
 from dbt_charts.cli._project import has_charts_marker, project_dir_was_typed
 from dbt_charts.cli._workspace_guard import detect_workspace_mismatch
 from dbt_charts.cli.commands import (
-    board_artifact as board_artifact_cmd,
     cloud as cloud_cmd,
     describe as describe_cmd,
     doctor as doctor_cmd,
@@ -108,15 +107,6 @@ inspect_app = typer.Typer(
     name="inspect",
     help="Inspect database tables and manage inspect templates.",
     invoke_without_command=True,
-    pretty_exceptions_show_locals=False,
-    rich_markup_mode=_RICH_MARKUP_MODE,
-)
-
-# Artifact subcommand app — `dct artifact emit` / `render` / `schema`
-artifact_app = typer.Typer(
-    name="artifact",
-    help="Emit a resolved-board artifact + recording, render one back, or print its JSON Schema.",
-    no_args_is_help=True,
     pretty_exceptions_show_locals=False,
     rich_markup_mode=_RICH_MARKUP_MODE,
 )
@@ -730,9 +720,6 @@ def mcp_serve(
 # --- Dashboards -------------------------------------------------------------
 
 
-app.add_typer(artifact_app, name="artifact", rich_help_panel="Dashboards")
-
-
 @app.command("describe", rich_help_panel="Dashboards")
 def describe(
     paths: Annotated[
@@ -1124,117 +1111,6 @@ def render(
     )
 
 
-@artifact_app.command("emit")
-def emit_board(
-    board: Annotated[
-        Path,
-        typer.Argument(
-            help="Path to the board YAML file to compile, resolve, and execute."
-        ),
-    ],
-    project_dir: ProjectDirOption = None,
-    dbt_project_dir: DbtProjectDirOption = None,
-    artifact: Annotated[
-        Path | None,
-        typer.Option(
-            help=(
-                "Where to write the board artifact (the resolved board's "
-                "published, data-free contract). Default: "
-                "boards/<board-stem>.board.json."
-            )
-        ),
-    ] = None,
-    recording: Annotated[
-        Path | None,
-        typer.Option(
-            help=(
-                "Where to write the recording sidecar (the rows the board was "
-                "resolved against, plus variable values and a recorded_at "
-                "stamp). Default: boards/<board-stem>.recording.json."
-            )
-        ),
-    ] = None,
-    var: VarOption = None,
-    no_cache: Annotated[
-        bool,
-        typer.Option(
-            "--no-cache", help="Bypass all query caches and re-run from scratch"
-        ),
-    ] = False,
-    json_output: Annotated[bool, typer.Option("--json", help="Output as JSON")] = False,
-) -> None:
-    """Compile, resolve, and execute a board; write its board artifact + recording.
-
-    The artifact is the resolved board's published, data-free contract; the
-    recording is a separate sidecar carrying the rows it was resolved
-    against. Render the pair back with `dct artifact render` — no compile step,
-    no warehouse connection.
-
-    \b
-    Examples:
-      dct artifact emit charts/sales.yml
-      dct artifact emit charts/sales.yml --artifact out/sales.board.json --recording out/sales.recording.json
-      dct artifact emit charts/sales.yml --var region=West
-    """
-    board_artifact_cmd.emit_board_command(
-        board,
-        project_dir=project_dir,
-        dbt_project_dir=dbt_project_dir,
-        artifact=artifact,
-        recording=recording,
-        var=var,
-        no_cache=no_cache,
-        json_output=json_output,
-    )
-
-
-@artifact_app.command("render")
-def render_board(
-    artifact: Annotated[Path, typer.Argument(help="Path to a board artifact file.")],
-    recording: Annotated[
-        Path, typer.Argument(help="Path to the artifact's recording sidecar.")
-    ],
-    output: Annotated[
-        Path | None,
-        typer.Option(
-            "--output", "-o", help="Write the rendered SVG here. Default: stdout."
-        ),
-    ] = None,
-    json_output: Annotated[bool, typer.Option("--json", help="Output as JSON")] = False,
-) -> None:
-    """Render a board from its artifact + recording — no compile, no warehouse.
-
-    Both files come from `dct artifact emit`. A recording missing a query, or
-    captured under different variable values than the artifact expects,
-    fails loudly rather than rendering an empty or wrong chart.
-
-    \b
-    Examples:
-      dct artifact render out/sales.board.json out/sales.recording.json
-      dct artifact render out/sales.board.json out/sales.recording.json --output sales.svg
-    """
-    board_artifact_cmd.render_board_command(
-        artifact,
-        recording,
-        output=output,
-        json_output=json_output,
-    )
-
-
-@artifact_app.command("schema")
-def artifact_schema() -> None:
-    """Print the JSON Schema (draft 2020-12) that board artifacts conform to.
-
-    Every artifact `dct artifact emit` writes names this schema in its `$id`.
-    The schema matches the installed dct version.
-
-    \b
-    Examples:
-      dct artifact schema > board-resolved.schema.json
-    """
-    board_artifact_cmd.schema_command()
-
-
 @app.command("search", rich_help_panel="Dashboards")
 def search(
     words: Annotated[
@@ -1498,6 +1374,14 @@ def serve(
         bool,
         typer.Option("--describe", help="With --detach, print what each chart draws."),
     ] = False,
+    port_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--port-file",
+            hidden=True,
+            help="Write the bound port here once listening (used by --detach).",
+        ),
+    ] = None,
 ) -> None:
     """Start the dashboard server.
 
@@ -1558,6 +1442,7 @@ def serve(
         detach=detach,
         stop=stop,
         describe=describe,
+        port_file=port_file,
     )
 
 

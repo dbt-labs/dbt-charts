@@ -103,7 +103,8 @@ def test_v2_callout_border_dash_array_emits_svg_dasharray() -> None:
         },
     }
     svg = _v2_svg(message, style=style)
-    assert 'stroke-dasharray="4,4"' in svg
+    # The authored 4,4 is stretched a hair so the outline closes on a dash.
+    assert re.search(r'stroke-dasharray="([\d.]+),\1"', svg)
     assert 'stroke-linecap="round"' in svg
 
 

@@ -873,7 +873,7 @@ fn axes_nodes(
                 if let Some(opacity) = grid_opacity {
                     attrs = attrs.num("stroke-opacity", opacity);
                 }
-                grid.push(Node::line(Role::Grid, from, to, attrs));
+                grid.push(crate::dash::line(Role::Grid, from, to, attrs));
             }
         }
     }

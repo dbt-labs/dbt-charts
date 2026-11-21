@@ -36,7 +36,7 @@ class ResolvedGeoshapeChartStyle(GeoshapeChartStyle):
     """GeoshapeChartStyle with a resolved color field.
 
     Carries a ResolvedGradientColorStyle so the gradient's resolved_stops
-    are preserved through pydantic serialization (board artifact round-trip).
+    are preserved through pydantic serialization.
     The engine reads chart.style.geoshape.color.gradient from this field
     unchanged — the path is identical, now provably resolved.
     """

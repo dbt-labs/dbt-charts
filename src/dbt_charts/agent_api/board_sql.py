@@ -136,7 +136,7 @@ def execute_board_sql(
     # One more row than the caller's limit: enough to tell a truncated result.
     ctx = make_context(
         loaded.board,
-        Planned(planned.compiled, planned.record, plan),
+        Planned(planned.compiled, plan),
         env,
         result_cache=result_cache,
         board_slug=board_identity(str(loaded.path)),

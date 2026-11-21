@@ -146,10 +146,6 @@ pub fn err_board_alias(alias: impl Into<Value>, reason: impl Into<Value>) -> Dia
     Diagnostic::new(&codes::ERR_BOARD_ALIAS, [("alias", alias.into()), ("reason", reason.into())])
 }
 
-pub fn err_board_artifact_invalid(detail: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_BOARD_ARTIFACT_INVALID, [("detail", detail.into())])
-}
-
 pub fn err_board_file_placed_twice(file: impl Into<Value>, first: impl Into<Value>, second: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_BOARD_FILE_PLACED_TWICE, [("file", file.into()), ("first", first.into()), ("second", second.into())])
 }
@@ -168,14 +164,6 @@ pub fn err_board_import_unresolved(path: impl Into<Value>, reason: impl Into<Val
 
 pub fn err_board_query_not_found(path: impl Into<Value>, query_name: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_BOARD_QUERY_NOT_FOUND, [("path", path.into()), ("query_name", query_name.into()), ("available", available.into())])
-}
-
-pub fn err_board_recording_invalid(detail: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_BOARD_RECORDING_INVALID, [("detail", detail.into())])
-}
-
-pub fn err_board_recording_mismatch(detail: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_BOARD_RECORDING_MISMATCH, [("detail", detail.into())])
 }
 
 pub fn err_board_source_invalid(file: impl Into<Value>, got: impl Into<Value>) -> Diagnostic {

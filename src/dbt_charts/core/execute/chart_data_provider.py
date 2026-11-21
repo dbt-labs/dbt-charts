@@ -2,13 +2,12 @@
 
 ``render_board_svg`` and everything below it need only three things from the
 execution layer: fetch a query's rows and their declared types, ask when the cache entries backing them
-were written, and ask when this render happened. ``QueryResults`` provides them,
-and so does ``ReplayDataProvider``: replaying a recorded board from a serialized
-artifact has rows on hand and no warehouse to reach.
+were written, and ask when this render happened. ``QueryResults`` provides them.
 
 Typing the render path against this Protocol rather than the concrete
-``QueryResults`` is what makes such a provider a type-checked participant instead
-of a duck-typed stand-in smuggled past an annotation. It is also a step toward the
+``QueryResults`` is what makes another provider (a test's rows on hand) a
+type-checked participant instead of a duck-typed stand-in smuggled past an
+annotation. It is also a step toward the
 boundary ``core/AGENTS.md`` commits to — render as a pure function of
 ``(Resolved*, data)`` plus foreign-format translation.
 
@@ -52,10 +51,8 @@ class ChartDataProvider(Protocol):
         """Return the rows for ``query_name`` under ``variables``.
 
         Every post-resolve call site passes exactly ``(query_name, variables)``
-        with a real mapping. An implementation may accept more than the Protocol
-        promises (``ReplayDataProvider`` takes ``VariableValues | None``);
-        declaring only what the seam uses keeps a provider from modeling cache
-        control it has no concept of.
+        with a real mapping. Declaring only what the seam uses keeps a provider
+        from modeling cache control it has no concept of.
         """
         ...
 

@@ -118,6 +118,9 @@ pub struct CalloutCard<'a> {
     pub id: &'a str,
     /// Each project image its text writes, by that reference, as the `data:` URI its host read.
     pub images: &'a std::collections::BTreeMap<String, String>,
+    /// The markdown rules already written into the `<svg>` this card draws in; a card with no
+    /// enclosing scope of its own prints every rule it needs.
+    pub scope: Option<&'a std::cell::RefCell<mdsvg::StyleScope>>,
 }
 
 /// A title or message laid out: the nodes it draws at its own origin, the `<style>` its markdown
@@ -175,15 +178,17 @@ fn markdown_renderer(book: &FontBook, style: &CalloutStyle, element: &Element, l
     let regular = FontSlot::of(book.file(font_file(&face.family))?);
     let bold = FontSlot { weight: css_weight_axis(&style.bold_font_weight)?, ..regular.clone() };
     let mono = FontSlot::of(book.file(MONO_FILE)?);
-    SVGRenderer::new(md_style, FontSlots { bold: Some(bold), mono: Some(mono), ..FontSlots::new(regular) }).map_err(crate::markdown_style::mdsvg_error)
+    Ok(SVGRenderer::new(md_style, FontSlots { bold: Some(bold), mono: Some(mono), ..FontSlots::new(regular) })
+        .map_err(crate::markdown_style::mdsvg_error)?
+        .with_dash_fit(|dashes, length| crate::dash::fit_pattern(dashes, length, false)))
 }
 
 /// callout.rs:`markdown_block`, over text whose project images `resolved_text` already rewrote.
-fn markdown_block(renderer: &SVGRenderer, text: &str, content_width: f64) -> Result<Block, Diagnostic> {
+fn markdown_block(renderer: &SVGRenderer, text: &str, content_width: f64, scope: &mut mdsvg::StyleScope) -> Result<Block, Diagnostic> {
     let rendered = renderer.render_content(&mdsvg::parse(text), content_width, 0.0).map_err(crate::markdown_style::mdsvg_error)?;
     Ok(Block {
         nodes: mdsvg::indented_nodes(&rendered.elements),
-        styles: mdsvg::indented_nodes(std::slice::from_ref(&rendered.style)),
+        styles: mdsvg::indented_nodes(scope.style(&rendered.rules).as_slice()),
         height: rendered.height,
     })
 }
@@ -224,18 +229,20 @@ pub fn plan(card: &CalloutCard, book: &FontBook, width: f64) -> Result<Plan, Dia
     // The link color is the title's ink in both blocks.
     let link = &style.title.face.color;
     let mut diagnostics = Vec::new();
+    let own = std::cell::RefCell::new(mdsvg::StyleScope::default());
+    let scope = card.scope.unwrap_or(&own);
     let title_text = card.callout.title.as_deref().map(|text| resolved_text(text, card.images)).transpose()?;
     let title = match &title_text {
         Some(text) => {
             let renderer = markdown_renderer(book, style, &style.title, link)?;
-            let block = markdown_block(&renderer, text, content_width)?;
+            let block = markdown_block(&renderer, text, content_width, &mut scope.borrow_mut())?;
             Some(capped(block, &style.title.face, MAX_TITLE_LINES, card.id, "title", text, &mut diagnostics))
         }
         None => None,
     };
     let message_text = resolved_text(&card.callout.message, card.images)?;
     let renderer = markdown_renderer(book, style, &style.message, link)?;
-    let block = markdown_block(&renderer, &message_text, content_width)?;
+    let block = markdown_block(&renderer, &message_text, content_width, &mut scope.borrow_mut())?;
     let message = capped(block, &style.message.face, MAX_MESSAGE_LINES, card.id, "message", &message_text, &mut diagnostics);
     let natural_height = content_height(pad, title.as_ref().map(|(_, height)| *height), style.section_gap, message.1).max(MIN_HEIGHT);
     Ok(Plan { width: w, content_width, title, message, natural_height, title_text, message_text, diagnostics })

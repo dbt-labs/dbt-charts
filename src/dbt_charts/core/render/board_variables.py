@@ -12,10 +12,9 @@ variables-plumbing gap shipped (two production call sites silently painted
 page 1 regardless of the real page). The scope is opened at each render
 pass's own entry point, mirroring ``interactive_controls`` in
 ``controls.py``: ``render_board_svg`` (``boards.py``) opens it around its own
-layout walk, so both the live ``render()`` main pass and ``dct artifact
-render``'s replay path (``board_replay.py``) get it from the one place they
-both call directly; the sizing pass never calls ``render_board_svg``, so
-``renderer.py`` opens a separate scope around ``build_resolved_board``.
+layout walk, so every caller of ``render_board_svg`` gets it there; the
+sizing pass never calls ``render_board_svg``, so ``renderer.py`` opens a
+separate scope around ``build_resolved_board``.
 """
 
 from __future__ import annotations

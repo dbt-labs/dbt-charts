@@ -1754,7 +1754,7 @@ pub(super) fn render_horizontal_panel(
             if x < -0.5 || x > plot_w + 1.0 {
                 continue;
             }
-            lines.push(Node::line(Role::Grid, (x, gd), (x, plot_h + gd), grid.faded_stroke(gc, gw)));
+            lines.push(crate::dash::line(Role::Grid, (x, gd), (x, plot_h + gd), grid.faded_stroke(gc, gw)));
         }
         plot.push(::layout::contract::grid_group(lines));
     }

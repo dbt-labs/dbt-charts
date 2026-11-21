@@ -104,7 +104,7 @@ A `rows` or `cols` entry may be an inline board with its own `title`, `variables
 
 ## Formats
 
-A `formats:` entry takes a format name, never a spec: a built-in name below, or an alias defined once under `style.formats` (`style.formats.one_decimal: ',.1f'`, then `one_decimal` as the column's value under `formats:`). `compact` and `currency_compact` keep two significant digits (1.2M, 45K); another precision is a d3 spec in a `style.formats` alias, such as `.3~s`. Spreadsheet patterns (`#,##0.0`) are not supported.
+A `formats:` entry takes a format name, never a spec: a built-in name below, or an alias defined once under `style.formats` (`style.formats.one_decimal: ',.1f'`, then `one_decimal` as the column's value under `formats:`). `compact` keeps two significant digits (1.2M, 45K) and `currency_compact` three ($1.23M, $412K); another precision is a d3 spec in a `style.formats` alias, such as `.3~s`. Spreadsheet patterns (`#,##0.0`) are not supported.
 
 Built-in names, on 1234567.891 and 0.2534: {{ formats() }}. Date names: {{ format_names('time') }}. A `date_<grain>` name is the engine's own axis label, never a format you write: a date in a table, KPI or axis takes a strftime spec such as `"%b %Y"` or `"%Y"`.
 

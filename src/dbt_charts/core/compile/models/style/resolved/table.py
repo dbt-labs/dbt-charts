@@ -74,10 +74,9 @@ class ResolvedColumnScaleConfig(ColumnScaleConfig):
 
     Constructed by _with_resolved_scale_stops in compile/resolve/chart/_table.py
     after the WCAG-safe palette bake runs. background/color carry
-    ResolvedColumnScaleTarget so resolved_stops survives pydantic serialization
-    (board artifact round-trip). The base ColumnScaleConfig is used for
-    pre-bake authored input; this resolved variant is only constructed at
-    resolve time.
+    ResolvedColumnScaleTarget so resolved_stops survives pydantic serialization.
+    The base ColumnScaleConfig is used for pre-bake authored input; this
+    resolved variant is only constructed at resolve time.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

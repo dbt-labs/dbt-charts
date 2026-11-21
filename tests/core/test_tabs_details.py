@@ -7,6 +7,8 @@ Tests variable-controlled tabs and details sections:
 - Details rendering: summary bar with disclosure triangle, toggle URL
 """
 
+import re
+
 import pytest
 
 from dbt_charts.core.compile import compile
@@ -15,6 +17,7 @@ from dbt_charts.core.compile.normalize.dispatch import slugify
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 
 from ._board_utils import apply_static_layout
+from ._dash import is_stretched
 from ._svg_render import PINNED_RENDER_TIME
 
 
@@ -788,7 +791,8 @@ class TestDetailsRendering:
             resolved_style=rs,
         )
 
-        assert 'stroke-dasharray="4,4"' in svg
+        dash = re.search(r'stroke-dasharray="([^"]*)"', svg)
+        assert dash and is_stretched(dash.group(1), (4, 4))
         assert 'stroke-linecap="round"' in svg
 
 
@@ -1133,7 +1137,8 @@ rows:
 
         svg = render(board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
-        assert 'stroke-dasharray="4,4"' in svg
+        dash = re.search(r'stroke-dasharray="([^"]*)"', svg)
+        assert dash and is_stretched(dash.group(1), (4, 4))
         assert 'stroke-linecap="round"' in svg
 
 
@@ -1477,68 +1482,6 @@ class TestInactiveTabDataAwareResolution:
     def _build(self, yaml_content: str, local_project):
         return _compile_and_build_executor(yaml_content, local_project)
 
-    def test_inactive_tab_pie_survives_artifact_replay(self, local_project, tmp_path):
-        """CRITICAL regression: artifact emit -> replay with a pie in an
-        inactive tab.
-
-        A data-free resolve bakes ``presentation_fingerprint = sha256("[]")``,
-        which ``record_board``'s real query rows then contradict —
-        ``board_replay`` raised ``ERR-RESOLVED-PIE-DATA-MISMATCH`` for the
-        WHOLE board: ``dct artifact emit`` reported success, but
-        ``dct artifact render`` produced no SVG at all.
-        """
-        from dbt_charts.core.execute.recording import record_board
-        from dbt_charts.core.render.board_replay import render_board_from_artifact
-        from dbt_charts.core.render.board_resolve import build_resolved_board
-
-        yaml_content = """
-title: Test
-queries:
-  shares_q:
-    type: values
-    rows:
-      - {category: A, value: 40}
-      - {category: B, value: 35}
-      - {category: C, value: 25}
-charts:
-  active_chart:
-    query: shares_q
-    type: bar
-    x: category
-    y: value
-  shares:
-    query: shares_q
-    type: pie
-    theta: value
-    color: category
-tabs:
-  id: t
-  default: Active
-  items:
-    - title: Active
-      rows: [{cols: [active_chart]}]
-    - title: Hidden
-      rows: [{cols: [shares]}]
-"""
-        board, executor = self._build(yaml_content, local_project)
-        resolved, _ = build_resolved_board(board, executor, {})
-        recording = record_board(
-            resolved, executor.results(list(resolved.queries), {}), {}
-        )
-
-        # Must not raise ERR-RESOLVED-PIE-DATA-MISMATCH: before the fix, the
-        # inactive tab's pie was resolved against [] while record_board
-        # recorded the query's real rows.
-
-        from dbt_charts.core.compile.engine import engine_compile_recorded
-        from dbt_charts.core.render.board_replay import BoardArtifact
-
-        record = engine_compile_recorded(
-            None, content=yaml_content, project=local_project(tmp_path)
-        )[1]
-        svg = render_board_from_artifact(BoardArtifact(resolved, record), recording, {})
-        assert svg
-
     def test_inactive_tab_pie_honors_authored_width(self, local_project):
         """HIGH regression: an inactive tab's pie falls back to
         ``_resolve_chart_data_aware`` (the sizing pass never measured it),
@@ -1658,10 +1601,8 @@ tabs:
 
     def test_inactive_tab_broken_chart_recorded_in_resolve_errors(self, local_project):
         """HIGH regression: a broken chart in an inactive tab must not be
-        silently swallowed. ``agent_api.board_artifact`` gates artifact
-        publication on ``resolve_errors`` being empty ("Artifacts stay
-        all-or-nothing") — before the fix, an inactive tab's failure
-        recorded nothing there.
+        silently swallowed: its failure lands in ``resolve_errors`` like an
+        active tab's does.
         """
         from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
         from dbt_charts.core.render.board_resolve import build_resolved_board

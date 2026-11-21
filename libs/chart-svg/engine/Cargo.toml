@@ -20,6 +20,7 @@ display-text = { path = "../display-text" }
 indexmap = { version = "2", features = ["serde"] }
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 layout = { path = "../layout" }
+mdsvg = { path = "../mdsvg" }
 measure = { path = "../measure" }
 model-core = { path = "../model-core" }
 normalize = { path = "../normalize" }

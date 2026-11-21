@@ -33,6 +33,7 @@ from __future__ import annotations
 import html
 from collections.abc import Callable
 
+from dbt_charts import _engine
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
     LayoutItem,
@@ -584,7 +585,7 @@ def render_tabs_layout(
     rule = (
         f'<path d="{escape_attr(d)}" '
         f'fill="none" stroke="{escape_attr(border.color)}" stroke-width="{escape_attr(stroke)}" '
-        f'stroke-linejoin="round"{border_dash_attrs(border)}/>'
+        f'stroke-linejoin="round"{border_dash_attrs(border, None)}/>'
     )
     tab_bar_parts.insert(0, rule)
     orientation = ' aria-orientation="vertical"' if left_rail else ""
@@ -690,11 +691,14 @@ def render_details_summary(
     _summary_fill = _expanded_fill if is_expanded else _collapsed_fill
     # Always emit the rect so the border stroke is visible; fall back to
     # fill="none" when neither header nor stripe has a background color.
+    summary_perimeter = _engine.rect_perimeter(
+        available_width, summary_height, details_config.border.radius
+    )
     _summary_rect = (
         f'<rect x="0" y="0" width="{escape_attr(available_width)}" height="{escape_attr(summary_height)}" '
         f'fill="{escape_attr(_summary_fill or "none")}" '  # type-state: silent_fallback — no summary fill authored; fill="none" is the real SVG value the comment above already documents, not a fabricated color
         f'stroke="{escape_attr(resolved_style.border.color)}" stroke-width="{escape_attr(details_config.border.width)}"'
-        f"{border_dash_attrs(details_config.border)} "
+        f"{border_dash_attrs(details_config.border, summary_perimeter)} "
         f'rx="{escape_attr(details_config.border.radius)}" class="dbt-details-toggle"/>'
     )
     return (

@@ -12,7 +12,6 @@ pub mod prose;
 pub mod prose_flow;
 pub mod prose_plan;
 pub mod stack;
-pub mod styles;
 pub mod tree;
 pub mod variables;
 pub mod width;

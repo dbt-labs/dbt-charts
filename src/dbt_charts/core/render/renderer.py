@@ -346,10 +346,9 @@ def _collect_render_warnings(
 
     # A tabs layout's inactive-tab charts reach here only when the format walks
     # every tab (a drawn format empties them, `scope_tabs`). Then they are
-    # data-resolved (ResolvedBoard.charts must agree with what record_board
-    # records) but never laid out — the
-    # render-first vl-convert measurement the active tab gets is exactly the
-    # cost this skips, so these items (and a collapsed `details:` chart, sized
+    # data-resolved (ResolvedBoard.charts must agree with the query's rows)
+    # but never laid out — the render-first vl-convert measurement the active
+    # tab gets is exactly the cost this skips, so these items (and a collapsed `details:` chart, sized
     # the same unmeasured way) keep width=height=0.0.
     #
     # That absence of a real width only invalidates GEOMETRY detectors —
@@ -1126,10 +1125,7 @@ def _render(
             flat_export(format in ("png", "pdf") or is_flat_export()),
         ):
             # No board_variables() scope here: render_board_svg opens its own
-            # (boards.py), which also covers dct artifact render's replay
-            # path (board_replay.py) -- both call render_board_svg directly,
-            # so scoping there instead of here is what covers both callers,
-            # not just this one.
+            # (boards.py).
             svg_content = render_board_svg(
                 resolved_board,
                 results,

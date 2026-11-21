@@ -432,7 +432,8 @@ pub(super) fn card_rect(background: &str, border: &Border, w: f64, top: f64, h: 
         .quick("fill", background)
         .quick("stroke", border.color.as_str())
         .num("stroke-width", border.width);
-    let attrs = crate::board::card::dash_attrs(attrs, border.dash_array.as_deref(), border.line_cap.as_deref(), border.dash_offset);
+    let perimeter = crate::dash::rect_perimeter(w, h - top, border.radius);
+    let attrs = crate::board::card::dash_attrs(attrs, border.dash_array.as_deref(), border.line_cap.as_deref(), border.dash_offset, perimeter);
     Node::new(Role::Chrome, attrs, Shape::Rect { x: 0.0, y: top, w, h: h - top, rx: border.radius })
 }
 

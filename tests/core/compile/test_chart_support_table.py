@@ -897,7 +897,7 @@ def test_a_support_table_row_with_no_format_takes_the_engines_number():
         (",d", ("number", ".3~s")),
         ("integer", ("number", ".3~s")),
         ("percent", ("percent", ".1%")),
-        ("currency_compact", ("currency_compact", "$.2~s")),
+        ("currency_compact", ("currency_compact", "$.3~s")),
     ],
 )
 def test_a_full_digit_format_compacts_to_the_engines_three_digit_name(

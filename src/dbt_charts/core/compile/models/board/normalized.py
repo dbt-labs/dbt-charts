@@ -413,8 +413,7 @@ class Board(BaseModel):
     text: str = Field(
         default="", description="Markdown text content for text-only boards."
     )
-    # Provenance, not compiled output: never serialized, so a loaded artifact
-    # carries no location.
+    # Provenance, not compiled output: never serialized.
     base_dir: str | None = Field(  # type-state: optional — None is no location
         default=None,
         exclude=True,

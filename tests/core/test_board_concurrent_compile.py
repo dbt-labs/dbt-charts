@@ -52,8 +52,8 @@ def intervals(monkeypatch: pytest.MonkeyPatch) -> dict[str, tuple[float, float]]
     )
     monkeypatch.setattr(
         board_module,
-        "engine_compile_recorded",
-        slowed("engine", board_module.engine_compile_recorded),
+        "engine_compile",
+        slowed("engine", board_module.engine_compile),
     )
     spans["threads"] = (0.0, 0.0)
     yield spans

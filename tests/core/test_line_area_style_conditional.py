@@ -28,6 +28,7 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
+from ._dash import is_stretched
 from ._engine_render import render_chart_svg
 
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
@@ -308,7 +309,7 @@ def test_a_run_of_matching_points_restyles_its_segments() -> None:
     svg = _svg("line", _stroke_rule(color=GRAY, dasharray="4 4"), data=_RUN_ROWS)
     (gray,) = _runs(svg, GRAY)
     (base,) = _base_lines(svg)
-    assert _attr(gray, "stroke-dasharray") == "4,4"
+    assert is_stretched(_attr(gray, "stroke-dasharray"), (4, 4))
     assert _attr(base, "stroke-dasharray") is None
     # March is the first forecast row, but the February-March segment has one actual
     # endpoint, so the gray run starts at March and the base line ends there.
@@ -319,7 +320,8 @@ def test_a_run_of_matching_points_restyles_its_segments() -> None:
 def test_the_halo_follows_the_restyled_run() -> None:
     svg = _svg("line", _stroke_rule(width=2, dasharray="4 4"), data=_RUN_ROWS)
     halos = _runs(svg, WHITE)
-    assert [_attr(h, "stroke-dasharray") for h in halos] == [None, "4,4"]
+    plain, restyled = (_attr(h, "stroke-dasharray") for h in halos)
+    assert plain is None and is_stretched(restyled, (4, 4))
 
 
 def test_an_isolated_matching_point_restyles_no_line() -> None:

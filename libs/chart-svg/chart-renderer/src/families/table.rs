@@ -7141,8 +7141,7 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(lines.len(), 3, "header, one row line, one summary line:\n{svg}");
         for (line, width) in lines.iter().zip(["2", "2", "2"]) {
-            let stroke = format!("stroke-width=\"{width}\" stroke-dasharray=\"6 3\"/>");
-            assert!(line.contains(&stroke), "{line}");
+            assert!(line.contains(&format!("stroke-width=\"{width}\" stroke-dasharray=\"6.0")), "6 3 stretched to the 260px rule: {line}");
             assert!(line.contains("x1=\"20\"") && line.contains("x2=\"280\""), "{line}");
         }
         assert!(!svg.contains("fill=\"#0077cc\""), "no solid rect for a dashed divider:\n{svg}");
@@ -7323,7 +7322,7 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(lines.len(), solid.len(), "{svg}");
         for (line, (x, w)) in lines.iter().zip(&solid) {
-            assert!(line.contains("stroke-dasharray=\"4 2\""), "{line}");
+            assert!(line.contains("stroke-dasharray=\"") && !line.contains("\"4 2\""), "4 2 stretched to the rule: {line}");
             let end = |name: &str| -> f64 {
                 line.split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
             };
@@ -11032,7 +11031,7 @@ mod demand_affix_tests {
         };
         let compact = json!({"spec": ".2~s", "raw": "compact", "notation": "analytic"});
         assert_eq!(suffix(compact), (None, "1.23".into(), Some("M".into())));
-        let currency_compact = json!({"spec": "$.2~s", "raw": "currency_compact", "notation": "analytic"});
+        let currency_compact = json!({"spec": "$.3~s", "raw": "currency_compact", "notation": "analytic"});
         assert_eq!(suffix(currency_compact), (Some("$".into()), "1.23".into(), Some("M".into())));
         assert_eq!(suffix(json!({"spec": ".3~s", "raw": "number"})), (None, "1.23".into(), Some("m".into())));
     }
@@ -11040,7 +11039,7 @@ mod demand_affix_tests {
     /// Oracle: `format_kpi_parts(v, resolve_format_parts("compact"),
     /// default_number=True, keep_affix_gaps=True)` is `('', '45', 'K')` for
     /// `45123.0`, `('', '12', '')` for `12.0` and `('', '0.5', '')` for `0.5`
-    /// (the `number_full` sibling); `currency_compact` leads `45` with `$`.
+    /// (the `number_full` sibling); `currency_compact` keeps three figures, `('$', '45.1', 'K')`.
     #[test]
     fn an_unscaled_compact_column_splits_two_figures_and_an_analytic_word() {
         let lanes = |format: Value, v: f64| {
@@ -11053,8 +11052,8 @@ mod demand_affix_tests {
         assert_eq!(lanes(compact(), 45123.0), (None, "45".into(), Some("K".into())));
         assert_eq!(lanes(compact(), 12.0), (None, "12".into(), None));
         assert_eq!(lanes(compact(), 0.5), (None, "0.5".into(), None));
-        let currency_compact = json!({"spec": "$.2~s", "raw": "currency_compact", "notation": "analytic"});
-        assert_eq!(lanes(currency_compact, 45123.0), (Some("$".into()), "45".into(), Some("K".into())));
+        let currency_compact = json!({"spec": "$.3~s", "raw": "currency_compact", "notation": "analytic"});
+        assert_eq!(lanes(currency_compact, 45123.0), (Some("$".into()), "45.1".into(), Some("K".into())));
     }
 
     /// Oracle: production's `table_columns` reference (`number-format-affixes`,

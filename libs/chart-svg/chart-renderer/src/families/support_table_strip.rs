@@ -295,7 +295,7 @@ fn divider_offset(style: &SupportTableStyle) -> f64 {
 /// divider's own color and width, dashed as Vega serializes `strokeDash`.
 pub(crate) fn divider_line(x1: f64, y1: f64, x2: f64, y2: f64, divider: &Divider) -> Node {
     let line = crate::contract::rule(Role::Chrome, (x1, y1), (x2, y2), &divider.color, divider.width);
-    match divider.vega_dash() {
+    match divider.vega_dash((x2 - x1).hypot(y2 - y1)) {
         Some(dash) => Node { attrs: line.attrs.set("stroke-dasharray", dash), ..line },
         None => line,
     }
@@ -2176,10 +2176,11 @@ mod tests {
             {"visible": true, "color": "#cc7700", "width": 2.0, "dasharray": "6 3.5"}
         ))
         .unwrap();
+        // 100px holds 11 periods less the last gap: the authored 6,3.5 scaled by 100/101.
         assert_eq!(
             print::print(&[divider_line(10.0, 20.0, 110.0, 20.0, &dashed)]),
             "<line x1=\"10\" y1=\"20\" x2=\"110\" y2=\"20\" \
-             stroke=\"#cc7700\" stroke-width=\"2\" stroke-dasharray=\"6,3.5\"/>"
+             stroke=\"#cc7700\" stroke-width=\"2\" stroke-dasharray=\"5.9405940594059405,3.4653465346534653\"/>"
         );
         let solid = Divider { dasharray: None, ..dashed };
         assert!(!print::print(&[divider_line(0.0, 0.0, 1.0, 0.0, &solid)]).contains("dasharray"));

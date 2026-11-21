@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Literal, Self, cast, overload
 # Verb-forwarder imports use SUBMODULES so test monkeypatches on the
 # module attribute affect the call site.
 from dbt_charts.agent_api import (
-    board_artifact as _board_artifact,
     board_sql as _board_sql,
     describe as _describe,
     migrate as _migrate,
@@ -18,7 +17,6 @@ from dbt_charts.agent_api import (
     query as _query,
     validate as _validate,
 )
-from dbt_charts.agent_api.board_artifact import EmitBoardArtifactResult
 from dbt_charts.agent_api.migrate import MigrateSummary
 from dbt_charts.agent_api.semantics import semantic_diagnostics
 from dbt_charts.agent_api.validate import (
@@ -481,27 +479,6 @@ class ProjectSession:
 
     def profile_source(self, source: str, tables: Sequence[str] = ()) -> str:
         return _profile.profile_source(source, env=self.env, wanted=tables)
-
-    def emit_board(
-        self,
-        path: Path,
-        artifact_path: Path,
-        recording_path: Path,
-        *,
-        variables: dict[str, Any] | None = None,
-        use_cache: bool = True,
-    ) -> EmitBoardArtifactResult:
-        """Compile, resolve, and execute a board; write its board artifact + recording."""
-        return _board_artifact.emit_board_artifact(
-            path,
-            artifact_path,
-            recording_path,
-            project=self.project,
-            env=self.env,
-            variables=variables,
-            use_cache=use_cache,
-            result_cache=self.cache,
-        )
 
     def prefetch_board(
         self,

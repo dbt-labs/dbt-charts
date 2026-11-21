@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
-from dbt_charts.core.compile.engine import engine_compile_recorded
+from dbt_charts.core.compile.engine import engine_compile
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.execute import plan_names, run as run_stage
 from dbt_charts.core.execute.env import ExecEnv
@@ -78,7 +78,7 @@ def _hand_built_plan(board: Board, project: Project) -> Planned:
     names = {c.query_name for c in charts if c.query_name is not None}
     names.update(name for keys in layers.values() for name in keys if name)
     return Planned(
-        *engine_compile_recorded(None, content="title: hand built\n", project=project),
+        engine_compile(None, content="title: hand built\n", project=project),
         _plans.plan_of(
             {name: sql_entry("SELECT 1") for name in names},
             chart_queries={

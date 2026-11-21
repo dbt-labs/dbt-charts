@@ -28,6 +28,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from dbt_charts import _engine
 from dbt_charts.core.colors import InvalidColorError, parse_css_color
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_CSS_COLOR_INVALID_AT_RENDER,
@@ -312,13 +313,15 @@ def border_rect(
         return ""
     inset = stroke / 2.0
     class_attr = f' class="{escape_attr(css_class)}"' if css_class else ""
+    rect_width, rect_height = max(width - stroke, 0), max(height - stroke, 0)
+    radius = max(border.radius - inset, 0)
     return (
         f'<rect{class_attr} x="{escape_attr(inset)}" y="{escape_attr(inset)}" '
-        f'width="{escape_attr(max(width - stroke, 0))}" '
-        f'height="{escape_attr(max(height - stroke, 0))}" '
+        f'width="{escape_attr(rect_width)}" '
+        f'height="{escape_attr(rect_height)}" '
         f'fill="none" stroke="{escape_attr(border.color)}" stroke-width="{escape_attr(stroke)}"'
-        f"{border_dash_attrs(border)} "
-        f'rx="{escape_attr(max(border.radius - inset, 0))}"{flow_bg_attr(grows)}/>'
+        f"{border_dash_attrs(border, _engine.rect_perimeter(rect_width, rect_height, radius))} "
+        f'rx="{escape_attr(radius)}"{flow_bg_attr(grows)}/>'
     )
 
 
@@ -374,23 +377,40 @@ def shadow_rect(
     )
 
 
-def divider_dash_attr(dasharray: str | None) -> str:
-    """`` stroke-dasharray`` attribute for a divider; "" when solid."""
+def fit_rule_dashes(dasharray: str, length: float) -> str:
+    """An open rule's dash pattern stretched to its ``length`` so it starts and
+    ends on a dash; markdown's ``---`` takes it as the renderer's ``dash_fitter``.
+    """
+    return _engine.fit_dash_pattern(dasharray, length, False)
+
+
+def divider_dash_attr(dasharray: str | None, length: float) -> str:
+    """`` stroke-dasharray`` attribute for a divider ``length`` px long, its
+    pattern stretched so the line starts and ends on a dash; "" when solid.
+    """
     if dasharray is None:
         return ""
-    return f' stroke-dasharray="{escape_attr(dasharray)}"'
+    return f' stroke-dasharray="{escape_attr(fit_rule_dashes(dasharray, length))}"'
 
 
-def border_dash_attrs(border: BorderStyle) -> str:
+def border_dash_attrs(border: BorderStyle, perimeter: float | None) -> str:
     """SVG stroke-dasharray/-linecap/-dashoffset attributes for a dashed border.
 
     Returns "" (solid border, the default) when ``border.dash_array`` is unset.
     Otherwise a leading-space-separated attribute string ready to interpolate
     directly after a rect/path's existing ``stroke-width="..."`` attribute.
+    A closed outline ``perimeter`` px long gets its pattern stretched to whole
+    periods so the loop closes on a dash; ``None`` is an open rail drawn as
+    authored.
     """
     if border.dash_array is None:
         return ""
-    attrs = f' stroke-dasharray="{escape_attr(",".join(f"{v:g}" for v in border.dash_array))}"'
+    dashes = (
+        border.dash_array
+        if perimeter is None
+        else _engine.fit_dash(border.dash_array, perimeter, True)
+    )
+    attrs = f' stroke-dasharray="{escape_attr(",".join(f"{v:g}" for v in dashes))}"'
     if border.line_cap is not None:
         attrs += f' stroke-linecap="{escape_attr(border.line_cap)}"'
     if border.dash_offset is not None:

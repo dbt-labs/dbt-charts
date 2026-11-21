@@ -392,7 +392,7 @@ fn column_divider_line(x: f64, height: f64, divider: &Divider) -> String {
     format!(
         r#"<line x1="{x_snapped}" y1="0" x2="{x_snapped}" y2="{h_s}" stroke="{}" stroke-width="{sw_s}"{}/>"#,
         print::xml_escape_attr(&divider.color),
-        divider.dash_attr()
+        divider.dash_attr(height)
     )
 }
 
@@ -570,7 +570,7 @@ fn prose_flow(
     if allow_raw_html && mdsvg::types::contains_raw_html(&blocks) {
         return Err("board text raw HTML not modeled (html_policy: trusted-raw)".to_string());
     }
-    let renderer = mdsvg::renderer::SVGRenderer::new(style, fonts)?;
+    let renderer = mdsvg::renderer::SVGRenderer::new(style, fonts)?.with_dash_fit(|dashes, length| ::layout::dash::fit_pattern(dashes, length, false));
 
     let pad = card_padding;
     let mut boxes = span_boxes(width + 2.0 * pad, plan);
@@ -720,7 +720,7 @@ pub fn render_prose_svg(
     let window = |block: &mdsvg::types::AnyBlock, block_width: f64, start: usize, count: Option<usize>| {
         let rendered = renderer.render_block_window(block, block_width, start, count)?;
         if style_block.borrow().is_empty() {
-            *style_block.borrow_mut() = print::print_content(&mdsvg::indented(std::slice::from_ref(&rendered.style)));
+            *style_block.borrow_mut() = print::print_content(&mdsvg::indented(std::slice::from_ref(&rendered.style())));
         }
         Ok::<String, String>(print::print_content(&mdsvg::indented(&rendered.elements)))
     };

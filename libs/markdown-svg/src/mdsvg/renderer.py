@@ -9,7 +9,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import nh3
 
@@ -528,6 +528,7 @@ class SVGRenderer:
         image_timeout: float = 10.0,
         # Raw HTML passthrough
         allow_raw_html: bool = False,
+        dash_fitter: Optional[Callable[[str, float], str]] = None,
     ) -> None:
         """
         Initialize the renderer.
@@ -554,6 +555,10 @@ class SVGRenderer:
                       embedding in SVG. Useful for mapping local paths to CDN URLs.
                       Example: create_prefix_mapper({"/assets/": "https://cdn.example.com/"})
             image_timeout: Timeout in seconds for fetching remote images (default 10).
+            dash_fitter: Optional function that stretches a dashed horizontal
+                      rule's ``hr_dasharray`` to the rule's length, so the host
+                      can apply its own dash law. If None, the pattern is drawn
+                      as authored.
 
         Raises:
             ValueError: If both `fonts` and `font_path`/`mono_font_path` are given.
@@ -567,6 +572,7 @@ class SVGRenderer:
         self.style = style or Style()
         self._class_prefix = self._compute_class_prefix()
         self._allow_raw_html = allow_raw_html
+        self._dash_fitter = dash_fitter
         self._measurer: FontMeasurer
         self._mono_char_width: Optional[float] = None
         self._mono_font_path = mono_font_path
@@ -2300,12 +2306,17 @@ class SVGRenderer:
             return [], margin + height + margin
         if self.style.hr_dasharray:
             mid = y_pos + height / 2
+            dashes = (
+                self._dash_fitter(self.style.hr_dasharray, ctx.width)
+                if self._dash_fitter
+                else self.style.hr_dasharray
+            )
             element = (
                 f'  <line x1="{format_number(ctx.x)}" y1="{format_number(mid)}" '
                 f'x2="{format_number(ctx.x + ctx.width)}" y2="{format_number(mid)}" '
                 f'stroke="{escape_xml(self.style.hr_color)}" '
                 f'stroke-width="{format_number(height)}" '
-                f'stroke-dasharray="{escape_xml(self.style.hr_dasharray)}"/>'
+                f'stroke-dasharray="{escape_xml(dashes)}"/>'
             )
         else:
             element = (

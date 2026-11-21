@@ -421,7 +421,7 @@ pub fn render_chart_in_cell(board: &Board, styles: &ChartStyles, run: &RunResult
                 let body = crate::slot::body_placing(board, &at)?;
                 let id = styles.public_id(&chart_id)?;
                 // No cell height is the card's own: its content's.
-                let (extent, content, diagnostics) = crate::compose::callout_card(styles.at(&at)?, body, callout, id, images, (cell.width, cell.height.unwrap_or(0.0)), book)?;
+                let (extent, content, diagnostics) = crate::compose::callout_card(styles.at(&at)?, body, callout, id, images, None, (cell.width, cell.height.unwrap_or(0.0)), book)?;
                 let svg = scene::Node::new(scene::Role::Chrome, scene::Attrs::new(), scene::Shape::Svg { extent, children: content });
                 Ok(InCell { svg: print::print(std::slice::from_ref(&svg)), height: extent.height, diagnostics })
             }

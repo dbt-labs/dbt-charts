@@ -805,16 +805,12 @@ pub(super) fn emit_divider_segment(
         return;
     }
     let mid = y + thickness / 2.0;
-    tree.line(
-        Role::Grid,
-        (x1, mid),
-        (x2, mid),
-        Attrs::new()
-            .quick("stroke", divider.color.as_str())
-            .num("stroke-width", thickness)
-            .quick_some("stroke-dasharray", divider.dasharray.as_deref())
-            .quick_some("class", class),
-    );
+    let attrs = Attrs::new()
+        .quick("stroke", divider.color.as_str())
+        .num("stroke-width", thickness)
+        .quick_some("stroke-dasharray", divider.dasharray.as_deref())
+        .quick_some("class", class);
+    tree.line(Role::Grid, (x1, mid), (x2, mid), crate::dash::fit_attrs(attrs, x2 - x1, false));
 }
 
 /// One column's header rule span.

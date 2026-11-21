@@ -1339,10 +1339,8 @@ def _render_board_svg(
     # Render layout (using shared helper). Scoped in board_variables() so any
     # chart reachable from here (table pagination today) can read the current
     # page off current_board_variables() without a variables= parameter
-    # threaded down through every render_resolved_chart call site -- this is
-    # the one seam both the live render() pass and dct artifact render's
-    # replay path (board_replay.py) share, so opening it here covers both
-    # rather than at each caller.
+    # threaded down through every render_resolved_chart call site. Opening it
+    # here covers every caller of render_board_svg.
     with (
         board_variables(variables),
         variable_options(linked_variable_options(board, results, variables)),
@@ -1561,7 +1559,7 @@ def _render_board_svg(
                 f'<line x1="{format_svg_numeric(page_padding)}" y1="{format_svg_numeric(rule_y)}" '
                 f'x2="{format_svg_numeric(footer_x)}" y2="{format_svg_numeric(rule_y)}" '
                 f'stroke="{escape_attr(footer_style.divider.color)}" stroke-width="{format_svg_numeric(footer_style.divider.width)}"'
-                f"{divider_dash_attr(footer_style.divider.dasharray)}/>"
+                f"{divider_dash_attr(footer_style.divider.dasharray, footer_x - page_padding)}/>"
             )
         footer_parts.append(attribution_svg)
         footer_element = "\n".join(footer_parts)

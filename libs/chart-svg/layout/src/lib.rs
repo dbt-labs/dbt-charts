@@ -4,6 +4,7 @@
 
 pub mod board;
 pub mod contract;
+pub mod dash;
 pub mod families;
 pub mod family;
 pub mod geom;

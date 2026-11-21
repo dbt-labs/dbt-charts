@@ -80,10 +80,9 @@ def canonical_key(value: Any) -> str:
 
     Uses ``pydantic_core.to_json`` rather than ``str()``: it serializes a
     value by its runtime type (``datetime`` -> ISO-8601 with a ``Z`` UTC suffix,
-    ``timedelta`` -> ISO-8601 duration, ``bytes`` -> decoded text, ...), and a
-    replayed ``BoardRecording`` restores each cell to the type its column
-    declares, so bake and replay canonicalize the same Python value through the
-    same serializer rather than hand-matching format pairs like ``isoformat()``.
+    ``timedelta`` -> ISO-8601 duration, ``bytes`` -> decoded text, ...), so every
+    caller canonicalizes the same Python value through the same serializer
+    rather than hand-matching format pairs like ``isoformat()``.
     """
     return pydantic_core.to_json(value).decode()
 

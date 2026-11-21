@@ -204,6 +204,7 @@ fn callout_md_renderer(
             ..FontSlots::new(regular)
         },
     )
+    .map(|renderer| renderer.with_dash_fit(|dashes, length| ::layout::dash::fit_pattern(dashes, length, false)))
 }
 
 /// A title or message laid out: the nodes it draws at its own origin, the
@@ -219,7 +220,7 @@ fn markdown_block(renderer: &SVGRenderer, text: &str, content_width: f64) -> Res
     let r = renderer.render_content(&doc, content_width, 0.0)?;
     Ok(Block {
         nodes: mdsvg::indented_nodes(&r.elements),
-        styles: mdsvg::indented_nodes(std::slice::from_ref(&r.style)),
+        styles: mdsvg::indented_nodes(std::slice::from_ref(&r.style())),
         height: r.height,
     })
 }
@@ -469,6 +470,7 @@ fn card_rect(inline: &CalloutStyle, w: f64, top: f64, h: f64) -> Node {
         inline.border.dash_array.as_deref(),
         inline.border.line_cap.as_deref(),
         inline.border.dash_offset,
+        Some(::layout::dash::rect_perimeter(w, h - top, inline.border.radius)),
     )
     .into_iter()
     .fold(

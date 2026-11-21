@@ -110,10 +110,9 @@ def test_cap_below_one_raises(make_chart: Callable[..., Any]) -> None:
 def test_variable_dict_excludes_internal_fields() -> None:
     """User-facing variable projection must not leak compile-internal fields.
 
-    ``input_auto_detected`` and ``variable_dependencies`` are no longer
-    ``exclude=True`` on ``Variable`` (they must round-trip in the
-    resolved-board artifact), so the exclusion moves to this call site
-    instead — an author never wrote these and cannot author them back.
+    ``input_auto_detected`` and ``variable_dependencies`` are not
+    ``exclude=True`` on ``Variable``, so this call site excludes them: an
+    author never wrote these and cannot author them back.
     """
     from dbt_charts.core.compile import compile
 

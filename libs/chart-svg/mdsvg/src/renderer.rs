@@ -165,7 +165,7 @@ fn style_rule_body<'a>(bodies: &'a HashMap<&'static str, String>, name: &str) ->
 }
 
 /// CSS declarations for each `.md-*` rule, keyed by its bare name, in
-/// `STYLE_RULE_NAMES` order. Shared by `get_style_block` (which renders
+/// `STYLE_RULE_NAMES` order. Shared by `style_rules` (which renders
 /// them) and `compute_class_prefix` (which hashes them), so the two can
 /// never drift out of sync. Mirrors `_style_rule_bodies`.
 fn style_rule_bodies(style: &Style) -> HashMap<&'static str, String> {
@@ -399,16 +399,54 @@ struct TableRowLayout {
 #[derive(Debug, Clone)]
 pub struct RenderResult {
     pub elements: Vec<Element>,
-    pub style: Element,
+    /// One CSS rule line per class, scoped `.md-<hash>-<name>`: the hash is a function of the
+    /// renderer's style, so two renders of one style print the same lines.
+    pub rules: Vec<String>,
     pub width: f64,
     pub height: f64,
     pub max_content_width: f64,
 }
 
+/// The rule lines already written into one `<svg>`: a rule is printed once per scope.
+#[derive(Debug, Clone, Default)]
+pub struct StyleScope(std::collections::HashSet<String>);
+
+impl StyleScope {
+    /// Record `rules` as written into this scope by something other than [`StyleScope::style`].
+    pub fn note(&mut self, rules: &[String]) {
+        self.0.extend(rules.iter().cloned());
+    }
+
+    /// The `<style>` of the rules of `rules` this scope has not yet seen, `None` when it has seen
+    /// them all. Every rule it returns is now seen.
+    pub fn style(&mut self, rules: &[String]) -> Option<Element> {
+        let fresh: Vec<String> = rules.iter().filter(|rule| self.0.insert((*rule).clone())).cloned().collect();
+        (!fresh.is_empty()).then(|| style_element(&fresh))
+    }
+}
+
+/// A `<style>` element holding `rules`, one per line.
+fn style_element(rules: &[String]) -> Element {
+    let mut children = vec![ws("\n")];
+    for rule in rules {
+        children.push(quoted(rule.clone()));
+        children.push(ws("\n"));
+    }
+    // The last newline already closes the final rule; the tag sits two spaces in.
+    children.pop();
+    children.push(ws("\n  "));
+    el("style", vec![], children)
+}
+
 impl RenderResult {
+    /// The `<style>` of every rule of this render.
+    pub fn style(&self) -> Element {
+        style_element(&self.rules)
+    }
+
     /// The `<style>` and the elements as children of an enclosing element, one per line.
     pub fn content(&self) -> Vec<Child> {
-        let mut out = indented(std::slice::from_ref(&self.style));
+        let mut out = indented(&[self.style()]);
         out.push(ws("\n"));
         out.extend(indented(&self.elements));
         out
@@ -416,7 +454,7 @@ impl RenderResult {
 
     /// The standalone `<svg>`; its extent is the size the layout reserved.
     pub fn svg(&self) -> Node {
-        let mut lines = vec![self.style.clone()];
+        let mut lines = vec![self.style()];
         lines.extend(self.elements.iter().cloned());
         let newline = || Node::chars(Chars::new("\n", Escape::Attr));
         let mut children = vec![newline()];
@@ -609,6 +647,9 @@ pub struct SVGRenderer {
     /// its source for an intrinsic size. Off, an image is sized by its authored
     /// `{width= height=}` or the style alone. On is not ported and refuses.
     fetch_image_sizes: bool,
+    /// Python's `dash_fitter`: the host's law for stretching a divider's dash pattern to the
+    /// rule's length. Unset, the authored pattern is drawn as is.
+    dash_fit: Option<fn(&str, f64) -> String>,
 }
 
 impl SVGRenderer {
@@ -658,6 +699,7 @@ impl SVGRenderer {
             max_content_width: Cell::new(0.0),
             used_fonts: RefCell::new(HashSet::new()),
             fetch_image_sizes: false,
+            dash_fit: None,
         })
     }
 
@@ -680,6 +722,12 @@ impl SVGRenderer {
         let mut renderer = Self::new(style, fonts)?;
         renderer.regular_slot = None;
         Ok(renderer)
+    }
+
+    /// Mirrors the constructor's `dash_fitter=` keyword.
+    pub fn with_dash_fit(mut self, fit: fn(&str, f64) -> String) -> Self {
+        self.dash_fit = Some(fit);
+        self
     }
 
     /// Mirrors the constructor's `fetch_image_sizes=` keyword.
@@ -1110,7 +1158,7 @@ impl SVGRenderer {
             self.render_blocks_to_elements(blocks, width, padding)?;
         Ok(RenderResult {
             elements: svg_elements,
-            style: self.get_style_block(),
+            rules: self.style_rules(),
             width,
             height: total_height,
             max_content_width: self.max_content_width.get(),
@@ -1261,29 +1309,19 @@ impl SVGRenderer {
 
         Ok(RenderResult {
             elements,
-            style: self.get_style_block(),
+            rules: self.style_rules(),
             width,
             height,
             max_content_width: self.max_content_width.get(),
         })
     }
 
-    fn get_style_block(&self) -> Element {
+    fn style_rules(&self) -> Vec<String> {
         let bodies = style_rule_bodies(&self.style);
-        let mut rules = vec![ws("\n")];
-        for name in STYLE_RULE_NAMES {
-            let rule = format!(
-                "    .{} {{ {} }}",
-                self.scoped_class(name),
-                style_rule_body(&bodies, name)
-            );
-            rules.push(quoted(rule));
-            rules.push(ws("\n"));
-        }
-        // The last newline already closes the final rule; the tag sits two spaces in.
-        rules.pop();
-        rules.push(ws("\n  "));
-        el("style", vec![], rules)
+        STYLE_RULE_NAMES
+            .iter()
+            .map(|name| format!("    .{} {{ {} }}", self.scoped_class(name), style_rule_body(&bodies, name)))
+            .collect()
     }
 
     /// Painted size of an inline-code run sitting in text of `host_font_size`.
@@ -1749,6 +1787,7 @@ impl SVGRenderer {
             )
         } else {
             let mid = y_pos + height / 2.0;
+            let dashes = self.dash_fit.map_or_else(|| self.style.hr_dasharray.clone(), |fit| fit(&self.style.hr_dasharray, ctx.width));
             el(
                 "line",
                 vec![
@@ -1758,7 +1797,7 @@ impl SVGRenderer {
                     ("y2", g(mid)),
                     ("stroke", t(self.style.hr_color.clone())),
                     ("stroke-width", g(height)),
-                    ("stroke-dasharray", t(self.style.hr_dasharray.clone())),
+                    ("stroke-dasharray", t(dashes)),
                 ],
                 vec![],
             )

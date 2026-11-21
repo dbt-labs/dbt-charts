@@ -1858,7 +1858,7 @@ pub(super) fn fit(
             .iter()
             .map(|&frac| {
                 let gx = crate::common::tick_round(x_pos(frac));
-                Node::line(
+                crate::dash::line(
                     Role::Grid,
                     (gx, 0.5),
                     (gx, plot_h + 0.5),
@@ -1881,7 +1881,7 @@ pub(super) fn fit(
                 let gy = crate::common::tick_round(y_pos(frac));
                 // A rule whose label thinned away has nothing to carry in the gutter.
                 let (gx1, gx2) = if labeled[i] { reach } else { (0.5, plot_w + 0.5) };
-                Node::line(
+                crate::dash::line(
                     Role::Grid,
                     (gx1, gy),
                     (gx2, gy),

@@ -1136,11 +1136,14 @@ pub(crate) fn label_x(x: f64, ad: f64, anchor: &str, half: f64) -> f64 {
     }
 }
 
-/// `attrs` with the series' `stroke-dasharray`, when it draws a dash.
-fn with_dash(attrs: Attrs, dash: Option<String>) -> Attrs {
-    match dash {
-        Some(list) => attrs.set("stroke-dasharray", list),
-        None => attrs,
+/// `attrs` with the series' `stroke-dasharray`, when it draws a dash, stretched to the `length` of
+/// the stroke it dashes so the line starts and ends on ink. `None` keeps the list as is: a
+/// disconnected plateau's is already fitted to the plateau.
+fn with_dash(attrs: Attrs, dash: Option<String>, length: Option<f64>) -> Attrs {
+    match (dash, length) {
+        (Some(list), Some(length)) => attrs.set("stroke-dasharray", ::layout::dash::fit_pattern(&list, length, false)),
+        (Some(list), None) => attrs.set("stroke-dasharray", list),
+        (None, _) => attrs,
     }
 }
 
@@ -2099,7 +2102,7 @@ mod tests {
         let gray = drawn_with(&paths, &format!("stroke=\"{GRAY}\""));
         let base = drawn_with(&paths, "stroke=\"#3164a3\"");
         assert_eq!((gray.len(), base.len()), (1, 1), "{paths:?}");
-        assert!(gray[0].1.contains("stroke-dasharray=\"4,4\""), "{}", gray[0].1);
+        assert!(gray[0].1.contains("stroke-dasharray=\"4.005628818605752,4.005628818605752\""), "4,4 stretched to the path: {}", gray[0].1);
         assert!(!base[0].1.contains("stroke-dasharray"));
         // Mar is the first forecast row, and the Feb-Mar segment has one actual endpoint:
         // the base line ends where the gray one starts, and the gray one has four points.
@@ -4644,7 +4647,8 @@ mod tests {
             p["resolved"]["layers"] = serde_json::json!([line]);
         })
         .expect("renders");
-        assert_eq!(svg.matches("stroke-dasharray=\"6,3\"").count(), 2, "the plotted line and its swatch: {svg}");
+        assert_eq!(svg.matches("stroke-dasharray=").count(), 2, "the plotted line and its swatch: {svg}");
+        assert_eq!(svg.matches("stroke-dasharray=\"6,3\"").count(), 1, "the swatch keeps the authored pattern: {svg}");
     }
 
     /// The legend swatch and the points of a base line are the color it is drawn in, authored or not.
@@ -7225,6 +7229,25 @@ mod tests {
         assert_eq!(rail_fill("B"), "#111111", "B takes its board slot 0's companion: {svg}");
     }
 
+    /// A dashed series starts and ends on ink: the pattern is stretched to the path it strokes,
+    /// straight or curved. The legend swatch keeps the authored pattern.
+    #[test]
+    fn a_dashed_series_starts_and_ends_on_a_dash() {
+        use serde_json::json;
+        for curve in ["linear", "monotone", "natural"] {
+            let mut p = make_multi_series_line_payload_with_bottom_legend();
+            p["resolved"]["style"]["dashes"] = json!([[12.0, 16.0], [2.0, 6.0]]);
+            p["resolved"]["style"]["line_mark"]["curve"] = json!(curve);
+            p["resolved"]["legend"]["visible"] = json!(false);
+            let svg = render(&<Payload as serde::Deserialize>::deserialize(&p).unwrap(), &test_fonts()).expect("renders");
+            let dashed: Vec<_> = crate::dash_probe::dashed_strokes(&svg).into_iter().filter(|d| d.tag == "path").collect();
+            assert!(dashed.len() >= 2, "{curve}: {svg}");
+            for stroke in &dashed {
+                stroke.assert_fits();
+            }
+        }
+    }
+
     /// `style.dashes` is production's strokeDash encoding (`emitters/line.py`):
     /// a series-colored line binds the dash palette to the color field on
     /// a domain pinned to data-insertion order and pins the color scale to
@@ -7275,7 +7298,7 @@ mod tests {
         let dashes: Vec<Option<String>> = inks.iter().map(|(_, d)| d.clone()).collect();
         let expect: Vec<Option<String>> =
             ["12,16", "2,6", "4,4", "", "12,16"].iter().map(|d| (!d.is_empty()).then(|| d.to_string())).collect();
-        assert_eq!(dashes, expect, "{svg}");
+        assert_eq!(dashes.iter().map(Option::is_some).collect::<Vec<_>>(), expect.iter().map(Option::is_some).collect::<Vec<_>>(), "{svg}");
         assert_eq!(strokes("#ffffff"), inks.iter().map(|(y, d)| (*y, d.clone())).collect::<Vec<_>>(), "halos share the dash: {svg}");
         assert!(!svg.contains("#ccc"), "{svg}");
         // The legend draws each series' dash on a stroke sample two cycles long.
@@ -10662,8 +10685,11 @@ mod tests {
             }
         });
         let svg = render(&payload, &test_fonts()).expect("renders");
-        let dashed = svg.matches("stroke-dasharray=\"6,3\"").count();
-        assert!(dashed >= 3, "{dashed} dashed rules: {svg}");
+        let dashed = crate::dash_probe::dashed_strokes(&svg);
+        assert!(dashed.len() >= 3, "{} dashed rules: {svg}", dashed.len());
+        for rule in &dashed {
+            rule.assert_fits();
+        }
     }
 
     /// An authored `grid.opacity` paints on the gridlines; an opaque grid
@@ -17696,8 +17722,12 @@ mod tests {
                 .collect();
             p["rows"] = json!(rows);
             let svg = render_facet_payload(p).expect("renders");
-            assert!(svg.matches("stroke-dasharray=\"4,2\"").count() >= 2, "{svg}");
-            assert!(svg.contains("stroke-dasharray=\"2,2\""), "{svg}");
+            let dashed = crate::dash_probe::dashed_strokes(&svg);
+            assert!(dashed.iter().filter(|d| d.dashes[0] > 3.0).count() >= 2, "{svg}");
+            assert!(dashed.iter().any(|d| d.dashes[0] < 3.0), "{svg}");
+            for stroke in dashed.iter().filter(|d| d.tag == "path") {
+                stroke.assert_fits();
+            }
         }
 
         /// A panel prints its own rows' captions.

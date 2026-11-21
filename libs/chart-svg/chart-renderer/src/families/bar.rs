@@ -3285,7 +3285,7 @@ mod tests {
         fn a_base_grid_dash_paints_both_ladders() {
             let tags = grid_line_tags(&styled_dual_axis(serde_json::json!([6.0, 3.0]), serde_json::json!({})));
             assert!(tags.len() >= 6, "{tags:?}");
-            assert!(tags.iter().all(|t| t.contains("stroke-dasharray=\"6,3\"")), "{tags:?}");
+            assert!(tags.iter().all(|t| t.contains("stroke-dasharray=\"5.9")), "6,3 stretched to the 687px rule: {tags:?}");
         }
 
         /// A layer's own grid fields win field by field; the rest falls back to the base's.
@@ -3299,7 +3299,7 @@ mod tests {
             let layer: Vec<_> = tags.iter().filter(|t| t.contains("stroke=\"#aa0000\"")).collect();
             let base: Vec<_> = tags.iter().filter(|t| !t.contains("stroke=\"#aa0000\"")).collect();
             assert!(!layer.is_empty() && !base.is_empty(), "{tags:?}");
-            assert!(layer.iter().all(|t| t.contains("stroke-dasharray=\"2,2\"")), "{layer:?}");
+            assert!(layer.iter().all(|t| t.contains("stroke-dasharray=\"2.0")), "2,2 stretched to the rule: {layer:?}");
             assert!(base.iter().all(|t| !t.contains("stroke-dasharray")), "{base:?}");
         }
 
@@ -3308,7 +3308,7 @@ mod tests {
         fn an_empty_layer_dash_is_solid_over_a_dashed_base() {
             let tags = grid_line_tags(&styled_dual_axis(serde_json::json!([6.0, 3.0]), serde_json::json!({"dash": []})));
             assert!(tags.iter().any(|t| !t.contains("stroke-dasharray")), "{tags:?}");
-            assert!(tags.iter().any(|t| t.contains("stroke-dasharray=\"6,3\"")), "{tags:?}");
+            assert!(tags.iter().any(|t| t.contains("stroke-dasharray=\"5.9")), "{tags:?}");
         }
 
         /// A layer axis's baked colors paint its tick labels and its title.

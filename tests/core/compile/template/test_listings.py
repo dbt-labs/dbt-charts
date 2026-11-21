@@ -13,17 +13,9 @@ from dbt_charts.agent_api.import_closure import board_import_closure
 from dbt_charts.core.board_listings import resolve_listings
 from dbt_charts.core.compile import compile as compile_text
 from dbt_charts.core.compile.compiler import CompileResult, compile_file
-from dbt_charts.core.compile.engine import engine_compile_recorded
-from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.env import build_exec_env
-from dbt_charts.core.execute.recording import record_board
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
-from dbt_charts.core.render.board_replay import (
-    BoardArtifact,
-    render_board_from_artifact,
-)
-from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.render_result import RenderResult
 
 from ...._compile import remember
@@ -235,24 +227,6 @@ def test_board_without_location_fails_the_render(
     rendered = render(result.board, executor.ctx, executor.ledger, format="svg")
     assert rendered.board_error is not None
     assert rendered.board_error.code == "ERR-TEXT-LISTING-PATTERN"
-
-
-def test_replay_rejects_a_listing_board_before_rendering(
-    in_memory_project: Callable[..., Project],
-) -> None:
-    project = _project(in_memory_project, INDEX)
-    result = _compile(project)
-    assert result.board is not None
-    executor = Run(
-        result.board,
-        env=build_exec_env(project),
-    )
-    resolved, _ = build_resolved_board(result.board, executor, {})
-    recording = record_board(resolved, executor.results(list(resolved.queries), {}), {})
-    record = engine_compile_recorded(None, content="title: x\n", project=project)[1]
-    with pytest.raises(DbtChartsError) as exc:
-        render_board_from_artifact(BoardArtifact(resolved, record), recording, {})
-    assert exc.value.code.code == "ERR-BOARD-RECORDING-MISMATCH"
 
 
 def test_import_closure_lists_extends_text_from_the_extending_board(

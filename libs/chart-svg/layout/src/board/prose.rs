@@ -46,6 +46,8 @@ const MIN_CHARS: f64 = 45.0;
 #[derive(Debug, Clone)]
 pub struct TitleBlock {
     pub svg: Node,
+    /// The markdown rules `svg` prints.
+    pub rules: Vec<String>,
     pub height: f64,
     /// `title_line_box`: `(top, height)` of the heading's text inside its block.
     pub line_box: (f64, f64),
@@ -163,7 +165,7 @@ fn renderer(
 ) -> Result<SVGRenderer, Diagnostic> {
     let md_style = compact_style(style, overrides)?;
     let slots = font_slots(book, &md_style)?;
-    SVGRenderer::new(md_style, slots).map_err(mdsvg_error)
+    Ok(SVGRenderer::new(md_style, slots).map_err(mdsvg_error)?.with_dash_fit(|dashes, length| crate::dash::fit_pattern(dashes, length, false)))
 }
 
 /// The title as the heading production draws it (`board_title_markdown`: `# title`), with the
@@ -288,6 +290,7 @@ pub fn title(
         .map_err(mdsvg_error)?;
     Ok(TitleBlock {
         svg: paint_fill_svg(rendered.svg(), style.title.font.color.as_str()),
+        rules: rendered.rules,
         height: rendered.height,
         line_box,
         baseline,
@@ -441,7 +444,7 @@ fn column_divider(x: f64, height: f64, divider: &DividerStyle) -> Node {
         .num("y2", height)
         .set("stroke", divider.color.as_str())
         .num("stroke-width", divider.width)
-        .set_if(divider.dasharray.is_some(), "stroke-dasharray", divider.dasharray.as_ref().map_or("", |d| d.as_str()));
+        .set_if(divider.dasharray.is_some(), "stroke-dasharray", &divider.dasharray.as_ref().map_or(String::new(), |d| crate::dash::fit_pattern(d.as_str(), height, false)));
     Node::element(Element { tag: "line".into(), attrs, children: Vec::new() })
 }
 
@@ -515,17 +518,17 @@ fn flow(text: &Text, slot: Slot) -> Result<Flow, Diagnostic> {
     Ok(Flow { boxes, measure, table_box, table_measure, metrics, stretches, n_cols, spanning_measure })
 }
 
-/// `render_block_window`'s elements as nodes; the `<style>` is taken off the first window rendered,
+/// `render_block_window`'s elements as nodes; the rules are taken off the first window rendered,
 /// mdsvg's public surface being the contract.
 struct Windows<'a> {
     renderer: &'a SVGRenderer,
-    style: Option<Element>,
+    rules: Option<Vec<String>>,
 }
 
 impl Windows<'_> {
     fn of(&mut self, block: &AnyBlock, width: f64, start: usize, count: Option<usize>) -> Result<Vec<Node>, Diagnostic> {
         let rendered = self.renderer.render_block_window(block, width, start, count).map_err(mdsvg_error)?;
-        let _ = self.style.get_or_insert(rendered.style);
+        let _ = self.rules.get_or_insert(rendered.rules);
         Ok(mdsvg::indented_nodes(&rendered.elements))
     }
 }
@@ -573,7 +576,7 @@ fn flowed(text: &Text, flow: &Flow, stretch: &Stretch, insets: &[f64], plan: Pla
 }
 
 /// `render_prose_svg`: the text flowed across the spans its plan gives it, aligned in each.
-pub fn text(style: &Style, source: &str, book: &FontBook, slot: Slot) -> Result<TextBlock, Diagnostic> {
+pub fn text(style: &Style, source: &str, book: &FontBook, slot: Slot, scope: &mut mdsvg::StyleScope) -> Result<TextBlock, Diagnostic> {
     let text = text_setup(style, source, book)?;
     let flow = flow(&text, slot)?;
     let (pad, align) = (text.pad, style.text.align);
@@ -581,14 +584,14 @@ pub fn text(style: &Style, source: &str, book: &FontBook, slot: Slot) -> Result<
     if flow.paints_whole() {
         let rendered = text.renderer.render_content(&text.blocks, flow.measure, 0.0).map_err(mdsvg_error)?;
         let content = [
-            mdsvg::indented_nodes(std::slice::from_ref(&rendered.style)),
+            mdsvg::indented_nodes(scope.style(&rendered.rules).as_slice()),
             vec![Node::chars(Chars::new("\n", Escape::Attr))],
             mdsvg::indented_nodes(&rendered.elements),
         ]
         .concat();
         return Ok(TextBlock { nodes: translate_group(px(insets[0]), 0.0, content), height: rendered.height });
     }
-    let mut windows = Windows { renderer: &text.renderer, style: None };
+    let mut windows = Windows { renderer: &text.renderer, rules: None };
     let table_x = flow.table_measure.map_or(0.0, |measure| flow.table_box.0 + measure_offset(align, flow.table_box.1 - 2.0 * pad, measure));
     let heading_x = flow.boxes[0].0 + measure_offset(align, (flow.boxes[0].1 - 2.0 * pad).max(flow.spanning_measure), flow.spanning_measure);
     let mut y = 0.0;
@@ -615,8 +618,8 @@ pub fn text(style: &Style, source: &str, book: &FontBook, slot: Slot) -> Result<
             y += py_fsum(&m.line_advances) - lift;
         }
     }
-    let style_block = windows.style.ok_or_else(|| diag::err_internal("a flowed text paints a window"))?;
-    let nodes = [mdsvg::indented_nodes(std::slice::from_ref(&style_block)), painted].concat();
+    let rules = windows.rules.ok_or_else(|| diag::err_internal("a flowed text paints a window"))?;
+    let nodes = [mdsvg::indented_nodes(scope.style(&rules).as_slice()), painted].concat();
     Ok(TextBlock { nodes, height: y })
 }
 

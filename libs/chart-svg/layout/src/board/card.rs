@@ -40,10 +40,11 @@ pub(crate) fn numeric(value: f64) -> String {
     }
 }
 
-/// `svg_utils.border_dash_attrs`: a dashed border's pattern, its cap and offset, only with a dash
-/// array.
-pub fn dash_attrs(attrs: Attrs, dash_array: Option<&[f64]>, line_cap: Option<&str>, dash_offset: Option<f64>) -> Attrs {
+/// `svg_utils.border_dash_attrs`: a dashed border's pattern, fitted around an outline `perimeter`
+/// px long, its cap and offset, only with a dash array.
+pub fn dash_attrs(attrs: Attrs, dash_array: Option<&[f64]>, line_cap: Option<&str>, dash_offset: Option<f64>, perimeter: f64) -> Attrs {
     let Some(dashes) = dash_array else { return attrs };
+    let dashes = crate::dash::fit_list(dashes, perimeter, true);
     let attrs = attrs.set("stroke-dasharray", dashes.iter().map(|v| format_g(*v)).collect::<Vec<_>>().join(","));
     let attrs = match line_cap {
         Some(cap) => attrs.set("stroke-linecap", cap),
@@ -64,8 +65,9 @@ pub fn border_rect(width: f64, height: f64, border: &BorderStyle, class: &str) -
     }
     let inset = stroke / 2.0;
     let attrs = Attrs::new().set("class", class).set("fill", "none").set("stroke", border.color.as_str()).num("stroke-width", stroke);
-    let attrs = dash_attrs(attrs, border.dash_array.as_deref(), border.line_cap.as_ref().map(|cap| cap.as_str()), border.dash_offset);
     let (w, h, rx) = ((width - stroke).max(0.0), (height - stroke).max(0.0), (border.radius - inset).max(0.0));
+    let perimeter = crate::dash::rect_perimeter(w, h, rx);
+    let attrs = dash_attrs(attrs, border.dash_array.as_deref(), border.line_cap.as_ref().map(|cap| cap.as_str()), border.dash_offset, perimeter);
     Some(Node::new(Role::Chrome, attrs, Shape::Rect { x: inset, y: inset, w, h, rx }))
 }
 
@@ -105,5 +107,16 @@ mod tests {
         assert_eq!(parts(&shadow("0 2px 8px #00000040")).unwrap(), (0.0, 2.0, 8.0, "#00000040"));
         assert_eq!(parts(&shadow("1 -2 rgba(0, 0, 0, 0.2)")).unwrap(), (1.0, -2.0, 0.0, "rgba(0, 0, 0, 0.2)"));
         assert_eq!(parts(&shadow("0.5px 1.5px 3 black")).unwrap(), (0.5, 1.5, 3.0, "black"));
+    }
+
+    /// A dashed card border closes its loop on whole periods: the pattern is the shared fit over the
+    /// outline it strokes, not the authored lengths.
+    #[test]
+    fn a_dashed_border_is_fitted_to_its_outline() {
+        let attrs = dash_attrs(Attrs::new(), Some(&[6.0, 3.0]), None, None, crate::dash::rect_perimeter(200.0, 100.0, 4.0));
+        let dashes: Vec<f64> = attrs.get("stroke-dasharray").unwrap().split(',').map(|v| v.parse().unwrap()).collect();
+        let (period, perimeter) = (dashes[0] + dashes[1], crate::dash::rect_perimeter(200.0, 100.0, 4.0));
+        let seam = perimeter - (perimeter / period).round() * period;
+        assert!(seam.abs() < 0.01, "{dashes:?} leaves a {seam}px seam");
     }
 }

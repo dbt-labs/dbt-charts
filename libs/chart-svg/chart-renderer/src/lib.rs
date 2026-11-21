@@ -10,6 +10,7 @@ pub mod conditional;
 pub mod conditions;
 pub mod constants;
 pub mod contract;
+pub(crate) mod dash;
 pub mod embed_fonts;
 pub mod families;
 pub mod layout;
@@ -31,6 +32,8 @@ pub mod sizing;
 pub mod step_band;
 pub mod svg;
 pub mod text;
+#[cfg(test)]
+mod dash_probe;
 #[cfg(test)]
 mod time_axis_laws;
 pub mod torn;

@@ -8,8 +8,6 @@ from datetime import date
 from string import Formatter
 from typing import TypedDict
 
-from pydantic import BaseModel, ConfigDict
-
 from dbt_charts import _engine
 from dbt_charts._docs_site import DEFAULT_DOCS_SITE_URL, docs_site_url
 from dbt_charts.core.compile import sql_analysis
@@ -50,39 +48,9 @@ def _raise_unreadable(path: str, error: OSError) -> None:
     raise error
 
 
-CacheWire = tuple[bool | None, str | None, bool | None]
-
-
-class CompileRecord(BaseModel):
-    """Everything one `_engine.compile` took: the call's arguments and the project files its
-    reader answered. The compile is deterministic over them, so `replay_compile` rebuilds the
-    same `CompiledBoard` with no project on disk."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    path: str | None
-    named: bool
-    text: str | None
-    anchor: str | None
-    today: str
-    default_theme: str
-    html_policy_ceiling: str | None
-    sources: dict[str, str]
-    cache_root: CacheWire
-    source_caches: dict[str, CacheWire]
-    implicit_source: str | None
-    zones: dict[str, tuple[str, str | None]]
-    # What the reader answered, by the path or directory asked: `None` is a file that is not
-    # there.
-    reads: dict[str, str | None]
-    listings: dict[str, list[str]]
-    present: dict[str, bool]
-
-
 class _Files:
-    """`_engine.compile`'s project reader, over a `Project`, logging each answer into the
-    record's `reads`, `listings` and `present`. A file in `overrides` is served from there
-    instead (an unsaved editor buffer).
+    """`_engine.compile`'s project reader, over a `Project`. A file in `overrides` is served
+    from there instead (an unsaved editor buffer).
 
     `read` answers `None` only for a file that is not there; any other failure (permissions, I/O,
     text that is not UTF-8) raises, and the engine refuses with `ERR-PROJECT-FILE-UNREADABLE`.
@@ -91,50 +59,23 @@ class _Files:
     def __init__(self, project: Project, overrides: dict[str, str]) -> None:
         self.project = project
         self.overrides = overrides
-        self.reads: dict[str, str | None] = {}
-        self.listings: dict[str, list[str]] = {}
-        self.present: dict[str, bool] = {}
 
     def read(self, path: str) -> str | None:
         if path in self.overrides:
-            text = self.overrides[path]
-        else:
-            try:
-                text = self.project.read_text(path)
-            except FileNotFoundError:
-                text = None
-        self.reads[path] = text
-        return text
+            return self.overrides[path]
+        try:
+            return self.project.read_text(path)
+        except FileNotFoundError:
+            return None
 
     def list(self, dir: str) -> list[str]:
         root = dir or "."  # type-state: silent_fallback — the engine names the root ""
-        names = list(
+        return list(
             self.project.iter_files(root, recursive=False, onerror=_raise_unreadable)
         )
-        self.listings[dir] = names
-        return names
 
     def exists(self, path: str) -> bool:
-        found = self.project.exists(path)
-        self.present[path] = found
-        return found
-
-
-class _Snapshot:
-    """`_Files` answering from a `CompileRecord`; a question the recorded compile did not ask
-    is a compile that is not the recorded one, so it raises."""
-
-    def __init__(self, record: CompileRecord) -> None:
-        self.record = record
-
-    def read(self, path: str) -> str | None:
-        return self.record.reads[path]
-
-    def list(self, dir: str) -> list[str]:
-        return self.record.listings[dir]
-
-    def exists(self, path: str) -> bool:
-        return self.record.present[path]
+        return self.project.exists(path)
 
 
 class _Analyzer:
@@ -172,7 +113,7 @@ def _source_zones(declared: ProjectSourcesConfig) -> dict[str, tuple[str, str | 
     return zones
 
 
-def engine_compile_recorded(
+def engine_compile(
     path: ProjectPath | None,
     named: bool = False,
     content: str | None = None,
@@ -180,7 +121,7 @@ def engine_compile_recorded(
     synthetic_sources: RawSources | None = None,
     sources: ProjectSourcesConfig | None = None,
     anchor: str | None = None,
-) -> tuple[_engine.CompiledBoard, CompileRecord]:
+) -> _engine.CompiledBoard:
     """*path*'s board compiled in Rust, against the project's declared sources and cache layers.
 
     The project's `cache:` block is the root of the cache cascade and each source's `cache:` its
@@ -206,8 +147,6 @@ def engine_compile_recorded(
     one with its values rendered (an exec env's); `None` compiles against the project's declared
     sources, which hold no rendered value.
 
-    Returns the compile and the `CompileRecord` that rebuilds it.
-
     Raises `_engine.CompileError`, its `.diagnostics` the coded findings.
     """
     if path is None:
@@ -232,77 +171,27 @@ def engine_compile_recorded(
     files = _Files(
         project, {} if path is None or content is None else {path.relpath: content}
     )
-    inputs = {
-        "path": None if path is None else path.relpath,
-        "named": named,
-        "text": content if path is None else None,
-        "anchor": anchor if path is None else None,
-        "today": date.today().isoformat(),
-        "default_theme": get_default_theme_name(),
-        "html_policy_ceiling": html_policy_pin(),
-        "sources": {
+    return _engine.compile(
+        files,
+        None if path is None else path.relpath,
+        boards_root=".",
+        today=date.today().isoformat(),
+        default_theme=get_default_theme_name(),
+        html_policy_ceiling=html_policy_pin(),
+        sources={
             name: json.dumps(declaration) for name, declaration in registry.items()
         },
-        "cache_root": cache_wire(get_project_cache_root(project)),
-        "source_caches": {
+        cache_root=cache_wire(get_project_cache_root(project)),
+        source_caches={
             name: cache_wire(source_cache_layer(registry, name, name))
             for name in registry
         },
-        "implicit_source": declared.implicit_source,
-        "zones": _source_zones(declared),
-    }
-    compiled = _compile(
-        CompileRecord(**inputs, reads={}, listings={}, present={}), files
-    )
-    return compiled, CompileRecord(
-        **inputs,
-        reads=files.reads,
-        listings=files.listings,
-        present=files.present,
-    )
-
-
-def engine_compile(
-    path: ProjectPath | None,
-    named: bool = False,
-    content: str | None = None,
-    project: Project | None = None,
-    synthetic_sources: RawSources | None = None,
-    sources: ProjectSourcesConfig | None = None,
-    anchor: str | None = None,
-) -> _engine.CompiledBoard:
-    """`engine_compile_recorded`'s compile, for a caller that never replays it."""
-    return engine_compile_recorded(
-        path, named, content, project, synthetic_sources, sources, anchor
-    )[0]
-
-
-def replay_compile(record: CompileRecord) -> _engine.CompiledBoard:
-    """The compile `record` was taken from, rebuilt from its own files and arguments.
-
-    Raises `_engine.CompileError` as the recorded compile did."""
-    return _compile(record, _Snapshot(record))
-
-
-def _compile(record: CompileRecord, files: _Files | _Snapshot) -> _engine.CompiledBoard:
-    return _engine.compile(
-        files,
-        record.path,
-        boards_root=".",
-        today=record.today,
-        default_theme=record.default_theme,
-        html_policy_ceiling=record.html_policy_ceiling,
-        sources=record.sources,
-        cache_root=record.cache_root,
-        source_caches=record.source_caches,
-        implicit_source=record.implicit_source,
-        zones=record.zones,
-        sql=_Analyzer(
-            {name: json.loads(wire) for name, wire in record.sources.items()}
-        ),
-        named=record.named,
-        text=record.text,
-        anchor=record.anchor,
+        implicit_source=declared.implicit_source,
+        zones=_source_zones(declared),
+        sql=_Analyzer(dict(registry)),
+        named=named,
+        text=content if path is None else None,
+        anchor=anchor if path is None else None,
     )
 
 

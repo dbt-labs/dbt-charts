@@ -966,7 +966,7 @@ pub(super) fn render_vertical_continuous_x_panel(
             .iter()
             .map(|&tv| {
                 let gy = crate::common::tick_round(y_pos(tv));
-                Node::line(Role::Grid, (grid_x1, gy), (grid_x2, gy), ax_y.grid.stroke(gc, gw).num("opacity", go))
+                crate::dash::line(Role::Grid, (grid_x1, gy), (grid_x2, gy), ax_y.grid.stroke(gc, gw).num("opacity", go))
             })
             .collect();
         plot.push(::layout::contract::grid_group(lines));

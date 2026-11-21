@@ -953,10 +953,14 @@ mod tests {
     }
 
     #[test]
-    fn a_baked_dash_is_drawn_as_given_and_none_is_solid() {
+    fn a_baked_dash_is_fitted_to_the_rule_and_none_is_solid() {
         let mut anns: Vec<Annotation> = contract().into_iter().filter(|a| a.index == 0).collect();
         anns[0].style.rule.as_mut().unwrap().stroke.dasharray = Some("7 2".to_string());
-        assert!(painted(&anns, Plane::Foreground).contains("stroke-dasharray=\"7 2\""));
+        let svg = format!("<svg xmlns=\"http://www.w3.org/2000/svg\">{}</svg>", painted(&anns, Plane::Foreground));
+        let dashed = crate::dash_probe::dashed_strokes(&svg);
+        assert_eq!(dashed.len(), 1, "{svg}");
+        assert!(dashed[0].length > 20.0, "{svg}");
+        dashed[0].assert_fits();
         anns[0].style.rule.as_mut().unwrap().stroke.dasharray = None;
         assert!(!painted(&anns, Plane::Foreground).contains("stroke-dasharray"));
     }

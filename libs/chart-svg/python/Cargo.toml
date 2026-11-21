@@ -22,6 +22,7 @@ bind = { path = "../bind" }
 chart-renderer = { path = "../chart-renderer" }
 column-types = { path = "../column-types" }
 diagnostic = { path = "../diagnostic" }
+layout = { path = "../layout" }
 display-text = { path = "../display-text" }
 engine = { path = "../engine" }
 measure = { path = "../measure" }

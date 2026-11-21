@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`currency_compact` data values print three significant figures (`$412K`), so two different amounts no longer share a label; axis ticks are unchanged.'
+time: 2026-11-16T19:58:46.331106-08:00

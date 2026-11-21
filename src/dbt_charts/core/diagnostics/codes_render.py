@@ -347,9 +347,9 @@ ERR_RESOLVED_PIE_DATA_MISMATCH = REGISTRY.register(
     ErrorCode(
         code="ERR-RESOLVED-PIE-DATA-MISMATCH",
         domain="render",
-        title="Resolved pie rows do not match its recording",
-        message_template="Resolved pie {chart_id!r} was finalized from different query rows. Resolve the chart and record its data in the same emission.",
-        doc="Fired when replay data differs from the rows used to finalize pie label and attached-table policy. Resolved board artifacts and recordings must come from the same emission.",
+        title="Resolved pie rows do not match the rendered rows",
+        message_template="Resolved pie {chart_id!r} was finalized from different query rows. Resolve the chart against the rows it renders.",
+        doc="Fired when the rows a pie renders differ from the rows used to finalize its label and attached-table policy. Resolve and render must read the same query rows.",
         docs_topic="charts",
     )
 )
@@ -560,39 +560,6 @@ ERR_CONCAT_OVERSHOOT_NONPOSITIVE = REGISTRY.register(
         message_template="Overshoot correction produced a non-positive pane width ({new_w:.1f}px): pane width {orig_w:.1f}px minus overshoot {overshoot:.1f}px. The chart content (title, subtitle, axis labels, series labels, or legend) is wider than the available canvas ({target_width:.1f}px).",
         doc="Fired when the overshoot correction algorithm for a concatenated layout produces a non-positive pane width. The chart content (title, subtitle, axis labels, series labels, or legend) is wider than the available canvas. Series labels come from the column bound to `color:`, and are the usual cause when that column holds long text.",
         docs_topic="charts",
-    )
-)
-
-ERR_BOARD_ARTIFACT_INVALID = REGISTRY.register(
-    ErrorCode(
-        code="ERR-BOARD-ARTIFACT-INVALID",
-        domain="render",
-        title="Resolved-board artifact does not match the expected schema",
-        message_template="Board artifact is invalid: {detail}. It may have been produced by an incompatible dct version, hand-edited, or truncated. Re-emit it with `dct artifact emit`.",
-        doc="Fired when a resolved-board artifact fails to validate against `ResolvedBoard` while loading it for replay. The artifact is the published, versioned contract a resolved board serializes to; this means the file is not a valid instance of that contract.",
-        docs_topic="errors",
-    )
-)
-
-ERR_BOARD_RECORDING_INVALID = REGISTRY.register(
-    ErrorCode(
-        code="ERR-BOARD-RECORDING-INVALID",
-        domain="render",
-        title="Board recording sidecar does not match the expected schema",
-        message_template="Board recording is invalid: {detail}. It may have been produced by an incompatible dct version, hand-edited, or truncated. Re-emit it with `dct artifact emit`.",
-        doc="Fired when a board recording sidecar fails to validate against `BoardRecording` while loading it for replay.",
-        docs_topic="errors",
-    )
-)
-
-ERR_BOARD_RECORDING_MISMATCH = REGISTRY.register(
-    ErrorCode(
-        code="ERR-BOARD-RECORDING-MISMATCH",
-        domain="render",
-        title="Board recording does not match the artifact it was replayed against",
-        message_template="Board recording does not match this artifact: {detail} The artifact and its recording must come from the same `dct artifact emit` run.",
-        doc="Fired when replaying a resolved-board artifact against a recording that either lacks rows for one of the artifact's queries, or recorded them under different variable values. Both mean the artifact and recording came from different emits (or a truncated one); replaying anyway would render an empty or wrong chart that looks like real data.",
-        docs_topic="errors",
     )
 )
 

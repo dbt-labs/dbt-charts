@@ -140,8 +140,8 @@ class TestResolveLabelFormat:
 
 
 class TestCompactFormats:
-    """`compact` and `currency_compact` print two significant digits in the
-    analytic register (K, M, B), where `number` and `currency` print three."""
+    """`compact` prints two significant digits in the analytic register (K, M,
+    B); `currency_compact` prints three there, as `currency` does."""
 
     @pytest.mark.parametrize(
         ("value", "expected"),
@@ -159,10 +159,12 @@ class TestCompactFormats:
     @pytest.mark.parametrize(
         ("value", "expected"),
         [
-            (1234567, "$1.2M"),
-            (45321, "$45K"),
+            (1234567, "$1.23M"),
+            (45321, "$45.3K"),
             (1.2e9, "$1.2B"),
             (0.5, "$0.50"),
+            (412000, "$412K"),
+            (406000, "$406K"),
         ],
     )
     def test_currency_compact(self, value, expected):
@@ -170,10 +172,22 @@ class TestCompactFormats:
 
     @pytest.mark.parametrize("value", [999_960, 999_999.5, 999_499])
     def test_a_lone_value_rolls_over_to_the_next_prefix(self, value):
-        """`$1,000K` is acceptable only beside other K values; one value steps up."""
-        assert format_value(value, "currency_compact") == "$1M"
+        """`1,000K` is acceptable only beside other K values; one value steps up."""
         assert format_value(value, "compact") == "1M"
-        assert format_kpi_parts(value, "currency_compact") == ("$", "1", "M")
+
+    @pytest.mark.parametrize(
+        ("value", "expected", "parts"),
+        [
+            (999_960, "$1M", ("$", "1", "M")),
+            (999_999.5, "$1M", ("$", "1", "M")),
+            (999_499, "$999K", ("$", "999", "K")),
+        ],
+    )
+    def test_currency_compact_rolls_over_only_at_its_third_figure(
+        self, value, expected, parts
+    ):
+        assert format_value(value, "currency_compact") == expected
+        assert format_kpi_parts(value, "currency_compact") == parts
 
     def test_a_lone_bar_data_label_prints_the_next_prefix(self):
         """The engine's value label for a lone 999,960 reads `$1M`; the ruler's

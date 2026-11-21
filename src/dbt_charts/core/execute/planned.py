@@ -25,7 +25,6 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from dbt_charts import _engine
-from dbt_charts.core.compile.engine import CompileRecord
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.source import (
     ResolvedSourceConfig,
@@ -65,7 +64,6 @@ class Planned:
     reads the plan, and the engine draws from the compile."""
 
     compiled: _engine.CompiledBoard
-    record: CompileRecord
     plan: QueryPlan
 
 

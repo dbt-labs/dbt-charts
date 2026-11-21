@@ -1378,9 +1378,8 @@ def test_query_execution_failure_is_recorded_at_resolve_not_swallowed(
     Runs the real parallel pre-pass so ``executor.ledger.errors['q_bad']``
     holds the failure (both queries are cache misses, submitted together via
     ``run_misses``, as production does), then calls
-    ``build_resolved_board`` directly — the same call
-    ``agent_api.board_artifact.emit_board_artifact`` makes, with no render
-    walk downstream to redundantly re-execute the query.
+    ``build_resolved_board`` directly, with no render walk downstream to
+    redundantly re-execute the query.
     """
     from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
     from dbt_charts.core.execute import run as _run_mod
@@ -1467,9 +1466,9 @@ def test_category_color_planning_isolates_a_fresh_non_execution_error(
     tmp_path: Path,
 ) -> None:
     """``plan_board_category_colors`` runs first, before any query has been
-    attempted — the cold path ``emit_board_artifact`` takes, with no parallel
-    pre-pass. A non-ExecutionError DbtChartsError raised there must isolate
-    to its own chart rather than abort the whole board resolution.
+    attempted, on a cold path with no parallel pre-pass. A non-ExecutionError
+    DbtChartsError raised there must isolate to its own chart rather than abort
+    the whole board resolution.
     """
     from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
     from dbt_charts.core.execute import run as _run_mod
@@ -1487,41 +1486,6 @@ def test_category_color_planning_isolates_a_fresh_non_execution_error(
     assert "bad" in resolve_errors
     assert resolve_errors["bad"].diagnostic.fields["chart_id"] == "bad"
     assert "good" in resolved.charts
-
-
-def test_emit_board_artifact_reports_failure_for_a_query_error(
-    tmp_path: Path,
-) -> None:
-    """The agent-facing artifact verb — no render walk at all — must isolate
-    a broken chart to a clean ``success=False``, not crash or silently
-    publish an artifact with an empty-data chart.
-    """
-    from dbt_charts.agent_api.board_artifact import emit_board_artifact
-    from dbt_charts.cli.filesystem_project import FilesystemProject
-    from dbt_charts.core.execute import run as _run_mod
-    from dbt_charts.core.execute.env import build_exec_env
-
-    def _make_error() -> QueryError:
-        err = QueryError("simulated query failure", "q_bad")
-        err.code = ERR_FILE_NOT_FOUND
-        return err
-
-    _board, _executor, _boom = _real_executor_with_failing_query(tmp_path, _make_error)
-    project = FilesystemProject(tmp_path)
-
-    with patch.object(_run_mod, "run_planned", side_effect=_boom):
-        result = emit_board_artifact(
-            tmp_path / "charts" / "board.yml",
-            tmp_path / "out" / "board.artifact.json",
-            tmp_path / "out" / "board.recording.json",
-            project=project,
-            env=build_exec_env(project),
-        )
-
-    assert result.success is False
-    assert len(result.errors) == 1
-    assert result.errors[0].code == ERR_FILE_NOT_FOUND.code
-    assert result.errors[0].fields.get("chart_id") == "bad"
 
 
 # ---------------------------------------------------------------------------

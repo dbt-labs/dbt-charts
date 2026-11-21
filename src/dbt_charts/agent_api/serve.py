@@ -287,10 +287,22 @@ def _serve_args(settings: ServeSettings) -> list[str]:
 
 
 def _spawn(
-    root: Path, host: str, port: int, settings: ServeSettings, startup_timeout: float
-) -> int:
-    """Start ``dct serve`` detached from this process; returns the server's pid."""
-    log_file = Path(tempfile.gettempdir()) / f"dct-serve-{port}.log"
+    root: Path,
+    host: str,
+    port: int | None,
+    settings: ServeSettings,
+    startup_timeout: float,
+) -> tuple[int, int]:
+    """Start ``dct serve`` detached from this process; returns its pid and port.
+
+    The child binds its own listener, on *port* or, when None, on the port
+    auto-resolution picks, and reports the port it holds through a file once
+    bound. Nothing is probed here, so two starts cannot both believe a port is
+    free: the bind decides, and the loser exits.
+    """
+    run_dir = Path(tempfile.mkdtemp(prefix="dct-serve-"))
+    log_file = run_dir / "server.log"
+    port_file = run_dir / "port"
     # Leave the terminal's session (POSIX) or console (Windows), so closing
     # it does not take the server down.
     detach_options: dict[str, Any] = (
@@ -308,12 +320,13 @@ def _spawn(
                 "-m",
                 "dbt_charts.cli.main",
                 "serve",
-                "--port",
-                str(port),
+                *(["--port", str(port)] if port is not None else []),
                 "--host",
                 host,
                 "--project-dir",
                 str(root),
+                "--port-file",
+                str(port_file),
                 *_serve_args(settings),
             ],
             stdin=subprocess.DEVNULL,
@@ -322,7 +335,7 @@ def _spawn(
             **detach_options,
         )
     deadline = time.monotonic() + startup_timeout
-    while (served := _health(host, port)) is None:
+    while True:
         exited = child.poll()
         if exited is not None or time.monotonic() > deadline:
             if exited is None:
@@ -330,19 +343,18 @@ def _spawn(
                 child.wait()
             log_text = log_file.read_text(encoding="utf-8", errors="replace")
             tail = "\n".join(log_text.splitlines()[-15:])
+            where = f" on port {port}" if port is not None else ""
             raise DetachedServeError(
-                f"The server did not start (exit {exited}):\n{tail}"
+                f"The server did not start{where} (exit {exited}):\n{tail}"
             )
+        # Written only after the bind, so a server answering on this port is
+        # this child's, never another that held it.
+        text = port_file.read_text(encoding="utf-8") if port_file.exists() else ""
+        if text.isdigit() and (served := _health(host, int(text))) is not None:
+            # Not child.pid: on Windows a venv's python.exe is a launcher that
+            # starts the real interpreter as its own child.
+            return int(served["pid"]), int(text)
         time.sleep(0.2)
-    if not _serves(served, root):
-        # The port was taken between the probe and the bind; our child lost.
-        raise DetachedServeError(
-            f"Port {port} is answered by another server ({served['project']}); "
-            "pick a free one with --port."
-        )
-    # Not child.pid: on Windows a venv's python.exe is a launcher that
-    # starts the real interpreter as its own child.
-    return int(served["pid"])
 
 
 def _board_urls(project: FilesystemProject, base_url: str) -> dict[str, str]:
@@ -472,7 +484,6 @@ def start_detached(
         PORT_SCAN_ATTEMPTS,
         is_port_available,
         preferred_port,
-        resolve_port,
     )
 
     root = project.root
@@ -497,15 +508,13 @@ def start_detached(
             ),
             None,
         )
-    if resolved is None:
-        resolved = resolve_port(project_dir=root, host=host)
-    state_file = _state_path(resolved)
     pid: int | None = None
     replaced: str | None = None
-    if (state := _read_state(resolved)) is not None:
+    if resolved is not None and (state := _read_state(resolved)) is not None:
         served = _recorded_server(state, resolved)
         if served is None:
-            state_file.unlink()  # the recorded server is gone; its pid may be reused
+            # the recorded server is gone; its pid may be reused
+            _state_path(resolved).unlink()
         elif (
             _serves(served, root) and state.host == host and state.settings == settings
         ):
@@ -515,25 +524,30 @@ def start_detached(
             replaced = served["project"]
     reused = pid is not None
     if pid is None:
-        if not is_port_available(resolved, host):
+        # Fails fast with a clear error; the child's bind is still the arbiter.
+        if resolved is not None and not is_port_available(resolved, host):
             raise DetachedServeError(
                 f"Port {resolved} is in use by another process; "
                 "pick a free one with --port."
             )
-        pid = _spawn(root, host, resolved, settings, startup_timeout)
+        pid, served_port = _spawn(root, host, resolved, settings, startup_timeout)
+        state_file = _state_path(served_port)
         state_file.parent.mkdir(parents=True, exist_ok=True)
         state_file.write_text(
             _State(pid=pid, host=host, settings=settings).model_dump_json(),
             encoding="utf-8",
         )
+    else:
+        assert resolved is not None  # only a state recorded on a port is reused
+        served_port = resolved
     return DetachedServer(
         pid=pid,
-        port=resolved,
+        port=served_port,
         reused=reused,
         replaced=replaced,
         boards=_check_boards(
             project,
-            _board_urls(project, f"http://{host}:{resolved}"),
+            _board_urls(project, f"http://{host}:{served_port}"),
             settings=settings,
             describe=describe,
         ),

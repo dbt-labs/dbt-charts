@@ -5572,7 +5572,11 @@ mod tests {
             json["resolved"]["style"][axis]["grid"]["dash"] = serde_json::json!([6.0, 3.0]);
         }
         let svg = render_json(json);
-        assert!(svg.matches("stroke-dasharray=\"6,3\"").count() >= 2, "{svg}");
+        let dashed = crate::dash_probe::dashed_strokes(&svg);
+        assert!(dashed.len() >= 2, "{svg}");
+        for rule in &dashed {
+            rule.assert_fits();
+        }
     }
 
     const ZERO_RULE_COLOR: &str = "#123456";

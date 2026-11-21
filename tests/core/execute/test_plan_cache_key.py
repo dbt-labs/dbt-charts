@@ -3,7 +3,7 @@
 import pytest
 
 from dbt_charts.core.compile import compile
-from dbt_charts.core.compile.engine import engine_compile_recorded
+from dbt_charts.core.compile.engine import engine_compile
 from dbt_charts.core.compile.models.source import (
     DatabricksSourceConfig,
     PostgresSourceConfig,
@@ -67,9 +67,7 @@ def key_of(declaration: dict[str, object]) -> tuple[str, str, str]:
     env = scripted_env(ScriptedBackend())
     # The plan is hand-built, so the engine compiles an empty board beside it.
     planned = Planned(
-        *engine_compile_recorded(
-            None, content="title: hand built\n", project=env.project
-        ),
+        engine_compile(None, content="title: hand built\n", project=env.project),
         plan_with(declaration),
     )
     ctx = make_context(board, planned, env)

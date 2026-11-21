@@ -14,7 +14,6 @@ from dbt_charts.core.compile import compile as df_compile
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.cache_backend import CacheHit, ResultRows
 from dbt_charts.core.execute.query_result import QueryResult
-from dbt_charts.core.execute.recording import BoardRecording, load_board_recording
 from dbt_charts.core.execute.result_codec import decode_result, encode_result
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
@@ -112,16 +111,6 @@ def test_local_cache_put_rejects_a_mismatched_cell() -> None:
             )
     finally:
         cache.close()
-
-
-def test_recording_round_trips_nested_cells_and_schema() -> None:
-    recording = BoardRecording(
-        recorded_at=datetime(2026, 10, 9, tzinfo=UTC),
-        results_by_query={"q": RESULT},
-    )
-    _assert_restored(
-        load_board_recording(recording.model_dump_json().encode()).results_by_query["q"]
-    )
 
 
 def test_a_cache_hit_returns_the_schema_the_miss_wrote() -> None:

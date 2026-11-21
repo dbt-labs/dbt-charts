@@ -104,16 +104,6 @@ def bind_available_port(
     )
 
 
-def find_available_port(
-    preferred: int,
-    host: str = "localhost",
-    max_attempts: int = PORT_SCAN_ATTEMPTS,
-) -> int:
-    """Return *preferred* if free, otherwise scan upward until a free port is found."""
-    with bind_available_port(preferred, host, max_attempts) as listener:
-        return listener.getsockname()[1]
-
-
 def _read_port_from_config(project_dir: Path) -> int | None:
     """Read ``server.port`` from dbt_charts.yml, if present.
 
@@ -178,46 +168,23 @@ def preferred_port(*, project_dir: Path, default_port: int | None = None) -> int
     return port_from_project_dir(project_dir)
 
 
-def resolve_port(
-    *,
-    project_dir: Path,
-    explicit_port: int | None = None,
-    host: str = "localhost",
-    default_port: int | None = None,
-) -> int:
-    """Resolve the port to serve on.
-
-    Priority: explicit_port > DCT_PORT env > dbt_charts.yml server.port >
-    hash-based default.
-
-    Explicit ports (--port flag) are returned as-is — if the user asked for a
-    specific port, we respect that even if it's occupied (uvicorn will error).
-
-    For auto-resolved ports, we auto-increment to the next available port if the
-    chosen one is occupied.
-    """
-    if explicit_port is not None:
-        _validate_port(explicit_port, "--port")
-        return explicit_port
-    return find_available_port(
-        preferred_port(project_dir=project_dir, default_port=default_port), host
-    )
-
-
 def resolve_listener(
     *,
     project_dir: Path,
     explicit_port: int | None = None,
     host: str = "localhost",
+    default_port: int | None = None,
 ) -> socket.socket:
-    """Listen on the port ``resolve_port`` would pick, before the server starts.
+    """Listen on the port the server should take, before it starts.
 
     The server takes this socket rather than binding its own after startup, so
     a request sent while startup still loads the project waits in the backlog
     instead of being refused. An explicit port that is taken raises ``OSError``.
     """
     if explicit_port is None:
-        return bind_available_port(preferred_port(project_dir=project_dir), host)
+        return bind_available_port(
+            preferred_port(project_dir=project_dir, default_port=default_port), host
+        )
     _validate_port(explicit_port, "--port")
     listener = _listen(explicit_port, host)
     if listener is None:

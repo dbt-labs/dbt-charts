@@ -208,3 +208,36 @@ fn a_scale_composes_with_a_translate_and_a_pattern_draws_no_marks() {
     let pattern = Node::new(Role::Chrome, Attrs::new(), Shape::Pattern { w: 4.0, h: 4.0, transform: Some(Transform::Rotate { deg: 45.0, about: None }), children: vec![tile] });
     assert_eq!(marks(&[pattern]).len(), 0);
 }
+
+#[test]
+fn a_polyline_measures_its_segments_and_a_close_adds_the_return() {
+    let open = PathData::new().move_to(0.0, 0.0).line_to(3.0, 4.0).line_to(3.0, 14.0);
+    assert!((open.length() - 15.0).abs() < 1e-12);
+    assert!((open.close().length() - (15.0 + 3.0_f64.hypot(14.0))).abs() < 1e-12);
+}
+
+#[test]
+fn a_dash_fits_the_longest_subpath_because_svg_restarts_it_at_each_move() {
+    let two = PathData::new().move_to(0.0, 0.0).line_to(5.0, 0.0).move_to(0.0, 9.0).line_to(20.0, 9.0);
+    assert!((two.length() - 20.0).abs() < 1e-12);
+}
+
+#[test]
+fn a_collinear_cubic_measures_as_its_line() {
+    let curve = PathData(vec![PathCommand::M(0.0, 0.0), PathCommand::C(10.0, 0.0, 20.0, 0.0, 30.0, 0.0)]);
+    assert!((curve.length() - 30.0).abs() < 1e-6);
+}
+
+#[test]
+fn a_cubic_quarter_circle_measures_near_its_arc() {
+    let k = 0.552_284_749_830_793_4 * 100.0;
+    let curve = PathData(vec![PathCommand::M(100.0, 0.0), PathCommand::C(100.0, k, k, 100.0, 0.0, 100.0)]);
+    // The standard Bezier quarter circle is within 0.03% of the true arc.
+    assert!((curve.length() - 50.0 * std::f64::consts::PI).abs() < 0.1, "{}", curve.length());
+}
+
+#[test]
+fn an_arc_measures_its_sweep() {
+    let half = PathData::new().move_to(0.0, 0.0).arc_to(10.0, true, 20.0, 0.0);
+    assert!((half.length() - 10.0 * std::f64::consts::PI).abs() < 1e-3, "{}", half.length());
+}

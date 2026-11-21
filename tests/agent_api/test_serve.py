@@ -293,3 +293,43 @@ class TestDetachedRecordLocation:
             paths.append(_state_path(8080))
         assert paths[0] == paths[1]
         assert not paths[0].is_relative_to(tmp_path)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(180)
+def test_concurrent_detached_starts_on_one_port_have_one_winner(
+    project: FilesystemProject, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both starts see the port free; the bind alone decides, and the loser raises."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from dbt_charts.agent_api.serve import (
+        DetachedServeError,
+        start_detached,
+        stop_detached,
+    )
+
+    monkeypatch.setattr(
+        "dbt_charts.agent_api.serve.user_state_dir", lambda: str(tmp_path / "state")
+    )
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    def start() -> object:
+        try:
+            return start_detached(
+                project, port=port, host="127.0.0.1", startup_timeout=120
+            )
+        except DetachedServeError as exc:
+            return exc
+
+    with ThreadPoolExecutor(2) as pool:
+        futures = [pool.submit(start) for _ in range(2)]
+        results = [f.result() for f in futures]
+    try:
+        errors = [r for r in results if isinstance(r, DetachedServeError)]
+        assert len(errors) == 1
+        assert str(port) in str(errors[0])
+    finally:
+        stop_detached(port)

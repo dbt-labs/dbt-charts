@@ -5683,7 +5683,7 @@ pub(super) fn fit(
                 Some((_, cubics)) => (crate::torn::torn_across_at(cubics, gx), plot_h + ad),
                 None => (ad, plot_h + ad),
             };
-            lines.push(Node::line(Role::Grid, (gx, gy1), (gx, gy2), xg.faded_stroke(gc, gw)));
+            lines.push(crate::dash::line(Role::Grid, (gx, gy1), (gx, gy2), xg.faded_stroke(gc, gw)));
         }
         plot.push(::layout::contract::grid_group(lines));
     }
@@ -5700,7 +5700,7 @@ pub(super) fn fit(
             }
             // A rule whose label thinned away has nothing to carry in the gutter.
             let (gx1, gx2) = if y_visible.as_ref().is_some_and(|v| !v[i]) { (ad, plot_w + ad) } else { (gx1, gx2) };
-            lines.push(Node::line(Role::Grid, (gx1, gy), (gx2, gy), yg.faded_stroke(gc, gw)));
+            lines.push(crate::dash::line(Role::Grid, (gx1, gy), (gx2, gy), yg.faded_stroke(gc, gw)));
         }
         plot.push(::layout::contract::grid_group(lines));
     }
@@ -5714,7 +5714,7 @@ pub(super) fn fit(
         let (gx1, gx2) = if paint_value_axis { la.grid_span(plot_w, value_axis_right_overhang) } else { (ad, plot_w + ad) };
         for &tv in &la.tick_values {
             let gy = rule_at(ls.scale(tv));
-            plot.push(Node::line(Role::Grid, (gx1, gy), (gx2, gy), la.layer_grid_attrs(gc, gw)));
+            plot.push(crate::dash::line(Role::Grid, (gx1, gy), (gx2, gy), la.layer_grid_attrs(gc, gw)));
         }
     }
 
@@ -5840,10 +5840,11 @@ pub(super) fn fit(
 
     // The foreground line's authored dash. Each disconnected plateau is its own
     // subpath, so the dash restarts on every one and is fitted to the band
-    // (`_layers.py:397`); any other line keeps the authored list.
+    // (`_layers.py:397`); any other line is fitted to the path it strokes.
     let ink_dash = authored_dash
         .as_deref()
         .map(|list| crate::step_band::dasharray(list, disconnected.then_some(band_geometry.bandwidth * plateau_share)));
+    let dash_length = |d: &PathData| (!disconnected).then(|| d.length());
 
     // Halo lines — canvas-colored wider stroke under each main line,
     // sharing the series' dash (the strokeDash encoding is chart-level).
@@ -5860,7 +5861,7 @@ pub(super) fn fit(
                     .num("stroke-width", style.width.map_or(halo_w, |width| width * r.style.line_mark.halo_multiplier))
                     .set("stroke-linecap", cap)
                     .set("stroke-linejoin", join);
-                let halo = with_dash(halo, style.dasharray.clone().or_else(|| dash_of(series)));
+                let halo = with_dash(halo, style.dasharray.clone().or_else(|| dash_of(series)), dash_length(&d));
                 plot.push(crate::contract::connected_group("line", "layer_1_marks", vec![crate::href::linked(anchor, Node::path(Role::Chrome, d, halo))]));
             }
         }
@@ -5948,7 +5949,9 @@ pub(super) fn fit(
                             .set("stroke-linecap", cap)
                             .set("stroke-linejoin", join);
                         let anchor = selection.mark(r.link_open.anchor(datum_href(from, &data_key)));
-                        marks.push(crate::href::linked(anchor, Node::path(mark_of(series, None), scene_path(&top_cut.path(from, to).map_err(cut_error)?), series_key(with_dash(edge, style.dasharray)))));
+                        let cut = scene_path(&top_cut.path(from, to).map_err(cut_error)?);
+                        let edge = with_dash(edge, style.dasharray, dash_length(&cut));
+                        marks.push(crate::href::linked(anchor, Node::path(mark_of(series, None), cut, series_key(edge))));
                     }
                 }
                 plot.push(crate::contract::connected_group("area", "layer_2_marks", marks));
@@ -6299,7 +6302,7 @@ pub(super) fn fit(
                     .set("stroke-linecap", cap)
                     .set("stroke-linejoin", join)
                     .set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series));
-                let line = with_dash(line, style.dasharray.or_else(|| ink_dash.clone()).or_else(|| dash_of(series)));
+                let line = with_dash(line, style.dasharray.or_else(|| ink_dash.clone()).or_else(|| dash_of(series)), dash_length(&d));
                 plot.push(crate::contract::connected_group("line", "layer_3_marks", vec![crate::href::linked(anchor, Node::path(mark_of(series, None), d, line))]));
             }
         }

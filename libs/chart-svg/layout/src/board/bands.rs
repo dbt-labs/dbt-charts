@@ -309,7 +309,7 @@ pub fn draw(style: &Style, book: &FontBook, page: Page, stamp: &str) -> Result<R
                 .num("y2", rule_y)
                 .set("stroke", rule.color.as_str())
                 .num("stroke-width", rule.width)
-                .set_if(rule.dasharray.is_some(), "stroke-dasharray", rule.dasharray.as_ref().map_or("", |d| d.as_str()));
+                .set_if(rule.dasharray.is_some(), "stroke-dasharray", &rule.dasharray.as_ref().map_or(String::new(), |d| crate::dash::fit_pattern(d.as_str(), footer_x - padding, false)));
             nodes.push(Node::element(element("line", line, vec![])));
             nodes.push(Node::chars(Chars::new("\n", Escape::Attr)));
         }

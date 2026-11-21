@@ -186,7 +186,8 @@ def test_kpi_card_border_dash_array_reaches_the_stroke(
         board=board,
     )
     kpi_card = _CARD_BORDER.findall(svg)[0]
-    assert 'stroke-dasharray="4,4"' in kpi_card
+    # The authored 4,4 is stretched a hair so the outline closes on a dash.
+    assert re.search(r'stroke-dasharray="([\d.]+),\1"', kpi_card)
     assert 'stroke-linecap="round"' in kpi_card
 
 

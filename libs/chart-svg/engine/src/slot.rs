@@ -642,7 +642,7 @@ impl<F: EngineFacts> Facts for Adapter<'_, '_, F> {
         let kind = self.title_kind(at, false)?;
         let total = total_style(body)?;
         let frame = HeaderFrame::nested(&geometry, has_items, layout::board::assemble::opens_with_text(body, at, self.slots.drawn), kind, TitleShift::default(), None);
-        let header = Header::of(body, total, &frame, self.book, &Controls { list: Vec::new(), reset_enabled: false }, content_width, prose.get(at))?;
+        let header = Header::of(body, total, &frame, self.book, &Controls { list: Vec::new(), reset_enabled: false }, content_width, prose.get(at), &mut mdsvg::StyleScope::default())?;
         let title = match title_text(body) {
             // `board_title_metrics`: the first baseline and the body top of a plain title, from the board's top.
             Some(text) => {
@@ -758,7 +758,7 @@ impl<F: EngineFacts> Adapter<'_, '_, F> {
             // takes its natural height, with no card padding.
             (Ok(Family::Callout(callout)), ModelChart::Callout(_)) => {
                 let style = CalloutStyle::of(&slot.placed.charts.callout, total_style(slot.body)?)?;
-                CalloutCard { callout, style: &style, id: &chart.id, images: &std::collections::BTreeMap::new() }.plan(&Env { book: self.book }, width)?.natural_height
+                CalloutCard { callout, style: &style, id: &chart.id, images: &std::collections::BTreeMap::new(), scope: None }.plan(&Env { book: self.book }, width)?.natural_height
             }
             // A table's slot is the height the engine draws it at, unbounded, in the width its
             // padding leaves (`_get_table_height_from_data`), plus that padding (`_vertical_inset`).

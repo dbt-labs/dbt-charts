@@ -127,7 +127,7 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/_paths.py", 631): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
-    ("agent_api/project_session.py", 317): (
+    ("agent_api/project_session.py", 315): (
         'ProjectSession.charts_dir: cast("FilesystemProject", self.project)-narrowed'
     ),
     ("agent_api/serve.py", 83): (
@@ -136,7 +136,7 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/serve/server.py", 1355): (
         "health: create_server's FilesystemProject parameter, closed over"
     ),
-    ("agent_api/serve.py", 478): (
+    ("agent_api/serve.py", 489): (
         "start_detached(project: FilesystemProject) — already FS-typed"
     ),
     ("agent_api/serve.py", 166): (

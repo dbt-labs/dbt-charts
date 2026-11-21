@@ -33,6 +33,6 @@ pub mod unicode_unassigned;
 pub mod utils;
 
 pub use parser::parse;
-pub use renderer::{indented, indented_nodes, render, RenderResult, SVGRenderer};
+pub use renderer::{indented, indented_nodes, render, RenderResult, StyleScope, SVGRenderer};
 pub use style::Style;
 pub use types::Document;

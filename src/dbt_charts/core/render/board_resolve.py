@@ -85,10 +85,10 @@ def _resolve_chart_data_aware(
     inactive tab's chart, which skips the render-first vl-convert height
     measurement the active tab gets (that is the expensive part; see
     ``layout_sizing._require_resolved``). ``ResolvedBoard.charts`` must
-    still carry the same query rows ``record_board`` records — queries are
+    still be resolved against the query's real rows — queries are
     board-global and already executed by the time render reaches here — or
     a data-free resolve would bake presentation facts (e.g. a pie's
-    ``presentation_fingerprint``) that artifact replay then contradicts.
+    ``presentation_fingerprint``) that the rows then contradict.
 
     Routes through ``resolve_chart_with_runtime_inputs`` — the same runtime
     entry point ``_require_resolved`` calls for the active tab — so this

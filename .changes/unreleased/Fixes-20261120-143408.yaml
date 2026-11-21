@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct serve --detach and dct-playground no longer fail with "port in use" when another process takes the chosen port while they start.
+time: 2026-11-20T14:34:08.903678-08:00

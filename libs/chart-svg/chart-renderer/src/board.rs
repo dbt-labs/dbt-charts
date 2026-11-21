@@ -44,8 +44,7 @@ mod row_shifts;
 pub use row_shifts::{derive_title_shifts, RowShift};
 
 /// The envelope the Python harness dumps for one board render: production's
-/// own `ResolvedBoard` (undumped via the same `TypeAdapter` production's
-/// `board_artifact.py` uses), every chart's own datasets keyed by chart id
+/// own `ResolvedBoard` (dumped through a pydantic `TypeAdapter`), every chart's own datasets keyed by chart id
 /// then query name, and the handful of engine-config/render-clock/chrome
 /// facts the composer has no other way to read (see field docs).
 #[derive(Deserialize)]
@@ -1158,6 +1157,7 @@ fn border_rect(width: f64, height: f64, border: &BorderStyleDoc, css_class: &str
             border.dash_array.as_deref(),
             border.line_cap.as_deref(),
             border.dash_offset,
+            Some(::layout::dash::rect_perimeter((width - stroke).max(0.0), (height - stroke).max(0.0), (border.radius - inset).max(0.0))),
         ),
         py_max_zero(border.radius - inset),
     )
@@ -1625,7 +1625,7 @@ struct DetailsChrome {
     border_color: String,
     border_width: f64,
     border_radius: f64,
-    border_dash_attrs: String,
+    border: BorderStyleDoc,
     arrow_x: f64,
     arrow_font_size: f64,
     label_x: f64,
@@ -1642,6 +1642,17 @@ struct DetailsChrome {
     title_font_color: String,
 }
 
+/// The dash attributes of a details border drawn as a `width` by `height` rect.
+fn details_dash_attrs(details: &DetailsChrome, width: f64, height: f64) -> String {
+    let border = &details.border;
+    crate::common::border_dash_attrs(
+        border.dash_array.as_deref(),
+        border.line_cap.as_deref(),
+        border.dash_offset,
+        Some(::layout::dash::rect_perimeter(width, height, border.radius)),
+    )
+}
+
 fn details_chrome_from_style(style: &StyleDoc) -> DetailsChrome {
     let details = &style.layout.details;
     DetailsChrome {
@@ -1654,11 +1665,7 @@ fn details_chrome_from_style(style: &StyleDoc) -> DetailsChrome {
         border_color: style.border.color.clone(),
         border_width: details.border.width,
         border_radius: details.border.radius,
-        border_dash_attrs: crate::common::border_dash_attrs(
-            details.border.dash_array.as_deref(),
-            details.border.line_cap.as_deref(),
-            details.border.dash_offset,
-        ),
+        border: details.border.clone(),
         arrow_x: details.arrow.x,
         arrow_font_size: details.arrow.font.size,
         label_x: details.label_x,
@@ -1840,6 +1847,7 @@ fn tabs_chrome_from_style(style: &StyleDoc) -> TabsChrome {
             tabs.border.dash_array.as_deref(),
             tabs.border.line_cap.as_deref(),
             tabs.border.dash_offset,
+            None,
         ),
         font_family: tabs.font.family.clone(),
         font_size: tabs.font.size,
@@ -1986,7 +1994,7 @@ fn render_details_item(
         float_repr(actual_height),
         xml_escape_attr(&details.border_color),
         float_repr(details.border_width),
-        details.border_dash_attrs,
+        details_dash_attrs(details, width, actual_height),
         float_repr(details.border_radius),
     );
     let svg = format!(
@@ -2061,7 +2069,7 @@ fn render_details_summary(
         float_repr(details.summary_height),
         xml_escape_attr(&details.border_color),
         float_repr(details.border_width),
-        details.border_dash_attrs,
+        details_dash_attrs(details, width, details.summary_height),
         float_repr(details.border_radius), fill_attr = xml_escape_attr(fill_attr),
     );
     Ok(format!(
@@ -5171,7 +5179,7 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
                 num_full(rule_y),
                 xml_escape_attr(&rule.color),
                 num_full(rule.width),
-                rule.dash_attr()
+                rule.dash_attr(footer_x - page_padding)
             ));
         }
         footer_parts.push(attribution);
@@ -5362,6 +5370,20 @@ mod tests {
     }
 
     #[test]
+    fn a_dashed_border_closes_its_loop_on_whole_periods() {
+        let border: BorderStyleDoc = serde_json::from_value(json!({
+            "width": 2.0, "color": "#000", "radius": 0.0, "dash_array": [6.0, 3.0],
+        }))
+        .unwrap();
+        let svg = format!("<svg xmlns=\"http://www.w3.org/2000/svg\">{}</svg>", border_rect(200.0, 100.0, &border, ""));
+        let dashed = crate::dash_probe::dashed_strokes(&svg);
+        assert_eq!(dashed.len(), 1, "{svg}");
+        // The stroke runs around the box inset by half its width: 198 by 98.
+        assert!((dashed[0].length - 592.0).abs() < 1e-9, "{svg}");
+        dashed[0].assert_fits();
+    }
+
+    #[test]
     fn dashed_border_prints_dash_pattern_with_format_g() {
         // Expected string is `svg_utils.border_dash_attrs` on the same border.
         let border: BorderStyleDoc = serde_json::from_value(json!({
@@ -5374,6 +5396,7 @@ mod tests {
                 border.dash_array.as_deref(),
                 border.line_cap.as_deref(),
                 border.dash_offset,
+                None,
             ),
             r#" stroke-dasharray="3.14159,2" stroke-linecap="round" stroke-dashoffset="1e-05""#
         );
@@ -5512,7 +5535,7 @@ mod tests {
         // radius 0 minus the half stroke clamps to the int `0`, as `max(.., 0)` does.
         let expected = concat!(
             r##"<rect class="dbt-card-border" x="1.0" y="1.0" width="198.0" height="88.0" "##,
-            r##"fill="none" stroke="#0b57d0" stroke-width="2.0" stroke-dasharray="6,3" "##,
+            r##"fill="none" stroke="#0b57d0" stroke-width="2.0" stroke-dasharray="5.95833,2.97917" "##,
             r##"stroke-linecap="round" stroke-dashoffset="1.5" rx="0"/></g>"##
         );
         assert!(wrapped.ends_with(expected), "{wrapped}");

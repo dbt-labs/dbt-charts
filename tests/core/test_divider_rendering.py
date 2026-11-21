@@ -7,6 +7,7 @@ import re
 
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
+from ._dash import is_stretched
 from ._svg_render import render_board_to_svg
 
 _BOARD = """title: T
@@ -50,7 +51,8 @@ def test_footer_divider_opt_in() -> None:
 def test_footer_divider_dashed() -> None:
     svg = _render(_FOOTER_DIVIDER_ON + "      dasharray: 6 3\n")
     (line,) = _footer_lines(svg)
-    assert 'stroke-dasharray="6 3"' in line
+    dash = re.search(r'stroke-dasharray="([^"]*)"', line)
+    assert dash and is_stretched(dash.group(1), (6, 3)), line
 
 
 def test_footer_divider_color_alone_keeps_it_off() -> None:
@@ -81,7 +83,11 @@ def test_table_dividers_dashed() -> None:
         "style:\n  charts:\n    table:\n      header:\n        divider:\n"
         "          dasharray: 6 3\n"
     )
-    dashed = re.findall(r'<line[^>]*stroke-dasharray="6 3"[^>]*/>', svg)
+    dashed = [
+        tag
+        for tag in re.findall(r'<line[^>]*stroke-dasharray="[^"]*"[^>]*/>', svg)
+        if is_stretched(re.search(r'stroke-dasharray="([^"]*)"', tag).group(1), (6, 3))
+    ]
     # The header line is dashed and the footer line is not.
     assert any("stroke-width" in line for line in dashed)
     assert len(dashed) == 1
@@ -148,8 +154,15 @@ def test_markdown_rule_hidden_keeps_the_text() -> None:
     assert "above" in hidden and "below" in hidden
 
 
-def test_markdown_rule_dashed() -> None:
-    assert 'stroke-dasharray="6 3"' in _markdown_rule("dasharray: 6 3")
+def test_markdown_rule_dashed_starts_and_ends_on_a_dash() -> None:
+    svg = _markdown_rule("dasharray: 6 3")
+    line = re.search(r"<line[^>]*stroke-dasharray=[^>]*/>", svg)
+    assert line, svg
+    attr = dict(re.findall(r'([\w-]+)="([^"]*)"', line.group(0)))
+    assert is_stretched(attr["stroke-dasharray"], (6, 3)), line.group(0)
+    dash, gap = (float(n) for n in re.split(r"[ ,]+", attr["stroke-dasharray"]))
+    periods = (float(attr["x2"]) - float(attr["x1"]) + gap) / (dash + gap)
+    assert abs(periods - round(periods)) < 1e-3, line.group(0)
 
 
 def test_table_divider_accepts_a_named_color() -> None:

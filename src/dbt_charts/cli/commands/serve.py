@@ -97,6 +97,7 @@ def serve_command(
     detach: bool = False,
     stop: bool = False,
     describe: bool = False,
+    port_file: Path | None = None,
 ) -> None:
     """Start unified dbt charts server.
 
@@ -119,6 +120,7 @@ def serve_command(
             board's URL and status, and return; the server keeps running.
         stop: Stop the server ``--detach`` left on ``port``.
         describe: With ``detach``, also print what each chart draws.
+        port_file: Write the bound port here once the listener is bound.
         cache_path: Persist the query-result cache to this DuckDB file (created
             if absent). None (the default) falls through to the project's
             cache: block, then to the per-user file.
@@ -181,6 +183,11 @@ def serve_command(
         typer.echo(f"  Auto-detected dialect: {setup.dialect} (from dbt profile)")
 
     port = setup.port
+    if port_file is not None:
+        # Atomic, so a reader never sees half the digits.
+        partial = port_file.with_name(port_file.name + ".tmp")
+        partial.write_text(str(port), encoding="utf-8")
+        partial.replace(port_file)
 
     # Start server. The URL is the whole banner: it lists every board in the
     # project, so any other route printed here is a second way to say the same

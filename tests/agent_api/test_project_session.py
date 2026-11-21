@@ -742,46 +742,6 @@ def test_project_injected_registry_with_owns_env_refresh_leaves_it_untouched(
     backend.close.assert_not_called()
 
 
-def test_project_emit_board_forwards_project_registry_and_cache(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    local_project: Callable[..., FilesystemProject],
-) -> None:
-    """ProjectSession.emit_board() forwards self.project/.env/.cache
-    to agent_api.board_artifact.emit_board_artifact, plus the call's own args."""
-    from dbt_charts.agent_api import board_artifact as _board_artifact_module
-    from dbt_charts.agent_api.board_artifact import EmitBoardArtifactResult
-
-    cache = MagicMock(spec=TrivialDuckDBCache)
-    session = ProjectSession(project=local_project(tmp_path), cache=cache)
-    captured: dict[str, Any] = {}
-
-    def fake_emit_board_artifact(*args: Any, **kwargs: Any) -> EmitBoardArtifactResult:
-        captured["args"] = args
-        captured.update(kwargs)
-        return EmitBoardArtifactResult(success=True)
-
-    monkeypatch.setattr(
-        _board_artifact_module, "emit_board_artifact", fake_emit_board_artifact
-    )
-
-    pre_built = session.env
-    board_path = tmp_path / "board.yml"
-    artifact_path = tmp_path / "out" / "board.artifact.json"
-    recording_path = tmp_path / "out" / "board.recording.json"
-
-    result = session.emit_board(
-        board_path, artifact_path, recording_path, variables={"region": "West"}
-    )
-
-    assert result.success
-    assert captured["args"] == (board_path, artifact_path, recording_path)
-    assert captured["project"] is session.project
-    assert captured["env"] is pre_built
-    assert captured["result_cache"] is cache
-    assert captured["variables"] == {"region": "West"}
-
-
 def test_project_exec_env_threads_project(tmp_path: Path) -> None:
     """ProjectSession.env passes the project object to build_exec_env.
 

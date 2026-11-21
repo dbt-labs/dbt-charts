@@ -321,9 +321,8 @@ def _with_baked_color_gradient(
     """Construct a ResolvedGeoshapeChartStyle with the gradient baked.
 
     Threads the resolved subtype down the existing nesting so the baked
-    gradient's resolved_stops survive pydantic serialization (board artifact
-    round-trip). The engine reads `chart.style.geoshape.color.gradient`
-    from the same path — the access is unchanged, now provably resolved.
+    gradient's resolved_stops survive pydantic serialization. The engine reads
+    `chart.style.geoshape.color.gradient` from the same path — the access is unchanged, now provably resolved.
     """
     if geoshape.color is None or geoshape.color.gradient is None:
         return ResolvedGeoshapeChartStyle.model_validate(

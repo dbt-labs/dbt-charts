@@ -172,9 +172,9 @@ pub(crate) fn kpi_card(placed: &Style, body: &BoardBody, kpi: &bind::bound::Kpi,
 /// A callout card drawn at (width, height), never shorter than its content, with the project
 /// `images` its host read: its `<svg>` extent, its content and the warnings production raises. The board's slot and a host's cell both draw a callout
 /// through this.
-pub(crate) fn callout_card(placed: &Style, body: &BoardBody, callout: &bind::bound::Callout, id: &str, images: &crate::host::Images, (width, height): (f64, f64), book: &FontBook) -> Result<(Extent, Vec<Node>, Vec<Diagnostic>), Diagnostic> {
+pub(crate) fn callout_card(placed: &Style, body: &BoardBody, callout: &bind::bound::Callout, id: &str, images: &crate::host::Images, scope: Option<&RefCell<mdsvg::StyleScope>>, (width, height): (f64, f64), book: &FontBook) -> Result<(Extent, Vec<Node>, Vec<Diagnostic>), Diagnostic> {
     let style = CalloutStyle::of(&placed.charts.callout, total_style(body)?)?;
-    let card = CalloutCard { callout, style: &style, id, images };
+    let card = CalloutCard { callout, style: &style, id, images, scope };
     let mut plan = card.plan(&Env { book }, width)?;
     let warnings = std::mem::take(&mut plan.diagnostics);
     let (extent, content) = card_svg(card.draw(plan, height)?)?;
@@ -310,7 +310,7 @@ impl Header {
         self.non_layout_height + self.gap_before_layout
     }
 
-    pub(crate) fn of(body: &BoardBody, total: &Style, frame: &HeaderFrame, book: &FontBook, controls: &Controls, content_width: f64, plan: Option<Plan>) -> Result<Self, Diagnostic> {
+    pub(crate) fn of(body: &BoardBody, total: &Style, frame: &HeaderFrame, book: &FontBook, controls: &Controls, content_width: f64, plan: Option<Plan>, scope: &mut mdsvg::StyleScope) -> Result<Self, Diagnostic> {
         let (page_padding, card_padding) = (frame.origin.0, total.frame.card_padding);
         let HeaderFrame { pitch, has_items, .. } = frame;
         let (pitch, has_items) = (*pitch, *has_items);
@@ -324,19 +324,24 @@ impl Header {
         let prose_width = prose_width.max(0.0);
         let title = title_text(body).map(|text| prose::title(total, text, book, prose_width, frame.title_kind)).transpose()?;
         let title_height = title.as_ref().map_or(0.0, |t| t.height.max(total.title.base.min_height));
-        let text = prose::board_text(body)
-            .map(|t| {
-                let plan = plan.ok_or_else(|| diag::err_internal("a board's text is planned before it is drawn"))?;
-                prose::text(total, t, book, prose::Slot { width: prose::slot_width(content_width, card_padding), plan })
-            })
-            .transpose()?;
-        let text_height = text.as_ref().map_or(0.0, |t| t.height);
         let heading = title.as_ref().map(|t| variables::Headline { height: title_height, baseline: t.baseline, one_line_width: t.one_line_width });
         // `should_use_title_inline_band`: the controls share the title's row when they fit beside it.
         let inline = match &heading {
             Some(heading) if !controls.list.is_empty() => variables::inline(controls, heading, content_width - 2.0 * card_padding, card_padding, total, book)?,
             _ => None,
         };
+        // The inline band holds the title's content, not its `<svg>`, so its markdown rules and the
+        // text's are one scope; a title that is an `<svg>` of its own shares none.
+        if let (Some(title), Some(_)) = (&title, &inline) {
+            scope.note(&title.rules);
+        }
+        let text = prose::board_text(body)
+            .map(|t| {
+                let plan = plan.ok_or_else(|| diag::err_internal("a board's text is planned before it is drawn"))?;
+                prose::text(total, t, book, prose::Slot { width: prose::slot_width(content_width, card_padding), plan }, scope)
+            })
+            .transpose()?;
+        let text_height = text.as_ref().map_or(0.0, |t| t.height);
         let strip = if controls.list.is_empty() || inline.is_some() {
             None
         } else {
@@ -423,6 +428,8 @@ struct Composer<'a, F> {
     /// height, never the taller cell a `cols` row gives it.
     pie_heights: RefCell<BTreeMap<ItemId, f64>>,
     prose: &'a ProsePlans,
+    /// The markdown rules written so far into the `<svg>` being composed.
+    scope: RefCell<mdsvg::StyleScope>,
 }
 
 pub(crate) fn board<F: EngineFacts>(
@@ -434,7 +441,7 @@ pub(crate) fn board<F: EngineFacts>(
     facts: &F,
     book: &FontBook,
 ) -> Result<(Vec<Node>, Vec<Diagnostic>, BTreeMap<ItemId, f64>), Diagnostic> {
-    let composer = Composer { bound, slots, facts, book, run, warnings: RefCell::new(Vec::new()), pie_heights: RefCell::new(BTreeMap::new()), prose: &laid.prose };
+    let composer = Composer { bound, slots, facts, book, run, warnings: RefCell::new(Vec::new()), pie_heights: RefCell::new(BTreeMap::new()), prose: &laid.prose, scope: RefCell::default() };
     let style = facts.style(&board.body)?;
     let body = &board.body;
     let total = total_style(body)?;
@@ -446,7 +453,7 @@ pub(crate) fn board<F: EngineFacts>(
         return Err(Diagnostic::refused(refuse!("drawing a board with no drawn items is not supported")));
     }
     let frame = HeaderFrame { origin: (page_padding, page_padding), pitch: laid.root.pitch, has_items: !laid.root.items.is_empty(), opens_with_text: layout::board::assemble::opens_with_text(body, &ItemId::root(), bound.drawn()), title_kind: prose::TitleKind::ROOT, shift: TitleShift::default(), header_path: None };
-    let header = Header::of(body, total, &frame, book, &controls, content_width, laid.prose.get(&ItemId::root()))?;
+    let header = Header::of(body, total, &frame, book, &controls, content_width, laid.prose.get(&ItemId::root()), &mut composer.scope.borrow_mut())?;
     let (items, layout_height) = composer.layout(&laid.root)?;
     let actual_height = header.non_layout_height + header.gap_before_layout + layout_height;
     let mut layout = header.nodes;
@@ -631,7 +638,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
                 // A callout paints its own border and background, and takes neither the card padding
                 // nor the chart's own (`_uses_svg_family_layout_padding`): its card fills the wrapper.
                 // A board's render reads no project images: a callout that writes one is refused.
-                let (extent, content, warnings) = callout_card(slot.placed, slot.body, callout, id, &crate::host::Images::new(), (placed.width, placed.height), self.book)?;
+                let (extent, content, warnings) = callout_card(slot.placed, slot.body, callout, id, &crate::host::Images::new(), Some(&self.scope), (placed.width, placed.height), self.book)?;
                 self.warnings.borrow_mut().extend(warnings);
                 let title = callout.title.clone().unwrap_or_else(|| id.to_string());
                 ("dbt-chart dbt-chart-callout", title, extent.height, unpadded(placed.width, extent.height, content))
@@ -828,6 +835,14 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
 
     /// `render_nested_board` for a board without variables, in `style`: its border, its own title and text, then its layout.
     fn nested(&self, placed: &PlacedBoard, style: &layout::board::assemble::StylePatch) -> Result<(Vec<Node>, f64), Diagnostic> {
+        // The board is an `<svg>` of its own: its rules are written once there, in document order.
+        let outer = self.scope.replace(mdsvg::StyleScope::default());
+        let drawn = self.nested_in_scope(placed, style);
+        self.scope.replace(outer);
+        drawn
+    }
+
+    fn nested_in_scope(&self, placed: &PlacedBoard, style: &layout::board::assemble::StylePatch) -> Result<(Vec<Node>, f64), Diagnostic> {
         let geometry = board_geometry(style)?;
         if matches!(style.border.dash_array, model_core::Tri::Value(_)) {
             return Err(Diagnostic::refused(refuse!("a dashed nested board border is not supported")));
@@ -838,17 +853,17 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         let (inset_left, inset_top, inset_bottom) = (padding.left + stroke, padding.top + stroke, padding.bottom + stroke);
         // A tab's pane has no body of its own, and so no text.
         let body = self.slots.boards.get(&placed.item).copied().filter(|body| prose::board_text(body).is_some() || title_text(body).is_some());
-        let (layout, layout_height) = self.layout(&placed.layout)?;
         // The board's own title and text above its layout, in this board's frame (`render_nested_board`).
         let header = if let Some(body) = body {
             let kind = prose::TitleKind { level: *self.slots.levels.get(&placed.item).ok_or_else(|| diag::err_internal("a nested board carries its heading level"))?, root: false };
             let opens = layout::board::assemble::opens_with_text(body, &placed.item, self.slots.drawn);
             let frame = HeaderFrame::nested(&geometry, !placed.layout.items.is_empty(), opens, kind, placed.shift, Some(authored_path(&placed.item)));
             let content_width = placed.width - geometry.chrome().0;
-            Some(Header::of(body, total_style(body)?, &frame, self.book, &Controls { list: Vec::new(), reset_enabled: false }, content_width, self.prose.get(&placed.item))?)
+            Some(Header::of(body, total_style(body)?, &frame, self.book, &Controls { list: Vec::new(), reset_enabled: false }, content_width, self.prose.get(&placed.item), &mut self.scope.borrow_mut())?)
         } else {
             None
         };
+        let (layout, layout_height) = self.layout(&placed.layout)?;
         let band = header.as_ref().map_or(0.0, Header::band);
         let natural = inset_top + band + layout_height + inset_bottom;
         let margin_vertical = margin.top + margin.bottom;

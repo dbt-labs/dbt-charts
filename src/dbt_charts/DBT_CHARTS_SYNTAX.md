@@ -872,7 +872,7 @@ on axes, value labels and tooltips as well as in a KPI or table:
 | `currency_whole` | `$,.0f` | `$12,346` |
 | `currency_full` | `$,.2f` | `$12,345.68` — cents at every magnitude |
 | `compact` | `.2~s` | `12K`, `1.2M`, `1.2B` — two significant digits with the K/M/B suffix in every slot; below 1 it uses the board's `number_full` if redefined, else two unpadded decimals |
-| `currency_compact` | `$.2~s` | `$12K`, `$1.2M` — `compact` with the currency symbol; below 1 it falls back to `currency_full` |
+| `currency_compact` | `$.3~s` | `$12.4K`, `$1.23M` — `currency` with the K/M/B suffix in every slot; below 1 it falls back to `currency_full` |
 | `percent` | `.1%` | `0.42` → `42.0%` — **multiplies by 100**; for a value that already IS a whole-number percent (`42`, `148.23`), use `percent_number` |
 | `percent_whole` | `.0%` | `0.42` → `42%` |
 | `percent_delta` | `+.1%` | `0.018` → `+1.8%` (ratio in, signed percent out) |

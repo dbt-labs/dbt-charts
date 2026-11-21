@@ -2423,6 +2423,18 @@ class TestDividerStyle:
             svg,
         )
 
+    def test_a_dash_fitter_restretches_the_rule_to_its_width(self) -> None:
+        seen: list[tuple[str, float]] = []
+
+        def fit(pattern: str, length: float) -> str:
+            seen.append((pattern, length))
+            return "7,2"
+
+        renderer = SVGRenderer(style=Style(hr_dasharray="6 3"), dash_fitter=fit)
+        svg = renderer.render(parse(self.HR), width=300)
+        assert seen == [("6 3", 300.0)]
+        assert 'stroke-dasharray="7,2"' in svg
+
     def test_table_gridlines_take_width_and_dashes(self) -> None:
         svg = self._svg(
             self.TABLE, table_border_width=2.0, table_border_dasharray="2 2"

@@ -9,7 +9,7 @@
 //! `render_board(&Board, &ChartStyles, &RunResult, &FontBook, &mut impl EngineFacts)` returns a `Rendered`
 //! (`svg` and `report`): bind, `layout::board::assemble::lay_out`, the board's frame composed on
 //! nodes (`compose`), and one `print`. The board's language and time locale are open for all of it
-//! (`scope`), and the nodes end in `layout::board::styles`' dedupe. Nothing in production calls it.
+//! (`scope`); `compose` prints each markdown rule once per `<svg>`. Nothing in production calls it.
 //!
 //! The engine draws only what it models, and anything else is refused by name rather than
 //! approximated: failed charts, KPI cards, callout cards, plain tables of text columns and
@@ -80,7 +80,7 @@ fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, book: &Fo
     let mut bound = bind::bind(board, styles, run)?;
     // A chart the slots cannot place, or whose family's plan or draw refuses, is that chart's refusal,
     // as one the bind cannot read is: the rest of the board is laid out and drawn without it.
-    let (laid, boxes, mut nodes, drawn) = loop {
+    let (laid, boxes, nodes, drawn) = loop {
         match lay_out_and_draw(board, styles, &bound, &reads_data, run, book, &*facts) {
             Ok(done) => break done,
             Err(refusal) => refuse_chart(board, styles, &mut bound, refusal)?,
@@ -97,7 +97,6 @@ fn render_scoped(board: &Board, styles: &ChartStyles, run: &RunResult, book: &Fo
     diagnostics.extend(laid.diagnostics.iter().cloned());
     diagnostics.extend(bound.diagnostics.iter().cloned());
     diagnostics.extend(drawn);
-    layout::board::styles::dedupe_repeated_style_rules(&mut nodes)?;
     Ok(Rendered {
         charts: host::chart_svgs(&nodes),
         svg: print::print(&nodes),

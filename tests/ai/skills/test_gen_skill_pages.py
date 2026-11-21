@@ -160,7 +160,10 @@ def test_chart_page_says_formats_take_names_and_what_compact_keeps() -> None:
     body = get_skill("chart", surface="cli").body
     assert "A `formats:` entry takes a format name, never a spec" in body
     assert "`style.formats` (`style.formats.one_decimal" in body
-    assert "`compact` and `currency_compact` keep two significant digits" in body
+    assert (
+        "`compact` keeps two significant digits (1.2M, 45K) and `currency_compact`"
+        " three ($1.23M, $412K)" in body
+    )
 
 
 def test_chart_page_lists_the_keys_of_nested_slots_one_level_down(

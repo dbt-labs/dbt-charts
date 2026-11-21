@@ -1,9 +1,9 @@
 """Board-wide category→color planning.
 
-One data value gets one swatch across every chart on a board. Without this,
-each chart hands Vega-Lite only the values *it* happens to see; VL sorts them
-and assigns palette slots positionally, so the same category lands on a
-different swatch in every chart, and adding one category reflows the rest.
+One data value gets one swatch across every chart on a board, and one rule
+decides which slot each value takes (see ``plan_category_colors``). Without a
+board-wide plan, each chart would slot only the values *it* happens to see, so
+the same category would land on a different swatch in every chart.
 
 The planner is pure: per-chart observed values in, one scale per bound field
 out. Enumerating those values needs executed rows, so the caller runs after
@@ -13,8 +13,9 @@ execute — see ``execute/category_colors.py``.
 from __future__ import annotations
 
 import itertools
-from collections import Counter
+import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
@@ -33,10 +34,6 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.normalized._base import (
         _BaseChartFields,
     )
-
-# A field bound on fewer charts than this has no cross-chart consistency
-# problem to solve, so it keeps the chart-local coloring it has today.
-_MIN_CHARTS_FOR_BINDING = 2
 
 # An authored `color:` channel names a category on any family — that is what
 # the channel means. A positional channel only does when the family paints one
@@ -76,7 +73,7 @@ _TYPE_FIELD = "type"
 # asserting the same thing. Importing an emitter-side registry here to derive
 # this set would invert that boundary. The only way to keep a single
 # declaration site without breaking it would be moving the set itself into
-# `render/` — but the planner's threshold gate needs it during compile, before
+# `render/` — but the planner needs it during compile, before
 # any emitter runs, so `render/` isn't reachable from here either. The
 # exhaustive `test_binding_capability_matches_every_authored_chart_family`
 # above is the drift guard in place of a mechanical derivation: it fails the
@@ -136,9 +133,75 @@ def categorical_channel_fields(chart: _BaseChartFields) -> tuple[str, ...]:
     return ()
 
 
-# Per-chart observations: field name → the distinct values that chart draws,
-# in first-seen row order.
-ChartFieldValues = Mapping[str, tuple[str, ...]]
+@dataclass(frozen=True)
+class FieldObservation:
+    """What one chart draws for one color field.
+
+    ``totals`` maps a value to the sum of the chart's measure over its rows
+    (``series_totals``); a chart with no additive measure has none, and weighs
+    nothing. ``stacked`` is the order the author explicitly asked of this chart
+    (``stack_order: data`` or ``alphabetical``), empty when none.
+    """
+
+    values: tuple[str, ...]
+    totals: Mapping[str, float]
+    stacked: tuple[str, ...] = ()
+
+
+# Per-chart observations: field name → what that chart draws for it.
+ChartFieldValues = Mapping[str, FieldObservation]
+
+# A label carrying an order of its own: a stem and a trailing number (P1, Tier 3, Q4).
+_RANKED_LABEL = re.compile(r"(\D*?)\s*(\d+)")
+
+
+def _ranked_number(value: str) -> tuple[str, int] | None:
+    match = _RANKED_LABEL.fullmatch(value)
+    return None if match is None else (match[1].casefold(), int(match[2]))
+
+
+def _ranked(
+    values: Sequence[str], observations: Sequence[FieldObservation]
+) -> list[str]:
+    """``values`` in the order that has no author behind it: their own, else size.
+
+    Values that are all one stem and a number (``P1``..``P10``) go by the number.
+    Otherwise the largest total takes the first slot, by magnitude: a series
+    summing to -100 draws larger than one summing to 10. Each chart's totals are
+    first turned into shares so charts on different measures weigh equally.
+    Ties go alphabetical.
+    """
+    numbers: dict[str, tuple[str, int]] = {}
+    for value in values:
+        number = _ranked_number(value)
+        if number is None:
+            break
+        numbers[value] = number
+    else:
+        if len({stem for stem, _ in numbers.values()}) == 1:
+            return sorted(values, key=lambda v: (numbers[v][1], v))
+    weight = dict.fromkeys(values, 0.0)
+    for chart in observations:
+        grand_total = sum(abs(total) for total in chart.totals.values())
+        if grand_total == 0:
+            continue
+        for value, total in chart.totals.items():
+            if value in weight:
+                weight[value] += abs(total) / grand_total
+    return sorted(values, key=lambda v: (-weight[v], v))
+
+
+def _discover(
+    options: Sequence[str],
+    stacked: Sequence[str],
+    drawn: Sequence[str],
+    observations: Sequence[FieldObservation],
+) -> list[str]:
+    """Every value the field seats, in slot order: what the author said (the
+    variable's ``options``, then explicit stack orders), then the rest ranked."""
+    said = dict.fromkeys([*options, *stacked])
+    rest = list(dict.fromkeys(v for v in drawn if v not in said))
+    return [*said, *_ranked(rest, observations)]
 
 
 def plan_category_colors(
@@ -147,46 +210,38 @@ def plan_category_colors(
     palette: Sequence[str],
     seeded: Mapping[str, Sequence[str]] = MappingProxyType({}),
 ) -> dict[str, CategoryColorScale]:
-    """Return one scale per bound field.
+    """Return one scale per field some chart colors by.
 
-    A field binds when it is authored (explicit intent, so the chart count
-    does not matter) or when at least two charts encode it. Slots go out in
-    authored order first, then to the values ``seeded`` lists for the field
-    (the options of a variable a chart's link sets from it, so a series keeps
-    its swatch whichever options a filter leaves rows for), in that order, then
-    to values discovered in the data in first-seen order across
-    ``observations``. Seeding never binds a field on its own, and never costs one:
-    options the palette cannot seat alongside the pins are left unseeded.
+    One rule decides which slot each value of a field takes, on every chart type
+    and whether one chart or many color by the field:
+
+    1. What the author said, in this order: pins under
+       ``style.charts.category_colors``; the options of a variable a chart's
+       link sets from the field (``seeded``, in option order, so a series keeps
+       its swatch whichever options a filter leaves rows for); then an explicit
+       ``stack_order: data`` or ``alphabetical`` on a chart.
+    2. The values' own order, when they are all one stem and a number
+       (``P1``..``P10``, ``Tier 1``..``Tier 3``).
+    3. Size: the largest total first (see ``_ranked``), ties alphabetical.
+
+    Slot assignment never reads row order, so it is stable across charts and
+    across which rows arrive first. It moves only when the data's ranking does;
+    pinning is what freezes an assignment.
 
     This decides *which slot a value owns*, never the order charts display
     their values in — display order stays wherever each emitter already put
-    it. Reordering a chart's domain is what desynchronizes the legend pin, the
+    it. Reordering a domain is what desynchronizes the legend pin, the
     tooltip rank, and the aria labels that read from it.
-
-    Slot assignment is stable across *charts*: one chart drawing a subset never
-    disturbs what its siblings get, which is the cross-chart consistency this
-    exists for. It is NOT stable across *data changes* — a value that appears
-    for the first time partway through the first chart's rows takes the slot
-    at that position and pushes later values down one. Pinning under
-    ``style.charts.category_colors`` is what makes an assignment survive new
-    data.
 
     Two categories must never share a swatch, so a field with more values than
     the palette can seat does not bind — except when the author named it,
-    which raises instead (see ``_build_scale``).
+    which raises instead (see ``_build_scale``). Seeding never costs a binding:
+    options the palette cannot seat alongside the pins are left unseeded.
     """
-    chart_counts: Counter[str] = Counter()
-
-    # Seeded with every authored field so the lookups below are total: an
-    # authored field whose values never appear in the data still has an entry.
-    observed: dict[str, list[str]] = {field: [] for field in authored}
+    per_field: dict[str, list[FieldObservation]] = {field: [] for field in authored}
     for chart in observations:
-        for field, values in chart.items():
-            chart_counts[field] += 1
-            seen = observed.setdefault(field, [])
-            for value in values:
-                if value not in seen:
-                    seen.append(value)
+        for field, observation in chart.items():
+            per_field.setdefault(field, []).append(observation)
 
     def seats_for(
         field: str, values: Sequence[str]
@@ -198,29 +253,33 @@ def plan_category_colors(
         return seatable, unseen, domain, _seats_needed(seatable, domain, palette)
 
     scales: dict[str, CategoryColorScale] = {}
-    for field in {**chart_counts, **authored}:
+    for field, field_observations in per_field.items():
         is_authored = field in authored
-        if not is_authored and chart_counts[field] < _MIN_CHARTS_FOR_BINDING:
-            continue
         options = list(seeded[field]) if field in seeded else []
-        discovered = options + [v for v in observed[field] if v not in options]
-        if not discovered:
+        stacked = [v for o in field_observations for v in o.stacked]
+        drawn = [v for o in field_observations for v in o.values]
+        if not drawn and not options:
             # Nothing on screen encodes this field, so there is no scale to
             # build and no observed values to check the pins against.
             # `dct render --chart X` narrows the layout without narrowing the
             # board's pins, which is the ordinary way to get here.
             continue
-        pinned, unseen, domain, seats = seats_for(field, discovered)
+
+        pinned, unseen, domain, seats = seats_for(
+            field, _discover(options, stacked, drawn, field_observations)
+        )
         if seats > len(palette) and options:
             # Seeding is an enhancement on top of binding: options that do not
             # fit leave the field to the values the data holds, as before.
-            pinned, unseen, domain, seats = seats_for(field, observed[field])
+            pinned, unseen, domain, seats = seats_for(
+                field, _discover([], stacked, drawn, field_observations)
+            )
         if seats > len(palette):
             # Binding is an enhancement the engine volunteers; when the
-            # palette cannot seat every value needing a swatch it declines — the same way the
-            # two-chart threshold declines — rather than turning a board that
-            # rendered fine before this feature existed into an error. Colors
-            # staying distinct matters more than binding this one field.
+            # palette cannot seat every value needing a swatch it declines
+            # rather than turning a board that rendered fine before this
+            # feature existed into an error. Colors staying distinct matters
+            # more than binding this one field.
             if not is_authored:
                 continue
             # An authored field is different: the author named it, so quietly

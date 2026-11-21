@@ -275,10 +275,17 @@ class GridLayout(BaseModel):
     )
 
 
-class TabItem(BaseModel):
+class TabItem(ConstrainedModel):
     """Tab layout item."""
 
     model_config = ConfigDict(extra="forbid")
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        AtMostOneOf(
+            ("rows", "cols", "grid", "tabs"),
+            "A tab can only have one layout type (rows, cols, grid, or tabs)",
+        ),
+    )
 
     title: Annotated[str, DisplayText()] = Field(
         description="Tab label displayed in the tab bar."

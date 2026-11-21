@@ -11,6 +11,8 @@ These are used by the parallel pre-execution path (renderer.py) to know which
 queries to fire before rendering begins.
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from typing import Any
 

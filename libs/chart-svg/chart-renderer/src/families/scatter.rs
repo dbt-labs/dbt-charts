@@ -1970,6 +1970,15 @@ impl RuleFires {
 /// The extent of no values: the identity of a min/max union.
 const NO_EXTENT: (f64, f64) = (f64::INFINITY, f64::NEG_INFINITY);
 
+/// The order a scatter lists its color series in when the board colors them by slot (so position does not
+/// decide the color): its own points' ranking by `y` (all rows, so a legend view does not reorder it). A linked legend and a wide fold keep their orders.
+fn own_series_order(r: &ScatterResolved, color_domain: &[String], rows: &[serde_json::Map<String, Value>]) -> Option<Vec<String>> {
+    let field = r.color.as_deref()?;
+    let bound = crate::common::category_scale_for(&r.category_colors, field).is_some();
+    let free = r.wide_measures.is_empty() && r.legend_view.as_ref().and_then(|view| view.series()).is_none();
+    (bound && free).then(|| ::bind::stack::ranked_series(color_domain, rows, field, &r.y, r.style.axis_y.rank_by(true)))
+}
+
 /// The color legend's entries as indices into `color_domain`, in drawn order.
 /// An authored `legend.values` (`apply_legend_entry_order`,
 /// `emitters/scatter.py:416-420`, and the wide fold's `_wide.py:206-210`)
@@ -1981,9 +1990,18 @@ fn legend_entry_order(
     legend: &legend::LegendConfig,
     color_domain: &[String],
     raw_measures: Option<&[&str]>,
+    ranked: Option<&[String]>,
 ) -> Result<Vec<usize>, String> {
     match &legend.values {
-        None => Ok((0..color_domain.len()).collect()),
+        None => {
+            // `ranked` is the chart's own order; without it the domain's.
+            let position = |name: &String| ranked.and_then(|r| r.iter().position(|s| s == name)).unwrap_or(0);
+            let mut order: Vec<usize> = (0..color_domain.len()).collect();
+            if ranked.is_some() {
+                order.sort_by_key(|&i| position(&color_domain[i]));
+            }
+            Ok(order)
+        }
         Some(authored) if authored.is_empty() => Ok(Vec::new()),
         Some(authored) => {
             let domain: Vec<&str> = color_domain.iter().map(String::as_str).collect();
@@ -2376,7 +2394,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
         .collect::<Result<_, _>>()?;
     let entry_symbol = (!has_mirror).then_some(legend::LegendSymbol::FilledCircle);
     let legend_order = if r.color.is_some() && r.legend.visible {
-        legend_entry_order(legend_cfg, &color_domain, None)?
+        legend_entry_order(legend_cfg, &color_domain, None, own_series_order(r, &color_domain, &payload.rows).as_deref())?
     } else {
         Vec::new()
     };
@@ -4879,21 +4897,17 @@ mod tests {
         assert!(symbol_centers(&svg).len() >= 6, "{svg}");
     }
 
-    /// Review round 1 HIGH 1: scatter's fold order is always RAW-sorted
-    /// (`_wide_scatter_fold`'s own doc comment; `_measure_paint_order`
-    /// returns `raw_wide_series_names` = `sorted(measures)` unchanged when
-    /// there is no dimension), never the AUTHORED `wide_measures` array
-    /// order. `make_wide_dot_band_payload` authors `[unit_price,
-    /// total_cost]` — alphabetically unsorted — so a correct fold paints
-    /// `total_cost` FIRST in every category (palette slot 0, `#3164a3`),
-    /// not `unit_price` (`#779bc9`).
+    /// Without a `color:` dimension a scatter's fold is the authored `y:`
+    /// order (`raw_wide_series_names`). `make_wide_dot_band_payload` authors
+    /// `[unit_price, total_cost]`, so a correct fold paints `unit_price` FIRST
+    /// in every category, in palette slot 0 (`#3164a3`).
     #[test]
-    fn wide_measures_fold_paints_sorted_measure_order_not_authored_order() {
+    fn wide_measures_fold_paints_in_authored_y_order() {
         let svg = render_json(make_wide_dot_band_payload());
         let marker = "3.87,0\" fill=\"";
         let start = svg.find(marker).expect("a data point marker") + marker.len();
         let first_fill = &svg[start..start + 7];
-        assert_eq!(first_fill, "#3164a3", "total_cost paints first (sorted): {svg}");
+        assert_eq!(first_fill, "#3164a3", "unit_price paints first (y order): {svg}");
     }
 
     fn make_wide_quantitative_x_payload() -> serde_json::Value {
@@ -6580,8 +6594,8 @@ mod tests {
         let svg = render_json(p);
         let drawn = legend_labels(&svg, &["Total cost", "Unit price"]);
         assert_eq!(drawn, ["Unit price", "Total cost"], "{svg}");
-        assert_eq!(swatch_fill(&svg, "Total cost"), "#3164a3", "{svg}");
-        assert_eq!(swatch_fill(&svg, "Unit price"), "#779bc9", "{svg}");
+        assert_eq!(swatch_fill(&svg, "Unit price"), "#3164a3", "{svg}");
+        assert_eq!(swatch_fill(&svg, "Total cost"), "#779bc9", "{svg}");
     }
 
     #[test]

@@ -1,5 +1,7 @@
 """Bar chart engine constants: hover band, label fit, horizontal rail spacing."""
 
+from __future__ import annotations
+
 from typing import Final
 
 # Hover band applies only to a bar or total under this fraction of the largest value.
@@ -12,7 +14,3 @@ LABEL_FIT_LINE_HEIGHT_MULTIPLIER: Final[float] = 1.15
 TOP_RAIL_LABEL_GAP_SPACES: Final[int] = 1
 # Ceiling of a continuous-scale bar's computed width when `marks.bar.max_size` is unauthored.
 CONTINUOUS_BAR_MAX_SIZE: Final[float] = 20.0
-# Smallest ratio between a bar and the next-longest one for the bar to count as an outlier worth tearing.
-TORN_OUTLIER_MIN_RATIO: Final[float] = 3.0
-# Fewest bars a chart needs before an outlier can be picked from the data.
-TORN_OUTLIER_MIN_BARS: Final[int] = 4

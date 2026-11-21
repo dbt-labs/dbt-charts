@@ -11,6 +11,8 @@ Tools: all tools from dbt_charts.ai.tool_schemas.ALL_TOOLS (render_board,
 Usage: dct mcp serve
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from pathlib import Path
@@ -226,7 +228,7 @@ def create_server(context: DbtChartsAIContext) -> Any:
     return server
 
 
-async def run_server(project: "Project", cache: "QueryResultCache | None") -> None:
+async def run_server(project: Project, cache: QueryResultCache | None) -> None:
     """Run the MCP server in stdio mode with embedded HTTP server.
 
     Both the project and its cache are injected by the composition root

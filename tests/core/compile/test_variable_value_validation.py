@@ -100,6 +100,28 @@ class TestValidateVariableValue:
         # squiggle, and nothing else asserts it.
         assert exc.value.to_diagnostic().path == "variables.my_var.default"
 
+    @pytest.mark.parametrize(
+        ("input_type", "value"),
+        [
+            ("daterange", [1, 2]),
+            ("select", ["a"]),
+            ("radio", ["a"]),
+        ],
+    )
+    def test_wrong_shape_default_carries_the_registered_code(
+        self, input_type: str, value
+    ):
+        """Non-text daterange ends and a list on a scalar input are authoring
+        mistakes: they carry `ERR-VALIDATION-FIELD` and a field path, not
+        ERR-INTERNAL."""
+        var = Variable(input=input_type)
+        with pytest.raises(CompilationError) as exc:
+            validate_variable_value("my_var", var, value)
+
+        assert exc.value.code is not None
+        assert exc.value.code.code == "ERR-VALIDATION-FIELD"
+        assert exc.value.to_diagnostic().path == "variables.my_var.default"
+
     # Slider/range min/max bounds
     @pytest.mark.parametrize(
         ("value", "min_val", "max_val", "error_contains"),

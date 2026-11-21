@@ -72,7 +72,7 @@ from dbt_charts.core.execute.lookup import (
     replayed_failure_ats,
     warehouse_cache_hit_ats,
 )
-from dbt_charts.core.execute.plan import make_context, utc_now
+from dbt_charts.core.execute.plan import ExecContext, make_context, utc_now
 from dbt_charts.core.execute.plan_names import plan_key
 from dbt_charts.core.execute.plan_reader import env_sources
 from dbt_charts.core.execute.planned import Planned, plan_board
@@ -808,6 +808,24 @@ def render_dashboard(
             if file_path is not None
             else None,
         )
+        # Category colors rank on the board's default view, so a filtered render
+        # needs its plan under the defaults too.
+        default_view_ctx: ExecContext | None = None
+        if variables:
+            default_planned = plan_for_board(
+                board,
+                project,
+                None,
+                _builtin_variables,
+                clock(),
+                strict_variables,
+                False,
+                only_charts=[chart] if chart is not None else only_charts,
+                sources=env_sources(env),
+            )
+            default_view_ctx = dataclasses.replace(
+                ctx, plan=default_planned.plan, compiled=default_planned.compiled
+            )
         if scale is not None:
             render_options["scale"] = scale
         if link_context is not None:
@@ -827,6 +845,7 @@ def render_dashboard(
                 warnings_ignore=_warnings_ignore,
                 max_rows_per_query=max_rows_per_query,
                 strict_variables=strict_variables,
+                default_view_ctx=default_view_ctx,
                 **render_options,
             )
         _t_done = time.perf_counter()

@@ -11,6 +11,8 @@ execute — mirroring how chart type auto-detection works at render time.
 Detection priority: date > boolean > numeric-slider > unchanged.
 """
 
+from __future__ import annotations
+
 import math
 from datetime import date
 from typing import TYPE_CHECKING, NamedTuple
@@ -45,7 +47,7 @@ class RefinedType(NamedTuple):
 
 
 def refine_input_type_from_data(
-    var_def: "Variable",
+    var_def: Variable,
     option_values: list[str],
 ) -> RefinedType:
     """Refine a variable's input type based on its resolved option values.

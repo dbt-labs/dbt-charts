@@ -18,6 +18,8 @@ Entry Points:
     - cache_key(ctx, name, resolve_source) -> CacheKey
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import re
@@ -156,8 +158,8 @@ class ExecContext:
     board: Board
     plan: QueryPlan
     compiled: _engine.CompiledBoard
-    env: "ExecEnv"
-    result_cache: "QueryResultCache | None"
+    env: ExecEnv
+    result_cache: QueryResultCache | None
     # Default *persistent-store* participation. False is no-store: nothing is
     # read from or written to ``result_cache``. The per-render memo is
     # unaffected: resolve and render must see identical rows.
@@ -187,9 +189,9 @@ def utc_now() -> datetime:
 def make_context(
     board: Board,
     planned: Planned,
-    env: "ExecEnv",
+    env: ExecEnv,
     use_cache: bool = True,
-    result_cache: "QueryResultCache | None" = None,
+    result_cache: QueryResultCache | None = None,
     clock: Callable[[], datetime] = utc_now,
     board_slug: str | None = None,
     row_limit: RowFetchLimit | None = None,
@@ -239,7 +241,7 @@ class QueryRun:
     source: SourceThunk
     # The run of each X of a ``{{ queries.X.cache }}`` query, by name: what run
     # reads from the memo, so a wave has already run them. Empty for any other.
-    upstreams: dict[str, "QueryRun"]
+    upstreams: dict[str, QueryRun]
     cache_key: CacheKey
     # False for a call-level no-store or a `cache: false` policy.
     use_store: bool
@@ -248,10 +250,10 @@ class QueryRun:
     tailable: bool
     # The options query of each untyped choice variable the query binds, by
     # variable name: run first, so its declared column type types the value.
-    option_types: dict[str, "QueryRun"]
+    option_types: dict[str, QueryRun]
 
     @property
-    def prerequisites(self) -> list["QueryRun"]:
+    def prerequisites(self) -> list[QueryRun]:
         """The runs a wave settles before this one."""
         return [*self.upstreams.values(), *self.option_types.values()]
 
@@ -540,7 +542,7 @@ def resolve_source(ctx: ExecContext, query_name: str) -> ResolvedSourceConfig | 
         raise error from exc
 
 
-def declarations(ctx: ExecContext) -> dict[str, dict[str, "JsonValue"]]:
+def declarations(ctx: ExecContext) -> dict[str, dict[str, JsonValue]]:
     """The plan's source declarations by name, inline ones over the project's."""
     sources = ctx.plan["sources"]
     return {**sources["project"], **sources["inline"]}
@@ -917,7 +919,7 @@ def _declared_warehouse_type(ctx: ExecContext, source_name: str | None) -> str |
     return None if expanded is None else expanded.type
 
 
-def base_column_formats(ctx: ExecContext, source: str | None) -> "RawTableFormats":
+def base_column_formats(ctx: ExecContext, source: str | None) -> RawTableFormats:
     """``meta.format`` of the dbt columns behind the query source *source* names,
     from the manifest its ``dbt_profile`` source points at.
 

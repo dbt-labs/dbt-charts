@@ -10,6 +10,8 @@ Modules:
     yaml_utils: YAML extraction from AI responses
 """
 
+from __future__ import annotations
+
 from dbt_charts.ai.prompts import load_prompt
 from dbt_charts.ai.tools import handle_tool_call
 from dbt_charts.ai.yaml_utils import extract_yaml

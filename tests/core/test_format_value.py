@@ -811,10 +811,12 @@ class TestPercentRangeGuard:
         assert format_value(12.0, "percent_delta", self._FORMATS) == "+1200.0%"
         assert format_value(-18.2, "percent_delta", self._FORMATS) == "−1820.0%"
 
-    def test_negative_0_100_shaped_value_rejected(self):
-        with pytest.raises(DbtChartsError) as exc_info:
-            format_value(-18.2, "percent_whole", self._FORMATS)
-        assert exc_info.value.code is ERR_PERCENT_RANGE
+    def test_large_negative_ratio_is_a_real_loss_not_percent_points(self):
+        # A cost-margin ratio of -20.94 (-2,094%) is a loss-making row, not a
+        # 0-100-shaped share; a forgotten ÷100 only ever surfaces as a positive.
+        assert format_value(-20.94, "percent", self._FORMATS) == "−2094.0%"
+        assert format_value(-859.67, "percent_whole", self._FORMATS) == "−85967%"
+        assert format_kpi_parts(-28.68, "percent", self._FORMATS) is not None
 
     def test_percent_guarded_not_delta(self):
         with pytest.raises(DbtChartsError):

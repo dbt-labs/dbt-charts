@@ -51,12 +51,14 @@ extend-select = [
 # false-fire on every entry. "**/" matches both the monorepo path
 # (oss/vulture-whitelist.py) and the post-export path (vulture-whitelist.py
 # at the standalone repo root).
-"**/vulture-whitelist.py" = ["B018", "F821"]
+"**/vulture-whitelist.py" = ["B018", "F821", "I002"]
 # "Annotate everything" is enforced on shipped source; tests are unannotated.
-"**/tests/**" = ["ANN"]
 "**/conftest.py" = ["ANN"]
+"**/tests/**" = ["ANN", "I002"]
 
 [lint.isort]
+# Keeps annotations lazy on every supported Python (3.11 evaluates them at import).
+required-imports = ["from __future__ import annotations"]
 # Combine aliased imports from same module into single statement
 combine-as-imports = true
 # Packages imported within dbt-charts/ (src + tests), pruned from the full

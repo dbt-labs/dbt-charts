@@ -11,6 +11,8 @@ Entry Points:
     - list_sql_sources(sources) -> list[dict]
 """
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.config import ProjectSourcesConfig
@@ -141,9 +143,9 @@ def resolve_query_source(
     sources: SourceRegistry,
     resolver: SourceResolver,
     dbt_context: DbtContext | None,
-    board: "Board | None" = None,
+    board: Board | None = None,
     query_name: str = AD_HOC_QUERY_NAME,
-) -> "ResolvedSourceConfig | None":
+) -> ResolvedSourceConfig | None:
     """Resolve the source a query will actually execute against.
 
     ``resolve_source_config`` consults project ``sources:`` only. A source
@@ -188,7 +190,7 @@ def resolve_authored_source(
     dbt_context: DbtContext | None,
     board_sources: dict[str, dict[str, Any]],  # type-state: explicit_any — raw
     query_name: str,
-) -> "ResolvedSourceConfig | None":
+) -> ResolvedSourceConfig | None:
     """:func:`resolve_query_source` over the query's fields: its authored source
     name, and its ``sql`` (None for a query that is not SQL)."""
     if authored is None:
@@ -218,7 +220,7 @@ def default_sql_source(
     board_sources: dict[str, dict[str, Any]],  # type-state: explicit_any — raw
     dbt_context: DbtContext | None,
     query_name: str,
-) -> "ResolvedSourceConfig":
+) -> ResolvedSourceConfig:
     """The source SQL runs on when its authored one defers to the dbt project.
 
     The one rule: SQL using dbt Jinja (``ref()``/``source()``) runs on the dbt

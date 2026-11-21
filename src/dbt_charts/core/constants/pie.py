@@ -1,5 +1,7 @@
 """Pie/donut engine constants: label thresholds and attached-table geometry."""
 
+from __future__ import annotations
+
 from typing import Final
 
 # Wedges with share at or below this value get no direct label: the wedge

@@ -1033,6 +1033,9 @@ pub(super) fn build_chart_domains(
     chart_palette_unset: bool,
     // The options of the variable a linked legend lists whole: the series, whether or not rows hold them.
     options: Option<&[String]>,
+    // Whether the board colors this chart's series by slot, so the series list in the chart's own ranked
+    // order (`bind::stack::ranked_series`) instead of position deciding the color.
+    own_order: Option<::bind::stack::RankBy<'_>>,
 ) -> Result<BarChartState, String> {
     let is_grouped = color_field.is_some();
     let is_stacked = is_grouped && stack != "none";
@@ -1044,7 +1047,10 @@ pub(super) fn build_chart_domains(
     } else if let Some(options) = options {
         options.to_vec()
     } else {
-        color_field.map_or_else(Vec::new, |cf| color_domain_of(rows, cf))
+        color_field.map_or_else(Vec::new, |cf| {
+            let seen = color_domain_of(rows, cf);
+            own_order.map_or_else(|| seen.clone(), |by| ::bind::stack::ranked_series(&seen, rows, cf, val_field, by))
+        })
     };
     let stack_order: Vec<String> = if is_stacked {
         ::bind::stack::sorted_series_by_stack_order(

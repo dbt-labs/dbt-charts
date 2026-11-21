@@ -4,6 +4,8 @@ MySQL uses:
 - %s for parameter placeholders (positional)
 """
 
+from __future__ import annotations
+
 from dbt_charts.core.dialects.base import SQLDialect
 
 

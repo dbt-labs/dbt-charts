@@ -73,7 +73,7 @@ impl ResolvedFormat {
             let prefix = if keep_affix_gaps { lstrip(&explicit_prefix) } else { strip(&explicit_prefix) }.to_string();
             return Ok(Lanes { prefix, number, suffix: format!("{unit}{}", rstrip(self.suffix.as_str())) });
         }
-        if spec.ends_with('%') && !spec.starts_with('+') && value.abs() >= 10.0 {
+        if spec.ends_with('%') && !spec.starts_with('+') && value >= 10.0 {
             return Err(diag::err_percent_range(value, spec));
         }
         let d3 = |spec: &str, value: f64| d3rs::format::format(&locale.locale, spec, value).map_err(Diagnostic::refused);

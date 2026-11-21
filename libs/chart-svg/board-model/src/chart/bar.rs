@@ -1,7 +1,7 @@
 //! `chart/authored/bar.py`: bars, and the histogram that bins x. Both tags read one model
 //! (Python's `BarChart`), so the struct cannot see which tag it was read under. A rule that
 //! depends on it names the tag (`read_under = "type"`): the histogram's tooltip, y_start,
-//! annotations, pattern, torn_outlier, layers, support_table and key-type rules are declared constraints, in
+//! annotations, pattern, outliers, layers, support_table and key-type rules are declared constraints, in
 //! the order Python's `BarChart.__constraints__` states them: the first a board breaks is the
 //! message it gets.
 
@@ -27,8 +27,8 @@ use model_derive::Model;
     constraint(forbids(pattern, "style.pattern", when(is_in(type, "histogram")),
         message = "pattern is not supported on type: histogram: its bars are bins of rows, so a column has no single value to pattern by."
     )),
-    constraint(forbids("style.torn_outlier", when(is_in(type, "histogram")),
-        message = "style.torn_outlier is not supported on type: histogram: its bars are bins of rows, so there is no bar to tear."
+    constraint(forbids("style.outliers", when(is_in(type, "histogram")),
+        message = "style.outliers is not supported on type: histogram: its bars are bins of rows, so there is no bar to tear."
     )),
     constraint(forbids("style.key.type", when(is_in(type, "histogram"), is_in("style.key.type", "direct")),
         message = "style.key.type: direct is not supported on type: histogram: it has one series, so there are no series labels to print. Set the type to `legend` or `auto`, or remove it."

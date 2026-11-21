@@ -377,7 +377,11 @@ impl<'a> Cx<'a> {
         let parsed = parse_patch::<Board>(&node, None);
         if !parsed.errors.is_empty() {
             return Err(invalid(
-                parsed.errors.into_iter().map(|e| e.diagnostic).collect(),
+                parsed
+                    .errors
+                    .into_iter()
+                    .map(|e| crate::extra_field::special(e.into_diagnostic(), &node))
+                    .collect(),
             ));
         }
         let (own, entries) = split_own(parsed.twin);

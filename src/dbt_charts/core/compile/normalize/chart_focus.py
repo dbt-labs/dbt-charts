@@ -36,6 +36,8 @@ Use cases:
 - Embed a single chart in another page
 """
 
+from __future__ import annotations
+
 from collections.abc import Collection
 
 from dbt_charts.core.compile.models.board.authored import LayoutType
@@ -72,16 +74,15 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
     - All sources and queries unchanged (they're lazy-loaded anyway)
 
     Focus does not preserve color. Narrowing the layout happens before
-    board-wide category colors are planned, so a focused chart falls under the
-    two-chart threshold and colors itself locally — it can differ from the same
-    chart in the dashboard. Planning over the unfocused layout would mean
-    executing the sibling queries focusing exists to skip.
+    board-wide category colors are planned, so a focused chart ranks its values
+    on its own data alone — it can differ from the same chart in the
+    dashboard. Planning over the unfocused layout would mean executing the
+    sibling queries focusing exists to skip.
 
     PINNED values are the exception, and the board's pins ride along for it:
-    an authored field bypasses the threshold, and a pin addresses a slot, so
-    the pinned value lands on the same swatch whether or not its siblings were
-    executed. Wiping the pins here would make the one case that costs nothing
-    diverge too.
+    a pin addresses a slot, so the pinned value lands on the same swatch
+    whether or not its siblings were executed. Wiping the pins here would make
+    the one case that costs nothing diverge too.
 
     This is called automatically when `chart_focus` is set in the YAML.
     It can also be called directly for programmatic chart focusing.

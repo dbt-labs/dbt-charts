@@ -5,6 +5,8 @@ where the fork's age shows, or its own extensions diverge — string literals,
 session reset, and statement_timeout, all below.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 from dbt_charts.core.dialects.postgres import PostgresDialect

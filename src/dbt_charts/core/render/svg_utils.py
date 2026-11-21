@@ -21,6 +21,8 @@ Dependencies:
     - mdsvg (required, for markdown rendering and text wrapping)
 """
 
+from __future__ import annotations
+
 import html
 import re
 from dataclasses import dataclass
@@ -298,7 +300,7 @@ def card_box(
 def border_rect(
     width: float,
     height: float,
-    border: "BorderStyle",
+    border: BorderStyle,
     css_class: str = "",
     grows: bool = False,
 ) -> str:
@@ -350,7 +352,7 @@ def round_clipped(
 
 @dataclass(frozen=True)
 class CardShadow:
-    shadow: "BoxShadow"
+    shadow: BoxShadow
     fill: str
     radius: float
 
@@ -379,7 +381,7 @@ def divider_dash_attr(dasharray: str | None) -> str:
     return f' stroke-dasharray="{escape_attr(dasharray)}"'
 
 
-def border_dash_attrs(border: "BorderStyle") -> str:
+def border_dash_attrs(border: BorderStyle) -> str:
     """SVG stroke-dasharray/-linecap/-dashoffset attributes for a dashed border.
 
     Returns "" (solid border, the default) when ``border.dash_array`` is unset.
@@ -520,10 +522,10 @@ def render_title(
     *,
     level: int = 1,
     root: bool,
-    resolved_style: "ResolvedStyle",
-    variable_values: "VariableValues",
+    resolved_style: ResolvedStyle,
+    variable_values: VariableValues,
     base_dir: str | None,
-    error_collector: "list[Diagnostic] | None",
+    error_collector: list[Diagnostic] | None,
 ) -> str:
     """Render board title using mdsvg for proper text handling.
 

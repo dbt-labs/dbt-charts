@@ -65,6 +65,7 @@ import dbt_charts.core.render.warnings.line_joins_missing_periods as line_joins_
 import dbt_charts.core.render.warnings.local_time_label_expr_on_bucketed_axis as local_time_label_expr_on_bucketed_axis
 import dbt_charts.core.render.warnings.low_text_contrast as low_text_contrast
 import dbt_charts.core.render.warnings.normalize_percent_format_reads_raw_value as normalize_percent_format_reads_raw_value
+import dbt_charts.core.render.warnings.outliers_torn_unsupported as outliers_torn_unsupported
 import dbt_charts.core.render.warnings.palette_unsupported as palette_unsupported
 import dbt_charts.core.render.warnings.pattern_fallback_flat as pattern_fallback_flat
 import dbt_charts.core.render.warnings.pie_dominant_segment as pie_dominant_segment
@@ -95,7 +96,6 @@ import dbt_charts.core.render.warnings.temporal_single_point as temporal_single_
 import dbt_charts.core.render.warnings.title_unit_mismatch as title_unit_mismatch
 import dbt_charts.core.render.warnings.too_many_color_categories as too_many_color_categories
 import dbt_charts.core.render.warnings.too_many_x_categories as too_many_x_categories
-import dbt_charts.core.render.warnings.torn_outlier_no_outlier as torn_outlier_no_outlier
 import dbt_charts.core.render.warnings.trend_on_bars as trend_on_bars
 import dbt_charts.core.render.warnings.value_labels_crowd_width as value_labels_crowd_width
 import dbt_charts.core.render.warnings.value_labels_no_markers as value_labels_no_markers
@@ -117,6 +117,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     title_unit_mismatch,
     bar_band_width_too_narrow,
     bar_grouped_series_coincide,
+    outliers_torn_unsupported,
     callout_text_truncated,
     chart_title_truncated,
     endpoint_label_gap_overflow,
@@ -181,7 +182,6 @@ _DATA_DETECTORS: list[ModuleType] = [
     temporal_single_point,
     too_many_color_categories,
     too_many_x_categories,
-    torn_outlier_no_outlier,
     variable_buttons_overflow,
     wide_measure_label_collision,
     y_encoding_mostly_null,

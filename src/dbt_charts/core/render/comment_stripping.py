@@ -22,6 +22,8 @@ literal marker text inside a real string, one non-greedy regex is
 sufficient and correct.
 """
 
+from __future__ import annotations
+
 import re
 
 _FENCED_COMMENT_RE = re.compile(r"/\*\{#.*?#\}\*/", re.DOTALL)

@@ -6,6 +6,8 @@ the cap is the ``query_max_run_time`` session property that driver sends at
 connect.
 """
 
+from __future__ import annotations
+
 import math
 import re
 from collections.abc import Sequence

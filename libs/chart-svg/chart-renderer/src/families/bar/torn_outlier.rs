@@ -1,4 +1,4 @@
-//! Torn outlier bars (`style.torn_outlier`): the value axis ends at the
+//! Torn outlier bars (`style.outliers.variant: torn_with_cap`): the value axis ends at the
 //! resolved `torn_break`, every segment that crosses it is torn there, and each
 //! segment end above it floats as a labeled cap in a band beyond the plot. One
 //! law for both orientations: geometry is kept in (band-axis, value-axis)
@@ -30,15 +30,50 @@ const LIFT_LINES: f64 = 2.0;
 /// The space between caps that clear one another, in label lines.
 const SPACE_LINES: f64 = 1.0;
 
-/// The resolved cap band (`ResolvedBarStyle.torn_outlier`). The tear itself is torn paper sized
-/// to the bars (`torn::ragged`), so the payload's tooth settings are not read.
+/// How a torn bar is drawn (`style.outliers.variant`).
+#[derive(Deserialize, PartialEq, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Variant {
+    Torn,
+    TornWithCap,
+}
+
+/// What hover redraws at true length (`style.outliers.reveal`).
+#[derive(Deserialize, PartialEq, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Reveal {
+    Bar,
+    Chart,
+    None,
+}
+
+impl Reveal {
+    /// The `data-dbt-*` value the hover runtime reads, or `None` when hover draws nothing.
+    pub(super) fn published(self) -> Option<&'static str> {
+        match self {
+            Reveal::Bar => Some("bar"),
+            Reveal::Chart => Some("chart"),
+            Reveal::None => None,
+        }
+    }
+}
+
+/// The cap's size (`style.outliers.cap`). The tear itself is torn paper sized to the bars
+/// (`torn::ragged`), so the payload's tooth settings are not read.
 #[derive(Deserialize)]
-pub(super) struct Style {
-    enabled: bool,
+pub(super) struct CapSize {
     /// The fraction of the plot's value-axis length the cap band takes beyond the tear.
     band: f64,
     /// A cap's length along the value axis, as a multiple of the bar's thickness.
-    cap: f64,
+    length: f64,
+}
+
+/// The resolved `style.outliers`.
+#[derive(Deserialize)]
+pub(super) struct Style {
+    pub(super) variant: Variant,
+    pub(super) reveal: Reveal,
+    cap: CapSize,
 }
 
 /// Where a segment lies against the break.
@@ -175,21 +210,21 @@ pub(super) struct Seg<'a> {
 }
 
 impl Torn {
-    /// `None` unless the chart opted in and resolve found an outlier to break at. Resolve
-    /// refuses every shape a tear cannot draw, so a `torn_break` here is drawable.
+    /// `None` unless the chart chose the cap variant and resolve found an outlier to break at.
+    /// Resolve refuses every shape the cap cannot draw, so a `torn_break` here is drawable.
     /// Ribbons join each bar's full extent, which a tear cuts off the plot, so they refuse.
     pub(super) fn of(r: &BarResolved, horizontal: bool) -> Result<Option<Self>, String> {
-        let (Some(style), Some(break_value)) = (r.style.torn_outlier.as_ref().filter(|s| s.enabled), r.torn_break) else {
+        let (Some(style), Some(break_value)) = (r.style.outliers.as_ref().filter(|s| s.variant == Variant::TornWithCap), r.torn_break) else {
             return Ok(None);
         };
         if r.style.mark.ribbons.visible() {
-            return Err(diagnostic::refuse!("bar: chart {:?} sets style.torn_outlier with ribbons, which is not supported", r.id).into());
+            return Err(diagnostic::refuse!("bar: chart {:?} sets style.outliers.variant torn_with_cap with ribbons, which is not supported", r.id).into());
         }
         Ok(Some(Self {
             break_value,
             horizontal,
-            band: style.band,
-            cap: style.cap,
+            band: style.cap.band,
+            cap: style.cap.length,
             labeled: false,
             band_px: 0.0,
         }))

@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
+    from dbt_charts.core.execute.category_colors import DefaultView
     from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
     from dbt_charts.core.render.layout_sizing import RenderCache, ResolvedChartVariants
 
@@ -301,6 +302,7 @@ def build_resolved_board(
     resolve_errors: dict[str, ChartResolveFailure] | EllipsisType = ...,
     authored_slot_heights: dict[str, float] | EllipsisType = ...,
     hug_board: Board | EllipsisType = ...,
+    default_view: DefaultView | None = None,
 ) -> tuple[ResolvedBoard, RenderCache]:
     with (
         regional_scope(
@@ -320,6 +322,7 @@ def build_resolved_board(
             resolve_errors=resolve_errors,
             authored_slot_heights=authored_slot_heights,
             hug_board=hug_board,
+            default_view=default_view,
         )
 
 
@@ -332,6 +335,7 @@ def _build_resolved_board(
     resolve_errors: dict[str, ChartResolveFailure] | EllipsisType,
     authored_slot_heights: dict[str, float] | EllipsisType,
     hug_board: Board | EllipsisType,
+    default_view: DefaultView | None,
 ) -> tuple[ResolvedBoard, RenderCache]:
     """Build a data-resolved ResolvedBoard using the chart resolver.
 
@@ -360,6 +364,9 @@ def _build_resolved_board(
             an authored ancestor. See
             ``layout_sizing._snapshot_authored_slot_heights``.
         hug_board: See ``calculate_data_aware_layout``.
+        default_view: The board under its variables' defaults, which ranks the
+            category colors (see ``plan_board_category_colors``); None ranks
+            from ``results``.
 
     Returns:
         (ResolvedBoard with data-resolved ResolvedChart members,
@@ -390,6 +397,7 @@ def _build_resolved_board(
                     board, results, variables
                 ).items()
             },
+            default_view,
         ),
     )
     board = with_dbt_column_formats(board, results, variables)

@@ -1,5 +1,7 @@
 """Main CLI entry point."""
 
+from __future__ import annotations
+
 import contextlib
 import faulthandler
 import importlib.util

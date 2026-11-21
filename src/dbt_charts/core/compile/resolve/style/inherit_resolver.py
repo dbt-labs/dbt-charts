@@ -208,6 +208,21 @@ def _model_copy_paths(model: _ModelT, updates_by_path: dict[str, _ValueT]) -> _M
         if "" in field_updates:
             input_value = field_updates[""]
             field = type(model).model_fields[field_name]
+            target = next(
+                (
+                    a
+                    for a in get_args(field.annotation)
+                    if isinstance(a, type) and issubclass(a, BaseModel)
+                ),
+                None,
+            )
+            if target is not None and isinstance(input_value, dict):
+                # A slot of another model type takes only the leaves it declares,
+                # as the engine mirrors them: a rect stroke's `cap` and `join`
+                # do not reach a band outline, which has neither.
+                input_value = {
+                    k: v for k, v in input_value.items() if k in target.model_fields
+                }
             field_value = _type_adapter(field.rebuild_annotation()).validate_python(
                 input_value
             )

@@ -98,7 +98,11 @@ def _resolve_kpi(
     available = set(data[0]) if data else set()
     _validate_kpi_conditional(normalized.id, kpi, available)
     channels = (
-        {"background": kpi_background_channel(kpi.background, available)}
+        {
+            "background": kpi_background_channel(
+                normalized.id, normalized.query_name, kpi.background, available
+            )
+        }
         if isinstance(kpi.background, KpiBackgroundGradient)
         else {}
     )

@@ -230,8 +230,10 @@ pub(crate) struct BarResolved {
     /// (acceptable for a spike; a production port would need the fallback).
     #[serde(default)]
     stacked_domain_max: Option<f64>,
-    /// The value the tear breaks the axis at (`style.torn_outlier`): the value domain
-    /// is `[0, torn_break]` and everything past it floats in the cap band.
+    /// The value a bar tears at (`style.outliers`). Under `torn_with_cap` the value domain
+    /// is `[0, torn_break]` and everything past it floats in the cap band; under `torn`
+    /// the axis already ends there, and a chart shape off-chart bars cannot draw, which
+    /// still carries it, draws plain and warns.
     #[serde(default)]
     torn_break: Option<f64>,
     /// A non-null `support_table` grows the card past the plot's own
@@ -354,7 +356,7 @@ struct BarStyle {
     #[serde(default)]
     overlap: Option<Overlap>,
     #[serde(default)]
-    torn_outlier: Option<torn_outlier::Style>,
+    outliers: Option<torn_outlier::Style>,
     /// `style.conditional`: per-column rules restyling a base-layer bar by its own row.
     #[serde(default)]
     conditional: Option<std::collections::BTreeMap<String, Vec<BarRule>>>,
@@ -5980,8 +5982,8 @@ mod tests {
         axis_y["scale"] = json!({"continuous": {"domain": [0.0, 4000.0]}});
         axis_y["tick_values"] = json!([0.0, 1000.0, 2000.0, 3000.0, 4000.0]);
         axis_y["domain_max"] = json!(null);
-        payload_json["resolved"]["style"]["torn_outlier"] =
-            json!({"enabled": false, "band": 0.5, "cap": 1.2});
+        payload_json["resolved"]["style"]["outliers"] =
+            json!({"variant": "torn", "reveal": "chart", "cap": {"band": 0.5, "length": 1.2}});
         payload_json
     }
 
@@ -6137,9 +6139,9 @@ mod tests {
 
         fn grouped_card(north: &[f64]) -> String {
             let mut payload_json = make_vertical_payload(&north.iter().enumerate().map(|(i, v)| (["A", "B", "C", "D"][i], *v)).collect::<Vec<_>>(), true);
-            let (axis_y, style) = (make_authored_domain_payload(false)["resolved"]["style"]["axis_y"].clone(), make_authored_domain_payload(false)["resolved"]["style"]["torn_outlier"].clone());
+            let (axis_y, style) = (make_authored_domain_payload(false)["resolved"]["style"]["axis_y"].clone(), make_authored_domain_payload(false)["resolved"]["style"]["outliers"].clone());
             payload_json["resolved"]["style"]["axis_y"] = axis_y;
-            payload_json["resolved"]["style"]["torn_outlier"] = style;
+            payload_json["resolved"]["style"]["outliers"] = style;
             render(&make_payload(payload_json), &test_fonts()).expect("renders")
         }
 
@@ -8219,18 +8221,17 @@ mod tests {
     }
 
     /// Two sub-bands per category (grouped, not stacked) and a two-entry
-    /// legend in SORTED series-name order — `wide_series_names(["revenue",
-    /// "profit"], None, _)` sorts to `["profit", "revenue"]`, matching
-    /// `layered_product_metrics.ref.svg`'s own legend text order.
+    /// legend in authored `y:` order — `wide_series_names(["revenue",
+    /// "profit"], None, _)` is `["revenue", "profit"]`.
     #[test]
-    fn wide_horizontal_bar_draws_two_sub_bands_with_a_sorted_legend() {
+    fn wide_horizontal_bar_draws_two_sub_bands_with_a_legend_in_y_order() {
         let payload = make_payload(make_wide_horizontal_payload());
         let svg = render(&payload, &test_fonts()).expect("wide horizontal bar renders");
         let bars: Vec<_> = parse_rects(&svg).into_iter().filter(|r| r.2 != 10.0).collect();
         assert_eq!(bars.len(), 4, "two sub-bands x two categories: {svg}");
         let profit_pos = svg.find(">Profit<").expect("profit legend entry present");
         let revenue_pos = svg.find(">Revenue<").expect("revenue legend entry present");
-        assert!(profit_pos < revenue_pos, "sorted alphabetically, profit before Revenue: {svg}");
+        assert!(revenue_pos < profit_pos, "y order, Revenue before Profit: {svg}");
     }
 
     /// `legend.values` may name a wide measure by its raw name or its painted label.
@@ -12408,7 +12409,7 @@ mod tests {
     /// a separate code path (`color_domain` keyed by enumerate index, not
     /// `palette_domain`) from the stacked one above.
     #[test]
-    fn vertical_grouped_board_slot_wins_over_local_alphabetical_order() {
+    fn vertical_grouped_board_slot_colors_while_the_chart_ranks_its_own_bands() {
         let mut payload_json = make_stacked_payload("vertical", "none");
         payload_json["resolved"]["category_colors"] =
             serde_json::json!([{"field": "series", "slots": {"x": 1, "y": 0}, "overrides": {}}]);
@@ -12416,13 +12417,13 @@ mod tests {
 
         let mut rects = parse_rects(&svg);
         assert_eq!(rects.len(), 4, "2 categories × 2 series: {rects:?}");
-        // "x" is the left sub-band (si=0) within each category cluster, "y"
-        // the right one (si=1) — sorted by x this gives xA, yA, xB, yB.
+        // "y" is the chart's larger series, so it is the left sub-band (si=0) within each category
+        // cluster and "x" the right one (si=1) — sorted by x this gives yA, xA, yB, xB.
         rects.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         assert_eq!(
             rects.iter().map(|r| r.4.as_str()).collect::<Vec<_>>(),
-            vec!["#779bc9", "#3164a3", "#779bc9", "#3164a3"],
-            "x takes its board slot 1, y its board slot 0, in every category: {svg}"
+            vec!["#3164a3", "#779bc9", "#3164a3", "#779bc9"],
+            "y takes its board slot 0, x its board slot 1, in every category: {svg}"
         );
     }
 
@@ -12683,11 +12684,11 @@ mod tests {
         assert_eq!(far.4, "#3164a3", "outer series (x) takes its board slot 0: {svg}");
     }
 
-    /// Mirrors `vertical_grouped_board_slot_wins_over_local_alphabetical_order`
+    /// Mirrors `vertical_grouped_board_slot_colors_while_the_chart_ranks_its_own_bands`
     /// for the horizontal arm's own grouped-fill call site (`color_domain`
     /// keyed by enumerate index).
     #[test]
-    fn horizontal_grouped_board_slot_wins_over_local_alphabetical_order() {
+    fn horizontal_grouped_board_slot_colors_while_the_chart_ranks_its_own_bands() {
         let mut payload_json = make_stacked_payload("horizontal", "none");
         payload_json["resolved"]["category_colors"] =
             serde_json::json!([{"field": "series", "slots": {"x": 1, "y": 0}, "overrides": {}}]);
@@ -12695,13 +12696,13 @@ mod tests {
 
         let mut rects = parse_rects(&svg);
         assert_eq!(rects.len(), 4, "2 categories × 2 series: {rects:?}");
-        // "x" is the top sub-band (si=0) within each category cluster, "y"
-        // the bottom one (si=1) — sorted by y this gives xA, yA, xB, yB.
+        // "y" is the chart's larger series, so it is the top sub-band (si=0) within each category
+        // cluster and "x" the bottom one (si=1) — sorted by y this gives yA, xA, yB, xB.
         rects.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         assert_eq!(
             rects.iter().map(|r| r.4.as_str()).collect::<Vec<_>>(),
-            vec!["#779bc9", "#3164a3", "#779bc9", "#3164a3"],
-            "x takes its board slot 1, y its board slot 0, in every category: {svg}"
+            vec!["#3164a3", "#779bc9", "#3164a3", "#779bc9"],
+            "y takes its board slot 0, x its board slot 1, in every category: {svg}"
         );
     }
 
@@ -12754,7 +12755,7 @@ mod tests {
         );
     }
 
-    /// The board's plan governs legend swatches on the horizontal GROUPED
+    /// The board's plan governs legend order and swatches on the horizontal GROUPED
     /// arm too — a separate `stacked_legend_entries` call site from the
     /// stacked one above.
     #[test]
@@ -12774,8 +12775,8 @@ mod tests {
         }
         assert_eq!(
             entries,
-            vec![("x".to_string(), "#779bc9".to_string()), ("y".to_string(), "#3164a3".to_string())],
-            "display order stays alphabetical (x, y); fills key off the board slot: {svg}"
+            vec![("y".to_string(), "#3164a3".to_string()), ("x".to_string(), "#779bc9".to_string())],
+            "display order follows the board slot (y, x), and so do the fills: {svg}"
         );
     }
 
@@ -19609,7 +19610,7 @@ mod tests {
         fn bind_unfolds_a_wide_chart_into_the_rows_and_series_layout_reads() {
             let (payload, _) = bound_of(make_wide_horizontal_payload());
             let bound = super::super::bind::bind(&payload).expect("bar binds");
-            assert_eq!(bound.wide_series, ["profit", "revenue"]);
+            assert_eq!(bound.wide_series, ["revenue", "profit"]);
             assert_eq!(bound.payload.rows.len(), 4, "two rows folded over two measures");
         }
 

@@ -4,6 +4,8 @@ Stage: NORMALIZE (Output) / EXECUTE and RENDER (Input)
 Purpose: Layout, Board, and core document types.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, TypeGuard
@@ -65,7 +67,7 @@ class TitleShift(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _body_follows_title(self) -> "TitleShift":
+    def _body_follows_title(self) -> TitleShift:
         if self.body_dy < self.title_dy - 1e-9:
             raise ValueError(
                 f"body_dy ({self.body_dy}) must not be less than title_dy "
@@ -114,10 +116,10 @@ class LayoutItem(BaseModel):
     type: Literal["chart", "board"] = Field(
         description="Item type: 'chart' or 'board'."
     )
-    chart: "Chart | None" = Field(
+    chart: Chart | None = Field(
         default=None, description="Compiled chart, present when type == 'chart'."
     )
-    board: "Board | None" = Field(
+    board: Board | None = Field(
         default=None, description="Compiled board, present when type == 'board'."
     )
     source_path: str = Field(
@@ -525,7 +527,7 @@ class Board(BaseModel):
         return charts
 
     @property
-    def visible_variables(self) -> "dict[str, Variable]":
+    def visible_variables(self) -> dict[str, Variable]:
         """Return variables with visible=True (available for UI controls)."""
         return {k: v for k, v in self.variables.items() if v.visible}
 

@@ -1,5 +1,7 @@
 """Color derivation constants for ``variant()`` and ``label_ink()``."""
 
+from __future__ import annotations
+
 from typing import Final
 
 # Every tier is L' = L + (pole - L) * k in OKLCH: hue held, chroma scaled, gamut-clipped.

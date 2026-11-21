@@ -1,5 +1,7 @@
 """Shared dbt utilities for SQL adapters."""
 
+from __future__ import annotations
+
 import re
 import threading
 from collections.abc import Callable
@@ -33,7 +35,7 @@ if TYPE_CHECKING:
 DBT_PROJECT_DB_NAMES = ["sample.duckdb", "dbt_charts_examples.duckdb", "dev.duckdb"]
 
 
-def source_target_path(source_config: "ResolvedSourceConfig | None") -> str | None:
+def source_target_path(source_config: ResolvedSourceConfig | None) -> str | None:
     """The manifest directory a dbt_profile source authored, before or after expansion."""
     if isinstance(source_config, DbtProfileSourceConfig | DbtTargetSourceConfig):
         return source_config.target_path
@@ -42,7 +44,7 @@ def source_target_path(source_config: "ResolvedSourceConfig | None") -> str | No
 
 def resolve_dbt_refs_with_provenance(
     sql: str,
-    index: "RefIndex",
+    index: RefIndex,
     encode_relation: Callable[[str], str] | None = None,
 ) -> tuple[str, list[ResolvedRelation]]:
     """Resolve ref/source in SQL and record the resolved relation per call.
@@ -119,7 +121,7 @@ class DbtRefResolver:
     ERR-DBT-MANIFEST-MISSING rather than passing the call downstream.
     """
 
-    def __init__(self, project: "Project | None") -> None:
+    def __init__(self, project: Project | None) -> None:
         """Initialize the resolver.
 
         Args:
@@ -166,7 +168,7 @@ class DbtRefResolver:
             )
         return resolve_dbt_refs_with_provenance(sql, index, encode_relation)
 
-    def column_formats(self, target_path: str | None) -> "RawTableFormats":
+    def column_formats(self, target_path: str | None) -> RawTableFormats:
         """``meta.format`` of the dbt columns that carry one, by ref/source name.
 
         Read from the manifest ``target_path`` names (dbt's default location
@@ -181,7 +183,7 @@ class DbtRefResolver:
         names the manifest the resolution will read."""
         return self._snapshot(target_path)[1]
 
-    def _snapshot(self, target_path: str | None) -> tuple[str, str, "RefIndex | None"]:
+    def _snapshot(self, target_path: str | None) -> tuple[str, str, RefIndex | None]:
         """The manifest path, its version and its ref/source index (``""`` and
         None when the manifest does not exist)."""
         from dbt_charts.core.dbt_manifest import (  # noqa: PLC0415

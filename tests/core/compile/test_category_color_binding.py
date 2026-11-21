@@ -8,8 +8,7 @@ category color mapping:
   - palette-token resolution through the board style cascade
   - ``plan_category_colors`` — the pure planner that turns per-chart observed
     values plus the authored block into one board-wide slot assignment per
-    field, including the two-or-more-charts threshold gate and palette
-    exhaustion.
+    field, including the slot-ranking ladder and palette exhaustion.
 
 The render-side half (scale injection) lives in
 ``dbt-charts/tests/core/render/test_category_color_scale_injection.py``.
@@ -32,7 +31,8 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
 )
 from dbt_charts.core.compile.resolve.style.category_colors import (
     CategoryColorScale,
-    plan_category_colors,
+    FieldObservation,
+    plan_category_colors as _plan,
 )
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_one_color_token
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -47,6 +47,20 @@ _VALID_BOARD_BASE = {"text": "hello"}
 # Three stops, deliberately not any real theme palette — see the repo rule
 # against pinning theme values in tests.
 _PALETTE = ("#111111", "#222222", "#333333")
+
+
+def plan_category_colors(
+    observations: list[dict[str, tuple[str, ...]]],
+    authored: dict[str, CategoryColorBinding],
+    palette: tuple[str, ...],
+    seeded: dict[str, tuple[str, ...]] | None = None,
+) -> dict[str, CategoryColorScale]:
+    """The planner over charts that draw these values and carry no size."""
+    charts = [
+        {field: FieldObservation(values, {}) for field, values in chart.items()}
+        for chart in observations
+    ]
+    return _plan(charts, authored, palette, seeded or {})
 
 
 def _binding(**values: str) -> CategoryColorBinding:
@@ -260,6 +274,7 @@ class TestPlanner:
     """
 
     def test_two_charts_sharing_a_field_get_one_scale(self) -> None:
+        """Values nothing sizes tie, and ties go alphabetical, never first-seen."""
         plan = plan_category_colors(
             [{"category": ("Electronics", "Tools")}, {"category": ("Accessories",)}],
             authored={},
@@ -267,7 +282,7 @@ class TestPlanner:
         )
         assert plan["category"] == CategoryColorScale(
             field="category",
-            slots={"Electronics": 0, "Tools": 1, "Accessories": 2},
+            slots={"Accessories": 0, "Electronics": 1, "Tools": 2},
             overrides={},
         )
 
@@ -285,7 +300,7 @@ class TestPlanner:
         scale = plan["category"]
         assert color_at(scale, "Electronics", _PALETTE) == _PALETTE[1]
 
-    def test_threshold_gate_single_chart_field_gets_no_binding(self) -> None:
+    def test_a_single_chart_field_binds_too(self) -> None:
         plan = plan_category_colors(
             [
                 {"category": ("Electronics",), "region": ("North",)},
@@ -295,9 +310,9 @@ class TestPlanner:
             palette=_PALETTE,
         )
         assert "category" in plan
-        assert "region" not in plan
+        assert "region" in plan
 
-    def test_authored_field_binds_below_the_threshold(self) -> None:
+    def test_authored_field_binds_on_one_chart(self) -> None:
         """An authored entry is intent, so it applies even on one chart."""
         plan = plan_category_colors(
             [{"region": ("North",)}],
@@ -322,14 +337,14 @@ class TestPlanner:
             ("APAC", 2),
         ]
 
-    def test_seeding_alone_never_binds_a_single_chart_field(self) -> None:
+    def test_a_single_chart_field_is_seeded_like_any_other(self) -> None:
         plan = plan_category_colors(
             [{"region": ("APAC",)}],
             authored={},
             palette=_PALETTE,
             seeded={"region": ("EMEA", "APAC")},
         )
-        assert "region" not in plan
+        assert list(plan["region"].slots.items()) == [("EMEA", 0), ("APAC", 1)]
 
     def test_options_past_the_palette_are_not_seeded_unpinned(self) -> None:
         """Seeding is an enhancement: more options than swatches seats what the data holds."""
@@ -340,7 +355,7 @@ class TestPlanner:
             palette=_PALETTE,
             seeded={"region": options},
         )
-        assert list(plan["region"].slots.items()) == [("r1", 0), ("r0", 1)]
+        assert list(plan["region"].slots.items()) == [("r0", 0), ("r1", 1)]
 
     def test_options_past_the_palette_never_raise_for_a_pinned_field(self) -> None:
         options = tuple(f"r{i}" for i in range(len(_PALETTE) + 2))
@@ -510,7 +525,7 @@ class TestPlanner:
 
         Colors must stay distinct, so a field the palette cannot seat gets no
         binding at all and keeps the chart-local coloring it had before this
-        feature existed — the same way the two-chart threshold declines.
+        feature existed — the same way every declined binding does.
         """
         values = tuple(f"v{i}" for i in range(len(_PALETTE) + 1))
         plan = plan_category_colors(

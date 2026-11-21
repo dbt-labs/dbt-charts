@@ -8,7 +8,7 @@ use scene::{Attrs, Node, Role, Shape, Transform};
 
 use super::BarResolved;
 use super::labels::{LabelLayer, label_font, label_text};
-use super::torn_outlier::retrace;
+use super::torn_outlier::{Reveal, Variant, retrace};
 
 /// How far inside the plot's top a dropped label's arrow sits.
 const PLOT_GAP: f64 = 6.0;
@@ -25,7 +25,16 @@ struct Outlier {
     depth: f64,
 }
 
+/// Warns when a bar tore under `variant: torn` on a chart shape that cannot draw an off-chart
+/// bar: it draws plain, and never as the cap.
+pub(super) fn warn_if_undrawable(r: &BarResolved) {
+    if r.torn_break.is_some() && r.style.outliers.as_ref().is_some_and(|o| o.variant == Variant::Torn) {
+        diagnostic::warn(diagnostic::diag::warn_outliers_torn_unsupported(r.id.as_str()));
+    }
+}
+
 pub(super) struct OffChart {
+    reveal: Reveal,
     max: f64,
     /// The card's top edge, in plot coordinates.
     top: f64,
@@ -33,11 +42,14 @@ pub(super) struct OffChart {
     bars: Vec<Outlier>,
     /// The boxes of the lifted header content, halo included, in plot coordinates.
     content: Vec<scene::Bounds>,
+    /// Under `reveal: none`, the header content on its band, painted over the bars.
+    front: Vec<Node>,
 }
 
 impl OffChart {
     pub(super) fn new(r: &BarResolved, max: f64, top: f64) -> Self {
-        Self { max, top, canvas: r.canvas.clone(), bars: Vec::new(), content: Vec::new() }
+        let reveal = r.style.outliers.as_ref().map_or(Reveal::Chart, |o| o.reveal);
+        Self { reveal, max, top, canvas: r.canvas.clone(), bars: Vec::new(), content: Vec::new(), front: Vec::new() }
     }
 
     /// Blanks the value labels of the bars that run off the chart: this chart names them itself.
@@ -65,7 +77,9 @@ impl OffChart {
                 path = path.line_to(px, py);
             }
             retrace(&mut nodes, &path.line_to(x.1, baseline).close());
-            stamp_hover(&mut nodes, &Hover { length: baseline - reach, plot: baseline - ceiling }, &self.canvas);
+            if let Some(reveal) = self.reveal.published() {
+                stamp_hover(&mut nodes, &Hover { length: baseline - reach, plot: baseline - ceiling, reveal }, &self.canvas);
+            }
             self.bars.push(Outlier { x, value, ink: ink.to_string(), depth });
         }
         nodes
@@ -85,7 +99,7 @@ impl OffChart {
             Some(color) => color.clone(),
             None => dbt_charts_color::ensure_readable_ink(&font.ink, &r.canvas, crate::common::OUTSIDE_INK_CONTRAST)?,
         };
-        let face = Face { family: &font.family, size };
+        let face = Face { family: &font.family, size, hover: self.reveal.published().is_some() };
         let mut nodes = Vec::new();
         for bar in &self.bars {
             let text = format!("{} \u{2192}", label_text(ml, r.style.label_is_house, bar.value, None)?);
@@ -111,17 +125,20 @@ impl OffChart {
     /// Marks in `head` (card coordinates, the plot at `origin`) every header line of a class in
     /// `lines` and the legend above the plot as content the hover runtime lifts over the bars
     /// (`data-dbt-lifted`), when this chart has a torn bar, and puts one band of the card's color,
-    /// `BAND_OPACITY` opaque and as wide as the text it backs, in front of the first. All of it
-    /// stays where `head` paints, behind the bars: the static picture is torn bars over the
-    /// header, and only a hovered chart, drawing each bar at true length, lifts the header over
-    /// them. The band is one shape, the strips behind each line merged, so where two meet the bars
-    /// show through it once. All of it lifts, crossed or not: a true-length drawing can pass over
-    /// any of it.
+    /// `BAND_OPACITY` opaque and as wide as the text it backs, in front of the first. With a hover
+    /// reveal all of it stays where `head` paints, behind the bars: the static picture is torn bars
+    /// over the header, and only a hovered chart, drawing each bar at true length, lifts the header
+    /// over them. With none, nothing lifts it, so it moves to `front` on its band and paints over
+    /// the bars at rest, as on a screen nobody points at or on paper. The band is one shape, the
+    /// strips behind each line merged, so where two meet the bars show through it once. All of it
+    /// lifts, crossed or not: a true-length drawing can pass over any of it.
     pub(super) fn lift(&mut self, head: &mut Vec<Node>, origin: (f64, f64), lines: &[&str], fonts: &FontBook) -> Result<(), String> {
         if self.bars.is_empty() {
             return Ok(());
         }
+        let hover = self.reveal.published().is_some();
         let mut strips: Vec<scene::Bounds> = Vec::new();
+        let mut lifted: Vec<usize> = Vec::new();
         let mut first = None;
         for (i, node) in head.iter_mut().enumerate() {
             let class = node.attrs.get("class").unwrap_or_default();
@@ -140,8 +157,11 @@ impl OffChart {
             };
             if let Some(strip) = strip {
                 strips.push(strip);
+                lifted.push(i);
                 first.get_or_insert(i);
-                node.attrs = std::mem::take(&mut node.attrs).set("data-dbt-lifted", "");
+                if hover {
+                    node.attrs = std::mem::take(&mut node.attrs).set("data-dbt-lifted", "");
+                }
             }
         }
         let Some(first) = first else {
@@ -160,9 +180,22 @@ impl OffChart {
             band = band.move_to(b.x1, b.y1).line_to(b.x2, b.y1).line_to(b.x2, b.y2).line_to(b.x1, b.y2).close();
             self.content.push(scene::Bounds { x1: b.x1 - origin.0, y1: b.y1 - origin.1, x2: b.x2 - origin.0, y2: b.y2 - origin.1 });
         }
-        let attrs = Attrs::new().set("fill", &self.canvas).num("fill-opacity", BAND_OPACITY).set("data-dbt-lifted", "");
-        head.insert(first, Node::new(Role::Chrome, attrs, Shape::Path(band)));
+        let attrs = Attrs::new().set("fill", &self.canvas).num("fill-opacity", BAND_OPACITY);
+        if hover {
+            head.insert(first, Node::new(Role::Chrome, attrs.set("data-dbt-lifted", ""), Shape::Path(band)));
+            return Ok(());
+        }
+        self.front.push(Node::new(Role::Chrome, attrs, Shape::Path(band)));
+        for i in lifted.into_iter().rev() {
+            self.front.insert(1, head.remove(i));
+        }
         Ok(())
+    }
+
+    /// The header content `lift` moved over the bars, in card coordinates: empty unless
+    /// `reveal: none` tore a bar.
+    pub(super) fn front(&mut self) -> Vec<Node> {
+        std::mem::take(&mut self.front)
     }
 }
 
@@ -209,6 +242,8 @@ struct Hover {
     length: f64,
     /// The plot's height, which a spiral keeps clear of.
     plot: f64,
+    /// What hovering redraws at true length (`data-dbt-off-chart-reveal`): `bar` or `chart`.
+    reveal: &'static str,
 }
 
 /// Stamps `hover` on the bar's filled shape (not a second, outline-only pass), with its edge:
@@ -224,7 +259,8 @@ fn stamp_hover(nodes: &mut [Node], hover: &Hover, canvas: &str) {
                 node.attrs = std::mem::take(&mut node.attrs)
                     .num("data-dbt-off-chart", hover.length)
                     .num("data-dbt-off-chart-plot", hover.plot)
-                    .num("data-dbt-off-chart-edge", edge);
+                    .num("data-dbt-off-chart-edge", edge)
+                    .set("data-dbt-off-chart-reveal", hover.reveal);
             }
             Shape::Group(children) | Shape::Link(children) | Shape::ClipPath(children) => stamp_hover(children, hover, canvas),
             _ => {}
@@ -235,12 +271,15 @@ fn stamp_hover(nodes: &mut [Node], hover: &Hover, canvas: &str) {
 struct Face<'a> {
     family: &'a str,
     size: f64,
+    /// Publish the label for the hover runtime to copy over a true-length drawing.
+    hover: bool,
 }
 
 impl Face<'_> {
     fn text(&self, at: (f64, f64), anchor: &str, text: &str, weight: f32, fill: &str) -> Node {
+        let attrs = Attrs::new().set("text-anchor", anchor).vega("font-family", self.family).num("font-size", self.size).set("font-weight", format!("{weight}")).set("fill", fill);
         // The hover runtime copies an outlier's label over its true-length drawing.
-        let attrs = Attrs::new().set("text-anchor", anchor).vega("font-family", self.family).num("font-size", self.size).set("font-weight", format!("{weight}")).set("fill", fill).set("data-dbt-off-chart-label", "");
+        let attrs = if self.hover { attrs.set("data-dbt-off-chart-label", "") } else { attrs };
         Node::text(Role::Label, at, attrs, text)
     }
 }

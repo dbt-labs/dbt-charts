@@ -46,6 +46,8 @@ logic, not a model definition — it lives at
 ``dbt_charts.core.compile.vega_lite.mapping``.
 """
 
+from __future__ import annotations
+
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisElementStyle,
     ResolvedAxisGridStyle,
@@ -86,8 +88,8 @@ from dbt_charts.core.compile.models.style.resolved._marks import (
 )
 from dbt_charts.core.compile.models.style.resolved.area import ResolvedAreaStyle
 from dbt_charts.core.compile.models.style.resolved.bar import (
+    ResolvedBarOutliersStyle,
     ResolvedBarStyle,
-    ResolvedBarTornOutlierStyle,
 )
 from dbt_charts.core.compile.models.style.resolved.callout import (
     ResolvedCalloutElementStyle,
@@ -165,7 +167,7 @@ __all__ = [
     # per-family slices
     "ResolvedAreaStyle",
     "ResolvedBarStyle",
-    "ResolvedBarTornOutlierStyle",
+    "ResolvedBarOutliersStyle",
     "ResolvedColumnScaleConfig",
     "ResolvedColumnSharedScale",
     "ResolvedGeoshapeChartStyle",

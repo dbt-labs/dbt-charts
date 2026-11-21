@@ -9,6 +9,8 @@ and boards that fail to compile. Such a board is listed with its title, notes an
 and with no queries or charts.
 """
 
+from __future__ import annotations
+
 from pathlib import PurePosixPath
 from typing import NamedTuple
 

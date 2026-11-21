@@ -11,6 +11,8 @@ So family → file lives in exactly one place: ``FONT_REGISTRY``. Measurement, t
 row, not adding an accessor.
 """
 
+from __future__ import annotations
+
 import base64
 import re
 import threading

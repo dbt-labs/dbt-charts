@@ -22,8 +22,8 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedBarLabels,
     ResolvedBarMarkStyle,
+    ResolvedBarOutliersStyle,
     ResolvedBarStyle,
-    ResolvedBarTornOutlierStyle,
     ResolvedBarTotalLabel,
 )
 from dbt_charts.core.compile.models.style.resolved._cartesian import (
@@ -79,7 +79,7 @@ from dbt_charts.core.compile.resolve.chart._conditional import (
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
     _axis_headroom,
-    _bake_normalize_domain,
+    _bake_measure_domain,
     _CartesianTickResolution,
     _check_bar_layer_spans,
     _check_bar_span,
@@ -129,6 +129,7 @@ from dbt_charts.core.compile.resolve.chart._plan import (
 )
 from dbt_charts.core.compile.resolve.chart._tooltip import resolve_tooltip
 from dbt_charts.core.compile.resolve.chart._torn_outlier import (
+    plan_off_chart,
     refuse_values_past,
     resolve_torn_break,
     torn_ticks,
@@ -1194,24 +1195,47 @@ def _resolve_bar(
     bar_domain_max: float | None = None
     bar_domain_min: float | None = None
     authored_y_domain = _ay_cont_zero.domain if _ay_cont_zero is not None else None
+    outliers = bar.outliers
+    median_multiplier = (
+        None if outliers.median_multiplier == "none" else outliers.median_multiplier
+    )
+    shared_layer_values = (
+        _shared_layer_y_values(data, y_field, normalized, datasets) if y_field else []
+    )
     torn = (
         resolve_torn_break(
             normalized,
             dataset,
             ay_merged,
-            bar.torn_outlier,
+            median_multiplier,
             stack=resolved_stack,
             y_fields=y_fields,
-            layer_values=(
-                _shared_layer_y_values(data, y_field, normalized, datasets)
-                if y_field
-                else []
-            ),
+            layer_values=shared_layer_values,
         )
-        if bar.torn_outlier.enabled
+        if outliers.variant == "torn_with_cap"
         else None
     )
+    off_chart = (
+        plan_off_chart(
+            normalized,
+            dataset,
+            ay_merged,
+            median_multiplier,
+            stack=resolved_stack,
+            y_fields=y_fields,
+            layer_values=[*shared_layer_values, *annotations.y_values],
+            vertical=orientation != "horizontal",
+            quantitative_x=x_ch_type == "quantitative",
+        )
+        if outliers.variant == "torn"
+        else None
+    )
+    if off_chart is not None and off_chart.domain is not None:
+        ay_merged = _bake_measure_domain(ay_merged, off_chart.domain)
     torn_break = torn.break_value if torn is not None else None
+    # The break a bar tears at, whichever variant draws it; the cap's own axis
+    # work below reads `torn`, and `torn_break` stays the cap's.
+    tear = torn if torn is not None else off_chart
     tick_values: tuple[float, ...]
     if torn is not None:
         refuse_values_past(
@@ -1227,7 +1251,7 @@ def _resolve_bar(
         # normalize-stack domain is always [0,1]; no y_field means no ticks.
         tick_values = ()
         if resolved_stack == "normalize":
-            ay_merged = _bake_normalize_domain(ay_merged)
+            ay_merged = _bake_measure_domain(ay_merged, (0.0, 1.0))
     elif is_stacked and x_field:
         tick_values = _resolve_stacked_bar_ticks(
             ay_merged,
@@ -1485,7 +1509,7 @@ def _resolve_bar(
         ),
         stack=resolved_stack,
         stacked_domain_max=stacked_domain_max,
-        torn_break=torn_break,
+        torn_break=tear.break_value if tear is not None else None,
         orientation=orientation,
         annotations=annotations.render(ay, style_tail["axis_x"], resolved_layers, None),
         annotation_gaps=annotations.gaps,
@@ -1508,8 +1532,8 @@ def _resolve_bar(
                 bar_mark.labels, chart_style_context
             ),
             grouped=bar.grouped,
-            torn_outlier=ResolvedBarTornOutlierStyle.model_validate(
-                bar.torn_outlier.model_dump(exclude={"at"})
+            outliers=ResolvedBarOutliersStyle.model_validate(
+                bar.outliers.model_dump(exclude={"median_multiplier"})
             ),
             total_label_is_house=total_label_is_house,
             **style_tail,
@@ -1685,11 +1709,10 @@ def _resolve_histogram(
                 hist_mark.labels, chart_style_context
             ),
             grouped=chart_style_context.bar.grouped,
-            torn_outlier=ResolvedBarTornOutlierStyle.model_validate(
-                {
-                    **chart_style_context.bar.torn_outlier.model_dump(exclude={"at"}),
-                    "enabled": False,
-                }
+            outliers=ResolvedBarOutliersStyle.model_validate(
+                chart_style_context.bar.outliers.model_dump(
+                    exclude={"median_multiplier"}
+                )
             ),
             total_label_is_house=False,
             label_usable_ratio=chart_style_context.label_usable_ratio,

@@ -7,6 +7,8 @@ declarations, which the registry-emission scan treats as declarations rather
 than emit sites.
 """
 
+from __future__ import annotations
+
 RETIRED_WARNING_CODES: frozenset[str] = frozenset(
     {
         "WARN-FANOUT-RISK",

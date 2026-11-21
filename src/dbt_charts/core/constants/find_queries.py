@@ -1,5 +1,7 @@
 """How much cache history ``find_queries`` shows an agent per query."""
 
+from __future__ import annotations
+
 from typing import Final
 
 # A week back covers the cadence of any board refreshed daily or weekly, and a

@@ -23,6 +23,8 @@ See also:
     - execute/query_result.py: Adapters consume these types
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 from abc import ABC, abstractmethod

@@ -11,6 +11,8 @@ This is acceptable for single-threaded use. In multi-threaded contexts
 (e.g., Django), the worst case is redundant Environment creation.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 from jinja2 import Environment, PackageLoader, select_autoescape

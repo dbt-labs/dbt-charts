@@ -183,9 +183,8 @@ def _resolve_pie(
     # Branch on the *resolved* color channel (not normalized.color) so this
     # agrees by construction with the emitter, which reads
     # chart.resolved_channels — the same `channels` dict baked below via
-    # _base_kwargs. A color: field that fails to resolve to a real data
-    # column (e.g. missing from query rows) must take the single-series path
-    # on both sides, not just one.
+    # _base_kwargs. A `color:` naming a column the rows lack already raised in
+    # `_channels_for`, so an unbound channel here means the author set none.
     color_channel = channels.get("color")
 
     # The field labels and the attached table use to identify each wedge.

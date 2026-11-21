@@ -15,6 +15,8 @@ These live here (separate from board/authored.py) because:
 - Keeping AuthoredQuery here avoids the discriminated-union module importing itself.
 """
 
+from __future__ import annotations
+
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (

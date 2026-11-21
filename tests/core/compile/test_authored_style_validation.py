@@ -156,3 +156,22 @@ def test_an_authored_style_float_rejects_a_non_finite_value(value: float) -> Non
 
     with pytest.raises(ValidationError, match="finite"):
         TableChartStylePatch.model_validate({"preferred_width": value})
+
+
+@pytest.mark.parametrize("mark", ["rect", "circle"])
+def test_a_global_mark_stroke_compiles_with_and_without_cap_and_join(
+    mark: str,
+) -> None:
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.normalize.dispatch import (
+        compile_board_resolved_style,
+    )
+
+    for stroke in (
+        {"color": "red", "width": 1},
+        {"color": "red", "width": 1, "cap": "round", "join": "bevel"},
+    ):
+        patch = StylePatch.model_validate(
+            {"charts": {"marks": {mark: {"stroke": stroke}}}}
+        )
+        compile_board_resolved_style(patch, None, None)

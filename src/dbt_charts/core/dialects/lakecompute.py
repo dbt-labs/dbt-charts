@@ -9,6 +9,8 @@ at connect, so ``statement_timeout_sql`` stays DuckDB's ``None`` and no
 credential rewrite is needed.
 """
 
+from __future__ import annotations
+
 from dbt_charts.core.dialects.duckdb import DuckDBDialect
 
 

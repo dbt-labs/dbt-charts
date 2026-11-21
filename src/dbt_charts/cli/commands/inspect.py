@@ -8,6 +8,8 @@ This module contains only the template-management commands that ship with the
 OSS ``dbt-charts`` wheel: eject, templates, and validate-templates.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import typer

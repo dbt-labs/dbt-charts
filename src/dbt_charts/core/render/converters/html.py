@@ -4,6 +4,8 @@ Stage: RENDER
 Purpose: Convert the canonical SVG output to a standalone HTML page.
 """
 
+from __future__ import annotations
+
 import re
 from typing import Any
 

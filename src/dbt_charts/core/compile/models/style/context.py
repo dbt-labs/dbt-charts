@@ -309,7 +309,7 @@ class ChartStyleContext:
     # needs executed rows — so it defaults to empty and is filled in after
     # execute by ``execute.category_colors.with_category_colors()``. Empty is
     # the honest "no board binding" state: a data-free resolve, or a board
-    # whose categorical fields never meet the two-chart threshold.
+    # with no `color:` field to bind.
     category_colors: tuple[CategoryColorScale, ...] = ()
 
     @property

@@ -1,5 +1,7 @@
 """Mark engine constants: series-label rail geometry, stroke and point sizing."""
 
+from __future__ import annotations
+
 from typing import Final
 
 # Largest share of the chart width the series-label rail may claim; must stay below 1.

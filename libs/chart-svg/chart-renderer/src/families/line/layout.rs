@@ -728,7 +728,8 @@ pub(super) fn fit(
         options.to_vec()
     } else if is_stacked {
         baseline_order.clone()
-    } else if dashed {
+    } else if dashed || !r.wide_measures.is_empty() {
+        // A wide chart's series are already in `y:` order (or the sorted cross with a dimension).
         spatial_domain.clone()
     } else {
         let mut domain = spatial_domain.clone();
@@ -757,14 +758,9 @@ pub(super) fn fit(
     // A stacked chart lists top of stack first instead: the reversed
     // baseline order (`_apply_area_color_encoding`'s `order`,
     // `_emit_multi_metric_area`'s `display_order`).
-    let legend_domain: Vec<String> = if let Some(options) = linked_options {
-        options.to_vec()
-    } else if is_stacked {
-        baseline_order.iter().rev().cloned().collect()
-    } else if dashed {
-        // A dash palette locks the color and strokeDash domains to data-insertion order.
-        spatial_domain.clone()
-    } else {
+    // An unstacked chart's series by their last value, largest first: the order its endpoint labels stack in,
+    // and the paint order of a wide chart's folded marks (below).
+    let by_last_value: Vec<String> = if linked_options.is_none() && !is_stacked && !dashed {
         let last_value = match color_field {
             Some(cf) => ::bind::rows::last_nonnull_value_per_series(&::bind::rows::x_ranked_rows(series_rows, x_field, &x_domain)?, x_field, y_field, cf)?,
             None => HashMap::new(),
@@ -776,6 +772,25 @@ pub(super) fn fit(
             bv.partial_cmp(&av).unwrap().then_with(|| a.cmp(b))
         });
         domain
+    } else {
+        Vec::new()
+    };
+    // The legend lists a stack top first, a wide chart's measures in `y:` order, and every other series in
+    // this chart's own ranked order when the board colors it by slot.
+    let legend_domain: Vec<String> = if let Some(options) = linked_options {
+        options.to_vec()
+    } else if is_stacked {
+        baseline_order.iter().rev().cloned().collect()
+    } else if dashed {
+        // A dash palette locks the color and strokeDash domains to data-insertion order.
+        spatial_domain.clone()
+    } else if !r.wide_measures.is_empty() {
+        wide_series.to_vec()
+    } else if let (Some(cf), Some(_)) = (color_field, category_scale) {
+        // The board colors the series by slot, so this chart lists them in its own ranked order.
+        ::bind::stack::ranked_series(&spatial_domain, series_rows, cf, y_field, r.style.axis_y.rank_by(false))
+    } else {
+        by_last_value.clone()
     };
 
     // a wide line/area's fold
@@ -794,7 +809,15 @@ pub(super) fn fit(
     // `palette_domain`'s own alphabetical `.sort()` is invariant to it
     // either way.
     let spatial_domain: Vec<String> =
-        if !r.wide_measures.is_empty() && !is_stacked { legend_domain.clone() } else { spatial_domain };
+        if !r.wide_measures.is_empty() && !is_stacked {
+            match linked_options {
+                Some(options) => options.to_vec(),
+                None if dashed => spatial_domain,
+                None => by_last_value,
+            }
+        } else {
+            spatial_domain
+        };
 
     // support_table per_series: row order + label ink for a `per_series:`
     // entry. Row order mirrors `_series_order_strip`

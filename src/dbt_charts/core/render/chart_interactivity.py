@@ -1,5 +1,7 @@
 """Core-owned chart hover interactivity runtime."""
 
+from __future__ import annotations
+
 import json
 from functools import cache
 from importlib.resources import files
@@ -13,7 +15,9 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 
 
-def _build_tooltip_style_dict(resolved_style: "ResolvedStyle") -> dict[str, Any]:
+def _build_tooltip_style_dict(
+    resolved_style: ResolvedStyle,
+) -> dict[str, Any]:  # type-state: explicit_any — nested JSON of mixed scalars
     """Build the camelCase JSON dict consumed by the JS tooltip runtime."""
     t = resolved_style.chart_defaults.tooltip
     return {
@@ -54,7 +58,7 @@ def _build_tooltip_style_dict(resolved_style: "ResolvedStyle") -> dict[str, Any]
 
 
 def _build_hover_emphasis_dict(
-    resolved_style: "ResolvedStyle",
+    resolved_style: ResolvedStyle,
 ) -> dict[str, bool | float | str]:
     """Build the JSON dict consumed by the JS hover-emphasis runtime.
 
@@ -98,7 +102,7 @@ def hover_runtime_source() -> str:
     )
 
 
-def hover_runtime_attributes(resolved_style: "ResolvedStyle") -> str:
+def hover_runtime_attributes(resolved_style: ResolvedStyle) -> str:
     """The theme facts the hover runtime reads off the board root.
 
     Published as data, never templated into the script: a board is a picture,

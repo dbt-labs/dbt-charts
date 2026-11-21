@@ -10,6 +10,7 @@ compile -> render circular dependency.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
@@ -141,8 +142,9 @@ def wide_dimension_values(data: Rows, dimension: str) -> list[Any]:  # type-stat
 def raw_wide_series_names(
     measures: Sequence[str], dimension: str | None, data: Rows
 ) -> list[str]:
-    """Sorted RAW (unhumanized) wide series identity: the authored measures,
-    crossed with every observed ``dimension`` value when one is authored.
+    """RAW (unhumanized) wide series identity: the authored measures in ``y:``
+    order, or, crossed with every observed ``dimension`` value when one is
+    authored, the composite names ranked by their own sums (ties by name).
 
     Measures come from the authored list, not observed rows — a measure that
     is null on every row would otherwise drop out of the domain and desync
@@ -157,12 +159,23 @@ def raw_wide_series_names(
     than sorting or matching on humanized text.
     """
     if dimension is None:
-        return sorted(measures)
-    return sorted(
+        return list(measures)
+    sizes: defaultdict[str, float] = defaultdict(float)
+    for row in data:
+        if row.get(dimension) is None:
+            continue
+        for measure in measures:
+            value = row.get(measure)
+            if value is not None:
+                sizes[f"{row[dimension]}{WIDE_SERIES_SEPARATOR}{measure}"] += float(
+                    value
+                )
+    names = [
         f"{v}{WIDE_SERIES_SEPARATOR}{m}"
         for v in wide_dimension_values(data, dimension)
         for m in measures
-    )
+    ]
+    return sorted(names, key=lambda name: (-abs(sizes[name]), name))
 
 
 def humanize_wide_series_name(
@@ -192,12 +205,11 @@ def wide_series_names(
     data: Rows,
     wide_measure_labels: dict[str, str],
 ) -> list[str]:
-    """Color-scale domain of a wide chart: ``raw_wide_series_names``
-    (already sorted), with each entry humanized -- in that same
-    RAW-sorted order, never re-sorted by the humanized text. Humanizing
-    is not order-preserving (a `_usd` suffix injects `(` before a sort
-    would see the letters), so sorting after humanizing can assign a
-    different palette slot than sorting on the raw identity first.
+    """Color-scale domain of a wide chart: ``raw_wide_series_names``, with
+    each entry humanized -- in that same RAW order, never re-sorted by the
+    humanized text. Humanizing is not order-preserving (a `_usd` suffix
+    injects `(` before a sort would see the letters), so sorting after
+    humanizing can assign a different palette slot than the raw identity.
 
     Must build the identical string ``_wide.py``'s ``_label_expression``
     does, or an authored ``legend.values`` entry resolves against a

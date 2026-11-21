@@ -583,6 +583,34 @@ def test_a_callout_is_measured_and_drawn_in_the_engines_cell(
     assert rendered.output.count("Heads up") >= 3
 
 
+def test_a_callout_placed_in_a_restyling_scope_is_drawn_in_each_scope(
+    local_project: Callable[..., FilesystemProject],
+) -> None:
+    red = "#ff0000"
+    rendered = _render(
+        _CALLOUT
+        + f"""\
+rows:
+  - note
+  - style:
+      charts:
+        callout:
+          background: '{red}'
+    rows:
+      - note
+""",
+        local_project,
+    )
+    assert rendered.board_error is None
+    assert isinstance(rendered.output, str)
+    cards = re.findall(
+        r'<g[^>]*data-chart-id="note"[^>]*>.*?</g>', rendered.output, re.S
+    )
+    assert len(cards) == 2
+    assert red not in cards[0].lower()
+    assert red in cards[1].lower()
+
+
 def test_a_callout_whose_project_image_is_missing_is_its_own_error_card(
     local_project: Callable[..., FilesystemProject], cells: list[str]
 ) -> None:

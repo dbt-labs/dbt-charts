@@ -188,6 +188,19 @@ class TestValidateSelectOnlyPasses:
             dialect=dialect,
         )
 
+    @pytest.mark.parametrize(
+        "where",
+        [
+            "{% if pick == 'a' %}true{% else %}col <> 'y'{% endif %}",
+            "{% if p %}true{% else %}false{% endif %}",
+            "{% if p %}a = 1{% elif q %}b = 2{% else %}c = 3{% endif %}",
+        ],
+    )
+    def test_if_else_in_expression_position(
+        self, where: str, dialect: str | None
+    ) -> None:
+        validate_select_only(f"SELECT a FROM t WHERE {where}", dialect=dialect)
+
     def test_for_loop_columns(self, dialect: str | None) -> None:
         validate_select_only(
             "SELECT a {% for c in cols %}, {{ c }}{% endfor %} FROM t",
@@ -284,6 +297,47 @@ class TestValidateSelectOnlyRejections:
             validate_select_only(
                 "{% if some_var %}DROP TABLE x{% else %}SELECT 1{% endif %}"
             )
+
+    @pytest.mark.parametrize(
+        ("sql", "dialect"),
+        [
+            (
+                "SELECT 1 WHERE {% if p %}true{% else %}false{% endif %}; CLUSTER",
+                "postgres",
+            ),
+            (
+                "SELECT 1 WHERE {% if p %}true{% else %}false{% endif %}; CHECKPOINT",
+                "duckdb",
+            ),
+            (
+                "SELECT 1 WHERE {% if p %}true{% else %}false; CHECKPOINT{% endif %}",
+                "postgres",
+            ),
+            (
+                "SELECT 1; {% if p %}SELECT 2{% else %}CHECKPOINT{% endif %}",
+                "duckdb",
+            ),
+            ("{% if p %}SELECT 2{% else %}CHECKPOINT{% endif %}", "duckdb"),
+            (
+                "SELECT 1 FROM t {% if p %}WHERE true{% else %}; CHECKPOINT{% endif %}",
+                "duckdb",
+            ),
+            (
+                "SELECT 1 FROM t {% if p %}WHERE true{% else %}; CLUSTER{% endif %}",
+                "postgres",
+            ),
+            ("SELECT 1 WHERE {% if p %}true{% else %};CHECKPOINT{% endif %}", "duckdb"),
+            (
+                "SELECT 1 WHERE {% if p %}true{% else %}/* c */ ; CHECKPOINT{% endif %}",
+                "duckdb",
+            ),
+        ],
+    )
+    def test_bare_command_beside_expression_if_else_rejected(
+        self, sql: str, dialect: str
+    ) -> None:
+        with pytest.raises(MutatingSqlError):
+            validate_select_only(sql, dialect=dialect)
 
     @pytest.mark.parametrize(
         "sql",

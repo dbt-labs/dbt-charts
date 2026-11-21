@@ -1566,11 +1566,14 @@ the Cheatsheet section (one-page essentials).
 
 A data value takes one palette **slot** board-wide, not a hex, so a category
 keeps the same color on every chart that draws it (and the same direct-label
-ink, table swatch, and nested-board coloring). A field binds automatically
-once two or more charts use it as their `color:` channel, including a chart
-with `layers:` (its base `color:` binds; layers keep their own series
-colors). Author a pin to bind a field on a single chart too, or to choose the
-slot:
+ink, table swatch, and nested-board coloring). Every `color:` field binds,
+including a chart with `layers:` (its base `color:` binds; layers keep their
+own series colors). Slots go to pins first, then a linked variable's options,
+then an explicit `stack_order`, then labels that carry a number (`P1`..`P10`)
+by number, then by size (largest total by magnitude first; a scatter's average,
+a waterfall's bar length; ties alphabetical), ranked on
+the board's default variable values. Pins apply board-wide, from a nested board
+too. Author a pin to choose the slot:
 
 ```yaml
 style:

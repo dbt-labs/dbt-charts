@@ -16,6 +16,7 @@ use std::borrow::Cow;
 use super::bind::Bound;
 use super::continuous::{XLayers, render_vertical_continuous_x};
 use super::horizontal::render_horizontal;
+use super::off_chart::warn_if_undrawable;
 use super::vertical::render_vertical;
 use super::{BarResolved, ContinuousWidth, MarkStyle, continuous_max_size, x_resolution};
 
@@ -80,6 +81,8 @@ fn draw(bound: &Bound, payload: &Payload, fonts: &FontBook) -> Result<Drawn, Dia
             if bound.support_table.is_none() {
                 let x_layers = XLayers { all: &bound.layers, payload };
                 if let Some(drawn) = render_vertical_continuous_x(payload, fonts, r, &x_layers)? {
+                    // A linear x has no off-chart bar: resolve left the axis plain.
+                    warn_if_undrawable(r);
                     warn_vertical_density(
                         payload.chart_id()?,
                         r,

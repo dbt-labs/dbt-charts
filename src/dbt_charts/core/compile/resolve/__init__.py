@@ -6,6 +6,8 @@ package, imported directly (`dbt_charts.core.compile.resolve.style`) — not
 re-exported here.
 """
 
+from __future__ import annotations
+
 from .chart import (
     AutomaticLinkCandidate,
     automatic_link_excludes_x,

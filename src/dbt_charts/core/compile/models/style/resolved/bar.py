@@ -11,19 +11,24 @@ from dbt_charts.core.compile.models.style.resolved._marks import ResolvedBarMark
 from dbt_charts.core.compile.models.style.theme.bar import (
     BarConditionalRule,
     BarGroupedStyle,
+    BarOutliersCapStyle,
 )
 
 from ._cartesian import ResolvedBarEndpointLabelsConfig, _SeriesCartesianResolvedStyle
 
 
-class ResolvedBarTornOutlierStyle(BaseModel):
-    """Theme-baked tear shape and cap band; the break itself is on the chart."""
+class ResolvedBarOutliersStyle(BaseModel):
+    """How a torn bar is drawn; whether and where it tears is on the chart."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    enabled: bool = Field(description="Tear outlier bars at the break.")
-    band: float = Field(description="Share of the plot length reserved for caps.")
-    cap: float = Field(description="Cap length, as a multiple of bar thickness.")
+    variant: Literal["torn", "torn_with_cap"] = Field(
+        description="How a torn bar is drawn."
+    )
+    reveal: Literal["bar", "chart", "none"] = Field(
+        description="What hover redraws at true length."
+    )
+    cap: BarOutliersCapStyle = Field(description="Cap size for torn_with_cap.")
 
 
 class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
@@ -83,8 +88,8 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
     grouped: BarGroupedStyle = Field(
         description="Band-scale padding applied to grouped bars."
     )
-    torn_outlier: ResolvedBarTornOutlierStyle = Field(
-        description="Tear shape and cap band for outlier bars."
+    outliers: ResolvedBarOutliersStyle = Field(
+        description="How torn outlier bars are drawn."
     )
     total_label_is_house: bool = Field(
         default=False,
@@ -123,4 +128,4 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
     )
 
 
-__all__ = ["ResolvedBarStyle", "ResolvedBarTornOutlierStyle"]
+__all__ = ["ResolvedBarStyle", "ResolvedBarOutliersStyle"]

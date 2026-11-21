@@ -619,7 +619,7 @@ pub fn is_predefined_name(name: &str) -> bool {
         || TEXT_NAMES.contains(&name)
 }
 
-/// `_check_percent_range`'s threshold: a share or rate past it is a forgotten ÷100.
+/// `_check_percent_range`'s threshold: a positive share or rate past it is a forgotten ÷100; a negative one is a real loss.
 const PERCENT_RANGE_THRESHOLD: f64 = 10.0;
 
 /// `format_value`: one number through `format` over the board's default for a
@@ -638,7 +638,7 @@ pub fn format_value(
         return Ok(format!("{}{number}{unit}{}", parts.prefix, parts.suffix));
     }
     let spec = sub_unit_spec_for_value(parts.raw.as_deref(), &parts.spec, value, formats)?;
-    if spec.ends_with('%') && !spec.starts_with('+') && value.abs() >= PERCENT_RANGE_THRESHOLD {
+    if spec.ends_with('%') && !spec.starts_with('+') && value >= PERCENT_RANGE_THRESHOLD {
         return Err(diag::err_percent_range(value, spec));
     }
     let notation = parts.notation.or(parts.is_house().then_some(Notation::Analytic));

@@ -11,6 +11,8 @@ install the ``lakecompute`` extra until drivers run in a subprocess. The Trino
 arm is the exception: its client is pure Python over HTTP.
 """
 
+from __future__ import annotations
+
 from dbt_charts.core.execute.drivers.base import (
     DRIVER_SOURCE_TYPES,
     DriverConnection,

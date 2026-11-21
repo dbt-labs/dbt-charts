@@ -103,7 +103,7 @@ Also exist: `preferred_width`, `padding`, `background`, `aspect_ratio`, `min_hei
 - `marks` ({bar: {}, text: {font: {}, align}}): Bar-family mark overrides
 - `stack` (none|zero|normalize|center): Default stack mode for bar charts; none renders side-by-side columns
 - `orientation` (horizontal|vertical|auto): Preferred bar orientation
-Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `torn_outlier`, `pattern`, `conditional`.
+Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `outliers`, `pattern`, `conditional`.
 
 ### Axes
 

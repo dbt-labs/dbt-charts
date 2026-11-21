@@ -45,7 +45,7 @@ rows: [revenue]
 
 def test_literal_color_advice_is_the_shape_that_compiles() -> None:
     with pytest.raises(ValueError, match="style") as caught:
-        _validate_channel_field("color", "#fff", {"month"})
+        _validate_channel_field("c1", "q", "color", "#fff", {"month"})
     advice = str(caught.value)
     assert "marks" in advice
     assert "value:" not in advice

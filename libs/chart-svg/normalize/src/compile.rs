@@ -25,7 +25,7 @@ use crate::cache::QueryPolicy;
 use crate::chart_checks::chart_checks;
 use crate::deps::dependencies;
 use crate::dialect_layer_checks::{dialect_mixed, layer_color_tokens};
-use crate::extends::{FoldError, MetaLint, Notice, Patch as LayerPatch};
+use crate::extends::{FoldError, MetaLint, Notice};
 use crate::external::{External, Imports};
 use crate::files::{ProjectFiles, ReadError};
 use crate::fill::{self, fill_nested, fill_queries, FillError};
@@ -497,7 +497,6 @@ fn fold<'a>(
                 .iter()
                 .any(|q| q == &at || at.is_empty() || q.starts_with(&format!("{at}.")))
     }));
-    refuse_rect_strokes(&node, &mut invalid);
     if !invalid.is_empty() {
         return Err(CompileError::Invalid(invalid));
     }
@@ -514,9 +513,6 @@ fn fold<'a>(
             .map(|n| schema_migrated(n, files.located())),
     );
     check_layers(&merged.layers)?;
-    if merged.layers.iter().any(|(_, l)| layer_sets_rect_stroke(l)) {
-        return Err(CompileError::Invalid(rect_stroke_refusal()));
-    }
     let theme = merged
         .themes
         .last()
@@ -790,45 +786,6 @@ pub(crate) fn written_by_migration(d: &Diagnostic, migrated: &[Vec<String>]) -> 
     d.path
         .as_ref()
         .is_some_and(|p| migrated.iter().any(|m| p.0.starts_with(m)))
-}
-
-/// Python's rect stroke patch lacks `cap` and `join`, which the theme-filled stroke carries, so it
-/// refuses a global `style.charts.marks.rect.stroke` with an unknown `cap` and `join`. Rust refuses
-/// the same until Python's patch is fixed.
-fn refuse_rect_strokes(node: &yaml::Node, errors: &mut Vec<Diagnostic>) {
-    let yaml::Kind::Map(map) = &node.kind else {
-        if let yaml::Kind::Seq(items) = &node.kind {
-            items.iter().for_each(|n| refuse_rect_strokes(n, errors));
-        }
-        return;
-    };
-    for (key, entry) in map {
-        if key == "style" && global_rect_stroke(&entry.value) {
-            errors.extend(rect_stroke_refusal());
-        }
-        refuse_rect_strokes(&entry.value, errors);
-    }
-}
-
-fn rect_stroke_refusal() -> Vec<Diagnostic> {
-    ["cap", "join"].map(diag::err_extra_field).into()
-}
-
-fn layer_sets_rect_stroke(layer: &LayerPatch) -> bool {
-    let Tri::Value(style) = &layer.body.style else {
-        return false;
-    };
-    matches!(style.charts.marks.rect.stroke, Tri::Value(_))
-}
-
-fn global_rect_stroke(style: &yaml::Node) -> bool {
-    ["charts", "marks", "rect", "stroke"]
-        .iter()
-        .try_fold(style, |node, key| match &node.kind {
-            yaml::Kind::Map(m) => m.get(*key).map(|e| &e.value),
-            _ => None,
-        })
-        .is_some()
 }
 
 /// The finished board.

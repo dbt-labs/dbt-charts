@@ -308,8 +308,8 @@ class TestAnnotationLayersKeepTheirInk:
             assert _slice_label_ink(d1, value) == _slice_label_ink(d2, value)
 
 
-class TestThresholdGate:
-    def test_a_field_on_one_chart_only_does_not_bind(self) -> None:
+class TestSingleChartField:
+    def test_a_field_on_one_chart_only_binds_too(self) -> None:
         resolved_board, _ = _resolve_board(
             _board(
                 """
@@ -341,8 +341,7 @@ rows:
         bound = {
             s.field for c in resolved_board.charts.values() for s in c.category_colors
         }
-        assert "category" in bound
-        assert "status" not in bound
+        assert {"category", "status"} <= bound
 
 
 class TestFieldsThatMustNotBind:

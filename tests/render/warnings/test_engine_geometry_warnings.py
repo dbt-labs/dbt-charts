@@ -19,6 +19,7 @@ from dbt_charts.core.diagnostics import (
     WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM,
     WARN_LAYOUT_MIN_EXCEEDS_HEIGHT,
     WARN_LEGEND_OVERLAY_COVERS_MARKS,
+    WARN_OUTLIERS_TORN_UNSUPPORTED,
     WARN_VALUE_LABELS_CROWD_WIDTH,
     WARN_VALUE_LABELS_NO_MARKERS,
     WARN_VALUE_LABELS_THINNED,
@@ -33,6 +34,7 @@ from dbt_charts.core.render.warnings import (
     facet_panel_width_below_minimum,
     layout_min_exceeds_height,
     legend_overlay_covers_marks,
+    outliers_torn_unsupported,
     value_labels_crowd_width,
     value_labels_no_markers,
     value_labels_thinned,
@@ -267,3 +269,11 @@ def test_an_overlay_legend_over_marks_anchors_on_the_legend_position() -> None:
         legend_overlay_covers_marks.detect(_ctx(WARN_LEGEND_OVERLAY_COVERS_MARKS, {}))
     )
     assert diagnostic.path == "charts.c1.style.key.legend.position"
+
+
+def test_outliers_torn_unsupported_names_the_cap_variant() -> None:
+    diagnostic = _only(
+        outliers_torn_unsupported.detect(_ctx(WARN_OUTLIERS_TORN_UNSUPPORTED, {}))
+    )
+    assert diagnostic.code == WARN_OUTLIERS_TORN_UNSUPPORTED.code
+    assert diagnostic.fix is not None and "torn_with_cap" in diagnostic.fix

@@ -804,17 +804,18 @@ pub fn static_slot_estimate(
     Ok(content_estimate * (1.0 + torn_band(chart_json, authored_height)?) + inset)
 }
 
-/// The share a vertical torn bar chart grows by: its cap band sits on top of the plot a chart
+/// The share a vertical bar chart torn with a cap grows by: its cap band sits on top of the plot a chart
 /// of its width would have, past `max_height`, unless the author set the height. A horizontal
 /// chart's band sits in its width.
 fn torn_band(chart_json: &Value, authored_height: Option<f64>) -> Result<f64, String> {
     if authored_height.is_some()
         || chart_json.get("torn_break").is_none_or(Value::is_null)
+        || chart_json.pointer("/style/outliers/variant").and_then(Value::as_str) != Some("torn_with_cap")
         || chart_json["orientation"] == "horizontal"
     {
         return Ok(0.0);
     }
-    chart_json.pointer("/style/torn_outlier/band").and_then(Value::as_f64).ok_or_else(|| "torn chart missing style.torn_outlier.band".to_string())
+    chart_json.pointer("/style/outliers/cap/band").and_then(Value::as_f64).ok_or_else(|| "torn chart missing style.outliers.cap.band".to_string())
 }
 
 /// What the size stage decided about a placed pie.
@@ -2427,7 +2428,7 @@ mod tests {
         let d = test_defaults();
         let chart = |torn_break: serde_json::Value| {
             serde_json::json!({"chart_type": "bar", "torn_break": torn_break,
-                   "style": {"torn_outlier": {"band": 0.5}},
+                   "style": {"outliers": {"variant": "torn_with_cap", "cap": {"band": 0.5}}},
                    "layout_padding": {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}})
         };
         let plain = static_slot_estimate(&chart(serde_json::Value::Null), None, 2000.0, 0.0, &d).unwrap();

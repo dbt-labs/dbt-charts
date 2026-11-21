@@ -24,6 +24,8 @@ consumer already goes straight to the owning submodule, matching how
 import ``resolve.chart`` (pinned by ``test_no_style_imports_resolve_chart``).
 """
 
+from __future__ import annotations
+
 from dbt_charts.core.compile.resolve.style.board import (
     clear_resolve_style_cache,
     resolve_cascaded_font,

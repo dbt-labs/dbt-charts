@@ -203,6 +203,7 @@ def test_render_first_is_unconditional_on_format(
         ChartResolveFailure,
         ResolvedBoard,
     )
+    from dbt_charts.core.execute.category_colors import DefaultView
     from dbt_charts.core.render.layout_sizing import RenderCache
 
     result = compile_board(_map_board())
@@ -224,6 +225,7 @@ def test_render_first_is_unconditional_on_format(
         resolve_errors: dict[str, ChartResolveFailure] | EllipsisType = ...,
         authored_slot_heights: dict[str, float] | EllipsisType = ...,
         hug_board: Board | EllipsisType = ...,
+        default_view: DefaultView | None = None,
     ) -> tuple[ResolvedBoard, RenderCache]:
         seen_render_first[current_format] = render_first
         return real_build(
@@ -234,6 +236,7 @@ def test_render_first_is_unconditional_on_format(
             resolve_errors=resolve_errors,
             authored_slot_heights=authored_slot_heights,
             hug_board=hug_board,
+            default_view=default_view,
         )
 
     for current_format in ("svg", *_DATA_FORMATS):

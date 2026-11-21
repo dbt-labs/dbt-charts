@@ -1,5 +1,7 @@
 """Which named queries a compiled board reads, and where it defines them."""
 
+from __future__ import annotations
+
 from collections.abc import Iterator
 
 from dbt_charts.core.compile.models.board.normalized import Board

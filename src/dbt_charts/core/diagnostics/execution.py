@@ -13,6 +13,8 @@ These errors are raised during:
 All errors inherit from ExecutionError → DbtChartsError for easy catching.
 """
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from dbt_charts.core.diagnostics.ansi import strip_ansi
@@ -82,7 +84,7 @@ class QueryError(ExecutionError):
         query_name: str | None = None,
         sql: str | None = None,
         *,
-        code: "ErrorCode | None" = None,
+        code: ErrorCode | None = None,
     ) -> None:
         self.sql = sql
         if code is not None:

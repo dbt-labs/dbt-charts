@@ -1,5 +1,7 @@
 """Markdown fenced code blocks, which board text keeps out of Jinja."""
 
+from __future__ import annotations
+
 import re
 from collections.abc import Callable
 

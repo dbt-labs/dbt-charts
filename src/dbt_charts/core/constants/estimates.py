@@ -1,5 +1,7 @@
 """Layout estimates: stand-ins for sizes the engine does not yet measure."""
 
+from __future__ import annotations
+
 from typing import Final
 
 # Height of a spark_bar title block, before the subtitle line.

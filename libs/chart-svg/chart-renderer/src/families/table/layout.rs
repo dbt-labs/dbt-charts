@@ -380,6 +380,49 @@ pub(super) fn allocate_text_columns(
     final_text
 }
 
+/// Shrinks `demands` to `budget` by one common factor. A wrapping text column
+/// in `held` keeps its word floor when the held floors fit the budget, and the
+/// other columns share the rest: a text column squeezed under its widest word
+/// breaks it mid-glyph, where a numeric one just narrows. Floors that do not
+/// all fit leave every column on the common factor.
+fn scale_to_budget_holding_floors(
+    demands: &BTreeMap<String, f64>,
+    held: &BTreeMap<String, f64>,
+    budget: f64,
+) -> BTreeMap<String, f64> {
+    let uniform = |keys: &BTreeMap<String, f64>, room: f64| -> BTreeMap<String, f64> {
+        let scale = room / sum_values(keys);
+        keys.iter().map(|(c, &d)| (c.clone(), d * scale)).collect()
+    };
+    if sum_values(held) > budget {
+        return uniform(demands, budget);
+    }
+    let mut out: BTreeMap<String, f64> = BTreeMap::new();
+    let mut active = demands.clone();
+    let mut room = budget;
+    loop {
+        let scale = room / sum_values(&active);
+        let squeezed: Vec<String> = active
+            .iter()
+            .filter(|(c, &d)| held.get(*c).is_some_and(|&floor| d * scale < floor))
+            .map(|(c, _)| c.clone())
+            .collect();
+        if squeezed.is_empty() {
+            out.extend(uniform(&active, room));
+            return out;
+        }
+        for c in squeezed {
+            let floor = held[&c];
+            active.remove(&c);
+            room -= floor;
+            out.insert(c, floor);
+        }
+        if active.is_empty() {
+            return out;
+        }
+    }
+}
+
 /// Cover each column's header gap
 /// first (proportionally when the surplus can't cover them all), then
 /// spread any residual proportionally to current width.
@@ -474,6 +517,7 @@ pub(super) fn natural_auto_width(
 pub(super) fn calculate_column_layout_port(
     columns: &[String],
     force_compact: &BTreeSet<String>,
+    wrapping: &BTreeSet<String>,
     pins: &BTreeMap<String, f64>,
     caps: &BTreeMap<String, Option<f64>>,
     available_width: f64,
@@ -562,10 +606,20 @@ pub(super) fn calculate_column_layout_port(
 
     if text_keys.is_empty() {
         if compact_total >= available_for_auto {
-            let scale = available_for_auto / compact_total;
-            for (c, w) in &compact_pinned {
-                col_widths.insert(c.clone(), w * scale);
-            }
+            let held: BTreeMap<String, f64> = compact_pinned
+                .iter()
+                .filter(|(c, _)| wrapping.contains(*c))
+                .map(|(c, &d)| {
+                    let floor = word_floors.get(c).copied().unwrap_or(0.0);
+                    let cap = caps.get(c).copied().flatten();
+                    (c.clone(), cap.map_or(floor, |m| floor.min(m)).min(d))
+                })
+                .collect();
+            col_widths.extend(scale_to_budget_holding_floors(
+                &compact_pinned,
+                &held,
+                available_for_auto,
+            ));
         } else {
             grow_toward_header_width(
                 &mut compact_pinned,
@@ -4394,6 +4448,11 @@ pub(crate) fn lay_out(
     let mut rn_w = row_number_width(font_size)?;
 
     let column_names: Vec<String> = cols.iter().map(|c| c.name.to_string()).collect();
+    let wrapping: BTreeSet<String> = cols
+        .iter()
+        .filter(|c| th.wrap && !(c.is_numeric || c.is_date || is_swatch(c) || is_list(c)))
+        .map(|c| c.name.to_string())
+        .collect();
     // Phase 1 (explicit `width:` pins and `max_width:` caps), the demands, and
     // the allocation, at the fonts and padding it is asked for.
     let allocate = |font_now: f64,
@@ -4446,6 +4505,7 @@ pub(crate) fn lay_out(
             let widths = calculate_column_layout_port(
                 &column_names,
                 &force_compact,
+                &wrapping,
                 &pins,
                 &caps,
                 budget,
@@ -4707,6 +4767,7 @@ pub(crate) fn lay_out(
         let unfloored = calculate_column_layout_port(
             &column_names,
             force_compact,
+            &wrapping,
             &pins,
             &caps,
             table_w - rn_w,

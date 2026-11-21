@@ -7,6 +7,8 @@ The project-config surface (`dbt_charts.yml`) walks and renders through its own
 pair, so only this generated document gains its keys.
 """
 
+from __future__ import annotations
+
 from dbt_charts.core.compile.schema.facets import board_keys_with, keys_with
 from dbt_charts.core.compile.schema.introspection import (
     introspect,

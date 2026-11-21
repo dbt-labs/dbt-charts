@@ -8,6 +8,8 @@ Two public functions:
 - load_builtin_registry(include_experimental=False)    — load the shipped registry
 """
 
+from __future__ import annotations
+
 from importlib.resources import files
 
 import yaml

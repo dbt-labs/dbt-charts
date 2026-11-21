@@ -4,6 +4,8 @@ PostgreSQL uses:
 - $1, $2, ... for parameter placeholders
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 
 from dbt_charts.core.dialects.base import (

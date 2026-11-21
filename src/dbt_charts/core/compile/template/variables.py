@@ -7,6 +7,8 @@ This module provides utilities for working with variables that are needed
 by both the execute and render stages.
 """
 
+from __future__ import annotations
+
 import json
 import math
 import re

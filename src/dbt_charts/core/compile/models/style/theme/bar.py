@@ -64,29 +64,46 @@ class BarGroupedStyle(BaseModel):
     )
 
 
-class BarTornOutlierStyle(BaseModel):
-    """Tear an outlier bar at a break and float its end above the plot.
-
-    Bars longer than the break are cut with a jagged edge; each cut end is
-    redrawn as a labeled cap in a band above the plot, outside the shared
-    scale, so the smaller bars stay legible.
-    """
+class BarOutliersCapStyle(BaseModel):
+    """Size of the floating cap that stands in for a torn bar's end."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    enabled: bool = Field(description="Tear outlier bars at the break.")
-    # Cascade-managed sentinel: None means the break is picked from the data.
-    at: float | None = Field(
-        default=None,
-        gt=0,
-        description="Break value in data units; unset picks it from the data.",
-    )
     band: float = Field(
         gt=0,
         le=1,
         description="Cap band length above the tear, as a share of the plot.",
     )
-    cap: float = Field(gt=0, description="Cap length, as a multiple of bar thickness.")
+    length: float = Field(
+        gt=0, description="Cap length, as a multiple of bar thickness."
+    )
+
+
+class BarOutliersStyle(BaseModel):
+    """Tear bars far longer than the rest so they do not shrink the others.
+
+    A bar is torn when its length is at least `median_multiplier` times the
+    median bar length. An `axis_y` domain maximum below a bar tears it
+    whatever the multiplier says.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    median_multiplier: Annotated[float, Field(gt=1)] | Literal["none"] = Field(
+        description="Tear bars at least this many times the median bar; none turns it off."
+    )
+    variant: Literal["torn", "torn_with_cap"] = Field(
+        description="How a torn bar is drawn: past the top of the card, or cut with a floating cap."
+    )
+    reveal: Literal["bar", "chart", "none"] = Field(
+        description=(
+            "What hover redraws at true length: the hovered bar, every torn bar, or"
+            " nothing, with the title painted over the torn bars for a static screen."
+        )
+    )
+    cap: BarOutliersCapStyle = Field(
+        description="Cap size, read only by the torn_with_cap variant."
+    )
 
 
 class BarLayerStyle(BaseModel):
@@ -152,8 +169,8 @@ class _BarChartStyleBase(
     # Stacked only: resolve turns the rail back off for a grouped bar, whose
     # series all rise from the same baseline and would collide.
     grouped: BarGroupedStyle = Field(description="Band-scale padding for grouped bars.")
-    torn_outlier: BarTornOutlierStyle = Field(
-        description="Tear bars far longer than the rest and float their ends as caps."
+    outliers: BarOutliersStyle = Field(
+        description="Tear bars far longer than the rest."
     )
     pattern: PatternStyle = Field(
         description="How the `pattern:` channel paints fills."

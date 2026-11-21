@@ -27,7 +27,9 @@ The approach:
 from __future__ import annotations
 
 import re
+import secrets
 from collections.abc import Callable, Iterable
+from itertools import pairwise
 from typing import Any, Final, overload
 
 import jinja2
@@ -36,7 +38,7 @@ import sqlglot
 import sqlglot.errors
 import sqlglot.expressions as exp
 from sqlglot.dialects import DIALECT_MODULE_NAMES
-from sqlglot.tokens import TokenType
+from sqlglot.tokens import Tokenizer, TokenType
 
 from dbt_charts.core.compile.config import get_execution_config
 from dbt_charts.core.compile.models.source import SourceConfig
@@ -237,11 +239,20 @@ def _is_allowed_top_level_command(stmt: exp.Expression) -> bool:
     )
 
 
+def _ends_mid_statement(sql: str) -> bool:
+    try:
+        tokens = Tokenizer().tokenize(sql)
+    except sqlglot.errors.TokenError:
+        return False
+    return bool(tokens) and tokens[-1].token_type != TokenType.SEMICOLON
+
+
 def _walk_jinja(
     node: jinja2.nodes.Node,
     out: list[str],
     counter: list[int],
     all_branches: bool = True,
+    marker: str = "",
 ) -> None:
     """Walk a jinja2 AST, appending SQL fragments to *out*.
 
@@ -253,11 +264,15 @@ def _walk_jinja(
     ``all_branches`` is the mutation guard's posture: every branch of an
     ``{% if %}`` reaches the parser, joined by ``;`` so each reads as its own
     statement. Pass False for the primary branch alone — see
-    ``_branch_join_is_the_only_problem``.
+    ``_branch_join_is_the_artifact``.
+
+    A non-empty ``marker`` tags the join of an ``{% if %}`` that opens mid
+    statement with a ``/*marker*/`` comment: there the branches can only
+    continue that statement, never start one of their own.
     """
     if isinstance(node, jinja2.nodes.Template):
         for child in node.body:
-            _walk_jinja(child, out, counter, all_branches)
+            _walk_jinja(child, out, counter, all_branches, marker)
 
     elif isinstance(node, jinja2.nodes.TemplateData):
         out.append(node.data)
@@ -277,29 +292,34 @@ def _walk_jinja(
         # jinja2 represents elif_ as a flat list of If nodes (each with empty
         # elif_), not a linked-list chain. Iterate every element so DROPs
         # buried in the 2nd / 3rd elif slot are walked, not just the first.
+        separator = (
+            f" ; /*{marker}*/ "
+            if marker and _ends_mid_statement("".join(out))
+            else " ; "
+        )
         for child in node.body:
-            _walk_jinja(child, out, counter, all_branches)
+            _walk_jinja(child, out, counter, all_branches, marker)
         if not all_branches:
             return
         for elif_node in node.elif_:
-            out.append(" ; ")
+            out.append(separator)
             for child in elif_node.body:
-                _walk_jinja(child, out, counter, all_branches)
+                _walk_jinja(child, out, counter, all_branches, marker)
         if node.else_:
-            out.append(" ; ")
+            out.append(separator)
             for child in node.else_:
-                _walk_jinja(child, out, counter, all_branches)
+                _walk_jinja(child, out, counter, all_branches, marker)
 
     elif isinstance(node, jinja2.nodes.For):
         # Walk body once and the `else_` clause if present — jinja2 runs the
         # else clause when the iterable is empty. Same branch-coverage posture
         # as If: SQL hiding in the else branch must reach the skeleton.
         for child in node.body:
-            _walk_jinja(child, out, counter, all_branches)
+            _walk_jinja(child, out, counter, all_branches, marker)
         if node.else_ and all_branches:
             out.append(" ; ")
             for child in node.else_:
-                _walk_jinja(child, out, counter, all_branches)
+                _walk_jinja(child, out, counter, all_branches, marker)
 
     elif isinstance(node, jinja2.nodes.Assign):
         # {% set x = ... %} — emits nothing.
@@ -313,7 +333,9 @@ def _walk_jinja(
         raise UnparseableSqlError(f"unsupported_jinja_node:{type(node).__name__}")
 
 
-def build_skeleton(template_str: str, all_branches: bool = True) -> str:
+def build_skeleton(
+    template_str: str, all_branches: bool = True, marker: str = ""
+) -> str:
     """Return a SQL skeleton by walking the jinja2 AST.
 
     TemplateData becomes literal SQL; `{{ expr }}` becomes a placeholder
@@ -331,7 +353,7 @@ def build_skeleton(template_str: str, all_branches: bool = True) -> str:
 
     out: list[str] = []
     counter = [0]
-    _walk_jinja(ast, out, counter, all_branches)
+    _walk_jinja(ast, out, counter, all_branches, marker)
     return "".join(out)
 
 
@@ -371,9 +393,9 @@ def _sqlglot_error_position(
     )
 
 
-def _select_skeleton(sql: str, all_branches: bool = True) -> str:
+def _select_skeleton(sql: str, all_branches: bool = True, marker: str = "") -> str:
     return _strip_describe_variant_prefix(
-        _strip_explain_prefix(build_skeleton(sql, all_branches))
+        _strip_explain_prefix(build_skeleton(sql, all_branches, marker))
     )
 
 
@@ -523,7 +545,7 @@ def _parse_failure_advice(skeleton: str, dialect: str | None) -> str | None:
 
 def _parse(
     skeleton: str, dialect: str | None, rebuild_single_branch: Callable[[], str]
-) -> list[exp.Expression]:
+) -> list[exp.Expr | None]:
     try:
         parsed = sqlglot.parse(skeleton, read=sqlglot_dialect(dialect))
     except sqlglot.errors.TokenError as exc:
@@ -543,7 +565,7 @@ def _parse(
             advice=_parse_failure_advice(skeleton, dialect)
             or _reserved_word_advice(exc, dialect),
         ) from exc
-    return as_expressions(parsed)
+    return parsed
 
 
 def _reject_mutating_descendants(
@@ -613,12 +635,20 @@ def validate_select_only(sql: str, dialect: str | None = None) -> None:
         sql: Raw SQL string, possibly containing Jinja expressions.
         dialect: sqlglot dialect name (e.g. "duckdb", "postgres"). None = default.
     """
-    skeleton = _select_skeleton(sql)
-    statements = [
-        s
-        for s in _parse(skeleton, dialect, lambda: _select_skeleton(sql, False))
-        if not isinstance(s, exp.Semicolon)
-    ]
+    marker = secrets.token_hex(8)
+    parsed = _parse(
+        _select_skeleton(sql, True, marker),
+        dialect,
+        lambda: _select_skeleton(sql, False),
+    )
+    continues_statement = {
+        id(stmt)
+        for before, stmt in pairwise(parsed)
+        if isinstance(before, exp.Semicolon)
+        and before.comments is not None
+        and marker in before.comments
+    }
+    statements = [s for s in as_expressions(parsed) if not isinstance(s, exp.Semicolon)]
 
     # BigQuery inline-UDF scripting pattern: one or more CREATE TEMP FUNCTION
     # statements followed by a SELECT-family statement. This is a read-only
@@ -648,6 +678,9 @@ def validate_select_only(sql: str, dialect: str | None = None) -> None:
             continue
         if _is_allowed_top_level_command(stmt):
             continue
+        if isinstance(stmt, exp.Condition) and id(stmt) in continues_statement:
+            _reject_mutating_descendants(stmt)
+            continue
         raise MutatingSqlError(
             rejected_node_kind=type(stmt).__name__,
             fragment_preview=stmt.sql()[:60],
@@ -664,7 +697,9 @@ def validate_setup_sql(sql: str, dialect: str | None = None) -> None:
     Rejects everything else, including non-TEMP CREATE, DROP, INSERT, etc.
     """
     skeleton = build_skeleton(sql)
-    for stmt in _parse(skeleton, dialect, lambda: build_skeleton(sql, False)):
+    for stmt in as_expressions(
+        _parse(skeleton, dialect, lambda: build_skeleton(sql, False))
+    ):
         if isinstance(stmt, exp.Semicolon):
             continue
         if type(stmt) not in _ALLOWED_SETUP_NODES:

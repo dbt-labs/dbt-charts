@@ -12,6 +12,8 @@ Rather than spreading conditionals throughout the codebase, each dialect
 encapsulates its own behavior.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import date, datetime, time

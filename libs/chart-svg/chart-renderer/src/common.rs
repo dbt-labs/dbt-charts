@@ -2259,6 +2259,12 @@ impl AxisStyle {
         Some((end(lo), end(hi)))
     }
 
+    /// How a chart sizes its series on this measure axis: smallest first when the author runs it backwards
+    /// (`domain: [6, 1]`, a rank where 1 is best); `mean` for a chart whose points, not sums, carry the level.
+    pub fn rank_by(&self, mean: bool) -> ::bind::stack::RankBy<'static> {
+        ::bind::stack::RankBy { mean, ascending: self.authored_continuous_domain().is_some_and(|(lo, hi)| lo > hi), start: None }
+    }
+
     /// The authored `scale.continuous.domain` `(lo, hi)`, or `None`.
     ///
     /// Production's single spelling of "did the author pin this axis's
@@ -4521,7 +4527,7 @@ const MAGNITUDE_CHARS: [&str; 8] = ["k", "M", "G", "T", "P", "E", "Z", "Y"];
 
 /// `_check_percent_range` (`format_value.py:78-93`): a `%` spec that does not
 /// open with `+` (the delta formats) is fed ratios, so a value of 10 or more
-/// is a forgotten division by 100 and refuses. The refusal quotes the value
+/// is a forgotten division by 100 and refuses; a negative value is a real loss ratio and never does. The refusal quotes the value
 /// as production holds it (`{value!r}`): the cell's own number when the caller
 /// kept it, else the float compared.
 pub(crate) fn check_percent_range(
@@ -4529,7 +4535,7 @@ pub(crate) fn check_percent_range(
     cell: Option<&serde_json::Number>,
     format_spec: &str,
 ) -> Result<(), Diagnostic> {
-    let ratio_shaped = value.abs() >= 10.0;
+    let ratio_shaped = value >= 10.0;
     if !format_spec.ends_with('%') || format_spec.starts_with('+') || !ratio_shaped {
         return Ok(());
     }

@@ -4,6 +4,8 @@ What `dct validate`'s host checks read off a compiled board. Not a class the eng
 reader refuses any version but its own.
 """
 
+from __future__ import annotations
+
 import json
 from collections.abc import Mapping
 from typing import Literal, TypedDict

@@ -9995,6 +9995,7 @@ mod allocator_tests {
         let got = calculate_column_layout_port(
             &["name".to_string(), "v".to_string()],
             &force_compact,
+            &BTreeSet::new(),
             &BTreeMap::new(),
             &BTreeMap::new(),
             500.0,
@@ -10083,6 +10084,7 @@ mod allocator_tests {
         let got = calculate_column_layout_port(
             &["company", "quarterly_revenue", "growth_rate", "margin"].map(String::from),
             &BTreeSet::new(),
+            &BTreeSet::new(),
             &BTreeMap::new(),
             &BTreeMap::new(),
             344.0,
@@ -10127,6 +10129,7 @@ mod allocator_tests {
         // text column: production yields name 310 / qty 90.
         let got = calculate_column_layout_port(
             &["name", "qty"].map(String::from),
+            &BTreeSet::new(),
             &BTreeSet::new(),
             &BTreeMap::new(),
             &BTreeMap::new(),
@@ -12950,8 +12953,8 @@ mod shared_scale_register_tests {
             assert_eq!(refusal("percent", json!(27.6)), r#"ERR-PERCENT-RANGE: format_spec=".1%", value=27.6"#);
             assert_eq!(refusal("percent_whole", json!(10.0)), r#"ERR-PERCENT-RANGE: format_spec=".0%", value=10.0"#);
             assert_eq!(refusal("percent", json!(27)), r#"ERR-PERCENT-RANGE: format_spec=".1%", value=27"#);
-            assert_eq!(refusal("percent", json!(-27)), r#"ERR-PERCENT-RANGE: format_spec=".1%", value=-27"#);
             assert_eq!(refusal("percent", json!(27.5)), r#"ERR-PERCENT-RANGE: format_spec=".1%", value=27.5"#);
+            assert_eq!(lanes_of(json!("percent"), "all", &[-27.0]), [lane(None, "\u{2212}2700,0", Some("\u{202f}%"))]);
             assert_eq!(lanes_of(json!("percent"), "all", &[9.99]), [lane(None, "999,0", Some("\u{202f}%"))]);
             assert_eq!(
                 lanes_of(json!("percent_delta"), "all", &[27.6]),

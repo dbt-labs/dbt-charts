@@ -5631,9 +5631,10 @@ mod tests {
     /// a RAGGED cross product (a dimension
     /// value missing a measure entirely — ordinary in real data) must not
     /// shift a later series' palette slot. `B` has no `m1` row at all,
-    /// so the complete sorted domain is `["A - m1", "A - m2", "B - m1",
-    /// "B - m2"]` (`B - m2` at slot 3); a scan of the folded rows never
-    /// sees `B - m1` at all and shifts `B - m2` to slot 2.
+    /// so the complete domain ranked by each series' own sum is `["A - m2",
+    /// "A - m1", "B - m2", "B - m1"]` (`B - m2` at slot 2, `B - m1` at slot 3
+    /// with no row at all); a scan of the folded rows never sees `B - m1` and
+    /// would leave the domain a series short.
     #[test]
     fn wide_line_ragged_dimension_cross_product_keeps_every_slot() {
         use serde_json::json;
@@ -5650,8 +5651,8 @@ mod tests {
         let payload: Payload = serde_json::from_value(p).unwrap();
         let svg = render(&payload, &test_fonts()).expect("renders");
         assert!(
-            svg.contains("fill=\"#444444\">8 B - M2<"),
-            "B - M2 keeps its sorted slot 3 even though B - m1 has no rows at all: {svg}"
+            svg.contains("fill=\"#333333\">8 B - M2<"),
+            "B - M2 takes its ranked slot 2 even though B - m1 has no rows at all: {svg}"
         );
     }
 

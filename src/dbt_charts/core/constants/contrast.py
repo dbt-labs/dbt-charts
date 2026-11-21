@@ -1,5 +1,7 @@
 """WCAG contrast floors. Accessibility minimums, never authorable."""
 
+from __future__ import annotations
+
 from typing import Final
 
 # Floor label_ink guarantees against its canvas; above ~4.6 a mid-gray canvas cannot clear it.

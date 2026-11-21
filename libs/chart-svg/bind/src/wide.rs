@@ -133,24 +133,34 @@ pub fn wide_dimension_values(
     out
 }
 
-/// Sorted color-scale domain of a wide chart, RAW identity (production's
-/// `raw_wide_series_names`): the authored measures (from the resolved chart,
-/// not the rows — a measure null on every row still owns a domain/palette
-/// slot), crossed with every observed `dimension` value when one is authored.
+/// Color-scale domain of a wide chart, RAW identity (production's
+/// `raw_wide_series_names`): the authored measures in `y:` order (from the resolved
+/// chart, not the rows — a measure null on every row still owns a domain/palette
+/// slot), or, crossed with every observed `dimension` value when one is authored,
+/// the composite names ranked by their own sums.
 pub fn wide_series_names(
     measures: &[String],
     dimension: Option<&str>,
     rows: &[serde_json::Map<String, Value>],
 ) -> Vec<String> {
-    let mut names: Vec<String> = match dimension {
-        None => measures.to_vec(),
-        Some(dim) => wide_dimension_values(rows, dim)
-            .iter()
-            .flat_map(|v| measures.iter().map(move |m| format!("{v}{WIDE_SERIES_SEPARATOR}{m}")))
-            .collect(),
-    };
-    names.sort();
-    names
+    let Some(dim) = dimension else { return measures.to_vec() };
+    let names: Vec<String> = wide_dimension_values(rows, dim)
+        .iter()
+        .flat_map(|v| measures.iter().map(move |m| format!("{v}{WIDE_SERIES_SEPARATOR}{m}")))
+        .collect();
+    // Each composite series is sized by the sum of its own measure over its dimension value's rows.
+    let mut sizes: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for row in rows {
+        if row.get(dim).is_some_and(|v| !v.is_null()) {
+            let value = wide_dimension_str(row, dim);
+            for measure in measures {
+                if let Some(y) = crate::rows::row_num(row, measure) {
+                    *sizes.entry(format!("{value}{WIDE_SERIES_SEPARATOR}{measure}")).or_insert(0.0) += y;
+                }
+            }
+        }
+    }
+    crate::stack::by_size(&names, &sizes, false)
 }
 
 /// `_wide_fields.py::humanize_wide_series_name`: a wide series' painted
@@ -239,13 +249,13 @@ mod wide_fields_tests {
     }
 
     #[test]
-    fn wide_series_names_sorts_the_plain_measure_list() {
+    fn wide_series_names_keeps_the_plain_measure_list_in_y_order() {
         let measures = vec!["revenue".to_string(), "profit".to_string()];
-        assert_eq!(wide_series_names(&measures, None, &[]), vec!["profit", "revenue"]);
+        assert_eq!(wide_series_names(&measures, None, &[]), vec!["revenue", "profit"]);
     }
 
     #[test]
-    fn wide_series_names_sorts_the_dimension_x_measure_cross() {
+    fn wide_series_names_ties_by_name_across_the_dimension_x_measure_cross() {
         let rows = vec![
             row(json!({"cat": "Tools", "a": 1.0})),
             row(json!({"cat": "Electronics", "a": 2.0})),
@@ -259,6 +269,19 @@ mod wide_fields_tests {
                 "Tools - avg_order_value",
                 "Tools - largest_order",
             ]
+        );
+    }
+
+    #[test]
+    fn wide_series_names_ranks_the_cross_by_each_series_own_sum() {
+        let rows = vec![
+            row(json!({"cat": "Tools", "big": 100.0, "small": 1.0})),
+            row(json!({"cat": "Electronics", "big": 50.0, "small": 2.0})),
+        ];
+        let measures = vec!["small".to_string(), "big".to_string()];
+        assert_eq!(
+            wide_series_names(&measures, Some("cat"), &rows),
+            vec!["Tools - big", "Electronics - big", "Electronics - small", "Tools - small"]
         );
     }
 

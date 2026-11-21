@@ -685,11 +685,12 @@ def _torn_band(resolved_chart: ResolvedChart, chart: Chart) -> float:
         not isinstance(resolved_chart, ResolvedBarChart)
         or not isinstance(chart, BarChart)
         or resolved_chart.torn_break is None
+        or resolved_chart.style.outliers.variant != "torn_with_cap"
         or resolved_chart.orientation == "horizontal"
         or chart.height is not None
     ):
         return 0.0
-    return resolved_chart.style.torn_outlier.band
+    return resolved_chart.style.outliers.cap.band
 
 
 def _make_data_aware_height_provider(

@@ -7,6 +7,8 @@ Variables provide dynamic values to queries and charts. They can be bound to
 user inputs (select, slider, etc.) or have static default values.
 """
 
+from __future__ import annotations
+
 import math
 from typing import Annotated, Any, Literal, Self, TypeVar
 
@@ -261,7 +263,11 @@ class Variable(BaseModel):
     # Options
     options: Annotated[VariableOptions | None, Exclusive("options_source")] = Field(
         default=None,
-        description="Dropdown values come from a query column, or (rarely) a written-out list.",
+        description=(
+            "Dropdown values come from a query column, or (rarely) a written-out "
+            "list. Options keep the query's row order (use ORDER BY) or the "
+            "written order; a `column` binding sorts them ascending."
+        ),
     )
 
     data_type: Literal["string", "number", "date", "boolean", "array"] | None = Field(

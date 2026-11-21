@@ -56,8 +56,8 @@ class BarChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
             when=(ValueIn("type", ("histogram",)),),
         ),
         Forbids(
-            ("style.torn_outlier",),
-            "style.torn_outlier is not supported on type: histogram: its bars "
+            ("style.outliers",),
+            "style.outliers is not supported on type: histogram: its bars "
             "are bins of rows, so there is no bar to tear.",
             when=(ValueIn("type", ("histogram",)),),
         ),

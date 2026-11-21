@@ -22,6 +22,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style_and_context,
 )
+from dbt_charts.core.diagnostics.base import DbtChartsError
 
 from .._engine_render import render_kpi_svg
 
@@ -70,7 +71,7 @@ class TestKpiBackgroundGradientSchema:
                 "background": {"column": "nope", "scale": {"palette": ["#fff", "#000"]}}
             },
         )
-        with pytest.raises(ValueError, match="'nope' not found"):
+        with pytest.raises(DbtChartsError, match="'nope'"):
             resolve(chart, [{"revenue": 1}], chart_style_context=_BOARD_STYLE)
 
     def test_unknown_root_field_still_rejected(self) -> None:

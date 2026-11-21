@@ -4,6 +4,8 @@ Athena uses:
 - ? for positional parameters
 """
 
+from __future__ import annotations
+
 from dbt_charts.core.dialects.base import SQLDialect
 
 

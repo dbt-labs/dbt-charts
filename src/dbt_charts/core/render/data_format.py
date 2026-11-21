@@ -6,6 +6,8 @@ live once per query and charts reference their query by name, so charts sharing
 a query never duplicate the result set.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 from pydantic import BaseModel

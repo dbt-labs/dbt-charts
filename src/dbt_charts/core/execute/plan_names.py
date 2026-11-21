@@ -9,6 +9,8 @@ Purpose: A chart or variable that reads a query written inline has no authored
     here. A named query is a key of the plan under its own name.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterator
 
 from dbt_charts.core.compile.compiler import cross_board_query_key

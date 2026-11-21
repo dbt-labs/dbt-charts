@@ -7,6 +7,8 @@ Purpose: What every stage that holds a plan asks of it, kept below the stages
     nothing here writes one anywhere.
 """
 
+from __future__ import annotations
+
 import re
 from collections.abc import Mapping
 from datetime import date

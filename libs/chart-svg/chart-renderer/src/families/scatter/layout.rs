@@ -1069,7 +1069,7 @@ pub(super) fn fit(
     let title_ink = title_plan.as_ref().map(|plan| plan.ink.clone());
 
     // ── Legend entries + panel width ─────────────────────────────────────
-    // `wide_series` (the sorted, authored-measure-COMPLETE domain,
+    // `wide_series` (the authored-measure-COMPLETE domain,
     // `bind::wide::wide_series_names` + humanization) feeds a wide chart's
     // domain instead of a row scan — a measure null on every row still owns
     // a domain/palette slot, same law bar.rs's own `color_domain` split
@@ -1135,10 +1135,13 @@ pub(super) fn fit(
     // A shape channel on the color field merges into the color legend with
     // its own glyphs.
     let mut wide_raw: Vec<&str> = r.wide_measures.iter().map(String::as_str).collect();
-    wide_raw.sort_unstable();
+    // Without a `color:` dimension the domain is the authored `y:` order; with one it is the sorted cross.
+    if r.link_color.as_deref() != Some(::bind::wide::WIDE_KEY_FIELD) {
+        wide_raw.sort_unstable();
+    }
     let legend_order = if legend_shown {
         let raw_measures = (!wide_series.is_empty()).then_some(wide_raw.as_slice());
-        legend_entry_order(&r.legend, &color_domain, raw_measures)?
+        legend_entry_order(&r.legend, &color_domain, raw_measures, super::own_series_order(r, &color_domain, r.whole_rows.as_deref().unwrap_or(&bound.payload.rows)).as_deref())?
     } else {
         Vec::new()
     };

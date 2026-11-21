@@ -35,6 +35,8 @@ For more information about MCP, see:
     https://modelcontextprotocol.io/
 """
 
+from __future__ import annotations
+
 from dbt_charts.ai.context import DbtChartsAIContext
 from dbt_charts.ai.mcp.server import create_server, run_server
 

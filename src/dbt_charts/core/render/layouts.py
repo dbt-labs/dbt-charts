@@ -28,6 +28,8 @@ Expected improvement: ~30% faster rendering for boards with 4+ charts.
 See: plans/archive/VEGA_SVG_BATCH_CONVERSION_ANALYSIS.md
 """
 
+from __future__ import annotations
+
 import html
 from collections.abc import Callable
 

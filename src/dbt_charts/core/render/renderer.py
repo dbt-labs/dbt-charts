@@ -21,6 +21,8 @@ Dependencies:
     - .converters (for format conversion)
 """
 
+from __future__ import annotations
+
 import contextlib
 import logging
 import time
@@ -61,6 +63,7 @@ from dbt_charts.core.compile.template.variables import (
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.suppression import partition as _partition_warnings
+from dbt_charts.core.execute.category_colors import DefaultView
 from dbt_charts.core.execute.chart_data_provider import ResolveDataProvider
 from dbt_charts.core.execute.collect import (
     collect_layout_chart_query_names,
@@ -227,7 +230,7 @@ def _data_format_renderer(format: str) -> DataFormatRenderer:
 
 def _collect_active_layout_charts(
     board: ResolvedBoard, variables: VariableValues
-) -> dict[str, tuple["ResolvedChart", float, float, TitleShift, PieMode | None]]:
+) -> dict[str, tuple[ResolvedChart, float, float, TitleShift, PieMode | None]]:
     """Map chart_id -> (the chart instance, its laid-out width, height and title
     shift, and a pie's sized mode) for the active-tab subtree.
 
@@ -529,6 +532,34 @@ def _render_variables(
     return normalize_render_values(merged_variables, variable_registry, clock)
 
 
+def _collect_default_view(
+    board: Board,
+    default_ctx: ExecContext | None,
+    merged_variables: VariableValues,
+    builtin_variables: VariableValues | None,
+    query_names: set[str],
+    max_workers: int,
+) -> DefaultView | None:
+    """The drawn queries' rows under the board's variable defaults, or None when
+    there is no second view to read: no context for it, or the render already
+    runs under the defaults (then the one collection is the cached call)."""
+    if default_ctx is None:
+        return None
+    default_variables = _render_variables(
+        board, {}, builtin_variables, current_board_clock()
+    )
+    if default_variables == merged_variables:
+        return None
+    ledger = Ledger()
+    names = query_names & set(default_ctx.plan["queries"])
+    found = lookup_names(default_ctx, ledger, names, resume_incremental=False)
+    outcomes = run_misses(default_ctx, ledger, found, max_workers)
+    return DefaultView(
+        collect(default_ctx, ledger, found, outcomes, default_variables),
+        default_variables,
+    )
+
+
 def prefetch_tab_queries(
     ctx: ExecContext,
     ledger: Ledger,
@@ -571,6 +602,7 @@ def render(
     warnings_ignore: frozenset[str] = frozenset(),
     max_rows_per_query: int = NO_ROW_CAP,
     strict_variables: bool = True,
+    default_view_ctx: ExecContext | None = None,
     **options: Any,
 ) -> RenderResult:
     overrides = variables or {}  # type-state: silent_fallback — None: no overrides
@@ -603,6 +635,7 @@ def render(
             warnings_ignore,
             max_rows_per_query,
             strict_variables,
+            default_view_ctx,
             **options,
         )
 
@@ -619,6 +652,7 @@ def _render(
     warnings_ignore: frozenset[str],
     max_rows_per_query: int,
     strict_variables: bool,
+    default_view_ctx: ExecContext | None,
     **options: Any,  # type-state: explicit_any — render()'s own pass-through options
 ) -> RenderResult:
     """Render a compiled board.
@@ -641,6 +675,11 @@ def _render(
             user-declared variables take precedence.  Computed by callers that
             have a real board file location (render_dashboard); omit for in-memory
             boards or inspect renders.
+        default_view_ctx: The context of this board planned under its variables'
+            defaults. When the render's variables differ from them, the queries of
+            the drawn charts also run under the defaults, and category colors rank
+            on those rows, so a filter never reshuffles them. None ranks colors on
+            the rows drawn.
         warnings_ignore: Project-level warning codes to suppress. Callers resolve
             these before calling render() — typically via ``ProjectSession.warnings_ignore``
             or get_project_warnings_ignore(). Defaults to frozenset() (no suppression).
@@ -750,6 +789,14 @@ def _render(
     outcomes = run_misses(ctx, ledger, found, resolved_max_workers)
     results = collect(ctx, ledger, found, outcomes, merged_variables)
     results = with_link_schema(results, ctx, board, merged_variables)
+    default_view = _collect_default_view(
+        board,
+        default_view_ctx,
+        merged_variables,
+        builtin_variables,
+        query_names,
+        resolved_max_workers,
+    )
     query_ms = (time.perf_counter() - query_started) * 1000
     # Option queries have run for the board's own controls, so their rows cost
     # nothing more to check a query-backed select against. A tab
@@ -903,6 +950,7 @@ def _render(
                     render_first=True,
                     authored_slot_heights=authored_chart_heights,
                     hug_board=whole_board,
+                    default_view=default_view,
                 )
         except DbtChartsError as e:
             _reset_contexts()
@@ -1350,7 +1398,7 @@ def _to_terminal(
     board: Board,
     results: ResolveDataProvider,
     variables: VariableValues,
-    resolved_style: "ResolvedStyle",
+    resolved_style: ResolvedStyle,
     **options: Any,
 ) -> str:
     """Render board to terminal output.

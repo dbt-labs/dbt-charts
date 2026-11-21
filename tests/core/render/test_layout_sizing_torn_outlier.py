@@ -28,10 +28,14 @@ charts:
     y: revenue
     style:
       orientation: vertical
-      torn_outlier:
-        enabled: true
-        at: 110
-        band: 0.5
+      axis_y:
+        scale:
+          continuous:
+            domain: [0, 110]
+      outliers:
+        variant: torn_with_cap
+        cap:
+          band: 0.5
   plain:
     query: q
     type: bar

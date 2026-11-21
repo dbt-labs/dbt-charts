@@ -49,7 +49,7 @@ from dbt_charts.core.compile.resolve.chart._conditional import (
     resolve_mark_conditional,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
-    _bake_normalize_domain,
+    _bake_measure_domain,
     _bake_y_zero,
     _CartesianTickResolution,
     _check_bar_layer_spans,
@@ -559,7 +559,7 @@ def _resolve_area(
     if resolved_stack == "normalize":
         # normalize-stack domain is always [0,1].
         area_ticks = _CartesianTickResolution((), None)
-        ay_merged = _bake_normalize_domain(ay_merged)
+        ay_merged = _bake_measure_domain(ay_merged, (0.0, 1.0))
     elif is_stacked and x_field_area and _log_y_fields:
         # Stacked area ladders against the cumulative column total, not the raw
         # per-series range. Without this a chart whose columns sum to 154 labels

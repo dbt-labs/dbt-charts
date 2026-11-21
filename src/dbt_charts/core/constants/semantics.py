@@ -1,5 +1,7 @@
 """How a search of a MetricFlow bundle ranks and limits what it returns."""
 
+from __future__ import annotations
+
 from typing import Final
 
 # Enough to pick from without reading a page of near misses.

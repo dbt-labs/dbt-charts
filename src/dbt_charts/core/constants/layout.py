@@ -1,5 +1,7 @@
 """Layout threshold constants: facet panel width, plot-size floors, support table limits."""
 
+from __future__ import annotations
+
 from typing import Final
 
 # Per-panel width below which a small-multiples chart warns; advisory, the card boundary still wins.

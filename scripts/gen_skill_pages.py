@@ -495,7 +495,7 @@ class Generator:
             "filter_date_range": p.make_filter_date_range_helper,
         }
         fn = maker[name](_placeholder, None)
-        full = inspect.signature(fn)
+        full = inspect.signature(fn, eval_str=True)
         shown = full.replace(
             parameters=[
                 p for p in full.parameters.values() if p.kind is not p.VAR_KEYWORD

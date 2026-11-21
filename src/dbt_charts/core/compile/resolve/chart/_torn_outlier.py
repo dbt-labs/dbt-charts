@@ -1,19 +1,21 @@
-"""Torn outlier bars: pick the break value where long bars are cut.
+"""Outlier bars: pick the break value where long bars are cut.
 
-The renderer draws the tear and the floating caps; this module only decides
-*where* the tear sits and refuses the chart shapes a tear cannot represent.
+The renderer draws the tear (past the card's top, or as floating caps); this
+module only decides *where* the tear sits and, for the cap, refuses the chart
+shapes it cannot represent.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
+from statistics import median
 from typing import NamedTuple
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.authored._layer import BarLayer
 from dbt_charts.core.compile.models.chart.normalized import BarChart
-from dbt_charts.core.compile.models.style.theme import AxisYStyle, BarTornOutlierStyle
+from dbt_charts.core.compile.models.style.theme import AxisYStyle
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, restamp
 from dbt_charts.core.compile.resolve.chart._domain import (
     _authored_tick_ladder,
@@ -27,10 +29,6 @@ from dbt_charts.core.compile.resolve.chart.tick_values import (
     numeric_domain_bounds,
 )
 from dbt_charts.core.compile.resolve.style.axis_cascade import target_tick_count
-from dbt_charts.core.constants.bar import (
-    TORN_OUTLIER_MIN_BARS,
-    TORN_OUTLIER_MIN_RATIO,
-)
 from dbt_charts.core.diagnostics.codes_compile import ERR_TORN_OUTLIER_UNSUPPORTED
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.utils import CellValue, coerce_numeric_cell
@@ -63,7 +61,9 @@ def bar_extents(
         )
         positive, negative = piles
         for index, row in enumerate(panel.rows):
-            category = row[x_field] if x_field else f"row {index + 1}"
+            # Detection runs on every bar chart, so a row missing x is left to the
+            # error the chart's own x channel raises, not a KeyError here.
+            category = row.get(x_field) if x_field else f"row {index + 1}"
             for y_field in y_fields:
                 value = coerce_numeric_cell(row.get(y_field))
                 if value is None:
@@ -90,7 +90,7 @@ def resolve_torn_break(
     normalized: BarChart,
     dataset: ChartDataset,
     ay: AxisYStyle,
-    torn: BarTornOutlierStyle,
+    median_multiplier: float | None,
     *,
     stack: str | None,
     y_fields: list[str],
@@ -99,7 +99,7 @@ def resolve_torn_break(
     """The chart's tear, refusing every shape a tear cannot represent.
 
     ``layer_values`` are the values of layers sharing the bars' scale. Call only
-    when ``torn.enabled``.
+    for ``variant: torn_with_cap``.
     """
     continuous = ay.scale.continuous if ay.scale is not None else None
     authored = numeric_domain_bounds(
@@ -115,9 +115,6 @@ def resolve_torn_break(
         else "with a bar layer on the shared axis_y scale"
         if not layers_own_y_scale(normalized)
         and any(isinstance(layer, BarLayer) for layer in normalized.layers)
-        else "with both `torn_outlier.at` and an authored axis_y domain; "
-        "the domain's max is the break"
-        if authored is not None and torn.at is not None
         else "with an authored axis_y domain above zero"
         if authored is not None and authored[0] > 0
         else "with `axis_y.scale.continuous.zero: false`"
@@ -139,7 +136,7 @@ def resolve_torn_break(
         domain_min = low
     else:
         torn_break = pick_torn_break(
-            extents, headroom, torn.at, max(layer_values, default=None)
+            extents, headroom, median_multiplier, max(layer_values, default=None)
         )
         floor = min([floor, *layer_values])
         domain_min = _headroom_floor(floor, headroom) if floor < 0 else None
@@ -152,37 +149,91 @@ def resolve_torn_break(
 def pick_torn_break(
     extents: Iterable[float],
     headroom: float | None,
-    at: float | None,
+    median_multiplier: float | None,
     layer_top: float | None,
 ) -> float | None:
     """The value the measure axis ends at, or None when no bar needs tearing.
 
-    An authored ``at`` is the break whenever a bar passes it. Otherwise the
-    bars are sorted longest first and the break goes after the first ``k``
-    (at most a third of them) where the next bar is shortest relative to the
-    last one cut; the break is then the ordinary headroom-expanded domain max
-    of the bars that stay and ``layer_top``, the highest value of a layer
-    sharing the scale, so the plot reads as if the outliers were absent.
-    Headroom that lifts the break past the shortest cut bar leaves nothing to tear.
+    A bar tears when it is at least ``median_multiplier`` times the median bar
+    length; ``None`` turns automatic tearing off. The break is the ordinary
+    headroom-expanded domain max of the bars that stay and ``layer_top``, the
+    highest value sharing the scale, so the plot reads as if the outliers were
+    absent. Headroom that lifts the break past the shortest torn bar leaves
+    nothing to tear.
     """
-    ordered = sorted(extents, reverse=True)
-    if at is not None:
-        return at if ordered and ordered[0] > at else None
-    if len(ordered) < TORN_OUTLIER_MIN_BARS:
+    lengths = list(extents)
+    if median_multiplier is None or not lengths:
         return None
-    candidates = [
-        (ordered[k - 1] / ordered[k], k)
-        for k in range(1, max(1, len(ordered) // 3) + 1)
-        if ordered[k] > 0
-    ]
-    if not candidates:
+    cutoff = median_multiplier * median(lengths)
+    kept = [v for v in lengths if v < cutoff]
+    torn = [v for v in lengths if v >= cutoff]
+    if not kept or not torn:
         return None
-    ratio, k = max(candidates, key=lambda c: c[0])
-    if ratio < TORN_OUTLIER_MIN_RATIO:
+    top = max(kept) if layer_top is None else max(max(kept), layer_top)
+    torn_break = apply_headroom(top, headroom)
+    return torn_break if torn_break < min(torn) else None
+
+
+class OffChartPlan(NamedTuple):
+    """The break a ``variant: torn`` chart tears at, and the domain to pin for it.
+
+    ``domain`` is None when the author already pinned the axis, or when the shape
+    cannot draw an off-chart bar (the renderer then draws plain and warns).
+    """
+
+    break_value: float
+    domain: tuple[float, float] | None
+
+
+def plan_off_chart(
+    normalized: BarChart,
+    dataset: ChartDataset,
+    ay: AxisYStyle,
+    median_multiplier: float | None,
+    *,
+    stack: str | None,
+    y_fields: list[str],
+    layer_values: Sequence[float],
+    vertical: bool,
+    quantitative_x: bool,
+) -> OffChartPlan | None:
+    """The tear of a ``variant: torn`` chart, or None when no bar passes it.
+
+    A pinned ``axis_y`` domain max is the break whenever a bar passes it,
+    whatever ``median_multiplier`` says; without one the break is the axis the
+    untorn bars alone would have, pinned here so the renderer needs no second
+    rule. Shapes the off-chart bar cannot draw (a numeric x among them: its bars
+    sit on a linear scale, not bands) get the break but no domain.
+    """
+    continuous = ay.scale.continuous if ay.scale is not None else None
+    authored = numeric_domain_bounds(
+        continuous.domain if continuous is not None else None
+    )
+    extents, floor = bar_extents(
+        dataset, normalized.x, y_fields, stacked=stack not in (None, "none")
+    )
+    headroom = _axis_headroom(ay)
+    if authored is not None:
+        high = authored[1]
+        return OffChartPlan(high, None) if max(extents, default=0.0) > high else None
+    torn_break = pick_torn_break(
+        extents, headroom, median_multiplier, max(layer_values, default=None)
+    )
+    if torn_break is None:
         return None
-    kept = ordered[k] if layer_top is None else max(ordered[k], layer_top)
-    torn_break = apply_headroom(kept, headroom)
-    return torn_break if torn_break < ordered[k - 1] else None
+    drawable = (
+        vertical
+        and not quantitative_x
+        and stack in (None, "none")
+        and normalized.multiples is None
+        and not any(isinstance(layer, BarLayer) for layer in normalized.layers)
+        and normalized.y_start is None
+        and not ay.mirror
+        and not (continuous is not None and continuous.zero is False)
+    )
+    floor = min([floor, *layer_values])
+    low = _headroom_floor(floor, headroom) if floor < 0 else 0.0
+    return OffChartPlan(torn_break, (low, torn_break) if drawable else None)
 
 
 def refuse_values_past(

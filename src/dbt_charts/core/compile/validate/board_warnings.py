@@ -21,6 +21,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     LineChart,
     ScatterChart,
+    _BaseChartFields,
     _SharedChartFields,
 )
 from dbt_charts.core.compile.normalize.chart_focus import (
@@ -37,6 +38,9 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
     AUTO_AXIS_FORMAT,
     decided_axis_format,
 )
+from dbt_charts.core.compile.resolve.style.category_colors import (
+    categorical_channel_fields,
+)
 from dbt_charts.core.compile.template.jinja import extract_text_undeclared_names
 from dbt_charts.core.compile.template.markdown_fence import (
     MASKED_FENCE_RE,
@@ -48,6 +52,7 @@ from dbt_charts.core.diagnostics import (
     WARN_ADJACENT_TEXT_ROWS,
     WARN_AXIS_ALIGN_DISCARDED,
     WARN_BODY_HEADING_NO_TITLE,
+    WARN_CATEGORY_COLOR_PIN_ORPHAN,
     WARN_DOUBLE_HEADER,
     WARN_FORMAT_UNUSED_NAME,
     WARN_RETIRED_IGNORE_CODE,
@@ -80,6 +85,7 @@ def detect_board_warnings(
     _detect_single_chart_redundant_title(board, warnings)
     _detect_adjacent_text_rows(board, warnings)
     _detect_orphan_charts(board, warnings)
+    _detect_orphan_category_pins(board, warnings)
     _detect_unreferenced_queries(board, warnings)
     _detect_undeclared_text_names(board, warnings)
     _detect_retired_ignore_codes(board, warnings)
@@ -485,6 +491,47 @@ def _detect_orphan_charts(board: Board, warnings: list[Diagnostic]) -> None:
                 fix=WARN_UNREFERENCED_CHART.fix_template,
             )
         )
+
+
+def _detect_orphan_category_pins(board: Board, warnings: list[Diagnostic]) -> None:
+    """Warn for a `category_colors` pin whose field no chart colors by.
+
+    Pins apply board-wide, so a field is judged against every chart in the tree.
+    A pin aimed at a multi-measure `y:` series lands here: those series have no
+    `color:` field. A custom chart reads pins by any of its columns, so a board
+    with one judges nothing.
+    """
+    colored: set[str] = set()
+    pinned: list[str] = []
+    has_custom: list[bool] = []
+
+    def walk(f: Board) -> None:
+        for chart in f.charts.values():
+            has_custom.append(chart.type == "custom")
+            if isinstance(chart, _BaseChartFields):
+                colored.update(categorical_channel_fields(chart))
+        pinned.extend(f.chart_style_context.category_color_pins)
+        for item in f.layout.items:
+            if item.board is not None:
+                walk(item.board)
+
+    walk(board)
+    if any(has_custom):
+        return
+    for field in dict.fromkeys(pinned):
+        if field not in colored:
+            warnings.append(
+                Diagnostic.from_code(
+                    WARN_CATEGORY_COLOR_PIN_ORPHAN,
+                    chart=None,
+                    path=f"style.charts.category_colors.{field}",
+                    field=field,
+                    message=WARN_CATEGORY_COLOR_PIN_ORPHAN.message_template.format(
+                        field=field
+                    ),
+                    fix=WARN_CATEGORY_COLOR_PIN_ORPHAN.fix_template,
+                )
+            )
 
 
 def _detect_unreferenced_queries(board: Board, warnings: list[Diagnostic]) -> None:

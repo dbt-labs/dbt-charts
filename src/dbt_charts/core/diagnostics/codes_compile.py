@@ -743,10 +743,10 @@ ERR_TORN_OUTLIER_UNSUPPORTED = REGISTRY.register(
     ErrorCode(
         code="ERR-TORN-OUTLIER-UNSUPPORTED",
         domain="compile",
-        title="Torn outlier bars are not supported here",
-        message_template="Chart {chart_id!r}: style.torn_outlier.enabled is not supported {reason}. Set style.torn_outlier.enabled: false, or change the chart.",
-        doc="Fired when `style.torn_outlier.enabled` is on for a chart the tear cannot draw truthfully: a normalized, ranged (`y_start`), small-multiples or histogram chart; one with a bar layer on the shared `axis_y` scale; one with an authored `axis_y` domain above zero or `zero: false`; one that sets both `torn_outlier.at` and an authored `axis_y` domain; or one with an annotation or layer value past the break. A torn bar's cap is positioned by its end value above a zero-based break, so these shapes have no honest tear.",
-        summary="Fired when torn outlier bars are enabled on a chart shape that cannot be torn.",
+        title="Torn outlier caps are not supported here",
+        message_template="Chart {chart_id!r}: style.outliers.variant: torn_with_cap is not supported {reason}. Set style.outliers.variant: torn, or change the chart.",
+        doc="Fired when `style.outliers.variant` is `torn_with_cap` for a chart the cap cannot draw truthfully: a normalized, ranged (`y_start`), small-multiples or histogram chart; one with a bar layer on the shared `axis_y` scale; one with an authored `axis_y` domain above zero or `zero: false`; or one with an annotation or layer value past the break. A torn bar's cap is positioned by its end value above a zero-based break, so these shapes have no honest cap.",
+        summary="Fired when torn outlier caps are chosen on a chart shape that cannot draw them.",
         docs_topic="charts",
     )
 )
@@ -1787,6 +1787,31 @@ ERR_CATEGORY_COLOR_PIN_DUPLICATE = REGISTRY.register(
         message_template="`style.charts.category_colors.{field}` pins both `{first_value}` and `{second_value}` to `{color}`: two categories cannot share a swatch. Give one of them a different color.",
         doc="Fired when two values pinned under `style.charts.category_colors.<field>` resolve to the same color (case-insensitively), which would seat two categories on one swatch. Give one of the pins a different color.",
         summary="Fired when two category_colors pins resolve to the same color.",
+        docs_topic="charts",
+    )
+)
+
+ERR_CATEGORY_COLOR_PIN_CONFLICT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CATEGORY-COLOR-PIN-CONFLICT",
+        domain="compile",
+        title="Two nested boards pin the same category value to different colors",
+        message_template="`style.charts.category_colors.{field}` pins `{value}` to `{first_color}` in one nested board and to `{second_color}` in another. A pin applies to the whole board, so one value cannot have two colors. Pin it once, or at the root board.",
+        doc="Fired when two sibling nested boards pin the same value of the same field to different colors. Pins under `style.charts.category_colors` apply to every chart on the whole board, wherever they are authored, so the two cannot both hold. A pin on the root board wins over nested ones and is not a conflict.",
+        summary="Fired when two nested boards pin the same value to different colors.",
+        docs_topic="charts",
+    )
+)
+
+WARN_CATEGORY_COLOR_PIN_ORPHAN = REGISTRY.register(
+    WarningCode(
+        code="WARN-CATEGORY-COLOR-PIN-ORPHAN",
+        domain="compile",
+        title="A category_colors pin names a field no chart colors by",
+        message_template="`style.charts.category_colors.{field}` pins colors for `{field}`, but no chart on this board has `color: {field}`, so the pin does nothing.",
+        fix_template="Pin a field a chart colors by with `color:`. A multi-measure `y:` chart has no such field; its series take palette slots in `y:` order.",
+        doc="Fired when a field pinned under `style.charts.category_colors` is named by no chart's `color:` channel, on the root board or any nested one. Typical causes are a misspelled column or a pin aimed at a measure name of a multi-measure `y:` chart, whose series have no color field to pin. The pin is ignored.",
+        summary="Fired when a category_colors pin names a field no chart colors by.",
         docs_topic="charts",
     )
 )

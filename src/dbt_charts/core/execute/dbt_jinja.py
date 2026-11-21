@@ -29,6 +29,8 @@ package, so ignoring the package would pick whichever same-named model came
 first), versioned `ref('orders', v=2)`, and any macro-computed argument.
 """
 
+from __future__ import annotations
+
 import re
 
 # Jinja's `-` whitespace-trim marker is matched but not honored: substitution

@@ -68,7 +68,7 @@ __all__ = [
     "_CartesianTickResolution",
     "_axis_headroom",
     "_unit_cap",
-    "_bake_normalize_domain",
+    "_bake_measure_domain",
     "_bake_y_zero",
     "_bake_x_zero",
     "_bake_zero_flag",
@@ -1192,21 +1192,24 @@ def _first_non_numeric_y(
     return None
 
 
-def _bake_normalize_domain(ay_merged: AxisYStyle) -> AxisYStyle:
-    """Bake [0, 1] domain onto ay_merged for normalize-stack axes.
+def _bake_measure_domain(
+    ay_merged: AxisYStyle, domain: tuple[float, float]
+) -> AxisYStyle:
+    """Bake ``domain`` onto ay_merged unless the author already set one.
 
-    measure_axis_to_vl estimates label widths from the resolved domain; without
-    this bake it reads raw query values (e.g. 0..1000) and computes an
-    over-wide label pad. Only bakes when the author has not already set a domain.
+    A normalize-stack axis bakes [0, 1]: measure_axis_to_vl estimates label
+    widths from the resolved domain, and without it reads raw query values
+    (e.g. 0..1000) and computes an over-wide label pad. An outlier tear bakes
+    its break so the axis ends there.
     """
     ay_sc = ay_merged.scale
     ay_cont = ay_sc.continuous if ay_sc is not None else None
     if ay_cont is not None and ay_cont.domain is not None:
         return ay_merged
     norm_cont = (
-        ay_cont.model_copy(update={"domain": (0.0, 1.0)})
+        ay_cont.model_copy(update={"domain": domain})
         if ay_cont is not None
-        else ScaleContinuousStyle(domain=(0.0, 1.0))
+        else ScaleContinuousStyle(domain=domain)
     )
     norm_scale = (
         ay_sc.model_copy(update={"continuous": norm_cont})

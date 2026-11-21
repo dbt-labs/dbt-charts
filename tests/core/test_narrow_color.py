@@ -270,6 +270,8 @@ class TestChannelScaleUpgrade:
         )
 
         class _FakeChart:
+            id = "c"
+            query_name = "q"
             type = "bar"
             color = "revenue"
             background = None
@@ -293,6 +295,8 @@ class TestChannelScaleUpgrade:
         )
 
         class _FakeChart:
+            id = "c"
+            query_name = "q"
             type = "bar"
             color = "segment"
             background = None
@@ -310,6 +314,8 @@ class TestChannelScaleUpgrade:
         )
 
         class _FakeChart:
+            id = "c"
+            query_name = "q"
             type = "bar"
             color = None  # no data channel
             background = None
@@ -330,6 +336,8 @@ class TestChannelScaleUpgrade:
         )
 
         class _FakeChart:
+            id = "c"
+            query_name = "q"
             type = "bar"
             color = None  # NO data channel
             background = None

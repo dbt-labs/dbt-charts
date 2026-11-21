@@ -4,6 +4,8 @@ Databricks uses:
 - :param1, :param2 for named parameter placeholders
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from typing import Any
 

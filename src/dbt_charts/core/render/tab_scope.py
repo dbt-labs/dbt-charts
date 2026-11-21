@@ -7,6 +7,8 @@ category-color plan, chart resolution and the warning pass all walk one tree
 and none of them can reach a query the pre-render pass did not run.
 """
 
+from __future__ import annotations
+
 from dbt_charts.core.compile.models.board.authored import LayoutType
 from dbt_charts.core.compile.models.board.normalized import (
     Board,

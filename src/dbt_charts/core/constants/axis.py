@@ -1,5 +1,7 @@
 """Axis, time-bucket, and gradient-legend engine constants."""
 
+from __future__ import annotations
+
 from typing import Final
 
 LABEL_GAP_SPACES: Final[int] = 1

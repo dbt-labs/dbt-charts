@@ -10,6 +10,7 @@ import pytest
 from dbt_charts.core.compile.models.chart.authored import (
     ScaleTargetConfig,
 )
+from dbt_charts.core.diagnostics.base import DbtChartsError
 
 # ============================================================================
 # ScaleTargetConfig with float palette
@@ -278,6 +279,8 @@ class _FakeChart:
     calls in channel.py work without raising AttributeError.
     """
 
+    id: str = "fake"
+    query_name: str | None = "q"
     background: object = None  # KPI-only gradient background channel
     support: object = None  # KPI-only support block
 
@@ -303,7 +306,7 @@ def test_normalize_chart_channels_validates_field_ref():
     chart = _FakeChart(
         color={"column": "nonexistent", "scale": {"palette": ["#a", "#b"]}},
     )
-    with pytest.raises(ValueError, match="'color'.*'nonexistent'"):
+    with pytest.raises(DbtChartsError, match="'color'.*'nonexistent'"):
         normalize_chart_channels(chart, {"arr", "segment"})
 
 

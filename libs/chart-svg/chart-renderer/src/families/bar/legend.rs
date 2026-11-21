@@ -323,8 +323,8 @@ pub(super) fn authored_legend_order(order: Vec<String>, legend: &LegendConfig, w
     resolve_legend_values(values, &domain, Some(&aliases)).into_iter().map(|i| order[i].clone()).collect()
 }
 
-/// A grouped bar's legend domain: `color_domain` (alphabetical, the VL
-/// default), unless `legend.values` is authored as a FULL reordering of it
+/// A grouped bar's legend domain: `color_domain` (the chart's own ranked order when the board colors it
+/// by slot, else alphabetical), unless `legend.values` is authored as a FULL reordering of it
 /// -- same members (an exact spelling, or a case/`-`/`_`/space-folded one,
 /// per `fold_legend_token` above), different order -- in which case the
 /// resolved domain order wins outright. Mirrors `emitters/_channels.py`'s

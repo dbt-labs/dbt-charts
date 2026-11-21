@@ -101,28 +101,46 @@ pub struct BarGroupedStyle {
     pub padding_outer: f64,
 }
 
-/// Tear an outlier bar at a break and float its end above the plot.
-///
-/// Bars longer than the break are cut with a jagged edge; each cut end is
-/// redrawn as a labeled cap in a band above the plot, outside the shared
-/// scale, so the smaller bars stay legible.
+string_enum!(
+    /// `none`: bars are never torn automatically.
+    NoOutliers { None = "none" }
+);
+string_enum!(
+    /// How a torn bar is drawn: past the top of the card, or cut with a floating cap.
+    OutliersVariant { Torn = "torn", TornWithCap = "torn_with_cap" }
+);
+string_enum!(
+    /// What hover redraws at true length: the hovered bar, every torn bar, or nothing.
+    OutliersReveal { Bar = "bar", Chart = "chart", None = "none" }
+);
+
+/// Size of the floating cap that stands in for a torn bar's end.
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(
-    constraint(range(at, gt = 0)),
-    constraint(range(band, gt = 0, le = 1)),
-    constraint(range(cap, gt = 0))
-)]
+#[model(constraint(range(band, gt = 0, le = 1)), constraint(range(length, gt = 0)))]
 #[allow(clippy::duplicated_attributes)]
-pub struct BarTornOutlierStyle {
-    /// Tear outlier bars at the break.
-    pub enabled: bool,
-    /// Break value in data units; unset picks it from the data.
-    #[model(absent = "the break picked from the data")]
-    pub at: Option<f64>,
+pub struct BarOutliersCapStyle {
     /// Cap band length above the tear, as a share of the plot.
     pub band: f64,
     /// Cap length, as a multiple of bar thickness.
-    pub cap: f64,
+    pub length: f64,
+}
+
+/// Tear bars far longer than the rest so they do not shrink the others.
+///
+/// A bar is torn when its length is at least `median_multiplier` times the
+/// median bar length. An `axis_y` domain maximum below a bar tears it
+/// whatever the multiplier says.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(range(median_multiplier, gt = 1)))]
+pub struct BarOutliersStyle {
+    /// Tear bars at least this many times the median bar; none turns it off.
+    pub median_multiplier: Engine<f64, NoOutliers>,
+    /// How a torn bar is drawn: past the top of the card, or cut with a floating cap.
+    pub variant: OutliersVariant,
+    /// What hover redraws at true length: the hovered bar, every torn bar, or nothing.
+    pub reveal: OutliersReveal,
+    /// Cap size, read only by the torn_with_cap variant.
+    pub cap: BarOutliersCapStyle,
 }
 
 /// Required wrapper for bar-layer mark overrides.
@@ -157,8 +175,8 @@ pub struct BarChartStyle {
     pub stack_order: Option<StackOrder>,
     /// Band-scale padding for grouped bars.
     pub grouped: BarGroupedStyle,
-    /// Tear bars far longer than the rest and float their ends as caps.
-    pub torn_outlier: BarTornOutlierStyle,
+    /// Tear bars far longer than the rest.
+    pub outliers: BarOutliersStyle,
     /// How the `pattern:` channel paints fills.
     pub pattern: PatternStyle,
     /// Bar-family mark overrides.

@@ -101,7 +101,8 @@ from dbt_charts.core.compile.models.style.theme.bar import (
     BarChartMarksStyle,
     BarChartStyle,
     BarLayerStyle,
-    BarTornOutlierStyle,
+    BarOutliersCapStyle,
+    BarOutliersStyle,
 )
 from dbt_charts.core.compile.models.style.theme.board import (
     VALID_FONT_WEIGHTS,
@@ -328,7 +329,8 @@ __all__ = [
     "XScaleStyle",
     "BarChartMarksStyle",
     "BarChartStyle",
-    "BarTornOutlierStyle",
+    "BarOutliersStyle",
+    "BarOutliersCapStyle",
     "BarLayerStyle",
     "BarLabelsStyle",
     "BarMarkStyle",

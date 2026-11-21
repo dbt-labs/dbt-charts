@@ -21,6 +21,8 @@ See also:
     - dbt_charts/core/execute/trivial_local_cache.py — TrivialDuckDBCache (replace-on-write)
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 from collections.abc import Collection

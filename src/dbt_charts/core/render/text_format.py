@@ -3,6 +3,8 @@
 Templates the dict produced by board_to_dict into compact markdown text.
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from typing import Any
 

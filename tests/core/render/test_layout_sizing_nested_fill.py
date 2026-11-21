@@ -370,11 +370,14 @@ def test_a_kpi_stays_compact_and_the_chart_takes_the_rest(
 def test_a_pie_keeps_its_size_and_the_chart_takes_the_rest(
     render_stack: RenderStack,
 ) -> None:
-    board, boxes = render_stack(_beside_tall_text("pie_a", "chart_a"))
-    _, alone = render_stack(_beside_tall_text("pie_a"))
+    # A colored pie binds a board-wide color scale, which resolves a copy of the
+    # layout, so the cell's height is read off what the pie and chart paint.
+    _, boxes = render_stack(_beside_tall_text("pie_a", "chart_a"))
+    _, pie_alone = render_stack(_beside_tall_text("pie_a"))
+    _, chart_alone = render_stack(_beside_tall_text("chart_a"))
 
-    assert boxes["pie_a"] == pytest.approx(alone["pie_a"])
-    assert _stack_end(_cell(board)) == pytest.approx(_cell(board).height)
+    assert boxes["pie_a"] == pytest.approx(pie_alone["pie_a"])
+    assert boxes["chart_a"] + boxes["pie_a"] == pytest.approx(chart_alone["chart_a"])
 
 
 def test_a_pie_in_a_nested_cols_matches_a_direct_pie(

@@ -210,6 +210,10 @@ pub fn err_category_color_palette_exhausted(value_count: impl Into<Value>, field
     Diagnostic::new(&codes::ERR_CATEGORY_COLOR_PALETTE_EXHAUSTED, [("value_count", value_count.into()), ("field", field.into()), ("swatch_count", swatch_count.into())])
 }
 
+pub fn err_category_color_pin_conflict(field: impl Into<Value>, value: impl Into<Value>, first_color: impl Into<Value>, second_color: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_CATEGORY_COLOR_PIN_CONFLICT, [("field", field.into()), ("value", value.into()), ("first_color", first_color.into()), ("second_color", second_color.into())])
+}
+
 pub fn err_category_color_pin_duplicate(field: impl Into<Value>, first_value: impl Into<Value>, second_value: impl Into<Value>, color: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_CATEGORY_COLOR_PIN_DUPLICATE, [("field", field.into()), ("first_value", first_value.into()), ("second_value", second_value.into()), ("color", color.into())])
 }
@@ -1562,6 +1566,10 @@ pub fn warn_callout_text_truncated(chart_id: impl Into<Value>, authored_field: i
     Diagnostic::new(&codes::WARN_CALLOUT_TEXT_TRUNCATED, [("chart_id", chart_id.into()), ("authored_field", authored_field.into()), ("authored_text", authored_text.into())])
 }
 
+pub fn warn_category_color_pin_orphan(field: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_CATEGORY_COLOR_PIN_ORPHAN, [("field", field.into())])
+}
+
 pub fn warn_category_color_pin_unseen(field: impl Into<Value>, values: impl Into<Value>, drawn: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_CATEGORY_COLOR_PIN_UNSEEN, [("field", field.into()), ("values", values.into()), ("drawn", drawn.into())])
 }
@@ -1716,6 +1724,10 @@ pub fn warn_missing_join_predicate(query_name: impl Into<Value>, message: impl I
 
 pub fn warn_normalize_percent_format_reads_raw_value(chart_id: impl Into<Value>, format: impl Into<Value>, field: impl Into<Value>, total: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_NORMALIZE_PERCENT_FORMAT_READS_RAW_VALUE, [("chart_id", chart_id.into()), ("format", format.into()), ("field", field.into()), ("total", total.into())])
+}
+
+pub fn warn_outliers_torn_unsupported(chart_id: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_OUTLIERS_TORN_UNSUPPORTED, [("chart_id", chart_id.into())])
 }
 
 pub fn warn_palette_unsupported(chart_id: impl Into<Value>, requested: impl Into<Value>, recommended: impl Into<Value>) -> Diagnostic {
@@ -1888,10 +1900,6 @@ pub fn warn_too_many_color_categories(chart_id: impl Into<Value>, field: impl In
 
 pub fn warn_too_many_x_categories(chart_id: impl Into<Value>, field: impl Into<Value>, count: impl Into<Value>, max_categories: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_TOO_MANY_X_CATEGORIES, [("chart_id", chart_id.into()), ("field", field.into()), ("count", count.into()), ("max_categories", max_categories.into())])
-}
-
-pub fn warn_torn_outlier_no_outlier(chart_id: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::WARN_TORN_OUTLIER_NO_OUTLIER, [("chart_id", chart_id.into())])
 }
 
 pub fn warn_trend_on_bars(chart_id: impl Into<Value>, index: impl Into<Value>) -> Diagnostic {

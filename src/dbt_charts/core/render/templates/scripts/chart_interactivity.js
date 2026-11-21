@@ -2131,7 +2131,7 @@
         applyHoverMarkers(state, mark, useXUnified ? matches : [{ mark: lone.mark }]);
     }
 
-    /*{# Off the chart: a bar past its chart's authored axis maximum is cut at #}*/
+    /*{# Off the chart: a bar past its chart's axis maximum is cut at #}*/
     /*{# its card's top edge, and carries its true length in chart pixels #}*/
     /*{# (`data-dbt-off-chart`). Hovering that chart draws each such bar at #}*/
     /*{# true length over the board and fades everything but the chart. A bar #}*/
@@ -2324,8 +2324,8 @@
         return true;
     }
 
-    function offChartPlan(svg, chartEl) {
-        const bars = Array.prototype.slice.call(chartEl.querySelectorAll(OFF_CHART)).map(function (el) {
+    function offChartPlan(svg, chartEl, only) {
+        const bars = (only ? [only] : Array.prototype.slice.call(chartEl.querySelectorAll(OFF_CHART))).map(function (el) {
             const box = rootBox(svg, el);
             const ctm = el.getScreenCTM();
             const toRoot = ctm.d / box.scale;
@@ -2409,14 +2409,16 @@
         }
     }
 
-    function showOffChart(svg, state, chartEl) {
-        if (state.offChart.chart === chartEl) return;
+    /*{# `only`: the one bar a `reveal: bar` chart draws at true length; #}*/
+    /*{# null draws every torn bar of the chart (`reveal: chart`). #}*/
+    function showOffChart(svg, state, chartEl, only) {
+        if (state.offChart.chart === chartEl && state.offChart.only === only) return;
         clearOffChart(state);
         const layer = svg.querySelector('.' + OFF_CHART_LAYER);
         if (!layer || !chartEl.querySelector(OFF_CHART)) return;
         const units = layer.querySelectorAll('.dbt-off-chart-unit');
         const canvas = chartEl.getAttribute('data-dbt-chart-canvas');
-        const plan = offChartPlan(svg, chartEl);
+        const plan = offChartPlan(svg, chartEl, only);
         plan.forEach(function (bar, i) {
             if (!bar.points) return;
             paintUnit(svg, chartEl, units[i], bar, canvas, bar.el.getAttribute('fill'));
@@ -2436,6 +2438,7 @@
         fadeAround(svg, chartEl, state.offChart.faded);
         placeContent(chartEl, true);
         state.offChart.chart = chartEl;
+        state.offChart.only = only;
         state.offChart.svg = svg;
         state.offChart.plan = plan;
     }
@@ -2493,7 +2496,7 @@
             if (entry[1]) entry[0].style.opacity = entry[1];
             else entry[0].style.removeProperty('opacity');
         });
-        state.offChart = { chart: null, shown: [], faded: [], spirals: [], target: null };
+        state.offChart = { chart: null, only: null, shown: [], faded: [], spirals: [], target: null };
     }
 
     /*{# A spiral wears its bar's current paint, so it recedes with it. A #}*/
@@ -2528,7 +2531,7 @@
         useBoard(svg);
         const state = ensureState();
         mountOffChart(svg);
-        const offChart = { offChart: { chart: null, shown: [], faded: [], spirals: [], target: null } };
+        const offChart = { offChart: { chart: null, only: null, shown: [], faded: [], spirals: [], target: null } };
         offChartStates.set(svg, offChart);
         const on = function (type, handler) {
             svg.addEventListener(type, function (event) {
@@ -2623,7 +2626,12 @@
 
         on('mouseover', function (event) {
             const chartEl = event.target && event.target.closest && event.target.closest('.dbt-chart');
-            if (chartEl && chartEl.querySelector(OFF_CHART)) showOffChart(svg, offChart, chartEl);
+            const torn = chartEl && chartEl.querySelector(OFF_CHART);
+            /*{# `reveal: bar` draws only the hovered torn bar; `chart` draws all. #}*/
+            const only = torn && torn.getAttribute('data-dbt-off-chart-reveal') === 'bar'
+                ? event.target.closest(OFF_CHART)
+                : null;
+            if (torn && (only || torn.getAttribute('data-dbt-off-chart-reveal') !== 'bar')) showOffChart(svg, offChart, chartEl, only);
             else clearOffChart(offChart);
         });
 

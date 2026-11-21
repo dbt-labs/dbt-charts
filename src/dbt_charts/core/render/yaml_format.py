@@ -4,6 +4,8 @@ Maps the dict produced by board_to_dict back to valid board YAML.
 The output can be re-compiled and rendered without a database connection.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 import yaml

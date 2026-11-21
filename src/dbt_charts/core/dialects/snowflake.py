@@ -4,6 +4,8 @@ Snowflake uses:
 - ? for positional parameters or :name for named parameters
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 
 from dbt_charts.core.dialects.base import SQLDialect

@@ -6,6 +6,8 @@ The names are a small grammar, not a list; `parse_daterange_preset` is the one
 place that knows it.
 """
 
+from __future__ import annotations
+
 import re
 from collections.abc import Generator
 from contextlib import contextmanager

@@ -5,6 +5,8 @@ ClickHouse uses:
   clickhouse-connect and clickhouse-driver, the two drivers dbt-clickhouse wraps)
 """
 
+from __future__ import annotations
+
 import math
 import re
 from collections.abc import Sequence

@@ -14,6 +14,8 @@ Dependencies:
     - .themes (for theme colors)
 """
 
+from __future__ import annotations
+
 import html
 import re
 from datetime import UTC
@@ -96,7 +98,7 @@ __all__ = [
 
 
 def _footer_attribution_svg(
-    footer: "FooterStyle", font_family: str, x: float, y: float
+    footer: FooterStyle, font_family: str, x: float, y: float
 ) -> tuple[str, float]:
     """Footer attribution ending at (x, y), and its total width.
 
@@ -173,7 +175,7 @@ def resolve_display_text_via(
     text: str,
     variables: VariableValues | None,  # type-state: optional — None means no variables
     *,
-    resolved_style: "ResolvedStyle",
+    resolved_style: ResolvedStyle,
     base_dir: str | None = None,  # type-state: optional — None is no location
 ) -> str:
     """Resolve board ``text:`` or a board title, reading query results and
@@ -223,7 +225,7 @@ def resolve_display_text_from_provider(
     text: str,
     variables: VariableValues | None,  # type-state: optional — None means no variables
     *,
-    resolved_style: "ResolvedStyle",
+    resolved_style: ResolvedStyle,
     base_dir: str | None = None,  # type-state: optional — None is no location
 ) -> str:
     """``resolve_display_text_via`` the provider scoped for this render pass, the one
@@ -411,11 +413,11 @@ def _nested_variables_path(source_path: str) -> str:
 
 
 def _render_variables_band(
-    variable_defs: "dict[str, Variable]",
+    variable_defs: dict[str, Variable],
     current_values: VariableValues,
     width: float,
     results: ChartDataProvider,
-    resolved_style: "ResolvedStyle",
+    resolved_style: ResolvedStyle,
     align: StripAlign,
     variables_path: str,
 ) -> tuple[str, float]:
@@ -605,9 +607,9 @@ def _render_text_svg(
     text: str,
     variables: VariableValues,
     width: float,
-    resolved_style: "ResolvedStyle",
-    text_style: "TextStyle",
-    plan: "ProsePlan | None",
+    resolved_style: ResolvedStyle,
+    text_style: TextStyle,
+    plan: ProsePlan | None,
     base_dir: str | None,
     error_collector: list[Diagnostic] | None,
     allow_raw_html: bool = False,

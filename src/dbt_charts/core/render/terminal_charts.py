@@ -7,6 +7,8 @@ This module handles the conversion from Vega-Lite chart specifications
 to terminal output using Plotext for charts and Rich for tables.
 """
 
+from __future__ import annotations
+
 import contextlib
 import logging
 from typing import Any

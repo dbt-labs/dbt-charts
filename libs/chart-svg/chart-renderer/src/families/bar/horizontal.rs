@@ -245,6 +245,7 @@ pub(super) fn render_horizontal_panel(
         wide_series,
         r.palette.is_empty(),
         r.legend_view.as_ref().and_then(|view| view.series()),
+        color_field.and_then(|cf| crate::common::category_scale_for(&r.category_colors, cf)).map(|_| ::bind::stack::RankBy { start: r.y_start.as_deref(), ..r.style.axis_y.rank_by(false) }),
     )?;
     let BarChartState {
         mut cat_domain,
@@ -480,10 +481,11 @@ pub(super) fn render_horizontal_panel(
     if reversed {
         tick_values.sort_by(|a, b| b.total_cmp(a));
     }
+    super::off_chart::warn_if_undrawable(&r);
     let mut torn = Torn::of(&r, true)?;
     if torn.is_some() && reversed {
         return Err(diagnostic::refuse!(
-            "bar: chart {chart_id:?} sets style.torn_outlier under a reversed value axis (axis_x.scale.x_reverse or a descending axis_y domain), which is not supported"
+            "bar: chart {chart_id:?} sets style.outliers.variant torn_with_cap under a reversed value axis (axis_x.scale.x_reverse or a descending axis_y domain), which is not supported"
         )
         .into());
     }

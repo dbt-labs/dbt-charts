@@ -24,6 +24,8 @@ See also:
     - vega_lite.py: Uses these utilities for KPI chart formatting
 """
 
+from __future__ import annotations
+
 import datetime
 import math
 import re
@@ -78,7 +80,9 @@ from dbt_charts.core.utils import is_date_like
 # 10 catches those gross mistakes without false-positiving on large legitimate
 # ratios — +300% growth (3.0), 9× ROI (9.0). Values below 10 (e.g. 3.2
 # meaning 3.2%) are below the threshold and will still mis-render silently —
-# the heuristic catches large mistakes, not all mistakes.
+# the heuristic catches large mistakes, not all mistakes. Negative values are
+# exempt: a margin of -20.94 is a real loss-making row. The trade-off is that a
+# negative percent-point rate (-18.2) mis-renders silently.
 _PERCENT_RANGE_THRESHOLD = 10.0
 
 
@@ -93,11 +97,14 @@ def _check_percent_range(value: int | float, format_spec: str) -> None:
     targets — they describe shares and rates where >10 is almost always a
     forgotten ÷100 in SQL.
 
+    Negative values never raise: a loss-making margin like -20.94 is a real
+    ratio, so a negative percent-point value is not caught.
+
     Callers are responsible for short-circuiting ``None`` before this call.
     """
     if not format_spec.endswith("%") or format_spec.startswith("+"):
         return
-    if abs(float(value)) >= _PERCENT_RANGE_THRESHOLD:
+    if float(value) >= _PERCENT_RANGE_THRESHOLD:
         raise DbtChartsError.from_code(
             ERR_PERCENT_RANGE, value=value, format_spec=format_spec
         )

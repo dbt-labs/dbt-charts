@@ -8,6 +8,8 @@ Resolution order:
 5. Auto-increment fallback if chosen port is occupied
 """
 
+from __future__ import annotations
+
 import errno
 import hashlib
 import os

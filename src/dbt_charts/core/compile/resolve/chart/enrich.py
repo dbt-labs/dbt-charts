@@ -7,6 +7,8 @@ Key principle: every auto-decision is overridable by explicit YAML.
 Authors override the zero baseline via style.axis_y.scale.continuous.zero.
 """
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 from datetime import date, datetime

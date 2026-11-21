@@ -150,9 +150,12 @@ def bar_style() -> ResolvedBarStyle:
         ResolvedBarEndpointLabelsConfig,
     )
     from dbt_charts.core.compile.models.style.resolved.bar import (
-        ResolvedBarTornOutlierStyle,
+        ResolvedBarOutliersStyle,
     )
-    from dbt_charts.core.compile.models.style.theme.bar import BarGroupedStyle
+    from dbt_charts.core.compile.models.style.theme.bar import (
+        BarGroupedStyle,
+        BarOutliersCapStyle,
+    )
 
     ax, ay = _bake_axes("bar", "ordinal", "quantitative")
     return ResolvedBarStyle(
@@ -168,10 +171,10 @@ def bar_style() -> ResolvedBarStyle:
         label_usable_ratio=0.8,
         axis_x=ax,
         axis_y=ay,
-        torn_outlier=ResolvedBarTornOutlierStyle(
-            enabled=False,
-            band=0.5,
-            cap=1.0,
+        outliers=ResolvedBarOutliersStyle(
+            variant="torn",
+            reveal="chart",
+            cap=BarOutliersCapStyle(band=0.5, length=1.0),
         ),
     )
 

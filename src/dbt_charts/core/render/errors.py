@@ -14,6 +14,8 @@ Note: Many render errors are displayed IN the output rather than thrown,
 so users see helpful error messages in the rendered board.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any
 

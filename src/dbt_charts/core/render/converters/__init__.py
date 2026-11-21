@@ -12,6 +12,8 @@ Dependencies:
     - vl-convert-python (for PNG/PDF export)
 """
 
+from __future__ import annotations
+
 from dbt_charts.core.render.converters.html import to_html
 from dbt_charts.core.render.converters.pdf import to_pdf
 from dbt_charts.core.render.converters.png import to_png

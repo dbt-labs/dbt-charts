@@ -4,6 +4,8 @@ Stage: RENDER
 Purpose: Convert SVG output to PDF using vl-convert.
 """
 
+from __future__ import annotations
+
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_FORMAT_CONVERSION_FAILED,
     ERR_FORMAT_CONVERTER_UNAVAILABLE,

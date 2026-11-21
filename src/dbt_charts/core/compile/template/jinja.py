@@ -31,6 +31,8 @@ Security Note:
     partial results. Production rendering should always use strict=True.
 """
 
+from __future__ import annotations
+
 import logging
 import re
 from collections.abc import Callable, Iterable, Mapping

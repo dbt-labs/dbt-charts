@@ -188,6 +188,147 @@ pub fn sorted_series_by_stack_order(
     Ok(ordered)
 }
 
+/// A label's stem and trailing number (`P10` is `("p", 10)`, `Tier 3` is `("tier", 3)`); none for a label
+/// that is not one stem and a number.
+fn ranked_number(label: &str) -> Option<(String, u64)> {
+    let split = label.find(|c: char| c.is_ascii_digit())?;
+    let (stem, digits) = label.split_at(split);
+    let number = digits.parse().ok()?;
+    Some((stem.trim_end().to_lowercase(), number))
+}
+
+/// A vertical stack's legend, top to bottom as the layers draw: the series that pile above the baseline,
+/// last-stacked first, then the ones below it, nearest the baseline first. `stack_order` is baseline-first;
+/// a series piles below when its values sum negative.
+pub fn vertical_legend_order(stack_order: &[String], rows: &[serde_json::Map<String, Value>], series_field: &str, y_field: &str) -> Vec<String> {
+    let mut sums: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for row in rows {
+        if row.get(series_field).is_some_and(|v| !v.is_null()) {
+            if let Some(y) = row_num(row, y_field) {
+                *sums.entry(row_str(row, series_field)).or_insert(0.0) += y;
+            }
+        }
+    }
+    let below = |s: &&String| sums.get(*s).copied().unwrap_or(0.0) < 0.0;
+    let above = stack_order.iter().filter(|s| !below(s)).rev();
+    above.chain(stack_order.iter().filter(below)).cloned().collect()
+}
+
+/// How a chart sizes its series: the sum of its measure (a bar, line or area), or the average of it
+/// (a scatter, whose sum only counts points); `ascending` for an authored axis that runs backwards,
+/// where the smaller value is the better one; `start` for a ranged bar (a waterfall), whose size is
+/// each bar's drawn length from that column to the measure, not where it ends.
+#[derive(Clone, Copy, Default)]
+pub struct RankBy<'a> {
+    pub mean: bool,
+    pub ascending: bool,
+    pub start: Option<&'a str>,
+}
+
+/// `series` in the order a chart lists them when its author said none: labels that are all one stem and a
+/// number by the number (`P2` before `P10`), otherwise [`by_size`]. Python's `_ranked` ranks the board's
+/// colors by the same rungs over every chart's shares.
+pub fn ranked_series(series: &[String], rows: &[serde_json::Map<String, Value>], series_field: &str, y_field: &str, by: RankBy) -> Vec<String> {
+    let mut sums: std::collections::HashMap<String, (f64, usize)> = std::collections::HashMap::new();
+    for row in rows {
+        if row.get(series_field).is_some_and(|v| !v.is_null()) {
+            let size = match by.start {
+                Some(start) => row_num(row, y_field).zip(row_num(row, start)).map(|(end, start)| (end - start).abs()),
+                None => row_num(row, y_field),
+            };
+            if let Some(y) = size {
+                let entry = sums.entry(row_str(row, series_field)).or_insert((0.0, 0));
+                entry.0 += y;
+                entry.1 += 1;
+            }
+        }
+    }
+    let sizes = sums.into_iter().map(|(name, (sum, n))| (name, if by.mean { sum / n as f64 } else { sum })).collect();
+    ranked_by_size(series, &sizes, by.ascending)
+}
+
+/// [`ranked_series`] over sizes already summed per series.
+pub fn ranked_by_size(series: &[String], sizes: &std::collections::HashMap<String, f64>, ascending: bool) -> Vec<String> {
+    let mut ordered = series.to_vec();
+    let numbers: Option<Vec<(String, u64)>> = series.iter().map(|s| ranked_number(s)).collect();
+    if let Some(numbers) = numbers.filter(|n| n.windows(2).all(|w| w[0].0 == w[1].0)) {
+        let number = |s: &String| numbers[series.iter().position(|t| t == s).unwrap_or(0)].1;
+        ordered.sort_by(|a, b| number(a).cmp(&number(b)).then_with(|| a.cmp(b)));
+        return ordered;
+    }
+    by_size(series, sizes, ascending)
+}
+
+/// `series` largest first by magnitude (a sum of -100 draws larger than one of 10), smallest first on a
+/// backwards axis, ties by name. Python's `_ranked` weighs the board's colors by the same magnitude.
+pub fn by_size(series: &[String], sizes: &std::collections::HashMap<String, f64>, ascending: bool) -> Vec<String> {
+    let mut ordered = series.to_vec();
+    let size = |s: &String| sizes.get(s).copied().unwrap_or(0.0).abs();
+    ordered.sort_by(|a, b| {
+        let by_size = if ascending { size(a).total_cmp(&size(b)) } else { size(b).total_cmp(&size(a)) };
+        by_size.then_with(|| a.cmp(b))
+    });
+    ordered
+}
+
+#[cfg(test)]
+mod ranked_series_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn rows(cells: &[(&str, f64)]) -> Vec<serde_json::Map<String, Value>> {
+        cells.iter().map(|(s, y)| json!({"s": s, "y": y}).as_object().unwrap().clone()).collect()
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn the_largest_sum_comes_first_and_ties_go_by_name() {
+        let data = rows(&[("a", 1.0), ("b", 5.0), ("c", 5.0)]);
+        assert_eq!(ranked_series(&names(&["a", "b", "c"]), &data, "s", "y", RankBy::default()), ["b", "c", "a"]);
+    }
+
+    #[test]
+    fn a_scatter_ranks_by_its_average_and_a_backwards_axis_by_the_smallest() {
+        let data = rows(&[("a", 10.0), ("a", 10.0), ("a", 10.0), ("b", 25.0)]);
+        let list = names(&["a", "b"]);
+        assert_eq!(ranked_series(&list, &data, "s", "y", RankBy::default()), ["a", "b"]);
+        assert_eq!(ranked_series(&list, &data, "s", "y", RankBy { mean: true, ..RankBy::default() }), ["b", "a"]);
+        assert_eq!(ranked_series(&list, &data, "s", "y", RankBy { ascending: true, ..RankBy::default() }), ["b", "a"]);
+    }
+
+    #[test]
+    fn a_ranged_bar_ranks_by_its_drawn_length_not_its_end() {
+        let data: Vec<_> = [("Net", 0.0, 40.0), ("Gain", 40.0, 140.0), ("Loss", 140.0, 120.0)]
+            .iter()
+            .map(|(s, start, end)| json!({"s": s, "start": start, "y": end}).as_object().unwrap().clone())
+            .collect();
+        let list = names(&["Gain", "Loss", "Net"]);
+        assert_eq!(ranked_series(&list, &data, "s", "y", RankBy::default()), ["Gain", "Loss", "Net"]);
+        assert_eq!(ranked_series(&list, &data, "s", "y", RankBy { start: Some("start"), ..RankBy::default() }), ["Gain", "Net", "Loss"]);
+    }
+
+    #[test]
+    fn a_negative_sum_ranks_by_its_magnitude() {
+        let data = rows(&[("small", -10.0), ("big", -100.0), ("mid", 50.0)]);
+        assert_eq!(ranked_series(&names(&["big", "mid", "small"]), &data, "s", "y", RankBy::default()), ["big", "mid", "small"]);
+    }
+
+    #[test]
+    fn numbered_labels_go_by_number_not_size() {
+        let data = rows(&[("P10", 9.0), ("P2", 1.0), ("P1", 5.0)]);
+        assert_eq!(ranked_series(&names(&["P1", "P10", "P2"]), &data, "s", "y", RankBy::default()), ["P1", "P2", "P10"]);
+    }
+
+    #[test]
+    fn labels_of_different_stems_go_by_size() {
+        let data = rows(&[("P1", 1.0), ("Q2", 5.0)]);
+        assert_eq!(ranked_series(&names(&["P1", "Q2"]), &data, "s", "y", RankBy::default()), ["Q2", "P1"]);
+    }
+}
+
 #[cfg(test)]
 mod grammar_stack_tests {
     use super::*;

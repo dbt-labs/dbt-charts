@@ -1,12 +1,11 @@
-"""The legend lists series by their value at the axis's last category, not at
-the alphabetically greatest one."""
+"""The legend lists series in the order of their color slots (largest total
+first), not by their value at the axis's last category or alphabetically."""
 
 import re
 
 from ._svg_render import render_board_to_svg
 
-# "Before" is the axis's first category, "After" its last; alphabetically it is
-# the other way round. Series B ends highest, A lowest.
+# Series A has the larger total (110 against 90) but ends lowest; B ends highest.
 _BOARD = """
 title: T
 queries:
@@ -33,8 +32,8 @@ rows:
 """
 
 
-def test_legend_orders_series_by_the_last_category_on_the_axis() -> None:
+def test_legend_orders_series_by_color_slot() -> None:
     svg = render_board_to_svg(_BOARD)
 
     legend = re.findall(r'role-legend-label"[^>]*>(?:<[^>]+>)*([AB])<', svg)
-    assert legend == ["B", "A"]
+    assert legend == ["A", "B"]

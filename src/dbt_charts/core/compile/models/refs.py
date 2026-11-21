@@ -24,6 +24,8 @@ import cycle (parser.py → authored.py via this module is fine; the reverse
 parser → authored would be circular).
 """
 
+from __future__ import annotations
+
 import re
 from typing import Annotated, Any
 

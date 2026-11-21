@@ -751,9 +751,13 @@ def validate_variable_value(var_name: str, var: Variable, value: Any) -> None:
             if isinstance(v, date):
                 continue
             if not isinstance(v, str):
-                raise CompilationError(
-                    f"Variable '{var_name}': daterange[{i}] must be string, "
-                    f"got {type(v).__name__}"
+                raise CompilationError.from_code(
+                    ERR_VALIDATION_FIELD,
+                    field_path=f"variables.{var_name}.default",
+                    pydantic_msg=(
+                        f"Variable '{var_name}': daterange[{i}] must be string, "
+                        f"got {type(v).__name__}"
+                    ),
                 )
             _validate_date_string(var_name, f"daterange[{i}]", v)
         return
@@ -765,9 +769,13 @@ def validate_variable_value(var_name: str, var: Variable, value: Any) -> None:
     # format_variable_display_value raises for the same reason without a
     # variable name to point at.
     if input_type in ("select", "radio") and isinstance(value, (list, tuple)):
-        raise CompilationError(
-            f"Variable '{var_name}': {input_type} default must be a scalar "
-            f"value, got a list: {value!r}"
+        raise CompilationError.from_code(
+            ERR_VALIDATION_FIELD,
+            field_path=f"variables.{var_name}.default",
+            pydantic_msg=(
+                f"Variable '{var_name}': {input_type} default must be a scalar "
+                f"value, got a list: {value!r}"
+            ),
         )
 
     # Standard type validation from dict

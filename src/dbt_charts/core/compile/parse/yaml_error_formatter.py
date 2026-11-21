@@ -9,6 +9,8 @@ This module provides utilities to format YAML validation errors with:
 Refs #94
 """
 
+from __future__ import annotations
+
 import difflib
 import json
 import re
@@ -237,7 +239,7 @@ def _authored_chart_fields_by_type() -> dict[str, frozenset[str]]:
     }
 
 
-def _raw_mapping(yaml_content: str | None) -> "JsonObject | None":
+def _raw_mapping(yaml_content: str | None) -> JsonObject | None:
     """The document as authored, or ``None`` when it is absent, unparseable, or not a mapping.
 
     Error formatting must never itself raise on the text it is describing.
@@ -279,7 +281,7 @@ def _chart_type_from_error_path(
     return None
 
 
-def _authored_chart(field_path: list[str], yaml_content: str | None) -> "JsonObject":
+def _authored_chart(field_path: list[str], yaml_content: str | None) -> JsonObject:
     """The chart mapping a ``charts.<name>...`` error path points into, as authored."""
     data = _raw_mapping(yaml_content)
     charts = data.get("charts") if data is not None else None
@@ -543,7 +545,7 @@ def _authored_child(
     return None
 
 
-def _display_path(path: list[str], authored: "JsonObject | None" = None) -> list[str]:
+def _display_path(path: list[str], authored: JsonObject | None = None) -> list[str]:
     """*path* with pure schema-plumbing segments (union-tag discriminators)
     dropped, for messages an author reads -- unlike ``_annotations_at_path``,
     which needs those segments to walk the type tree and must see the full
@@ -1322,7 +1324,7 @@ def format_validation_errors_structured(
     error: Any,
     yaml_content: str | None = None,
     template_names: tuple[str, ...] = (),
-) -> "list[Diagnostic]":
+) -> list[Diagnostic]:
     """Format a Pydantic ValidationError into collapsed Diagnostic objects.
 
     Each returned Diagnostic corresponds to one collapsed error group (not
@@ -1416,10 +1418,8 @@ def format_validation_errors_structured(
             ec = REGISTRY.get(err["ctx"]["code"])
         elif err_type == "model_type" and wrong_shape_keys:
             ec = ERR_WRONG_SHAPE
-        elif field_path_str:
-            ec = ERR_VALIDATION_FIELD
         else:
-            ec = ERR_INTERNAL
+            ec = ERR_VALIDATION_FIELD
 
         input_val = err.get("input")
         bar_position_fix = (

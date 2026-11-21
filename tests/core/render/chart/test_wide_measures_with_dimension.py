@@ -163,10 +163,11 @@ class TestUnfoldHelpers:
         ]
         labels = {"messages": "messages", "fixes": "fixes"}
         assert wide_series_names(("messages", "fixes"), "list", data, labels) == [
-            "bugs - fixes",
             "bugs - messages",
+            "bugs - fixes",
         ]
+        # Without a dimension the series keep their authored `y:` order.
         assert wide_series_names(("messages", "fixes"), None, data, labels) == [
-            "fixes",
             "messages",
+            "fixes",
         ]

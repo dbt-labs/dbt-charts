@@ -14,6 +14,8 @@ Example:
     '%s'
 """
 
+from __future__ import annotations
+
 from dbt_charts.core.dialects.athena import AthenaDialect
 from dbt_charts.core.dialects.base import VALID_OPERATORS, SQLDialect
 from dbt_charts.core.dialects.bigquery import BigQueryDialect

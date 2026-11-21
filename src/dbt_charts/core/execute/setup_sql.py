@@ -6,6 +6,8 @@ This module walks the dependency graph, collects setup_sql blocks
 in topological order, and deduplicates identical blocks.
 """
 
+from __future__ import annotations
+
 import re
 
 from dbt_charts.core.compile.models.query.normalized import (

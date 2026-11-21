@@ -40,6 +40,8 @@ Dependencies:
     - dbt_charts.core.dialects (for parameter placeholder styles)
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import re
@@ -311,7 +313,7 @@ class _TokenText(str):
     __slots__ = ("_var_name",)
     _var_name: str
 
-    def __new__(cls, token: str, var_name: str) -> "_TokenText":
+    def __new__(cls, token: str, var_name: str) -> _TokenText:
         self = super().__new__(cls, token)
         self._var_name = var_name
         return self

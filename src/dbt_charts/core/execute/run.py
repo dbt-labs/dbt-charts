@@ -21,6 +21,8 @@ Entry Points:
     - run_misses(ctx, ledger, found, max_workers) -> dict[str, Outcome]
 """
 
+from __future__ import annotations
+
 import contextvars
 import logging
 import re
@@ -698,7 +700,7 @@ def ad_hoc_board_clock(instant: datetime) -> BoardClock:
 
 
 def run_query(
-    env: "ExecEnv",
+    env: ExecEnv,
     query: AnyQuery,
     variables: VariableValues | None = None,
     params: QueryParams = None,
@@ -823,7 +825,7 @@ def attributed(
 
 
 def run_route(
-    env: "ExecEnv",
+    env: ExecEnv,
     route: Route,
     query: AnyQuery,
     variables: VariableValues | None,
@@ -936,7 +938,7 @@ def _cut_to_ceiling(result: QueryResult) -> QueryResult:
     return result
 
 
-def _source_origin(env: "ExecEnv", source_config: ResolvedSourceConfig) -> str:
+def _source_origin(env: ExecEnv, source_config: ResolvedSourceConfig) -> str:
     """What a source is, for the agent repairing its connection: the warehouse
     type, plus the dbt project when it expanded from a dbt profile.
 
@@ -955,7 +957,7 @@ def _source_origin(env: "ExecEnv", source_config: ResolvedSourceConfig) -> str:
 
 
 def execute_on_backend(
-    env: "ExecEnv",
+    env: ExecEnv,
     source_config: ResolvedSourceConfig,
     source_name: str | None,
     prepare: Callable[[SQLDialect], ResolvedQuery | QueryResult],
@@ -1044,7 +1046,7 @@ def execute_on_backend(
 
 
 def run_file_source(
-    env: "ExecEnv",
+    env: ExecEnv,
     source_config: ResolvedSourceConfig,
     source_name: str | None,
     dialect: str | None,
@@ -1108,7 +1110,7 @@ def run_file_source(
 
 
 def run_planned(
-    env: "ExecEnv",
+    env: ExecEnv,
     plan: QueryPlan,
     name: str,
     *,

@@ -2252,15 +2252,15 @@ WARN_TREND_ON_BARS = REGISTRY.register(
     )
 )
 
-WARN_TORN_OUTLIER_NO_OUTLIER = REGISTRY.register(
+WARN_OUTLIERS_TORN_UNSUPPORTED = REGISTRY.register(
     WarningCode(
-        code="WARN-TORN-OUTLIER-NO-OUTLIER",
+        code="WARN-OUTLIERS-TORN-UNSUPPORTED",
         domain="render",
-        title="Torn outlier bars are on but no bar needs tearing",
-        message_template="Chart {chart_id!r}: style.torn_outlier.enabled is on, but no bar is far enough above the rest to tear, so the chart is drawn plain.",
-        fix_template="Nothing to fix if the data may change. Otherwise set style.torn_outlier.enabled: false, or pin the break with style.torn_outlier.at.",
-        doc="Fires when `style.torn_outlier.enabled` is on and no bar qualifies as an outlier. With no authored `at`, no gap between sorted bar lengths reaches the minimum ratio (or fewer than four bars exist); with an authored `at`, no bar extends past it. The chart renders without a tear. This is informational because the data under a saved board can change.",
-        summary="style.torn_outlier is enabled but no bar exceeds the break.",
+        title="Bars past the axis cannot be torn off the chart on this chart",
+        message_template="Chart {chart_id!r}: a bar is far enough past the rest to tear, but `style.outliers.variant: torn` cannot draw this chart shape, so the chart is drawn plain.",
+        fix_template="On a horizontal or stacked chart, set style.outliers.variant to torn_with_cap to cap the long bar. Otherwise set style.outliers.median_multiplier to none to stop tearing bars automatically; a bar past a pinned axis_y domain maximum still tears until the pin is raised.",
+        doc="Fires when a bar tears (it is at least `style.outliers.median_multiplier` times the median bar, or passes a pinned `axis_y` domain maximum) on a chart where `variant` is `torn` and the chart is horizontal, stacked, normalized, has a bar layer, small multiples, ranged (`y_start`) or has a mirrored value axis. Torn bars run off the top of a vertical card, so these shapes draw every bar at its true length instead; the chart is never switched to the cap variant for you.",
+        summary="Fired when a bar would tear but the chart shape cannot draw an off-the-chart bar.",
         docs_topic="charts",
     )
 )

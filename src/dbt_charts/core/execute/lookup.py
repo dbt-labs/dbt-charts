@@ -16,6 +16,8 @@ Entry Points:
     - lookup_names(ctx, ledger, names, variables, ...) -> Lookup
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field

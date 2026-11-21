@@ -7,6 +7,8 @@ and an optional set of pre-template queries. Python owns route compilation;
 YAML owns the visible template structure.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field

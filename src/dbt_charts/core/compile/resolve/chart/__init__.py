@@ -28,6 +28,8 @@ import a family module, and no family module imports another family module — o
 `_dispatch` imports family modules.
 """
 
+from __future__ import annotations
+
 from ._dispatch import resolve
 from ._domain import layers_own_y_scale, resolve_y_zero
 from ._kwargs import (

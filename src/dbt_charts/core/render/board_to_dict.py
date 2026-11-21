@@ -4,6 +4,8 @@ The dict shape is the shared primitive that the JSON, YAML, and text formatters
 serialize into their respective wire formats.
 """
 
+from __future__ import annotations
+
 import sys
 import uuid
 from collections.abc import Callable, Mapping

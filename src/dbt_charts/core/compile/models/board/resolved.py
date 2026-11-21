@@ -3,6 +3,8 @@
 # ============================================================================
 
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -87,7 +89,7 @@ class ChartIdentity:
     title: str | None
 
     @classmethod
-    def from_resolved(cls, chart: ResolvedChart) -> "ChartIdentity":
+    def from_resolved(cls, chart: ResolvedChart) -> ChartIdentity:
         return cls(
             chart_type=chart.chart_type,
             id=chart.id,
@@ -104,7 +106,7 @@ class ChartIdentity:
         )
 
     @classmethod
-    def from_normalized(cls, chart: Chart) -> "ChartIdentity":
+    def from_normalized(cls, chart: Chart) -> ChartIdentity:
         """Identity for a chart that never resolved.
 
         ``chart.type`` is the authored family alias (``histogram`` survives
@@ -150,7 +152,7 @@ class ResolvedLayoutItem:
     type: str  # "chart" | "board" | "text" | "markdown" | ...
     chart: ResolvedChart | None
     # nested board is a forward reference — resolved recursively
-    board: "ResolvedBoard | None"
+    board: ResolvedBoard | None
     x: float
     y: float
     width: float
@@ -161,7 +163,7 @@ class ResolvedLayoutItem:
     details_summary: str | None = None
     details_expanded_summary: str | None = None
     notes: str | None = None
-    visible: "bool | str | SingleRowBoolProbe | None" = None
+    visible: bool | str | SingleRowBoolProbe | None = None
     # Set instead of `chart` when the chart failed to resolve. The render walk
     # draws an error tile from it; `chart` stays None exactly as it is for any
     # non-chart item.
@@ -182,7 +184,7 @@ class ResolvedLayout:
     """
 
     type: str  # "rows" | "cols" | "grid" | "tabs"
-    items: tuple["ResolvedLayoutItem", ...]
+    items: tuple[ResolvedLayoutItem, ...]
     width: float
     height: float
     content_width: float
@@ -257,6 +259,6 @@ class ResolvedBoard:
         )
 
     @property
-    def visible_variables(self) -> "dict[str, Variable]":
+    def visible_variables(self) -> dict[str, Variable]:
         """Variables with visible=True — available for UI controls."""
         return {k: v for k, v in self.variables.items() if v.visible}

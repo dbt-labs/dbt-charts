@@ -445,6 +445,8 @@ pub struct Variable {
     #[model(arm_pattern)]
     pub query: Option<VariableQuery>,
     /// Dropdown values come from a query column, or (rarely) a written-out list.
+    /// Options keep the query's row order (use ORDER BY) or the written order; a
+    /// `column` binding sorts them ascending.
     #[model(absent = "no options")]
     pub options: Option<VariableOptions>,
     /// The type of the values a select, radio or multiselect sends back. 'number', 'date' and 'boolean' convert the value before it reaches SQL. Without it, a static numeric list implies 'number' and query options their column's declared type. 'string' and 'array' leave the value as sent.

@@ -3,6 +3,8 @@
 Not a class the engine builds: a reader refuses any version but its own.
 """
 
+from __future__ import annotations
+
 import json
 from typing import Literal, TypedDict
 

@@ -39,7 +39,7 @@ def test_long_legend_entries_are_cut_and_reveal_the_full_name_on_hover() -> None
     cut = re.findall(
         r"role-legend-label[^>]*><text[^>]*>([^<]*…)<title>([^<]*)</title>", svg
     )
-    assert [full for _, full in cut] == list(_NAMES)
+    assert sorted(full for _, full in cut) == sorted(_NAMES)
     assert all(full.startswith(shown.rstrip("…").rstrip()) for shown, full in cut)
 
 

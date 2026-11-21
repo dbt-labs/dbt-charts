@@ -145,7 +145,6 @@ pub(crate) fn total_style(body: &BoardBody) -> Result<&Style, Diagnostic> {
 pub(crate) fn plan<'a>(board: &'a Board, styles: &'a ChartStyles, bound: &'a bound::Board, reads_data: &'a BTreeMap<ItemId, ReadsData>, facts: &impl EngineFacts) -> Result<Slots<'a>, Diagnostic> {
     let mut slots = Slots { by_placement: BTreeMap::new(), boards: BTreeMap::from([(ItemId::root(), &board.body)]), levels: BTreeMap::new(), drawn: bound.drawn(), closed: BTreeMap::new(), panes: BTreeMap::new(), styles, width_authored: board.width.is_some(), reads_data };
     walk(&board.body, &ItemId::root(), 0, false, board, styles, bound, facts, &mut slots)?;
-    refuse_callout_scopes(&slots)?;
     // An unpinned table hugs the board's width to its columns (`_make_chart_width_measurer`).
     if board.width.is_none() && slots.by_placement.values().any(|slot| matches!(slot.drawn, Ok(Family::Table(_)))) {
         return Err(Diagnostic::refused(refuse!("a table on a board with no authored `width:` is not supported")));
@@ -164,22 +163,6 @@ pub(crate) fn plan<'a>(board: &'a Board, styles: &'a ChartStyles, bound: &'a bou
         }
     }
     Ok(slots)
-}
-
-/// Production caches a callout's rendered card by chart id, width and height, so a callout placed in
-/// scopes that style it differently draws one scope's card at every placement that shares a size.
-/// The engine draws each in its own scope, so it refuses the placements production would conflate.
-fn refuse_callout_scopes(slots: &Slots) -> Result<(), Diagnostic> {
-    let mut seen = BTreeMap::new();
-    for slot in slots.by_placement.values().filter(|slot| matches!(slot.drawn, Ok(Family::Callout(_)))) {
-        // What draws a callout: its slot width and the style it resolves to, which also reads the
-        // scope's emoji family, bold weight and code family.
-        let drawn = (slot.placed.charts.callout.preferred_width, CalloutStyle::of(&slot.placed.charts.callout, total_style(slot.body)?)?);
-        if *seen.entry(slot.facts.id.as_str()).or_insert_with(|| drawn.clone()) != drawn {
-            return Err(Diagnostic::refused(refuse!("a callout placed in scopes that style it differently is not supported")));
-        }
-    }
-    Ok(())
 }
 
 fn walk<'a>(

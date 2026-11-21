@@ -23,6 +23,8 @@ from dbt_charts.core.compile.models.primitives import (
     bake_scale_target_stops,
 )
 from dbt_charts.core.compile.models.style.theme import KpiBackgroundGradient
+from dbt_charts.core.diagnostics import ERR_CHART_COLUMN_NOT_IN_RESULT
+from dbt_charts.core.diagnostics.base import DbtChartsError
 
 _RawStyleChannel = str | dict[str, Any]
 
@@ -158,6 +160,8 @@ def _parse_channel_scale(
 
 
 def _validate_channel_field(
+    chart_id: str,
+    query_name: str | None,
     channel_name: str,
     data_field: str,
     available_columns: set[str],
@@ -173,9 +177,13 @@ def _validate_channel_field(
             "chart's mark, e.g. for a bar chart:\n  style:\n    marks:\n      bar:\n"
             f'        color: "{data_field}"'
         )
-    raise ValueError(
-        f"Channel '{channel_name}' column '{data_field}' not found. "
-        f"Available: {sorted(available_columns)}"
+    raise DbtChartsError.from_code(
+        ERR_CHART_COLUMN_NOT_IN_RESULT,
+        chart=chart_id,
+        channel=channel_name,
+        column=data_field,
+        name=query_name,
+        columns=sorted(available_columns),
     )
 
 
@@ -222,13 +230,21 @@ def _validate_palette_type(channel_name: str, scale: ScaleTargetConfig) -> None:
 
 
 def _validate_parsed_channel_input(
+    chart_id: str,
+    query_name: str | None,
     parsed: _ParsedChannelInput,
     available_columns: set[str],
 ) -> None:
     if isinstance(parsed, _LiteralChannelInput):
         return
     if available_columns:
-        _validate_channel_field(parsed.channel, parsed.data_field, available_columns)
+        _validate_channel_field(
+            chart_id,
+            query_name,
+            parsed.channel,
+            parsed.data_field,
+            available_columns,
+        )
     if isinstance(parsed, _GradientChannelInput):
         _validate_palette_type(parsed.channel, parsed.scale)
 
@@ -247,7 +263,8 @@ def normalize_chart_channels(
     ``style_color``: when a color config with a gradient is provided, the
     series color channel is upgraded to gradient mode.
 
-    Raises ValueError on unresolvable field references or invalid syntax.
+    Raises ValueError on invalid syntax and ERR-CHART-COLUMN-NOT-IN-RESULT on a
+    field the rows lack.
     """
     raw_channels: dict[str, _RawStyleChannel] = {}
 
@@ -286,7 +303,9 @@ def normalize_chart_channels(
         for channel_name, raw in raw_channels.items()
     }
     for channel_input in parsed_channels.values():
-        _validate_parsed_channel_input(channel_input, available_columns)
+        _validate_parsed_channel_input(
+            chart.id, chart.query_name, channel_input, available_columns
+        )
 
     channels = {
         channel_name: _resolve_style_channel_input(parsed)
@@ -309,16 +328,21 @@ def normalize_chart_channels(
 
 
 def kpi_background_channel(
-    gradient: KpiBackgroundGradient, available_columns: set[str]
+    chart_id: str,
+    query_name: str | None,
+    gradient: KpiBackgroundGradient,
+    available_columns: set[str],
 ) -> ResolvedStyleChannel:
     """The KPI card's background channel: its color scale, read at the value's column.
 
     Raises:
-        ValueError: The column is not in the query result, or the palette is not
-            a list of colors.
+        ValueError: The palette is not a list of colors.
+        DbtChartsError: The column is not in the query result.
     """
     if available_columns:
-        _validate_channel_field("background", gradient.column, available_columns)
+        _validate_channel_field(
+            chart_id, query_name, "background", gradient.column, available_columns
+        )
     scale = bake_scale_target_stops(gradient.scale)
     _validate_palette_type("background", scale)
     return ResolvedStyleChannel(

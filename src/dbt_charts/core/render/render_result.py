@@ -1,5 +1,7 @@
 """RenderResult — the return type of render()."""
 
+from __future__ import annotations
+
 from pydantic import BaseModel
 
 from dbt_charts.core.diagnostics import Diagnostic

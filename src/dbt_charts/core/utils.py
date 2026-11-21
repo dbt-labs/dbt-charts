@@ -1,7 +1,10 @@
 """Cross-cutting utilities shared across compile, execute, and render modules."""
 
+from __future__ import annotations
+
 import math
 import re
+from collections import defaultdict
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from copy import deepcopy
 from datetime import date, datetime
@@ -566,6 +569,42 @@ def bar_sort_op(sort_by: str, measure_field: str | None, stacked: bool) -> VlSor
     return "sum" if stacked and sort_by == measure_field else "min"
 
 
+def series_totals(data: Rows, series_field: str, y_field: str) -> dict[str, float]:
+    """Each series' global sum of *y_field*, in first-seen row order.
+
+    The one size measure of a series: stack order ranks by it, and so does the
+    board's color-slot ranking.
+    """
+    totals: dict[str, float] = {}
+    for row in data:
+        s = row.get(series_field)
+        y = row.get(y_field)
+        if s is None or y is None:
+            continue
+        key = str(s)
+        # Accumulator init, not a fallback masking bad input.
+        running = totals.get(
+            key, 0.0
+        )  # type-state: silent_fallback — accumulator init, not masked bad input
+        totals[key] = running + float(y)
+    return totals
+
+
+def series_means(data: Rows, series_field: str, y_field: str) -> dict[str, float]:
+    """Each series' mean of *y_field*, in first-seen row order; a series with no
+    value has none."""
+    sums: defaultdict[str, float] = defaultdict(float)
+    counts: defaultdict[str, int] = defaultdict(int)
+    for row in data:
+        s = row.get(series_field)
+        y = row.get(y_field)
+        if s is None or y is None:
+            continue
+        sums[str(s)] += float(y)
+        counts[str(s)] += 1
+    return {key: total / counts[key] for key, total in sums.items()}
+
+
 def sorted_series_by_stack_order(
     series: list[str],
     data: Rows,
@@ -604,18 +643,7 @@ def sorted_series_by_stack_order(
 
         return sorted(series, key=_first_encounter_rank)
     # None / "value": sort by descending global sum.
-    global_sums: dict[str, float] = {}
-    for row in data:
-        s = row.get(series_field)
-        y = row.get(y_field)
-        if s is None or y is None:
-            continue
-        key = str(s)
-        # Accumulator init, not a fallback masking bad input.
-        running = global_sums.get(
-            key, 0.0
-        )  # type-state: silent_fallback — accumulator init, not masked bad input
-        global_sums[key] = running + float(y)
+    global_sums = series_totals(data, series_field, y_field)
 
     def _global_sum_rank(name: str) -> tuple[float, str]:
         # Unseen series sorts last (lowest priority) — a ranking default,

@@ -18,6 +18,8 @@ Entry Points:
     - Planned: a board's compile and its plan, what a render reads
 """
 
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime

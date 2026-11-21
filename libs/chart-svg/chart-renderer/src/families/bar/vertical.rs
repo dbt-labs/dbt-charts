@@ -40,7 +40,7 @@ use super::layout::{Drawn, XScale, clipped_if, warn_vertical_density};
 use super::legend::{LayeredBarLegend, authored_legend_order, bar_link_keys, grouped_legend_domain, numeric_legends_of, stacked_legend_entries};
 use super::marks::{BandColumns, ColumnSplit, Columns, RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, collapsed_bars, direction_layers, grouped_overlap_fraction, hover_band_for, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, strip_columns, unity_rule};
 use super::time_x::TimeX;
-use super::off_chart::OffChart;
+use super::off_chart::{OffChart, warn_if_undrawable};
 use super::torn_outlier::{Caps, Seg, Torn};
 use super::tooltip::{NativeTitles, bar_datum_aria, imputed_datum_aria, stack_group_total, tooltip_order_domain};
 use super::{BarResolved, x_resolution};
@@ -604,7 +604,15 @@ pub(crate) fn render_vertical_panel(
     } else if let Some(options) = linked_options {
         options.to_vec()
     } else {
-        color_field.map_or_else(Vec::new, |cf| color_domain_of(chart_rows, cf))
+        color_field.map_or_else(Vec::new, |cf| {
+            let seen = color_domain_of(chart_rows, cf);
+            // The board colors the series by slot, so they list in this chart's own ranked order.
+            if crate::common::category_scale_for(&r.category_colors, cf).is_some() {
+                ::bind::stack::ranked_series(&seen, chart_rows, cf, val_field, ::bind::stack::RankBy { start: r.y_start.as_deref(), ..r.style.axis_y.rank_by(false) })
+            } else {
+                seen
+            }
+        })
     };
     // The series that take a grouped band's slots: a legend view's shown ones.
     let layout_domain: Vec<String> = crate::legend_view::shown_among(r.legend_view.as_ref(), &color_domain);
@@ -1060,7 +1068,7 @@ pub(crate) fn render_vertical_panel(
     let legend_entries: Vec<(String, String)> = if legend_shown && !color_domain.is_empty() && r.numeric_color.is_none() {
         if is_stacked {
             // A linked legend lists its variable's options in their order, not the stack's.
-            let reversed: Vec<String> = linked_options.map_or_else(|| authored_legend_order(stack_order.iter().rev().cloned().collect(), &r.legend, &wide_labels), <[String]>::to_vec);
+            let reversed: Vec<String> = linked_options.map_or_else(|| authored_legend_order(::bind::stack::vertical_legend_order(&stack_order, chart_rows, color_field.unwrap_or_default(), val_field), &r.legend, &wide_labels), <[String]>::to_vec);
             stacked_legend_entries(&reversed, palette_domain, &r.series_palette, category_scale, &wide_labels, &r.patterns)?
         } else {
             stacked_legend_entries(
@@ -1800,7 +1808,7 @@ pub(crate) fn render_vertical_panel(
     let value_extent = (value_extent.0, torn.as_ref().map_or(value_extent.1, |t| t.break_value));
     // A bar past an authored maximum is cut at its card's top edge: it adds no ink above the plot.
     let off_chart_max = (facet.is_none()
-        && layers.is_empty()
+        && !layers.iter().any(|l| matches!(l.layer_type(), LayerType::Bar))
         && !is_stacked
         && !normalize
         && center_stack.is_none()
@@ -1812,6 +1820,9 @@ pub(crate) fn render_vertical_panel(
         && v_domain_min < linear_domain_max
         && value_extent.1 > linear_domain_max)
         .then_some(linear_domain_max);
+    if off_chart_max.is_none() {
+        warn_if_undrawable(r);
+    }
     // The cut bar leaves the fit entirely: the plot is what it would be without it.
     let value_extent = match off_chart_max {
         Some(max) => (value_extent.0, data_map.values().copied().filter(|v| *v <= max).fold(0.0, f64::max)),
@@ -5410,6 +5421,7 @@ under,
     let svg: Node = {
         let mut body = head;
         body.push(plot_group(plot));
+        body.extend(off_chart.as_mut().map(OffChart::front).unwrap_or_default());
         body.extend(tail);
         body.extend(floating);
         frame.svg(body)

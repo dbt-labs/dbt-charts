@@ -11,6 +11,8 @@ Entry Points:
       -> (ResultRows, TruncationInfo | None)
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal

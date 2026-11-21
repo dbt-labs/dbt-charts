@@ -3,6 +3,8 @@
 Serializes the dict produced by board_to_dict as JSON.
 """
 
+from __future__ import annotations
+
 import json
 from collections.abc import Mapping
 from datetime import date, datetime

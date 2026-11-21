@@ -81,8 +81,8 @@ class ResolvedBarChart(
     torn_break: float | None = Field(
         default=None,
         description=(
-            "Value where outlier bars are torn; the measure axis ends exactly "
-            "here. None when no bar is torn."
+            "Value where outlier bars are torn; the measure axis ends here "
+            "when the chart can draw the tear. None when no bar is torn."
         ),
     )
     style: ResolvedBarStyle = Field(

@@ -4,6 +4,8 @@ SQL Server uses:
 - @p1, @p2, ... for parameter placeholders
 """
 
+from __future__ import annotations
+
 import re
 from datetime import date, datetime, time
 from typing import Any

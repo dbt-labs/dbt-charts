@@ -1,6 +1,8 @@
 """SQL identifiers: the one quoter, and the spelling rules between SQL text,
 the warehouse catalog, and the result column names boards reference."""
 
+from __future__ import annotations
+
 import re
 
 from sqlglot import exp

@@ -24,6 +24,8 @@ name of a chart or board file. The prose around it becomes text rows.
 host that renders the prose itself can draw each fence's row in its place.
 """
 
+from __future__ import annotations
+
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass

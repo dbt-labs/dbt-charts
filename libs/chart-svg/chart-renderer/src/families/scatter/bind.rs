@@ -58,10 +58,9 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     // dimension/stack-order complexity to carry: `_wide_scatter_fold`
     // (`emitters/scatter.py:65-95`) passes `fold_order=raw_wide_series_
     // names(measures, dimension, data)`, and `raw_wide_series_names`
-    // (`compile/resolve/chart/_wide_fields.py:142-161`) is `sorted(
-    // measures)` with no dimension — production paints in SORTED measure
-    // order, never the authored `wide_measures` array order — so this seam
-    // sorts before folding; a `color:` dimension composes `value - measure`
+    // (`compile/resolve/chart/_wide_fields.py`) is the authored `y:` order with
+    // no dimension — production paints in that order — so this seam folds in
+    // it; a `color:` dimension sorts the measures and composes `value - measure`
     // labels like bar/line. Unlike bar/line, the row's own `WIDE_LABEL_FIELD` is overwritten
     // to the HUMANIZED text directly (not the raw measure name) —
     // production's real VL `calculate` expression (`_label_expression`)
@@ -73,9 +72,11 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     let mut wide_series: Vec<String> = Vec::new();
     if !r.wide_measures.is_empty() {
         let wide_labels = display_text::wide_measure_labels(&r.wide_measures, &r.field_labels)?.labels;
-        let mut fold_order = r.wide_measures.clone();
-        fold_order.sort();
         let dimension = r.color.clone();
+        let mut fold_order = r.wide_measures.clone();
+        if dimension.is_some() {
+            fold_order.sort();
+        }
         let raw_names = ::bind::wide::wide_series_names(&r.wide_measures, dimension.as_deref(), &payload.rows);
         // Display text per raw series name: the measure part humanized, a
         // `color:` dimension value kept verbatim ahead of it.
@@ -167,7 +168,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     let y_measure = y_numeric && (!r.style.axis_y.tick_values.is_empty() || y_log || independent_facet);
     let drawn = drawn_at(&prepared.rows, &r, x_nominal, x_dates, y_nominal);
     let drawn_rows = rows_at(&prepared.rows, &drawn);
-    // `wide_series` (the sorted, authored-measure-COMPLETE domain, `bind::wide::wide_series_names` +
+    // `wide_series` (the authored-measure-COMPLETE domain, `bind::wide::wide_series_names` +
     // humanization) feeds a wide chart's domain instead of a row scan — a measure null on every row
     // still owns a domain/palette slot, same law bar.rs's own `color_domain` split applies
     // (`build_chart_domains`).

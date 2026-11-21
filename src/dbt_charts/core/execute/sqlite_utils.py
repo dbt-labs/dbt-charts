@@ -5,6 +5,8 @@ from here without triggering a circular import through inspect/__init__.py
 (which imports renderer.py which imports the dbt backend from execute/).
 """
 
+from __future__ import annotations
+
 from urllib.request import pathname2url
 
 # SQL to list user tables from sqlite_master. Both SQLiteSchemaSource and

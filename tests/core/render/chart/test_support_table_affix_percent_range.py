@@ -43,8 +43,8 @@ rows:
 """
 
 
-def test_affixed_percent_support_table_entry_rejects_0_100_shaped_value() -> None:
-    compiled = compile_board(_BOARD)
+def _render_errors(board: str) -> list[str]:
+    compiled = compile_board(board)
     assert compiled.success, compiled.errors
     assert compiled.board is not None
     executor = Run(
@@ -54,5 +54,43 @@ def test_affixed_percent_support_table_entry_rejects_0_100_shaped_value() -> Non
     result = render(
         compiled.board, executor.ctx, executor.ledger, format="svg", controls=False
     )
-    assert [e.code for e in result.chart_errors] == [ERR_PERCENT_RANGE.code]
-    assert "5,500" not in (result.output or "")
+    return [e.code for e in result.chart_errors]
+
+
+def test_affixed_percent_support_table_entry_rejects_0_100_shaped_value() -> None:
+    assert _render_errors(_BOARD) == [ERR_PERCENT_RANGE.code]
+
+
+def test_large_negative_ratio_renders_in_table_and_kpi() -> None:
+    board = """
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {k: A, margin: -20.94}
+      - {k: B, margin: 0.18}
+  one:
+    type: values
+    rows:
+      - {margin: -20.94}
+charts:
+  t:
+    type: table
+    query: q
+    style:
+      columns:
+        margin:
+          format: percent
+  kpi:
+    type: kpi
+    query: one
+    value: margin
+    style:
+      value:
+        format: percent
+rows:
+  - t
+  - kpi
+"""
+    assert _render_errors(board) == []

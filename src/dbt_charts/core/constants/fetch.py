@@ -1,5 +1,7 @@
 """Warehouse fetch sizes."""
 
+from __future__ import annotations
+
 from typing import Final
 
 # Rows asked of a cursor per fetch while the cut reads the result: a byte cut

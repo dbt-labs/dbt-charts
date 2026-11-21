@@ -18,6 +18,8 @@ then quietly opt out of the control, which is how a live injection once
 survived the round that fixed it.
 """
 
+from __future__ import annotations
+
 import math
 import re
 from collections.abc import Callable

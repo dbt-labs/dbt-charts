@@ -35,6 +35,8 @@ relevant constant:
   "
 """
 
+from __future__ import annotations
+
 import inspect
 from multiprocessing.context import SpawnContext
 from typing import Any, cast

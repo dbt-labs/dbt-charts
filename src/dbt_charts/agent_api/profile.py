@@ -6,6 +6,8 @@ and grain); then sample rows. Every number comes from a few full-table
 aggregates through ``execute_query``, so it runs only on local file sources.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 from pathlib import PurePosixPath

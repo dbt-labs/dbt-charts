@@ -922,10 +922,13 @@ style:
       grouped:
         padding_inner: 0.2
         padding_outer: 0.2
-      torn_outlier:
-        enabled: false
-        band: 0.5                # cap band, as a share of the plot; the chart grows by it
-        cap: 1.2                 # cap length, in bar thicknesses
+      outliers:
+        median_multiplier: 12    # a bar this many times the median bar tears; `none` turns it off
+        variant: torn
+        reveal: chart
+        cap:
+          band: 0.5              # cap band, as a share of the plot; the chart grows by it
+          length: 1.2            # cap length, in bar thicknesses
       axis_x:
         grid:
           visible: false

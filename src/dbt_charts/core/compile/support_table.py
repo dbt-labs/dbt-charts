@@ -185,7 +185,7 @@ def bake_neutral_ink(
 def resolve_support_table_position(
     position: Literal["top", "bottom", "left", "right"] | None,
     category_axis_vertical: bool,
-    axis_y_orient: Literal["left", "right"],
+    category_side: Literal["left", "right"],
     chart_id: str,
 ) -> Literal["top", "bottom", "left", "right"]:
     """Resolve and validate ``style.support_table.position`` against the chart's
@@ -193,7 +193,7 @@ def resolve_support_table_position(
 
     ``None`` means "not authored": it defaults to ``top`` on a horizontal
     category axis (vertical bar, line, area), or to the side the category
-    labels are on (``axis_y_orient``) on a vertical one (a horizontal bar) —
+    labels are on (``category_side``) on a vertical one (a horizontal bar) —
     so the shipped layout is label -> table -> plot without the author
     restating it. An explicit author value is validated against the actual
     orientation and always wins; it is never silently re-mapped to a valid
@@ -205,7 +205,7 @@ def resolve_support_table_position(
     """
     if category_axis_vertical:
         if position is None:
-            return axis_y_orient
+            return category_side
         if position not in ("left", "right"):
             raise CompilationError.from_code(
                 ERR_SUPPORT_TABLE_POSITION_INVALID,

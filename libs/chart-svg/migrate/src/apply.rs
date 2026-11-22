@@ -394,6 +394,9 @@ pub fn apply_move(
             Some(rw) => Some(rw(authored, &source, &before).map_err(MigrationError::Other)?),
             None => None,
         };
+        if rewrote.as_ref().is_some_and(|r| r.leave) {
+            continue;
+        }
         if let Some(notice) = rewrote.as_ref().and_then(|r| r.notice.clone()) {
             out.notices.push(notice);
         }

@@ -1321,7 +1321,7 @@ impl LineResolved {
         r.link_context = payload.link_context.clone();
         r.link_y = r.y.clone();
         r.link_color = r.color.clone();
-        r.link_x_labeled = ::bind::temporal::has_labeled_bucket(&payload.rows, &r.x);
+        r.link_x_labeled = !r.style.axis_x.x_axis().is_nominal() && ::bind::temporal::has_labeled_bucket(&payload.rows, &r.x);
         Ok(r)
     }
 }
@@ -2811,8 +2811,11 @@ mod tests {
         let payload: Payload = serde_json::from_value(make_fit_line_payload()).unwrap();
         let fonts = test_fonts();
         let (svg_render, _) = render_with_layout(&payload, &fonts, false).unwrap();
-        let (svg_panel, _, _) = render_panel(&payload, &fonts, payload.width, payload.height, None);
-        assert_eq!(svg_render, svg_panel, "the wrapper adds nothing beyond the panel call");
+        let bound = super::bind::bind(&payload, false).expect("binds");
+        let panel = super::layout::fit(&bound, &payload, &payload.rows, (payload.width, payload.height), payload.padding.as_ref(), &fonts, None, true)
+            .expect("renders");
+        let svg_panel = print::print(&::layout::contract::tick_stubs_under_marks(vec![panel.svg]));
+        assert_eq!(svg_render, svg_panel, "the wrapper adds nothing beyond the panel call and the stub pass");
     }
 
     /// A2: `suppress_x_axis` takes `pad_plot` (never shrinks the declared
@@ -5123,7 +5126,7 @@ mod tests {
         // Only the reference rules are hidden.
         assert_eq!(
             svg.matches("aria-hidden").count(),
-            svg.matches("mark-rule role-mark").count() + svg.matches("role-axis-grid").count() + svg.matches("knockout-undercoat").count(),
+            svg.matches("mark-rule role-mark").count() + svg.matches("role-axis-grid").count() + svg.matches("role-axis-tick").count() + svg.matches("knockout-undercoat").count(),
             "{svg}"
         );
     }

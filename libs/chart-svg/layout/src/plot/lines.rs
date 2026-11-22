@@ -9,8 +9,7 @@
 //! the halo multiplier; anything else reaching the painter is an engine bug. A null y breaks the
 //! path into runs, and a point is drawn only for a defined datum.
 //!
-//! Production paints the value axis between the halo and the series line, so the painter says where
-//! it goes ([`Painted::y_axis_at`]).
+//! Production paints the value axis before the x axis, both over the marks ([`Painted::y_first`]).
 
 use bind::bound::{self, Datum, Paint, Pos, ScaleKind};
 use d3rs::shape::{line_path, Curve};
@@ -149,7 +148,6 @@ pub fn lines(plot: &bound::Plane, metrics: Metrics, canvas: &str, size: Size) ->
             marks.push(hidden_mark_group("symbol", "layer_1_marks", halos));
         }
     }
-    let y_axis_at = marks.len();
     marks.push(connected_group("line", "layer_3_marks", vec![Node::path(mark, d, line(&stroke_color, metrics.stroke))]));
 
     let described = |datum: &Datum, attrs: Attrs| -> Result<Attrs, Diagnostic> {
@@ -177,5 +175,5 @@ pub fn lines(plot: &bound::Plane, metrics: Metrics, canvas: &str, size: Size) ->
         })
         .collect::<Result<Vec<_>, Diagnostic>>()?;
     marks.push(if announce { mark_group("symbol", "layer_3_marks", targets).map_err(diag::err_internal)? } else { hidden_mark_group("symbol", "layer_3_marks", targets) });
-    Ok(Painted { marks, y_axis_at: Some(y_axis_at) })
+    Ok(Painted { marks, y_first: true })
 }

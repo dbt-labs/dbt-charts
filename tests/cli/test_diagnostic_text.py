@@ -82,7 +82,7 @@ def test_sql_error_names_the_query_and_gives_the_union_advice() -> None:
     assert "columns exist" not in text
     assert fix.startswith("  Fix: ") and "wrap the UNION in a subquery" in fix
     assert docs == (
-        f"Docs: ERR-BINDER-QUERY-SHAPE {_DOCS}/reference/errors/#err-binder-query-shape"
+        f"Docs: ERR-BINDER-QUERY-SHAPE {_DOCS}/reference/errors/queries/#err-binder-query-shape"
     )
 
 
@@ -95,7 +95,7 @@ def test_validation_error_snapshot() -> None:
     assert render_diagnostics(result.errors) == (
         "error[ERR-VALIDATION-FIELD]: Field 'charts.k': Value error, "
         "`title:` is not used on `type: kpi`. Use `label:` instead.\n\n"
-        f"Docs: ERR-VALIDATION-FIELD {_DOCS}/reference/errors/#err-validation-field"
+        f"Docs: ERR-VALIDATION-FIELD {_DOCS}/reference/errors/board/#err-validation-field"
     )
 
 
@@ -107,7 +107,7 @@ def test_yaml_syntax_error_snapshot() -> None:
     assert text.startswith("error[ERR-YAML-SYNTAX]: Invalid YAML syntax")
     assert "\n      charts: {\n  Fix: Fix the line quoted above." in text
     assert text.endswith(
-        f"Docs: ERR-YAML-SYNTAX {_DOCS}/reference/errors/#err-yaml-syntax"
+        f"Docs: ERR-YAML-SYNTAX {_DOCS}/reference/errors/errors/#err-yaml-syntax"
     )
 
 
@@ -144,8 +144,8 @@ def test_restated_keys_collapse_into_one_block_without_fix_or_docs_noise() -> No
         "  charts/airports.yml:203  charts.a.sort.order: asc  (default)\n"
         "  charts/airports.yml:258  charts.t.style.columns.name.label: Name  (derived header)\n"
         "  charts/airports.yml:2    extends: clarity  (default theme)\n\n"
-        f"Docs: WARN-RESTATED-INFERRED {_DOCS}/reference/warnings/#warn-restated-inferred  "
-        f"WARN-RESTATED-STYLE {_DOCS}/reference/warnings/#warn-restated-style"
+        f"Docs: WARN-RESTATED-INFERRED {_DOCS}/reference/warnings/board/#warn-restated-inferred  "
+        f"WARN-RESTATED-STYLE {_DOCS}/reference/warnings/board/#warn-restated-style"
     )
 
 

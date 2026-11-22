@@ -64,7 +64,8 @@ def test_plain_mode_has_no_chrome(err: Diagnostic) -> None:
     assert "\n  Hint: Try this fix" in output
     assert "\n  At: charts/dashboard.yml:42" in output
     assert (
-        f"Docs: ERR-INTERNAL {docs_site_url()}/reference/errors/#err-internal" in output
+        f"Docs: ERR-INTERNAL {docs_site_url()}/reference/errors/errors/#err-internal"
+        in output
     )
 
 

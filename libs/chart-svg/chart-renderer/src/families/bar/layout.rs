@@ -58,7 +58,7 @@ fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Paddin
     Ok(Layout {
         insets: drawn.canvas.insets_of(&drawn.data_box),
         data_box: drawn.data_box,
-        nodes: vec![drawn.svg],
+        nodes: ::layout::contract::tick_stubs_under_marks(vec![drawn.svg]),
         diagnostics,
         title_pos: drawn.title_pos,
     })

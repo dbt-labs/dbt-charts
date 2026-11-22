@@ -555,7 +555,7 @@ def _support_table_geometry(
     x_labeled: bool,
     chart_id: str,
     category_axis_vertical: bool,
-    axis_y_orient: Literal["left", "right"],
+    category_side: Literal["left", "right"],
     stacked: bool,
     stage_ink: str | None,
 ) -> tuple[SupportTableStyle | None, float | None, bool | None]:
@@ -573,9 +573,9 @@ def _support_table_geometry(
     render reads ``resolved.effective_support_table_style``/
     ``.support_table_axis_offset`` directly, never the cascade context.
 
-    ``category_axis_vertical``/``axis_y_orient`` are the caller's own already-
+    ``category_axis_vertical``/``category_side`` are the caller's own already-
     resolved orientation facts (a horizontal bar's category axis is vertical;
-    ``axis_y_orient`` is that chart's baked ``axis_y.position``) — resolving
+    ``category_side`` is the edge its category names sit on) — resolving
     ``position`` here, once, means the ``Resolved*`` contract always carries a
     concrete ``"top"``/``"bottom"``/``"left"``/``"right"``, and a mismatched
     `position:` is a compile-time error rather than a render-time surprise.
@@ -598,7 +598,7 @@ def _support_table_geometry(
         chart_style_context, chart_type
     )
     resolved_position = resolve_support_table_position(
-        effective_style.position, category_axis_vertical, axis_y_orient, chart_id
+        effective_style.position, category_axis_vertical, category_side, chart_id
     )
     effective_style, series_ink = bake_neutral_ink(
         effective_style.model_copy(update={"position": resolved_position}),
@@ -626,7 +626,7 @@ def _cartesian_kwargs(
     stacked: bool,
     measure_format: str | FormatConfig | None,
     category_axis_vertical: bool = False,
-    axis_y_orient: Literal["left", "right"] = "left",
+    category_side: Literal["left", "right"] = "left",
     header_inks: Mapping[str, str] = MappingProxyType({}),
     stage_ink: str | None = None,
 ) -> dict[str, Any]:
@@ -643,12 +643,11 @@ def _cartesian_kwargs(
     cartesian family bakes it here so the field can never be forgotten on a
     new resolver.
 
-    ``category_axis_vertical``/``axis_y_orient`` feed ``support_table.position``
+    ``category_axis_vertical``/``category_side`` feed ``support_table.position``
     resolution; ``stacked`` is bar's own resolved stacking, which decides whether
     a ``per_series`` label names a column. Every family but bar has a horizontal category axis
     unconditionally, so they take the defaults (``False``/unused); bar passes
-    its own already-resolved ``orientation == "horizontal"`` and baked
-    ``axis_y.position``.
+    its own already-resolved ``orientation == "horizontal"`` and category edge.
     """
     resolved_support_table = _resolved_support_table(
         normalized.support_table,
@@ -670,7 +669,7 @@ def _cartesian_kwargs(
         bool(normalized.x_label),
         normalized.id,
         category_axis_vertical,
-        axis_y_orient,
+        category_side,
         stacked,
         stage_ink,
     )

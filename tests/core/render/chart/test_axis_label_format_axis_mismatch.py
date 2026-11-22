@@ -370,14 +370,12 @@ class TestNumberFormatOnCategoryYAxisRaises:
         assert "time spec" in message
         assert "categorical" not in message
 
-    def test_horizontal_bar_mirror_format_raises(self) -> None:
-        """The common bar shape, not just a dot plot. Bar defaults to
-        horizontal on a categorical x, which puts the category on VL's own
-        y — so `axis_y.mirror.format` mirrors the CATEGORY edge and raises,
-        even though the author followed the documented "axis_y is the
-        measure" convention."""
+    def test_horizontal_bar_mirror_format_relabels_the_value_axis(self) -> None:
+        """A horizontal bar's axis_y is its value axis, so the mirror repeats
+        the values in the authored format instead of refusing over the
+        category names."""
         chart = BarChart(
-            id="bar-mirror-category",
+            id="bar-mirror-value",
             type="bar",
             x="month",
             y="revenue",
@@ -386,16 +384,7 @@ class TestNumberFormatOnCategoryYAxisRaises:
             ),
         )
         data = [{"month": "Jan", "revenue": 1.0}, {"month": "Feb", "revenue": 2.0}]
-        with pytest.raises(ChartDataError) as exc:
-            _render(chart, data)
-        assert exc.value.code is ERR_LABEL_FORMAT_AXIS_MISMATCH
-        message = str(exc.value)
-        assert message.startswith("style.axis_y.mirror.format")
-        # A bar's measure is axis_y in BOTH orientations — `orientation:
-        # horizontal` flips the VL channels, not the authored ones. Routing
-        # to axis_x here would land the author in this same error code.
-        assert "style.axis_y.labels.format" in message
-        assert "style.axis_x.labels.format" not in message
+        assert ">$" in _render(chart, data)
 
     def test_multi_measure_heatmap_axis_y_currency_raises(self) -> None:
         """A wide (list) y builds per-measure layer encodings with no axis

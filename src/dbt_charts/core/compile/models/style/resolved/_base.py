@@ -508,7 +508,7 @@ class ResolvedAxisStyle:
         | None
     )
     time_unit: str | None  # time-unit bucketing for temporal x-axes
-    type: Literal["auto", "ordinal", "temporal"] | None  # scale type for bucketed-time
+    type: Literal["auto", "ordinal", "temporal", "nominal"] | None  # x scale type
     # Fiscal-year-start month (1=Jan..12=Dec) for year/yearquarter bucket
     # anchoring; 1 is the calendar-quarter convention. Only active on axis_x.
     fiscal_year_start_month: int

@@ -343,7 +343,14 @@ pub(crate) fn render(
     let head = Head::parse(family, &payload.resolved)?;
     let extra: Extra = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("{family} payload: {e}"))?;
     let (ax_x, ax_y) = (&head.style.axis_x, &head.style.axis_y);
-    let position_right = crate::families::empty::value_axis_on_right(family, ax_y)?;
+    let position_right = if horizontal {
+        if ax_y.position.as_deref() == Some("top") {
+            return Err(format!("{family}: a horizontal bar with no x or y draws its value axis below the plot, never on top").into());
+        }
+        ax_x.position.as_deref() == Some("right")
+    } else {
+        crate::families::empty::value_axis_on_right(family, ax_y)?
+    };
     let facet = head.facet();
     // Once a layer pins a side, every layer owns an axis and the base takes the free side
     // (`_overlay.py`): a horizontal bar has none to give (`ERR-LAYER-AXIS-POSITION-ORIENTATION`,

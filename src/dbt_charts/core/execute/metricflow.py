@@ -51,10 +51,7 @@ if TYPE_CHECKING:
     # Optional at runtime: imported inside the methods that need it.
     from metricflow_sql.registry.memory import InMemoryRegistry
 
-INSTALL_HINT = (
-    "pip install 'metricflow-sql[yaml] @ git+https://github.com/fivetran/metricflow"
-    "#subdirectory=metricflow_sql/packages/metricflow-sql'"
-)
+INSTALL_HINT = "pip install 'metricflow-sql[yaml]>=0.5.4'"
 
 # The sentinel `sql_literals.INLINE_PLACEHOLDERS` renders a variable as. MetricFlow
 # validates every bare name as a column, so a sentinel crosses its compiler as a
@@ -275,7 +272,7 @@ class SemanticLayer:
             View,
         )
         from metricflow_sql.utils.normalize import read_identifier
-        from metricflow_sql.utils.sql import entity_name
+        from metricflow_sql.utils.sql import ref_target  # pyright: ignore[reportAttributeAccessIssue] — pyright at pythonVersion 3.11 cannot parse the library module's 3.12-only syntax
 
         registry = self.registry
         dialect = registry.dialect
@@ -291,9 +288,9 @@ class SemanticLayer:
         def datatype(node: exp.DataType | None) -> str | None:
             if node is None:
                 return None
-            entity = entity_name(node)
-            if entity is not None:
-                return f"entity('{qualified(entity)}')"
+            target = ref_target(node)
+            if target is not None:
+                return f"REF({qualified(target)})"
             return node.sql(dialect)
 
         datasets = []

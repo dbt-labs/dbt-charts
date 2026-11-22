@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from dbt_charts.core.compile.resolve import resolve
 
 # ---------------------------------------------------------------------------
@@ -106,37 +108,23 @@ def test_legend_not_suppressed_when_endpoint_labels_disabled(
 # ---------------------------------------------------------------------------
 
 
-def test_ay_position_baked_for_bar_with_endpoint_labels(
-    make_chart: Any, model_copy_at: Any
+@pytest.mark.parametrize("endpoint_labels", [True, False])
+def test_ay_position_baked_bottom_for_a_horizontal_bar(
+    make_chart: Any, model_copy_at: Any, endpoint_labels: bool
 ) -> None:
-    """bar with series color + endpoint_labels.visible → ay.position is 'left', not 'auto'.
+    """A categorical-x bar resolves horizontal (_bar_orientation's column-type
+    inference), so its value axis bakes 'bottom', never 'auto', with or
+    without endpoint labels.
 
     Explicit stack: 'zero' — see the legend test above for why the grouped
-    default can't exercise this path.
+    default can't exercise the endpoint-label path.
     """
-    board_style = _board_style_with_endpoint_labels("bar", True, model_copy_at)
+    board_style = _board_style_with_endpoint_labels(
+        "bar", endpoint_labels, model_copy_at
+    )
     chart = make_chart("bar", x="month", y="value", color="series", stack="zero")
     rc = resolve(chart, _MULTI_SERIES_DATA, chart_style_context=board_style)
-    assert rc.style.axis_y.position == "left", (
-        "axis_y.position must be baked 'left' at resolve time when endpoint labels fire"
-    )
-
-
-def test_ay_position_baked_left_for_bar_without_endpoint_labels(
-    make_chart: Any, model_copy_at: Any
-) -> None:
-    """bar without endpoint labels → ay.position is still 'left', not 'auto'.
-
-    This bar's categorical x (month="Jan"/"Feb") auto-classifies as
-    horizontal orientation (see _bar_orientation's column-type inference),
-    whose categorical y-axis always defaults 'left' (matching the deleted
-    categorical_orient field's static default) independent of endpoint
-    labels — endpoint_labels is a line/area concept, bar never fires it.
-    """
-    board_style = _board_style_with_endpoint_labels("bar", False, model_copy_at)
-    chart = make_chart("bar", x="month", y="value", color="series")
-    rc = resolve(chart, _MULTI_SERIES_DATA, chart_style_context=board_style)
-    assert rc.style.axis_y.position == "left"
+    assert rc.style.axis_y.position == "bottom"
 
 
 def test_ay_position_baked_for_line_with_endpoint_labels(

@@ -113,7 +113,9 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     }
     // A labeled bucket or a year-shaped x reads as its ISO start, as line rewrites the column: a year is a
     // time axis, never a number line joined to zero.
-    if r.link_x_labeled || ::bind::rows::is_year_shaped(&prepared.schema.rows, &prepared.rows, &r.x)? {
+    // A nominal x never reads as dates.
+    let x_forced_nominal = r.style.axis_x.x_axis().is_nominal();
+    if !x_forced_nominal && (r.link_x_labeled || ::bind::rows::is_year_shaped(&prepared.schema.rows, &prepared.rows, &r.x)?) {
         let rows = ::bind::temporal::normalize_labeled_temporal(&prepared.schema.rows, &prepared.rows, &r.x)?.into_owned();
         let row_types = prepared.schema.rows.clone().with(&r.x, ColumnType::Date);
         prepared = Cow::Owned(prepared.with_inputs(prepared.resolved.clone(), rows).with_row_types(row_types));
@@ -124,7 +126,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     // string row (`kept_reading`) and anything else is a nominal band, whose
     // domain order comes from `bind::rows::vega_ascending_sort`.
     let column_is_measure = |field: &str| infer_vega_type(&prepared.schema.rows, &prepared.rows, field).map(|t| t == VegaType::Quantitative);
-    let x_numeric = column_is_measure(&r.x)?;
+    let x_numeric = !x_forced_nominal && column_is_measure(&r.x)?;
     let y_numeric = column_is_measure(&r.y)?;
     let x_nominal = !x_numeric;
     // A column of ISO dates types `temporal` (a UTC time scale), not a
@@ -132,7 +134,9 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     // date-LIKE column (`2024-01`) that `detect_time_unit` buckets is also
     // `temporal` on a scatter (`resolve_cartesian_x_type`), which this arm
     // does not draw; any other date-like column stays a band.
-    let (x_dates, x_nominal) = if x_nominal {
+    let (x_dates, x_nominal) = if x_forced_nominal {
+        (false, true)
+    } else if x_nominal {
         let mut seen = HashSet::new();
         let distinct: Vec<String> = prepared
             .rows

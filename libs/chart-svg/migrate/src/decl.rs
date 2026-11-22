@@ -84,6 +84,8 @@ pub struct Rewrote {
     /// creating the mappings it passes through; `None` strikes the key and the
     /// mappings it empties.
     pub writes: Vec<(KeyPath, Option<Json>)>,
+    /// The move does not fire here: nothing moves and nothing is reported.
+    pub leave: bool,
 }
 
 /// A rewrite whose successor depends on the rest of the document: it reads the
@@ -122,13 +124,17 @@ pub struct Move {
     /// into it key by key, recursively. A leaf both hold refuses, so nothing the
     /// author wrote is overridden.
     pub merge: bool,
+    /// Both paths are valid in the current grammar, so the document alone says
+    /// whether it fires (its `rewrite_in_document` may `leave`). Recognition
+    /// never reads it as evidence; it runs on every load, before the
+    /// current-grammar check.
+    pub live: bool,
 }
 
 impl Move {
-    /// An identity-path move with a document-aware rewrite: live in both
-    /// grammars, so recognition never reads it as evidence.
-    pub fn rewrites_in_document_in_place(&self) -> bool {
-        self.old_path == self.new_path && self.rewrite_in_document.is_some()
+    /// Valid in both grammars, so recognition never reads it as evidence.
+    pub fn is_live(&self) -> bool {
+        self.live || (self.old_path == self.new_path && self.rewrite_in_document.is_some())
     }
 
     pub fn new(source: &'static str, target: &'static str, old: KeyPath, new: KeyPath) -> Move {
@@ -147,6 +153,7 @@ impl Move {
             chart_type: None,
             conflicts_with: Vec::new(),
             merge: false,
+            live: false,
         }
     }
 }

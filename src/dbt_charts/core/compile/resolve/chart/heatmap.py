@@ -121,6 +121,7 @@ def _resolve_heatmap(
         normalized.y,
         has_quantitative_axis=False,
         temporal_band_axes=frozenset(temporal_axes),
+        horizontal=False,
     )
     primary = plan.primary
     heatmap = merge_unset(board_family_style(chart_style_context, normalized), primary)

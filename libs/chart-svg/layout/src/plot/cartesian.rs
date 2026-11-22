@@ -58,12 +58,12 @@ pub struct Env<'a> {
     pub x_inset: Option<f64>,
 }
 
-/// What a family's painter draws: its marks in plot-local coordinates, and where in them production
-/// paints the y axis (between the halo and the series line of a line); `None` paints the y axis
-/// after the x axis, over the marks.
+/// What a family's painter draws: its marks in plot-local coordinates, and which axis production
+/// paints first. Both axes paint over every mark: a line paints its y axis before its x axis, every
+/// other family its x axis first.
 pub struct Painted {
     pub marks: Vec<Node>,
-    pub y_axis_at: Option<usize>,
+    pub y_first: bool,
 }
 
 /// What a chart's title is resolved from: the board scope's total style, whose chart title slot picks
@@ -817,32 +817,22 @@ pub fn draw(
         XPlanned::Time(planned) => (planned.ticks.clone(), planned.grid.as_ref(), planned.stubs.as_ref()),
     };
     let floor = floor_span(at.width, grid_width.map(|line| line.width), tick_width.map(|ticks| ticks.line.width), stops.iter().map(|stop| snap(*stop)));
-    let Painted { mut marks, y_axis_at } = paint(plot, at)?;
+    let Painted { mut marks, y_first } = paint(plot, at)?;
     let drawn = rules.nodes(at, floor);
-    let y_axis_at = if rules.under() {
-        let before = drawn.len();
+    if rules.under() {
         marks.splice(0..0, drawn);
-        y_axis_at.map(|index| index + before)
     } else {
         marks.extend(drawn);
-        y_axis_at
-    };
+    }
     let y_axis = axis_group(&plan.y, "y-axis", "y_label", at.height, true, &rules)?;
     let x_axis = match &plan.x {
         XPlanned::Value(planned) => axis_group(planned, "x-axis", "x_label", at.height, false, &rules)?,
         XPlanned::Time(planned) => time_axis_group(planned, at.height, &rules)?,
     };
-    match y_axis_at {
-        Some(index) if index <= marks.len() => {
-            marks.insert(index, y_axis);
-            marks.push(x_axis);
-        }
-        Some(index) => return Err(diag::err_internal(format!("a painter puts the y axis at mark {index} of {}", marks.len()))),
-        None => marks.extend([x_axis, y_axis]),
-    }
+    marks.extend(if y_first { [y_axis, x_axis] } else { [x_axis, y_axis] });
     inner.extend(marks);
     inner.extend(plan.legend.iter().flat_map(|(legend, origin)| legend.nodes(*origin)));
-    children.push(Node::group(Role::Chrome, Attrs::new(), inner).translate(plan.plot.x, plan.plot.y));
+    children.push(Node::group(Role::Chrome, Attrs::new(), crate::contract::tick_stubs_under_marks(inner)).translate(plan.plot.x, plan.plot.y));
     let root = Node::new(Role::Chrome, Attrs::new().set("class", "marks"), Shape::Svg { extent: Extent { width, height }, children });
     Ok(vec![root])
 }

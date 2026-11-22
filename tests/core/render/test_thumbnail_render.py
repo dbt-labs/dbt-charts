@@ -56,7 +56,11 @@ rows:
   - by_region
 """
 
-FURNITURE = ("role-axis", "role-axis-grid", "role-legend")
+
+# Its line draws x tick stubs, which the bar does not.
+TICKED_BOARD = FURNITURE_BOARD.replace("type: bar", "type: line")
+
+FURNITURE = ("role-axis", "role-axis-grid", "role-axis-tick", "role-legend")
 
 
 def classes(svg: str) -> set[str]:
@@ -126,6 +130,11 @@ def test_a_real_board_loses_its_footer_legend_and_axis_furniture() -> None:
     )
     left = classes(render_board("thumbnail", FURNITURE_BOARD))
     assert not left & {"dbt-footer-link", *FURNITURE}
+
+
+def test_a_thumbnail_drops_the_axis_tick_stubs_with_the_axis() -> None:
+    assert "role-axis-tick" in classes(render_board("svg", TICKED_BOARD))
+    assert not classes(render_board("thumbnail", TICKED_BOARD)) & set(FURNITURE)
 
 
 def test_a_transparent_board_cartoonizes_to_translucent_ink() -> None:

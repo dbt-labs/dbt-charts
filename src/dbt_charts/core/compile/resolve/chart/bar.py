@@ -46,7 +46,6 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     _apply_multiples_mirror,
     _bake_ay_orient,
     _bake_ay_position_left,
-    _edge_or_none,
     _rail_off_for_layers,
     _rail_off_for_multiples,
     _reject_dual_axis_layered_endpoint_labels,
@@ -59,6 +58,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     horizontal_measure_style,
     legend_wrap_marginal_height_px,
     legend_wrap_required_height_px,
+    settle_axis_edges,
     support_table_names_series,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
@@ -126,6 +126,7 @@ from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
     plan_cartesian,
     quantitative_channel_values,
+    x_channel_type,
 )
 from dbt_charts.core.compile.resolve.chart._tooltip import resolve_tooltip
 from dbt_charts.core.compile.resolve.chart._torn_outlier import (
@@ -700,7 +701,7 @@ def _resolve_bar(
     multiples_scale = (
         normalized.multiples.scale if normalized.multiples is not None else "shared"
     )
-    x_ch_type = _classify_to_channel_type(normalized.x, data, is_dimension=True)
+    x_ch_type = x_channel_type(normalized, data, chart_style_context, "bar")
     # Bar semantics fix x=category, y=measure regardless of orientation (see
     # the _bake_cartesian_axes docstring above) — the axis cascade hardcodes y
     # to "quantitative" and downstream stack-totals math assumes numeric y. A
@@ -747,6 +748,7 @@ def _resolve_bar(
         None,
         has_quantitative_axis=True,
         temporal_band_axes=frozenset(),
+        horizontal=None,
     )
     bar = chart_local_style_context.bar
     band_width = bar.marks.bar.band_width
@@ -808,6 +810,13 @@ def _resolve_bar(
     )
     if normalized.type == "funnel" and orientation == "vertical":
         raise CompilationError.from_code(ERR_FUNNEL_VERTICAL, chart_id=normalized.id)
+    ax_merged, ay_merged, unapplied_axis_edges = settle_axis_edges(
+        ax_merged,
+        ay_merged,
+        plan.axis_overrides,
+        orientation == "horizontal",
+        normalized.id,
+    )
     if orientation == "horizontal":
         ay_merged = horizontal_measure_style(
             chart_style_context, normalized, "bar", plan.axis_overrides, ay_merged
@@ -1146,19 +1155,7 @@ def _resolve_bar(
         normalized.layers,
         endpoint_labels.visible and endpoint_label_has_layers,
     )
-    if orientation == "horizontal":
-        # For horizontal bar, ay (the semantic measure axis) maps to VL x,
-        # which has no left/right orient — _emit_horizontal pops it entirely.
-        # ay.position's only remaining role is supplying the swapped
-        # categorical axis's (VL y) orient in emitters/bar.py. The deleted
-        # categorical_orient field always defaulted "left" there, statically —
-        # the horizontal rail sits above the plot (top-row), never left/right,
-        # so it never competes for this axis's side the way the vertical
-        # endpoint-label rail does. Preserve the static default via
-        # _bake_ay_position_left rather than _bake_ay_orient's
-        # endpoint-label-aware auto-resolution.
-        ay_merged = _bake_ay_position_left(ay_merged)
-    else:
+    if orientation != "horizontal":
         ay_merged = _bake_ay_orient(
             ay_merged,
             channels,
@@ -1166,12 +1163,14 @@ def _resolve_bar(
             wide_measure_series=wide_measure_series,
             has_layers=endpoint_label_has_layers,
         )
-    # Bar's categorical axis (axis_x) only has a left/right edge when the
-    # chart is horizontal — it then renders on VL's y channel at ay.position
-    # (see emitters/bar.py's own-orient swap; categorical_orient was deleted
-    # 2026-08 — position now serves this role too). A vertical bar's x stays
-    # bottom-orient — no edge.
-    x_edge = _edge_or_none(ay_merged.position) if orientation == "horizontal" else None
+    # A horizontal bar's category axis (axis_x) runs down the side named by
+    # axis_x.position; unset, it sits left (the renderer moves it to the zero
+    # line's side when the value axis is reversed). A vertical bar's x has no
+    # left/right edge.
+    category_side: Literal["left", "right"] = (
+        "right" if ax_merged.position == "right" else "left"
+    )
+    x_edge = category_side if orientation == "horizontal" else None
     _ay_cont_log = ay_merged.scale.continuous if ay_merged.scale is not None else None
     if _ay_cont_log is not None and _ay_cont_log.type == "log":
         raise CompilationError.from_code(
@@ -1333,7 +1332,7 @@ def _resolve_bar(
         normalized.id,
         "bar",
         chart_style_context,
-        plan.axes.x,
+        replace(plan.axes.x, style=ax_merged),
         replace(plan.axes.y, style=ay_merged),
         ax_edge=x_edge,
         ticks=_CartesianTickResolution(tick_values, bar_domain_max, bar_domain_min),
@@ -1461,14 +1460,6 @@ def _resolve_bar(
         labels=resolved_labels,
         total_label=resolved_total,
     )
-    # support_table.position resolution needs the same orientation facts
-    # already baked above: axis_y_orient falls back to "right" when unset,
-    # mirroring the fallback apply_chart_support_table_post_pass used to
-    # apply at render before this bake closed that reach-back.
-    if ay_merged.position == "left" or ay_merged.position == "right":
-        _ay_orient_for_table: Literal["left", "right"] = ay_merged.position
-    else:
-        _ay_orient_for_table = "right"
     _ck = _cartesian_kwargs(
         normalized,
         chart_local_style_context,
@@ -1478,7 +1469,7 @@ def _resolve_bar(
         panel_axes=dataset.axes,
         measure_format=authored_measure_format(normalized.style),
         category_axis_vertical=orientation == "horizontal",
-        axis_y_orient=_ay_orient_for_table,
+        category_side=category_side,
         stacked=is_stacked,
         header_inks=series_header_inks(
             base_y=normalized.y,
@@ -1510,6 +1501,7 @@ def _resolve_bar(
         stack=resolved_stack,
         stacked_domain_max=stacked_domain_max,
         torn_break=tear.break_value if tear is not None else None,
+        unapplied_axis_edges=unapplied_axis_edges,
         orientation=orientation,
         annotations=annotations.render(ay, style_tail["axis_x"], resolved_layers, None),
         annotation_gaps=annotations.gaps,
@@ -1589,6 +1581,7 @@ def _resolve_histogram(
         None,
         has_quantitative_axis=True,
         temporal_band_axes=frozenset(),
+        horizontal=False,
     )
     primary = plan.primary
     hist = merge_unset(board_family_style(chart_style_context, normalized), primary)

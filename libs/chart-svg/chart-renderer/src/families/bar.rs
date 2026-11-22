@@ -950,7 +950,7 @@ fn x_resolution(
     r: &BarResolved,
     chart_rows: &[serde_json::Map<String, Value>],
 ) -> Result<::bind::x_type::FilledX, String> {
-    let normalized = ::bind::temporal::normalize_labeled_temporal(&r.column_types, chart_rows, &r.x)?;
+    let normalized = r.style.axis_x.x_axis().law_rows(&r.column_types, chart_rows, &r.x)?;
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
     ::bind::x_type::resolve_filled_x(
         &r.column_types,
@@ -3236,10 +3236,7 @@ mod tests {
                 }
                 render(&make_payload(payload_json), &test_fonts()).expect("dual-axis bar renders")
             };
-            let plot_w = |svg: &str| {
-                let (x1, x2, _) = *horizontal_lines(svg).first().expect("a gridline");
-                x2 - x1
-            };
+            let plot_w = |svg: &str| plot_grid_width(svg);
             let off = render_with(false, None);
             for (length, expected) in [(None, 6.0), (Some(14.0), 14.0)] {
                 let on = render_with(true, length);
@@ -3883,6 +3880,7 @@ mod tests {
             layer["bar_mark"]["border"]["radius"] = serde_json::json!(0.0);
             let mut payload_json = payload_with_layer(&[("Jan", 100.0, 40.0), ("Feb", 120.0, 60.0)], layer);
             payload_json["resolved"]["orientation"] = serde_json::json!("horizontal");
+            payload_json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("bottom");
             payload_json["resolved"]["style"]["mark"]["border"]["radius"] = serde_json::json!(0.0);
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
             let mut bars: Vec<_> = parse_rects(&svg).into_iter().filter(|r| r.4 == "#779bc9" && r.3 != 10.0).collect();
@@ -3899,6 +3897,7 @@ mod tests {
         fn horizontal_bar_layer_payload(layer: serde_json::Value, rows: &[(&str, f64, f64)]) -> serde_json::Value {
             let mut payload_json = payload_with_layer(rows, layer);
             payload_json["resolved"]["orientation"] = serde_json::json!("horizontal");
+            payload_json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("bottom");
             payload_json["resolved"]["style"]["mark"]["border"]["radius"] = serde_json::json!(0.0);
             payload_json
         }
@@ -3914,6 +3913,7 @@ mod tests {
                 layer["bar_mark"]["opacity"] = serde_json::json!(0.0);
                 let mut payload_json = payload_with_layer(&[("Jan", 100.0, 40.0)], layer);
                 payload_json["resolved"]["orientation"] = serde_json::json!(orientation);
+                payload_json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!(if payload_json["resolved"]["orientation"] == "horizontal" { "bottom" } else { "left" });
                 payload_json["resolved"]["style"]["mark"]["border"]["radius"] = serde_json::json!(0.0);
                 let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
                 let outlined: Vec<&str> = svg.split('<').filter(|e| e.contains("stroke=\"#d49656\"")).collect();
@@ -3991,6 +3991,7 @@ mod tests {
         fn a_colored_ranged_horizontal_base_takes_a_bar_layer() {
             let mut payload_json = make_vertical_payload(&[("Jan", 100.0)], true);
             payload_json["resolved"]["orientation"] = serde_json::json!("horizontal");
+            payload_json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("bottom");
             payload_json["resolved"]["y_start"] = serde_json::json!("low");
             payload_json["resolved"]["layers"] = serde_json::json!([bar_layer_json(None)]);
             for row in payload_json["rows"].as_array_mut().unwrap() {
@@ -5080,7 +5081,8 @@ mod tests {
         let svg = render(&make_payload(make_time_payload(&months_from_2000(72))), &test_fonts()).expect("renders");
         let plot_left: f64 = svg.split("<g transform=\"translate(").nth(1).unwrap().split(',').next().unwrap().parse().unwrap();
         let ticks: Vec<f64> = tick_xs(&svg).into_iter().map(|x| x - plot_left).collect();
-        let rule = svg
+        let without_stubs = without_tick_stubs(&svg);
+        let rule = without_stubs
             .split("<line ")
             .find(|l| l.contains("stroke-width=\"2\""))
             .expect("a floor rule");
@@ -8077,7 +8079,7 @@ mod tests {
                         "padding": 6.0, "min_gap": null, "format": null, "visible": true, "flush": true
                     },
                     "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": false},
-                    "position": "left", "mirror": null, "band_position": 0.5, "scale": {},
+                    "position": "bottom", "mirror": null, "band_position": 0.5, "scale": {},
                     "tick_values": [0.0, 500.0, 1000.0], "domain_max": 1000.0, "domain_min": null,
                     "ruler": null, "tick_label": {"format": ",.0~f"},
                     "time_unit": null, "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false, "fill": null, "line": null
@@ -8267,6 +8269,7 @@ mod tests {
         for orientation in ["horizontal", "vertical"] {
             let mut p = make_wide_horizontal_payload();
             p["resolved"]["orientation"] = json!(orientation);
+            p["resolved"]["style"]["axis_y"]["position"] = serde_json::json!(if p["resolved"]["orientation"] == "horizontal" { "bottom" } else { "left" });
             p["resolved"]["wide_measures"] = json!(["revenue", "units_sold"]);
             p["rows"] = json!([
                 {"product": "Alpha", "revenue": 800.0, "units_sold": 200.0},
@@ -8303,6 +8306,7 @@ mod tests {
             for (color, rows) in [(None, base["rows"].clone()), (Some("region"), crossed.clone())] {
                 let mut p = base.clone();
                 p["resolved"]["orientation"] = serde_json::json!(orientation);
+                p["resolved"]["style"]["axis_y"]["position"] = serde_json::json!(if p["resolved"]["orientation"] == "horizontal" { "bottom" } else { "left" });
                 p["resolved"]["color"] = serde_json::json!(color);
                 p["rows"] = rows;
                 let unlabeled = render(&make_payload(p.clone()), &test_fonts()).expect("wide bar renders");
@@ -8774,7 +8778,7 @@ mod tests {
                         "padding": 6.0, "min_gap": 16.0, "format": ".3~s", "visible": true
                     },
                     "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": false},
-                    "position": "left", "mirror": null, "band_position": 0.5,
+                    "position": "bottom", "mirror": null, "band_position": 0.5,
                     "scale": {"headroom": 0.08, "values": null},
                     "tick_values": [-1000000.0, 0.0, 1000000.0, 2000000.0, 3000000.0],
                     "domain_max": 2160000.0, "domain_min": null,
@@ -9879,7 +9883,7 @@ mod tests {
     #[test]
     fn hidden_value_axis_labels_free_their_gutter_on_a_bar() {
         use serde_json::json;
-        for (horizontal, position) in [(false, "left"), (false, "right"), (true, "left")] {
+        for (horizontal, position) in [(false, "left"), (false, "right"), (true, "bottom")] {
             let payload_with = |visible: serde_json::Value| {
                 let mut payload_json = if horizontal {
                     make_horizontal_payload()
@@ -9979,7 +9983,7 @@ mod tests {
         for position in ["left", "right"] {
             let payload_with = |visible: bool| {
                 let mut payload_json = make_horizontal_payload();
-                payload_json["resolved"]["style"]["axis_y"]["position"] = json!(position);
+                payload_json["resolved"]["style"]["axis_x"]["position"] = json!(position);
                 payload_json["resolved"]["style"]["axis_x"]["labels"]["visible"] = json!(visible);
                 payload_json
             };
@@ -9990,20 +9994,6 @@ mod tests {
             assert!(!hidden_svg.contains(">Alpha<") && !hidden_svg.contains(">Beta<"), "{position}: category labels painted: {hidden_svg}");
             assert!(widths(&hidden_svg) > widths(&shown_svg), "{position}: plot did not widen: {} -> {}", widths(&shown_svg), widths(&hidden_svg));
         }
-    }
-
-    /// The mirror's ghost copy of the category axis paints no names under `labels.visible: false`.
-    #[test]
-    fn hidden_category_labels_leave_no_name_on_the_mirror_ghost() {
-        use serde_json::json;
-        let make = |visible: bool| {
-            let mut payload_json = make_horizontal_payload();
-            payload_json["resolved"]["style"]["axis_y"]["mirror"] = json!(true);
-            payload_json["resolved"]["style"]["axis_x"]["labels"]["visible"] = json!(visible);
-            render(&make_payload(payload_json), &test_fonts()).expect("renders")
-        };
-        assert_eq!(make(true).matches(">Alpha</text>").count(), 2, "control paints both copies");
-        assert_eq!(make(false).matches(">Alpha<").count(), 0);
     }
 
     /// Vega anchors an axis label at `sign * ((tickSize if ticks visible else
@@ -10288,6 +10278,7 @@ mod tests {
         let cats = [("2024-01-01 00:00:00 UTC", 100.0), ("2024-02-01 00:00:00 UTC", 130.0), ("2024-03-01 00:00:00 UTC", 90.0)];
         let mut payload_json = make_vertical_payload(&cats, false);
         payload_json["resolved"]["orientation"] = json!("horizontal");
+        payload_json["resolved"]["style"]["axis_y"]["position"] = json!("bottom");
         payload_json["resolved"]["style"]["tooltip_format"] = json!(",.0f");
         let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
         let arias: Vec<&str> = svg.split("aria-label=\"").skip(1).filter_map(|a| a.split('"').next()).collect();
@@ -10330,6 +10321,7 @@ mod tests {
         let cats = [("2023-12-31T15:00:00Z", 100.0), ("2024-01-31T15:00:00Z", 130.0), ("2024-02-29T15:00:00Z", 90.0)];
         let mut payload_json = make_vertical_payload(&cats, false);
         payload_json["resolved"]["orientation"] = json!("horizontal");
+        payload_json["resolved"]["style"]["axis_y"]["position"] = json!("bottom");
         payload_json["resolved"]["style"]["tooltip_format"] = json!(",.0f");
         let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
         let arias: Vec<&str> = svg.split("aria-label=\"").skip(1).filter_map(|a| a.split('"').next()).collect();
@@ -10967,6 +10959,20 @@ mod tests {
             .collect()
     }
 
+    /// The plot width: the first gridline, which starts at the plot's left edge; a tick stub starts off it.
+    fn plot_grid_width(svg: &str) -> f64 {
+        let (x1, x2, _) = horizontal_lines(svg).into_iter().find(|(x1, _, _)| *x1 == 0.5).expect("a gridline");
+        x2 - x1
+    }
+
+    /// The svg without its `role-axis-tick` groups, whose stubs borrow the baseline rule's stroke.
+    fn without_tick_stubs(svg: &str) -> String {
+        svg.split("<g class=\"mark-rule role-axis-tick\"")
+            .enumerate()
+            .map(|(i, part)| if i == 0 { part } else { part.split_once("</g>").map_or("", |(_, after)| after) })
+            .collect()
+    }
+
     /// The value-axis tick marks: horizontal lines exactly `len` long (a
     /// gridline spans the plot, never the tick).
     fn tick_marks(svg: &str, len: f64) -> Vec<(f64, f64, f64)> {
@@ -11069,7 +11075,7 @@ mod tests {
         axis_y["position"] = json!("right");
         axis_y["ticks"] = json!({"color": "#D0D3D9", "visible": true, "count": 6.0, "length": 9.0});
         let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
-        let plot_w = horizontal_lines(&svg).first().map(|(x1, x2, _)| x2 - x1).expect("a gridline");
+        let plot_w = plot_grid_width(&svg);
         let ticks = tick_marks(&svg, 9.0);
         assert_eq!(ticks.len(), 5, "one mark per rung: {svg}");
         for (x1, _, _) in &ticks {
@@ -11210,6 +11216,9 @@ mod tests {
         // Production themes bake `ticks.visible: false` on the value axis.
         let mut axis_y = axis.clone();
         axis_y["ticks"]["visible"] = json!(false);
+        if orientation == "horizontal" {
+            axis_y["position"] = json!("bottom");
+        }
         let mut axis = axis;
         axis["ticks"]["visible"] = json!(orientation == "vertical");
         if orientation == "horizontal" {
@@ -14791,6 +14800,7 @@ mod tests {
         let mut payload_json =
             make_vertical_payload(&[("Alpha", 1800.0), ("Beta", 1200.0)], false);
         payload_json["resolved"]["orientation"] = serde_json::json!("horizontal");
+        payload_json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("bottom");
         enable_axis_title(&mut payload_json["resolved"]["style"]["axis_x"]);
         let payload = make_payload(payload_json);
         let fonts = test_fonts();
@@ -14810,6 +14820,7 @@ mod tests {
         let no_title_json = {
             let mut j = make_vertical_payload(&[("Alpha", 1800.0), ("Beta", 1200.0)], false);
             j["resolved"]["orientation"] = serde_json::json!("horizontal");
+            j["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("bottom");
             j
         };
         let no_title_svg = render(&make_payload(no_title_json), &fonts).expect("renders");
@@ -14839,6 +14850,7 @@ mod tests {
         let mut payload_json =
             make_vertical_payload(&[("Alpha", 1800.0), ("Beta", 1200.0)], false);
         payload_json["resolved"]["orientation"] = serde_json::json!("horizontal");
+        payload_json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("bottom");
         enable_axis_title(&mut payload_json["resolved"]["style"]["axis_y"]);
         let payload = make_payload(payload_json);
         let fonts = test_fonts();
@@ -14899,6 +14911,7 @@ mod tests {
         // label paints the formatted measure at bar_end − 4, anchored end.
         let mut j = make_vertical_payload(&[("Alpha", 1800.0), ("Beta", 1200.0)], false);
         j["resolved"]["orientation"] = serde_json::json!("horizontal");
+        j["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("bottom");
         j["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
             "visible": true,
             "field": null,
@@ -14959,6 +14972,7 @@ mod tests {
                 let mut j = make_vertical_payload(&[("Alpha", 1800.0), ("Beta", 1200.0)], false);
                 if horizontal {
                     j["resolved"]["orientation"] = json!("horizontal");
+                    j["resolved"]["style"]["axis_y"]["position"] = json!("bottom");
                 }
                 j["resolved"]["style"]["tooltip_format"] = json!(",.0f");
                 if !rule_painted {
@@ -15333,6 +15347,7 @@ mod tests {
         // not 46).
         let mut j = make_vertical_payload(&[("Alpha", 1800.0), ("Beta", 1200.0)], false);
         j["resolved"]["orientation"] = serde_json::json!("horizontal");
+        j["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("bottom");
         j["resolved"]["style"]["axis_y"]["grid"]["visible"] = serde_json::json!(false);
         let svg = render(&make_payload(j), &test_fonts()).expect("renders");
         assert!(
@@ -15367,7 +15382,7 @@ mod tests {
             j["resolved"]["style"]["axis_y"]["grid"]["visible"] = serde_json::json!(true);
             j["resolved"]["style"]["axis_y"]["grid"]["threshold"] =
                 serde_json::json!({"color": "#8A8C8F", "width": 2.0});
-            let svg = render(&make_payload(j), &fonts).expect("renders");
+            let svg = without_tick_stubs(&render(&make_payload(j), &fonts).expect("renders"));
             let last_bar =
                 svg.rfind("<rect x=").unwrap_or_else(|| panic!("{name}: no bar rects: {svg}"));
             let first_rule = svg
@@ -15452,7 +15467,7 @@ mod tests {
                 j["resolved"]["format"] = json!(".0%");
                 let svg = render(&make_payload(j), &test_fonts()).expect("renders");
                 let ctx = format!("{orientation}\n{svg}");
-                let grids = svg.matches("role-axis-grid").count();
+                let grids = svg.matches("role-axis-grid").count() + svg.matches("role-axis-tick").count();
                 assert_eq!(svg.matches(hidden).count() - grids, 2, "{ctx}");
                 assert_eq!(svg.matches("aria-roledescription=\"rule mark\"").count(), 0, "{ctx}");
             }
@@ -15921,6 +15936,7 @@ mod tests {
         let mut titled_json =
             make_vertical_payload(&[("Alpha", 1800.0), ("Beta", 1200.0)], false);
         titled_json["resolved"]["orientation"] = serde_json::json!("horizontal");
+        titled_json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("bottom");
         enable_axis_title(&mut titled_json["resolved"]["style"]["axis_y"]);
         let fonts = test_fonts();
         let titled_svg = render(&make_payload(titled_json), &fonts).expect("renders");
@@ -15928,6 +15944,7 @@ mod tests {
         let mut untitled_json =
             make_vertical_payload(&[("Alpha", 1800.0), ("Beta", 1200.0)], false);
         untitled_json["resolved"]["orientation"] = serde_json::json!("horizontal");
+        untitled_json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("bottom");
         let untitled_svg = render(&make_payload(untitled_json), &fonts).expect("renders");
 
         // val_title_band = title.font.size(11) + title.padding(10) = 21.
@@ -16203,25 +16220,13 @@ mod tests {
             assert_eq!(text_count(&svg, "500"), 2, "every column foots its own value axis: {svg}");
         }
 
-        #[test]
-        fn a_mirrored_horizontal_facet_repeats_the_category_axis_on_the_right_edge() {
-            let mut payload_json = horizontal_facet_payload(json!({"rows": "panel", "columns": null, "scale": "shared"}));
-            payload_json["resolved"]["style"]["axis_y"]["mirror"] = json!(true);
-            let svg = rendered(payload_json);
-            for category in ["North", "South", "East"] {
-                assert_eq!(text_count(&svg, category), 4, "{category} on both edges of both rows: {svg}");
-            }
-            assert!(svg.contains("ghost_marks"), "the mirror's invisible rule layer: {svg}");
-        }
-
         /// `labels.visible: false` paints no category name on any copy of the axis: the row headers,
         /// the mirror's right-edge copy, and a right-hand category axis's edge copy.
         #[test]
         fn hidden_category_labels_leave_no_name_on_any_facet_axis_copy() {
             for (case, edit) in [
                 ("row header", (|_: &mut serde_json::Value| {}) as fn(&mut serde_json::Value)),
-                ("mirror ghost copy", |p| p["resolved"]["style"]["axis_y"]["mirror"] = json!(true)),
-                ("right-edge copy", |p| p["resolved"]["style"]["axis_y"]["position"] = json!("right")),
+                ("right-edge copy", |p| p["resolved"]["style"]["axis_x"]["position"] = json!("right")),
             ] {
                 let make = |visible: bool| {
                     let mut payload_json = horizontal_facet_payload(json!({"rows": "panel", "columns": null, "scale": "shared"}));
@@ -16252,7 +16257,9 @@ mod tests {
                 {"product": "C", "panel": "B", "revenue": 45.0},
             ]);
             let svg = rendered(payload_json);
-            let at = |label: &str| svg.find(&format!(">{label}</text>")).unwrap();
+            // The shared category axis paints after the cells; the row headers "A" and "B" precede them.
+            let axis = &svg[svg.find("role-scope cell").expect("the cell group")..];
+            let at = |label: &str| axis.find(&format!(">{label}</text>")).unwrap();
             assert!(at("B") < at("A") && at("A") < at("C"), "sums 130, 120, 115: {svg}");
         }
 
@@ -16333,44 +16340,6 @@ mod tests {
             // the plot; the gutter is otherwise the labels' own width and the label gap.
             assert!((single - faceted).abs() < 2.5, "single {single} vs faceted {faceted}");
             assert!(single < 6.0, "the gap is the label gap, not the one-line gutter: {single}");
-        }
-
-        /// A mirrored axis's labels begin a label gap past the plot, as the left labels end one
-        /// before it, and stay inside the canvas.
-        #[test]
-        fn a_mirrored_wrapped_axis_starts_its_right_labels_one_label_gap_past_the_plot() {
-            let fonts = test_fonts();
-            let mut payload_json = wrapped_names_payload(false);
-            payload_json["resolved"]["style"]["axis_y"]["mirror"] = json!(true);
-            payload_json["resolved"]["style"]["mark"]["border"]["radius"] = json!(0.0);
-            payload_json["rows"][1]["revenue"] = json!(1000.0);
-            payload_json["resolved"]["style"]["axis_y"]["domain_max"] = json!(1000.0);
-            payload_json["resolved"]["style"]["axis_y"]["tick_values"] = json!([0.0, 500.0, 1000.0]);
-            let svg = rendered(payload_json);
-            let (plot_left, left_right) = plot_left_and_label_right(&svg, &fonts, "#626366");
-            let bar = svg.find("fill=\"#3164a3\"").expect("a bar");
-            let widest_bar_right = svg
-                .match_indices("<rect x=\"0\"")
-                .skip(1)
-                .map(|(pos, _)| {
-                    let tag = &svg[pos..];
-                    let width: f64 = tag.split("width=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
-                    group_x_at(&svg, pos) + width
-                })
-                .fold(f64::MIN, f64::max);
-            assert!(group_x_at(&svg, bar) == plot_left);
-            let ghost_x = svg
-                .match_indices("<text")
-                .filter_map(|(pos, _)| {
-                    let tag = &svg[pos..pos + svg[pos..].find("</text>").unwrap()];
-                    (tag.contains("<tspan>Europe") && tag.contains("text-anchor=\"start\"")).then(|| {
-                        let x: f64 = tag.split(" x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
-                        group_x_at(&svg, pos) + x
-                    })
-                })
-                .fold(f64::MIN, f64::max);
-            let (left_gap, right_gap) = (plot_left - left_right, ghost_x - widest_bar_right);
-            assert!((right_gap - left_gap).abs() <= 1.01, "left {left_gap} vs right {right_gap}");
         }
 
         /// A facet's shared category header wraps a long name the way a single chart's axis does.
@@ -17353,7 +17322,10 @@ mod tests {
                     .unwrap()
                     .parse()
                     .unwrap();
-                (width, text_xs(&svg, ">1,000<"))
+                // Leftmost first: the mirror's ghost labels sit left of the primary's.
+                let mut xs = text_xs(&svg, ">1,000<");
+                xs.sort_by(f64::total_cmp);
+                (width, xs)
             };
             for (length, tick) in [(None, 6.0), (Some(20.0), 20.0)] {
                 let (off_w, off_xs) = render_with(false, false, length);
@@ -18522,6 +18494,7 @@ mod tests {
                 let mut j = make_vertical_payload(&[("Alpha", 1800.0), ("Beta", 1200.0)], false);
                 if horizontal {
                     j["resolved"]["orientation"] = json!("horizontal");
+                    j["resolved"]["style"]["axis_y"]["position"] = json!("bottom");
                 }
                 j["resolved"]["style"]["axis_y"]["tick_label"] = json!(null);
                 j["resolved"]["style"]["axis_y"]["labels"]["format"] = slot.clone();

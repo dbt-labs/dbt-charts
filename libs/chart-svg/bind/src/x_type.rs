@@ -34,6 +34,26 @@ pub struct XAxis<'a> {
 }
 
 impl XAxis<'_> {
+    /// The rows the law reads: verbatim on a nominal axis, which never reads
+    /// its values as dates, else with a labeled or year-shaped x rewritten to
+    /// ISO dates (`normalize_labeled_temporal`).
+    pub fn law_rows<'r>(
+        &self,
+        types: &ColumnTypes,
+        rows: &'r [Row],
+        x_field: &str,
+    ) -> Result<std::borrow::Cow<'r, [Row]>, String> {
+        if self.is_nominal() {
+            return Ok(std::borrow::Cow::Borrowed(rows));
+        }
+        crate::temporal::normalize_labeled_temporal(types, rows, x_field)
+    }
+
+    /// `axis_x.type: nominal`: the values are plain categories, never dates.
+    pub fn is_nominal(&self) -> bool {
+        self.authored_type == Some("nominal")
+    }
+
     /// `gap_fill_ordinal_time` returns rows (so the chart's base spec carries its own data)
     /// when it fires, whether it builds the scaffold or only sorts and canonicalizes.
     pub fn rewrites_rows(&self, resolution: &XResolution) -> bool {
@@ -274,6 +294,9 @@ pub fn resolve_cartesian_x_type(
     panel_fields: &[&str],
 ) -> Result<XResolution, String> {
     let from_data = infer_vega_type(types, rows, x_field)?;
+    if axis.is_nominal() {
+        return Ok(XResolution { vl_type: VegaType::Nominal, from_data, grain: Grain::None, fill_grain: Grain::None });
+    }
     let cells: Vec<&Value> = rows.iter().filter_map(|row| row.get(x_field)).collect();
     let grain = match axis.time_unit {
         None => match from_data {
@@ -377,6 +400,24 @@ mod tests {
         let axis = XAxis { time_unit: None, authored_type: None, raw_type: None, fill: Some("null"), fiscal_year_start_month: 1, max_ordinal_buckets: 60 };
         let bar = resolve_cartesian_x_type(&ColumnTypes::default().with("x", column_types::ColumnType::String), &rows, "x", &axis, "bar", false, &[]).unwrap();
         assert_eq!((bar.vl_type, bar.grain), (VegaType::Temporal, Grain::None));
+    }
+
+    #[test]
+    fn a_nominal_axis_reads_month_names_verbatim_as_categories() {
+        let rows: Vec<Row> = ["Oct 2025", "Nov", "Dec", "Jan 2026"]
+            .iter()
+            .map(|d| Row::from_iter([("x".to_string(), Value::from(*d))]))
+            .collect();
+        let types = ColumnTypes::default().with("x", column_types::ColumnType::String);
+        let auto = XAxis { time_unit: None, authored_type: None, raw_type: None, fill: Some("null"), fiscal_year_start_month: 1, max_ordinal_buckets: 60 };
+        assert!(auto.law_rows(&types, &rows, "x").is_err(), "sniffed, the mixed labels refuse");
+        let nominal = XAxis { authored_type: Some("nominal"), raw_type: Some("nominal"), ..auto };
+        let law_rows = nominal.law_rows(&types, &rows, "x").unwrap();
+        assert_eq!(&*law_rows, rows.as_slice());
+        for mark in ["bar", "line", "area", "scatter"] {
+            let law = resolve_cartesian_x_type(&types, &law_rows, "x", &nominal, mark, false, &[]).unwrap();
+            assert_eq!((law.vl_type, law.grain, law.fill_grain), (VegaType::Nominal, Grain::None, Grain::None), "{mark}");
+        }
     }
 
     /// Vega reads a year below 100 as NaN on a temporal scale; each family positions the NaN row

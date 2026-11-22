@@ -79,6 +79,9 @@ pub fn migrate(node: Node, today: Date) -> Migrated {
         }
     }
 
+    if let Err(e) = apply_live_moves(&mut doc, reg, &mut applied) {
+        return kept(node, doc, applied, failed(&e));
+    }
     if accepts_current(&doc) {
         return finish(node, doc, applied, None);
     }
@@ -169,6 +172,37 @@ fn apply_identity_moves(
     let mut local = Applied::default();
     for m in identity {
         apply_move(&mut work, m, &authored, &mut local)?;
+    }
+    *doc = work;
+    out.notices.append(&mut local.notices);
+    out.notices.push(IN_MEMORY.to_string());
+    out.edits.append(&mut local.edits);
+    Ok(())
+}
+
+/// Applies the live moves where their rewrites fire. Nothing is applied unless
+/// one does, and a refusal leaves the document as it came.
+fn apply_live_moves(
+    doc: &mut Node,
+    reg: &Registry,
+    out: &mut Applied,
+) -> Result<(), MigrationError> {
+    let live: Vec<_> = reg.all.moves.iter().filter(|m| m.live).collect();
+    let probe = Probe::new(doc);
+    if !live
+        .iter()
+        .any(|m| !move_source_locations(&probe, doc, m).is_empty())
+    {
+        return Ok(());
+    }
+    let mut work = doc.clone();
+    let authored = doc.to_json();
+    let mut local = Applied::default();
+    for m in live {
+        apply_move(&mut work, m, &authored, &mut local)?;
+    }
+    if local.edits.is_empty() {
+        return Ok(());
     }
     *doc = work;
     out.notices.append(&mut local.notices);
@@ -328,7 +362,7 @@ fn transition_applies<'d>(
     keys: &HashSet<String>,
 ) -> bool {
     for m in reg.moves_from(identifier) {
-        if m.rewrites_in_document_in_place() {
+        if m.is_live() {
             continue;
         }
         if m.old_path.iter().all(|p| p == "*" || keys.contains(p))
@@ -436,7 +470,12 @@ fn is_newer(version: &str, other: &str) -> bool {
 pub fn plan_text(node: &Node, stop_target: Option<&str>) -> Result<TextPlan, TextError> {
     let reg = Registry::get();
     let cur = current();
-    let recognized = recognize(node, reg).map_err(|_| {
+    let mut staged = node.clone();
+    let mut out = Applied::default();
+    if stop_target.is_none() {
+        apply_live_moves(&mut staged, reg, &mut out)?;
+    }
+    let recognized = recognize(&staged, reg).map_err(|_| {
         let why = current_grammar()
             .and_then(|g| crate::validate::first_rejection(g.root(), node))
             .unwrap_or_default();
@@ -444,11 +483,11 @@ pub fn plan_text(node: &Node, stop_target: Option<&str>) -> Result<TextPlan, Tex
             "Unsupported YAML syntax; current schema rejected it: {why}"
         ))
     })?;
-    if recognized == cur.version || stop_target.is_some_and(|t| is_newer(&recognized, t)) {
+    if (recognized == cur.version && out.edits.is_empty())
+        || stop_target.is_some_and(|t| is_newer(&recognized, t))
+    {
         return Ok(TextPlan::Current);
     }
-    let mut staged = node.clone();
-    let mut out = Applied::default();
     let mut identifier = recognized.clone();
     while identifier != cur.version && Some(identifier.as_str()) != stop_target {
         let (moves, deletions, mkds) = (
@@ -578,7 +617,7 @@ pub fn retired_keys(doc: &Node) -> Vec<RetiredKey> {
     let probe = Probe::new(doc);
     for e in entries().iter().rev() {
         for m in reg.moves_from(&e.version) {
-            if m.old_path == m.new_path || !m.old_path.iter().all(|p| p == "*" || keys.contains(p))
+            if m.old_path == m.new_path || m.live || !m.old_path.iter().all(|p| p == "*" || keys.contains(p))
             {
                 continue;
             }

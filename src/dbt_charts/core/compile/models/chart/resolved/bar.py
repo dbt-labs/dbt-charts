@@ -85,6 +85,13 @@ class ResolvedBarChart(
             "when the chart can draw the tear. None when no bar is torn."
         ),
     )
+    unapplied_axis_edges: tuple[tuple[Literal["axis_x", "axis_y"], str], ...] = Field(
+        default=(),
+        description=(
+            "Board or theme axis edges dropped because they only fit the other "
+            "orientation, as (axis, position); a warning input, not authored."
+        ),
+    )
     style: ResolvedBarStyle = Field(
         description="Bar family style slice — self-contained, globals merged down by resolve.",
     )

@@ -566,3 +566,14 @@ def test_a_retired_warning_code_is_never_also_registered() -> None:
     from dbt_charts.core.diagnostics.codes_retired import RETIRED_WARNING_CODES
 
     assert RETIRED_WARNING_CODES.isdisjoint(REGISTRY.codes(level="warning"))
+
+
+def test_doc_url_names_the_topic_page_of_the_generated_reference() -> None:
+    from dbt_charts.core.diagnostics.registry import REGISTRY, build_doc_url
+
+    code = "ERR-BINDER-UNKNOWN-RELATION"
+    topic = REGISTRY.get(code).docs_topic
+
+    assert build_doc_url(code).endswith(
+        f"/reference/errors/{topic}/#err-binder-unknown-relation"
+    )

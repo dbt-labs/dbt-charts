@@ -26,16 +26,16 @@ fn family<'a>(plot: &bound::Plane, cell: Size, mark: &Mark, canvas: &'a str, sco
         Mark::Points { .. } => {
             Ok((GutterRule::BAR_FIT, Some(edge_pad(plot)?), Box::new(|plot, size| {
                 let layer = &plot.layers()[0];
-                points(plot, 0, layer, &layer.panels[0], size, &points_group(plot)).map(|marks| Painted { marks, y_axis_at: None })
+                points(plot, 0, layer, &layer.panels[0], size, &points_group(plot)).map(|marks| Painted { marks, y_first: false })
             })))
         }
         Mark::Bins => Ok((GutterRule::BAR_FIT, None, Box::new(|plot, size| {
             let layer = &plot.layers()[0];
-            bins(plot, 0, layer, &layer.panels[0], size, "marks").map(|marks| Painted { marks, y_axis_at: None })
+            bins(plot, 0, layer, &layer.panels[0], size, "marks").map(|marks| Painted { marks, y_first: false })
         }))),
         Mark::Bars => Ok((GutterRule::BAR_FIT, None, Box::new(move |plot, size| {
             let layer = &plot.layers()[0];
-            bars(plot, 0, layer, &layer.panels[0], size, canvas, scope).map(|marks| Painted { marks, y_axis_at: None })
+            bars(plot, 0, layer, &layer.panels[0], size, canvas, scope).map(|marks| Painted { marks, y_first: false })
         }))),
         Mark::Lines => {
             let metrics = Metrics::of_plot(plot, cell.width)?;

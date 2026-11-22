@@ -455,8 +455,7 @@ style:
       # `style.axis.*` reach axis_y through the same path.
       # "auto" → "right" by default; flips to "left" when endpoint labels are
       # on the right edge (line charts with key.type: direct).
-      # Also serves the categorical-orient role for horizontal bar's swapped
-      # categorical axis (categorical_orient was deleted 2026-08 trim).
+      # A horizontal bar resolves "auto" to "bottom".
       position: auto
       labels:
         position: beside_gridline
@@ -1411,7 +1410,6 @@ style:
         radius: 4.0
 
   variables:
-    visible: true
     presets:
       - today
       - last_7_days

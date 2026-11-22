@@ -73,6 +73,7 @@ from dbt_charts.core.constants.estimates import (
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_AXIS_POSITION_WRONG_EDGE,
     ERR_FORMAT_AFFIX_NOMINAL_AXIS_UNSUPPORTED,
     ERR_TICKS_INTERVAL_MEASURE_AXIS,
 )
@@ -96,6 +97,7 @@ __all__ = [
     "_bake_ay_orient",
     "_bake_ay_position_left",
     "_bake_ay_position_right",
+    "settle_axis_edges",
     "_apply_multiples_mirror",
     "_bake_cartesian_axes",
     "_edge_or_none",
@@ -640,6 +642,58 @@ def _bake_ay_position_left(ay: AxisYStyle) -> AxisYStyle:
     if ay.position != "auto":
         return ay
     return ay.model_copy(update={"position": "left"})
+
+
+def settle_axis_edges(
+    ax: AxisXStyle,
+    ay: AxisYStyle,
+    overrides: AxisOverrides,
+    horizontal: bool,
+    chart_id: str,
+) -> tuple[AxisXStyle, AxisYStyle, tuple[tuple[Literal["axis_x", "axis_y"], str], ...]]:
+    """Keep each axis's ``position`` to the edges its orientation gives it.
+
+    ``axis_x`` is the category axis and ``axis_y`` the value axis in every
+    orientation, so a horizontal bar's category axis sits left or right and
+    its value axis top or bottom; every other chart is the other way round.
+    The chart's own style naming an edge its axis cannot take is refused; a
+    board or theme value meant for the other orientation does not reach the
+    chart; on a horizontal bar the edges so dropped come back as the third value.
+    """
+    orientation = "horizontal" if horizontal else "vertical"
+    x_edges = ("left", "right") if horizontal else ("top", "bottom")
+    y_edges = ("top", "bottom") if horizontal else ("left", "right", "auto")
+    sides = (
+        ("axis_x", "category", overrides.x, x_edges, "axis_y", "value"),
+        ("axis_y", "value", overrides.y, y_edges, "axis_x", "category"),
+    )
+    for axis, role, own, edges, other, other_role in sides:
+        position = own.position if own is not None else None
+        if position not in (None, "auto", *edges):
+            raise CompilationError.from_code(
+                ERR_AXIS_POSITION_WRONG_EDGE,
+                chart_id=chart_id,
+                axis=axis,
+                position=position,
+                role=role,
+                orientation=orientation,
+                allowed=" or ".join(e for e in edges if e != "auto"),
+                hint=f"To move the {other_role} axis there, use "
+                f"`{other}.position: {position}`.",
+            )
+    dropped: list[tuple[Literal["axis_x", "axis_y"], str]] = []
+    if horizontal:
+        if ax.position in ("top", "bottom"):
+            dropped.append(("axis_x", ax.position))
+        if ay.position in ("left", "right"):
+            dropped.append(("axis_y", ay.position))
+    if ax.position is not None and ax.position not in x_edges:
+        ax = ax.model_copy(update={"position": None})
+    if ay.position == "auto" and horizontal:
+        ay = ay.model_copy(update={"position": "bottom"})
+    elif ay.position not in y_edges:
+        ay = ay.model_copy(update={"position": "bottom" if horizontal else "auto"})
+    return ax, ay, tuple(dropped)
 
 
 def _bake_ay_position_right(ay: AxisYStyle) -> AxisYStyle:

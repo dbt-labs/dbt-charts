@@ -213,12 +213,13 @@ fn x_axis(r: &LineResolved, payload: &Payload, overlays: &[OverlayLayer], draw_a
     // The one x-type law (`::bind::x_type::resolve_cartesian_x_type`) decides the grain
     // and whether x is a category; the labeled-bucket and year rewrites run
     // ahead of it exactly as production's emitters apply them.
-    let law_rows = ::bind::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, x_field)?;
+    let x_axis = r.style.axis_x.x_axis();
+    let law_rows = x_axis.law_rows(&payload.schema.rows, &payload.rows, x_field)?;
     let law = ::bind::x_type::resolve_cartesian_x_type(
         &payload.schema.rows,
         &law_rows,
         x_field,
-        &r.style.axis_x.x_axis(),
+        &x_axis,
         fam,
         // A multi-measure chart's axis is built without the curve.
         curve_name == Some("step") && r.wide_measures.is_empty(),
@@ -234,9 +235,10 @@ fn x_axis(r: &LineResolved, payload: &Payload, overlays: &[OverlayLayer], draw_a
     let rows_rewritten = law_rows.iter().zip(&payload.rows).any(|(normalized, raw)| normalized.get(x_field) != raw.get(x_field));
     // A null x on a date axis is no bucket: production's ordinal scaffold places rows
     // by their bucket and drops the rest, though the row still counts toward the y domain.
-    let is_dates = is_year_shaped(&payload.schema.rows, domain_rows, x_field)?
-        || law.vl_type == VegaType::Temporal
-        || matches!(::bind::temporal::infer_vega_type(&payload.schema.rows, domain_rows, x_field)?, VegaType::Temporal | VegaType::Ordinal);
+    let is_dates = !x_axis.is_nominal()
+        && (is_year_shaped(&payload.schema.rows, domain_rows, x_field)?
+            || law.vl_type == VegaType::Temporal
+            || matches!(::bind::temporal::infer_vega_type(&payload.schema.rows, domain_rows, x_field)?, VegaType::Temporal | VegaType::Ordinal));
     let unit: Option<TimeUnit> = match law.grain {
         ::bind::x_type::Grain::Calendar(tu) => Some(tu),
         _ => None,
@@ -269,7 +271,7 @@ fn x_axis(r: &LineResolved, payload: &Payload, overlays: &[OverlayLayer], draw_a
         let layer_x = overlay.x().unwrap_or(x_field.as_str());
         let layer_rows = crate::families::layers::resolve_layer_rows(payload, overlay.query_name(), r.query_name.as_deref(), fam)?;
         let layer_types = crate::families::layers::resolve_layer_types(payload, overlay.query_name(), r.query_name.as_deref(), fam)?;
-        let normalized = ::bind::temporal::normalize_labeled_temporal(layer_types, layer_rows, layer_x)?;
+        let normalized = x_axis.law_rows(layer_types, layer_rows, layer_x)?;
         time.rewrite(
             layer_rows
                 .iter()
@@ -306,7 +308,7 @@ fn rekey_to_enclosing_buckets(r: &LineResolved, payload: &Payload, draw_areas: b
     if payload.rows.is_empty() {
         return Ok(None);
     }
-    let normalized = ::bind::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, &r.x)?;
+    let normalized = r.style.axis_x.x_axis().law_rows(&payload.schema.rows, &payload.rows, &r.x)?;
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
     let filled = ::bind::x_type::resolve_filled_x(
         &payload.schema.rows,
@@ -357,7 +359,7 @@ fn fill_calendar_buckets(r: &LineResolved, payload: &Payload, draw_areas: bool) 
         return Ok(None);
     }
     let axis = &r.style.axis_x;
-    let normalized = ::bind::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, &r.x)?;
+    let normalized = r.style.axis_x.x_axis().law_rows(&payload.schema.rows, &payload.rows, &r.x)?;
     let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
     let mark = if draw_areas { "area" } else { "line" };
     let filled = ::bind::x_type::resolve_filled_x(

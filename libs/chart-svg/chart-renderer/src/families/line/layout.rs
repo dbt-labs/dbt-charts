@@ -98,7 +98,7 @@ fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Paddin
     let laid_out = Layout {
         insets: fitted.canvas.insets_of(&fitted.data_box),
         data_box: fitted.data_box,
-        nodes: vec![fitted.svg],
+        nodes: ::layout::contract::tick_stubs_under_marks(vec![fitted.svg]),
         diagnostics,
         title_pos: fitted.plot.title_pos,
     };
@@ -6264,9 +6264,6 @@ pub(super) fn fit(
         plot.extend(crate::annotation::nodes(&annotations, crate::annotation::Plane::Background)?);
     }
 
-    // The value axis paints here, over the halo and under the lines, so a line ending on a tick covers it.
-    let mut marks_start = plot.len();
-
     // Main lines — a stacked area's perimeter stroke already painted above,
     // combined with its fill; drawing a second top-edge-only stroke here
     // would double it.
@@ -6651,7 +6648,6 @@ pub(super) fn fit(
                         (0.0, 0.0, plot_w, plot_h),
                     );
                     let undercoat = if clip { clips.wrap((plot_w, plot_h), knocked.undercoat) } else { knocked.undercoat };
-                    marks_start += undercoat.len();
                     plot.splice(under_annotations..under_annotations, undercoat);
                     layer_nodes.extend(knocked.marks);
                     let under = crate::annotation::DataMark::plot_marks(&layer_nodes);
@@ -7331,14 +7327,13 @@ pub(super) fn fit(
             register_axis("x", AxisSpec { orient: Orient::Bottom, offset, shift, align, baseline, angle, flush, style: ax_x.labels.item_style()? });
         }
     }
+    // Both axes paint over every mark, so a line or dot reaching the tick column never covers tick text.
+    let value_axis_range = plot.len()..plot.len() + axis.len();
+    plot.extend(axis);
+    plot.extend(ghost);
     if !suppress_x_axis {
         plot.extend(x_axis.nodes(ax_x, 0.0, plot_w, (x_edge.edge_y(plot_h), x_edge.edge_y(plot_h)), fonts)?);
     }
-
-    let mut value_axis_range = marks_start..marks_start;
-    value_axis_range.end += axis.len();
-    plot.splice(marks_start..marks_start, axis);
-    plot.splice(value_axis_range.end..value_axis_range.end, ghost);
 
     // Dual axis: each layer's own axis, on its side.
     for (index, (la, ll)) in layer_axes.iter().zip(&layer_linear).enumerate() {

@@ -118,7 +118,7 @@ constellations:
   description: Billing by account and month.
   roles:
   - name: account
-    datatype: entity('account')
+    datatype: REF(account)
   - name: month
     datatype: TIMESTAMP
   metrics:
@@ -128,7 +128,7 @@ constellations:
     expr: AGG(charges.charged_amount)
   - name: uncharged
     expr: AGG(invoiced_total) - AGG(charged_amount)
-  assignments:
+  facts:
   - dataset: invoices
     roles:
     - name: account

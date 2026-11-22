@@ -455,7 +455,7 @@ pub fn x_is_band(resolved: &Value, types: &ColumnTypes, rows: &[Row]) -> Result<
 pub fn base_x_type(resolved: &Value, types: &ColumnTypes, rows: &[Row]) -> Result<Option<VegaType>, Diagnostic> {
     let facts: Facts = Deserialize::deserialize(resolved).map_err(|e| format!("x axis facts: {e}"))?;
     let Some(field) = facts.x.as_deref() else { return Ok(None) };
-    let rows = normalize_labeled_temporal(types, rows, field)?;
+    let rows = x_axis_of(&facts).law_rows(types, rows, field)?;
     let filled = resolve_filled_x(types, &rows, field, &x_axis_of(&facts), &facts.chart_type, band_step_of(&facts), &panel_fields_of(&facts))?;
     Ok(Some(filled.resolution.vl_type))
 }
@@ -484,8 +484,8 @@ pub fn check(resolved: &Value, types: &ColumnTypes, rows: &[Row]) -> Result<(), 
     }
     // Bar and the other cartesian emitters rewrite a labeled or year-shaped x
     // to ISO dates before anything below reads it.
-    let rows = normalize_labeled_temporal(types, rows, field)?;
     let x_axis = x_axis_of(&facts);
+    let rows = x_axis.law_rows(types, rows, field)?;
     let panel_fields = panel_fields_of(&facts);
     if facts.chart_type == "bar" && facts.orientation.as_deref() == Some("horizontal") {
         // A horizontal bar's category never resolves a continuous scale, so the

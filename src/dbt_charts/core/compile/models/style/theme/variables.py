@@ -76,7 +76,6 @@ class VariablesStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    visible: bool = Field(description="Show the variables control panel.")
     position: Literal["top", "bottom", "title-inline"] = Field(
         description="Variables strip placement: stacked under the title (top/bottom) "
         "or on one horizontal band with the board title (title-inline)."

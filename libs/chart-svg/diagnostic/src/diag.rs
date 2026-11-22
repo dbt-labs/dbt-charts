@@ -82,6 +82,10 @@ pub fn err_axis_column_requires_tabular_font(chart_id: impl Into<Value>, family:
     Diagnostic::new(&codes::ERR_AXIS_COLUMN_REQUIRES_TABULAR_FONT, [("chart_id", chart_id.into()), ("family", family.into())])
 }
 
+pub fn err_axis_position_wrong_edge(chart_id: impl Into<Value>, axis: impl Into<Value>, position: impl Into<Value>, role: impl Into<Value>, orientation: impl Into<Value>, allowed: impl Into<Value>, hint: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_AXIS_POSITION_WRONG_EDGE, [("chart_id", chart_id.into()), ("axis", axis.into()), ("position", position.into()), ("role", role.into()), ("orientation", orientation.into()), ("allowed", allowed.into()), ("hint", hint.into())])
+}
+
 pub fn err_band_step_multi_metric(chart_type: impl Into<Value>, chart_id: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_BAND_STEP_MULTI_METRIC, [("chart_type", chart_type.into()), ("chart_id", chart_id.into())])
 }
@@ -1524,6 +1528,10 @@ pub fn warn_axis_align_discarded(chart_id: impl Into<Value>, authored_align: imp
 
 pub fn warn_axis_label_collision(chart_id: impl Into<Value>, field: impl Into<Value>, label_count: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_AXIS_LABEL_COLLISION, [("chart_id", chart_id.into()), ("field", field.into()), ("label_count", label_count.into())])
+}
+
+pub fn warn_axis_position_not_applied(chart_id: impl Into<Value>, key: impl Into<Value>, instead: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_AXIS_POSITION_NOT_APPLIED, [("chart_id", chart_id.into()), ("key", key.into()), ("instead", instead.into())])
 }
 
 pub fn warn_axis_title_truncated(chart_id: impl Into<Value>, authored_field: impl Into<Value>, authored_text: impl Into<Value>) -> Diagnostic {

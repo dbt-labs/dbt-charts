@@ -38,6 +38,7 @@ import dbt_charts.core.render.warnings.annotation_note_moved as annotation_note_
 import dbt_charts.core.render.warnings.annotation_nothing_drawn as annotation_nothing_drawn
 import dbt_charts.core.render.warnings.area_unstacked_reads_as_stacked as area_unstacked_reads_as_stacked
 import dbt_charts.core.render.warnings.axis_label_collision as axis_label_collision
+import dbt_charts.core.render.warnings.axis_position_not_applied as axis_position_not_applied
 import dbt_charts.core.render.warnings.axis_title_truncated as axis_title_truncated
 import dbt_charts.core.render.warnings.bar_band_width_too_narrow as bar_band_width_too_narrow
 import dbt_charts.core.render.warnings.bar_category_ticks as bar_category_ticks
@@ -160,6 +161,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
 _DATA_DETECTORS: list[ModuleType] = [
     annotation_nothing_drawn,
     area_unstacked_reads_as_stacked,
+    axis_position_not_applied,
     bar_category_ticks,
     bar_centered_no_baseline,
     category_color_pin_unseen,

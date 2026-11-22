@@ -43,9 +43,6 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     estimate_cartesian_plot_height,
     estimate_left_axis_reserve_px,
 )
-from dbt_charts.core.compile.resolve.chart._channels import (
-    _classify_to_channel_type,
-)
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
     ChartDataset,
     ChartRows,
@@ -95,6 +92,7 @@ from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
     plan_cartesian,
     quantitative_channel_values,
+    x_channel_type,
 )
 from dbt_charts.core.compile.resolve.chart._tooltip import resolve_tooltip
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
@@ -182,7 +180,7 @@ def _resolve_line(
     multiples_scale = (
         normalized.multiples.scale if normalized.multiples is not None else "shared"
     )
-    x_ch_type = _classify_to_channel_type(normalized.x, data, is_dimension=True)
+    x_ch_type = x_channel_type(normalized, data, chart_style_context, "line")
     # Line semantics fix x=dimension, y=value — the axis cascade hardcodes y
     # to "quantitative" regardless of the real column type. A categorical y
     # silently bakes a NaN axis with zero marks; refuse instead. Checked
@@ -218,6 +216,7 @@ def _resolve_line(
         normalized.y,
         has_quantitative_axis=True,
         temporal_band_axes=frozenset(),
+        horizontal=False,
     )
     line = chart_local_style_context.line
     line_conditional = resolve_mark_conditional(line.conditional, data, y=normalized.y)

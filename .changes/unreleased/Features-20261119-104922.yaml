@@ -1,0 +1,3 @@
+kind: Features
+body: Set axis_x.type to nominal to draw date-like labels, such as Oct 2025, as plain categories.
+time: 2026-11-19T10:49:22.248335-08:00

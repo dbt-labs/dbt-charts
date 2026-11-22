@@ -494,42 +494,6 @@ def test_parity_table_header_font_fills_from_table_font():
     assert _get_at(result, target) == distinctive
 
 
-def test_parity_table_spark_bar_font_fills_from_charts_font():
-    """table.spark.bar.font inherits from charts.font (not table.font) via InheritSlot."""
-    graph = get_inherit_graph()
-    target = "Style.charts.table.spark.bar.font.color"
-
-    base = get_theme_style("clarity")
-    distinctive = "#ff6677"
-
-    patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
-    patched_bar_font = base.charts.table.spark.bar.font.model_copy(
-        update={"color": None}
-    )
-    merged = base.model_copy(
-        update={
-            "charts": base.charts.model_copy(
-                update={
-                    "font": patched_charts_font,
-                    "table": base.charts.table.model_copy(
-                        update={
-                            "spark": base.charts.table.spark.model_copy(
-                                update={
-                                    "bar": base.charts.table.spark.bar.model_copy(
-                                        update={"font": patched_bar_font}
-                                    )
-                                }
-                            )
-                        }
-                    ),
-                }
-            )
-        }
-    )
-    result = apply_inherit(merged, graph)
-    assert _get_at(result, target) == distinctive
-
-
 # ── spark_bar font fixture ────────────────────────────────────────────────────
 
 

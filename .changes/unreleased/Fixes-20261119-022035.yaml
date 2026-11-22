@@ -1,0 +1,3 @@
+kind: Fixes
+body: MetricFlow semantic layers now compile with metricflow-sql 0.5.4; rename a constellation's `assignments:` to `facts:`.
+time: 2026-11-19T02:20:35.890043-08:00

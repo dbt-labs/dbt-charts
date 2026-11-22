@@ -749,11 +749,12 @@ def probe_relation_readability(
 ) -> tuple[bool, str]:
     """Verify *relation* is readable with *source_config*'s credential.
 
-    ``SELECT * FROM <relation> LIMIT 0`` — a live probe. Portable across every
+    ``SELECT 1 FROM <relation> LIMIT 0`` — a live probe. Portable across every
     supported dialect and truthful regardless of how the grant was applied (dbt,
     Terraform, or by hand), since it asks the warehouse directly rather than
     reading declared config. Zero rows are ever fetched or returned; only
-    whether the statement itself was accepted.
+    whether the statement itself was accepted. Names no column on purpose:
+    ``SELECT *`` fails under column-level grants.
 
     Args:
         source_config: The connection's own credential.
@@ -783,7 +784,7 @@ def probe_relation_readability(
             if part
         )
         try:
-            _send_one_statement(source_config, f"SELECT * FROM {qualified} LIMIT 0")
+            _send_one_statement(source_config, f"SELECT 1 FROM {qualified} LIMIT 0")
         except (
             Exception  # noqa: BLE001
         ) as e:  # broad on purpose — surfaces driver-level errors as messages
@@ -799,7 +800,7 @@ def probe_relation_readability(
         )
         with open_connection(adapter, "probe_relation_readability"):
             adapter.execute(
-                f"SELECT * FROM {qualified} LIMIT 0", auto_begin=False, fetch=True
+                f"SELECT 1 FROM {qualified} LIMIT 0", auto_begin=False, fetch=True
             )
         return True, ""
     except (

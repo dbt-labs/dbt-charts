@@ -482,9 +482,6 @@ pub struct SparkBarCellStyle {
     pub width: f64,
     /// Corner rounding for spark bar cells.
     pub border: CornerStyle,
-    /// Spark bar cell font style overrides.
-    #[model(inherit_slot = "Style.charts.font")]
-    pub font: FontStyle,
 }
 
 /// Spark area fill.

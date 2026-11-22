@@ -484,7 +484,7 @@ def test_inline_callout_block_renders_code():
         width=300.0,
         placard={
             "code": "ERR-INTERNAL",
-            "code_url": "https://docs.dbtcharts.com/reference/errors/#err-internal",
+            "code_url": "https://docs.dbtcharts.com/reference/errors/errors/#err-internal",
             "hint": None,
             "chart_title_baseline": 0.0,
             "tile_top": 0.0,
@@ -505,7 +505,7 @@ def test_inline_callout_block_renders_hint():
         width=300.0,
         placard={
             "code": "ERR-INTERNAL",
-            "code_url": "https://docs.dbtcharts.com/reference/errors/#err-internal",
+            "code_url": "https://docs.dbtcharts.com/reference/errors/errors/#err-internal",
             "hint": "Check your column names",
             "chart_title_baseline": 0.0,
             "tile_top": 0.0,

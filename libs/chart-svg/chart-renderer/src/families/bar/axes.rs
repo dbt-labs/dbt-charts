@@ -88,12 +88,13 @@ pub(crate) fn format_tick_labels(
         .collect()
 }
 
-/// A horizontal bar's value axis (labels under the plot, anchored per
+/// A horizontal bar's value axis (labels along the plot's `edge`, anchored per
 /// `flush_threshold`, plus the title), resolved once by `render_horizontal_panel`. The
-/// panel paints it under its own plot; a facet composite paints the same value
-/// at the shared `column_footer`.
+/// panel paints it on its own plot, and a mirror paints a copy on the other edge; a facet
+/// composite paints the same value at the shared `column_footer`.
 #[derive(Clone)]
 pub(crate) struct HorizontalValueAxis {
+    pub(super) edge: crate::common::XEdge,
     pub(super) ticks: Vec<f64>,
     pub(super) labels: Vec<String>,
     /// The text each label paints: cut to the axis's `labelLimit`, which its ink (measured on `labels`) is not.
@@ -165,14 +166,14 @@ impl HorizontalValueAxis {
         Ok(self)
     }
 
-    /// Paints at the CALLER's own `plot_left`/`plot_w`/`plot_bottom`: the
-    /// panel's, or a facet composite's footer band.
-    pub(crate) fn nodes(&self, ax: &AxisStyle, plot_left: f64, plot_w: f64, plot_bottom: f64) -> Result<Vec<Node>, String> {
-        // The bottom axis group sits at (0.5, ph + 0.5): Vega's crispness
+    /// Paints at the CALLER's own `plot_left`/`plot_w` and `edge_y`, the plot edge the
+    /// axis hangs from: the panel's, or a facet composite's footer band.
+    pub(crate) fn nodes(&self, ax: &AxisStyle, plot_left: f64, plot_w: f64, edge_y: f64) -> Result<Vec<Node>, String> {
+        // The axis group sits at (0.5, edge + 0.5): Vega's crispness
         // translate shifts the whole label row half a pixel right and down.
         let delta = 0.5;
-        // Baseline one `round(0.79·fs)` below the label row's top.
-        let label_y = plot_bottom + delta + self.pad + measure::baseline_shift("top", self.font_size);
+        // A bottom row's baseline is one `round(0.79·fs)` below its top; a top row sits on its bottom.
+        let label_y = edge_y + delta + self.edge.sign() * self.pad + measure::baseline_shift(self.edge.baseline(), self.font_size);
         let mut items: Vec<Node> = self
             .drawn(plot_w)
             .into_iter()
@@ -180,15 +181,16 @@ impl HorizontalValueAxis {
                 crate::text::label(Role::Axis, (plot_left + x + delta, label_y), Attrs::new().set("text-anchor", anchor).vega("font-family", self.family.as_str()).num("font-size", self.font_size).quick_some("font-style", self.style.as_deref()).set("font-weight", self.weight.as_str()).set("fill", self.color.as_str()), label)
             })
             .collect();
-        items.extend(crate::common::axis_title_bottom(
+        items.extend(crate::common::axis_title_flat(
             &self.title,
             &ax.title,
             plot_left + plot_w / 2.0,
             label_y,
             self.font_size,
             self.title_key,
+            self.edge,
         ));
-        crate::contract::axis_group(crate::contract::AxisChannel::X, &self.caption, (plot_left + 0.5, plot_bottom + delta), items)
+        crate::contract::axis_group(crate::contract::AxisChannel::X, &self.caption, (plot_left + 0.5, edge_y + delta), items)
     }
 }
 

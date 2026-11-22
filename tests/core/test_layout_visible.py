@@ -8,7 +8,7 @@ Layout items support:
   visible: {query: q, column: col}   — single-row boolean probe query
   visible: false                     — always hidden
 
-This is distinct from variables.visible (control-bar only).
+This is distinct from variables.<name>.visible (control-bar only).
 """
 
 from collections.abc import Callable

@@ -710,6 +710,19 @@
   doc: 'Fired when a `type: funnel` chart authors `style.orientation: vertical`.'
   summary: Fired when a funnel authors a vertical orientation.
   docs_topic: charts
+- code: ERR-AXIS-POSITION-WRONG-EDGE
+  level: error
+  title: An axis position names an edge that axis cannot take
+  template: 'Chart {chart_id!r}: `{axis}.position: {position}` names an edge the {role}
+    axis of a {orientation} chart cannot take; it takes {allowed}. {hint}'
+  doc: 'Fired when a chart''s own style places an axis on an edge it cannot reach. `axis_x`
+    is the category axis and `axis_y` the value axis in every orientation: on a horizontal
+    bar `axis_x.position` is `left` or `right` and `axis_y.position` is `top` or `bottom`;
+    on every other cartesian chart `axis_x.position` is `top` or `bottom` and `axis_y.position`
+    is `left` or `right`.'
+  summary: Fired when a chart places an axis on an edge its orientation does not give that
+    axis.
+  docs_topic: charts
 - code: ERR-PERCENT-ENTRY-NOT-FUNNEL
   level: error
   title: A percent support-table column is for funnels only

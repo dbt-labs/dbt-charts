@@ -405,7 +405,7 @@ impl ScatterResolved {
         r.link_context = payload.link_context.clone();
         r.link_y = r.y.clone();
         r.link_color = r.color.clone();
-        r.link_x_labeled = ::bind::temporal::has_labeled_bucket(&payload.rows, &r.x);
+        r.link_x_labeled = !r.style.axis_x.x_axis().is_nominal() && ::bind::temporal::has_labeled_bucket(&payload.rows, &r.x);
         Ok(r)
     }
 }

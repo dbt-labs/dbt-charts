@@ -6,7 +6,7 @@
 
 use board_model::board::theme::{built_in_theme, BASE_THEME};
 use board_model::style::axis::{
-    AxisYLabelPosition, SwitchOrPixels, TimeUnit, XAxisPosition, YAxisPosition,
+    AxisYLabelPosition, SwitchOrPixels, TimeUnit, XAxisPosition, ValueAxisPosition,
     AxisTicksStylePatch, BaseAxisStyle, BaseAxisStylePatch,
 };
 use board_model::style::font::{FontSlant, LetterCase, TextDecoration};
@@ -188,14 +188,20 @@ impl AxisLadder<'_> {
     /// to the right for endpoint labels, which no ported family draws, and where the family has no
     /// rail to yield the right side to (`y_auto_right`, a scatter or a line:
     /// `bake_ay_position_right`).
-    fn side(&self, y_auto_right: bool) -> Side {
+    fn side(&self, y_auto_right: bool, family: &str) -> Result<Side, Diagnostic> {
         match self.axis {
             AxisName::X => {
                 let set = self.rungs.walk(|layer| match &layer.rung {
                     AxisRung::X(p) => p.position.as_ref(),
                     _ => Tri::Unset,
                 });
-                if set == Some(&XAxisPosition::Top) { Side::Top } else { Side::Bottom }
+                match set {
+                    Some(XAxisPosition::Top) => Ok(Side::Top),
+                    Some(XAxisPosition::Bottom) | None => Ok(Side::Bottom),
+                    Some(XAxisPosition::Left | XAxisPosition::Right) => {
+                        Err(unsupported(format!("a {family} x axis sits on the top or bottom edge, never `position: left` or `right`")))
+                    }
+                }
             }
             AxisName::Y => {
                 let set = self.rungs.walk(|layer| match &layer.rung {
@@ -203,10 +209,13 @@ impl AxisLadder<'_> {
                     _ => Tri::Unset,
                 });
                 match set {
-                    Some(Engine::Value(YAxisPosition::Right)) => Side::Right,
-                    Some(Engine::Value(YAxisPosition::Left)) => Side::Left,
-                    _ if y_auto_right => Side::Right,
-                    _ => Side::Left,
+                    Some(Engine::Value(ValueAxisPosition::Right)) => Ok(Side::Right),
+                    Some(Engine::Value(ValueAxisPosition::Left)) => Ok(Side::Left),
+                    Some(Engine::Value(ValueAxisPosition::Top | ValueAxisPosition::Bottom)) => {
+                        Err(unsupported(format!("a {family} y axis sits on the left or right edge, never `position: top` or `bottom`")))
+                    }
+                    _ if y_auto_right => Ok(Side::Right),
+                    _ => Ok(Side::Left),
                 }
             }
         }
@@ -274,7 +283,7 @@ impl AxisLadder<'_> {
             (AxisName::X, Some(TicksShown::Auto)) => Some(self.grid_visible() != Some(true) || caps_bottom),
             _ => None,
         };
-        let mut parts = parts_of(&resolved.total.charts.axis, self.side(y_auto_right), family, ticks_drawn, labeled)?;
+        let mut parts = parts_of(&resolved.total.charts.axis, self.side(y_auto_right, family)?, family, ticks_drawn, labeled)?;
         if self.axis == AxisName::X && self.channel != ChannelType::Quantitative {
             let ticks_count = match count(self)? {
                 Some(Count::N(count)) => Some(count),

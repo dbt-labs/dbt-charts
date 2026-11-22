@@ -316,9 +316,6 @@ pub(super) fn render_horizontal_panel(
     if ax_x.ticks.visible == Some(true) {
         return Err(diagnostic::refuse!("bar: axis_x.ticks.visible: true on a horizontal bar's category axis is not supported").into());
     }
-    if ax_x.position.is_some() {
-        return Err(diagnostic::refuse!("bar: axis_x.position on a horizontal bar is not supported; axis_y.position places its category axis").into());
-    }
     let cat_font_size = ax_x
         .labels.font.size
         .ok_or("bar: axis_x.labels.font.size absent (theme required)")?;
@@ -905,12 +902,18 @@ pub(super) fn render_horizontal_panel(
     let series = if split_columns { layout_domain.len() } else { 1 };
     warn_band_too_narrow(chart_id, h, distinct_values(r.whole_rows.as_deref().unwrap_or(rows), cat_field), series);
 
-    // The category axis follows `axis_y.position` on a horizontal bar.
-    // A reversed value axis puts the zero line on the right, and the category labels go with it.
-    let cat_on_right = match ax_y.position.as_deref() {
-        Some("left") => reversed,
+    // The category axis follows `axis_x.position` on a horizontal bar. Unset, it sits on the
+    // zero line's side: a reversed value axis puts the zero line on the right.
+    let cat_on_right = match ax_x.position.as_deref() {
+        None => reversed,
+        Some("left") => false,
         Some("right") => true,
-        Some(other) => return Err(format!("bar: axis_y.position {other:?} is neither left nor right").into()),
+        Some(other) => return Err(format!("bar: axis_x.position {other:?} is neither left nor right").into()),
+    };
+    let val_edge = match ax_y.position.as_deref() {
+        Some("bottom") => crate::common::XEdge::Bottom,
+        Some("top") => crate::common::XEdge::Top,
+        Some(other) => return Err(format!("bar: axis_y.position {other:?} is neither top nor bottom").into()),
         None => return Err("bar: axis_y.position absent (theme required)".into()),
     };
     let label_side = if cat_on_right { Side::Right } else { Side::Left };
@@ -1054,38 +1057,33 @@ pub(super) fn render_horizontal_panel(
     let val_limit = ax_y.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     // A label aligned to the axis's own side is the flip model; production maps
     // every other align, and an absent one, to the default.
-    let (own_side, opposite_side) = if cat_on_right { ("right", "left") } else { ("left", "right") };
+    let own_side = if cat_on_right { "right" } else { "left" };
     let cat_flip = ax_x.labels.align_kept(own_side) == Some(own_side);
     let cat_center = ax_x.labels.align.as_deref() == Some("center");
     let anchor_at = |side: &str, own_aligned: bool| if (side == "left") == own_aligned { "start" } else { "end" };
-    // `axis_y.mirror`: a ghost copy of the category axis on the right edge
-    // (`mirror_axis.py` reflects the spec's y encoding, the category here).
-    let mut ghost = r.style.axis_y.mirror_ghost("bar")?;
-    // The ghost copies the category axis, so it wears that axis's case, not the measure axis's.
-    if let Some(g) = &mut ghost {
-        g.case = ax_x.labels.font.case.clone();
-    }
+    // `axis_y.mirror`: the value axis repeated on the opposite edge, relabeled by its own format
+    // or expr off the same ticks.
+    let ghost = ax_y.mirror_ghost("bar")?;
     let mirror_active = ghost.is_some();
-    if reversed && (mirror_active || facet.is_some() || support_table.is_some()) {
+    let ghost_edge = match val_edge {
+        crate::common::XEdge::Bottom => crate::common::XEdge::Top,
+        crate::common::XEdge::Top => crate::common::XEdge::Bottom,
+    };
+    // An axis above the plot would cross the strip, rail and panel chrome that stand there.
+    if (mirror_active || val_edge == crate::common::XEdge::Top)
+        && (facet.is_some() || support_table.is_some() || top_rail.is_some() || torn.is_some())
+    {
         return Err(diagnostic::refuse!(
-            "bar: chart {chart_id:?} has a reversed value axis (axis_x.scale.x_reverse or a descending axis_y domain) with mirrored axes, facets or a support table, which is not supported"
+            "bar: chart {chart_id:?} puts a horizontal bar's value axis above the plot (axis_y.position: top or axis_y.mirror) with facets, a support table, a series label rail or a torn outlier, which is not supported"
         )
         .into());
     }
-    // The ghost's own format reads each category as the number d3 sees (`gate_label_format`).
-    let ghost_cats: Vec<String> = match &ghost {
-        Some(g) if g.format.is_some() || g.ruler.is_some() => {
-            let values: Vec<f64> = cat_domain.iter().map(|cat| crate::common::js_number(cat)).collect();
-            g.texts(&values, &cat_domain)?
-        }
-        _ => cat_domain.iter().map(|cat| ax_x.labels.cased(&date_text(cat)?.unwrap_or_else(|| cat.clone()))).collect::<Result<_, _>>()?,
-    };
-    let ghost_w_one_line = ghost_cats
-        .iter()
-        .try_fold(0.0_f64, |acc, c| fonts.measure_shaped(c, cat_family, cat_font_size).map(|w| acc.max(w)))?
-        .min(cat_limit);
-    let ghost_w_wrapped = widest_painted(&ghost_cats, true)?;
-    let ghost_w_at = |plot_h: f64| if cat_labels_hidden { 0.0 } else if row_holds_two(plot_h) { ghost_w_wrapped } else { ghost_w_one_line };
+    if reversed && (facet.is_some() || support_table.is_some()) {
+        return Err(diagnostic::refuse!(
+            "bar: chart {chart_id:?} has a reversed value axis (axis_x.scale.x_reverse or a descending axis_y domain) with facets or a support table, which is not supported"
+        )
+        .into());
+    }
     // The label anchor's distance from the axis, and the anchor side.
     let cat_anchor = if cat_center { "middle" } else { anchor_at(own_side, cat_flip) };
     // A block on the label side widens the axis's own `labelPadding` by its
@@ -1114,40 +1112,6 @@ pub(super) fn render_horizontal_panel(
         .iter()
         .map(|c| Ok((c.clone(), if cat_labels_hidden { 0.0 } else { fonts.measure(&shown_cat(c)?, cat_family, cat_font_size)?.min(cat_limit) })))
         .collect::<Result<_, String>>()?;
-    // `center` is deleted from the spec before the mirror copies the axis, so
-    // the ghost carries no align and takes Vega's default: start-anchored at
-    // the primary's `labelPadding`.
-    let ghost_default = mirror_active && ax_x.labels.align.as_deref() == Some("center");
-    let ghost_own_aligned = mirror_active && !ghost_default && !cat_flip;
-    let ghost_anchor = anchor_at(opposite_side, ghost_own_aligned);
-    // A ghost whose copied `labelAlign` is the ghost's own orient would paint
-    // into the plot, so `mirror_axis.py` re-measures its `labelPadding` over
-    // the labels of the measure ladder rather than the category labels.
-    let ghost_gutter = if cat_labels_hidden {
-        0.0
-    } else if ghost_default {
-        cat_pad
-    } else if ghost_own_aligned {
-        let val_limit = ax_y.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
-        if ax_y.tick_values.is_empty() {
-            let (lo, hi) = rows.iter().filter_map(|row| row_num(row, val_field)).fold(
-                (f64::INFINITY, f64::NEG_INFINITY),
-                |(lo, hi), v| (lo.min(v), hi.max(v)),
-            );
-            crate::common::estimated_tick_label_gutter(
-                fonts, val_family, val_font_size, val_limit, ax_y.tick_label.as_ref(), ax_y.labels.format.as_ref(), ax_y, lo, hi,
-            )?
-        } else {
-            let family = measure::stand_in_family(val_family);
-            let widest = format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, normalize, "x", fonts)?
-                .iter()
-                .try_fold(0.0_f64, |acc, label| fonts.measure(label, family, val_font_size).map(|w| acc.max(w)))?;
-            widest.min(val_limit) + VALUE_AXIS_BREATHING_ROOM
-        }
-    } else {
-        // Start-anchored on the far edge, so the labels begin a label gap past the plot.
-        VALUE_AXIS_BREATHING_ROOM
-    };
 
 
     // Vega's parity overlap on the value labels (`labelSeparation` is the
@@ -1256,33 +1220,21 @@ pub(super) fn render_horizontal_panel(
     };
     let cat_axis_in_panel = facet.map_or(true, |f| f.cell_cat_axis);
     let val_axis_in_panel = facet.map_or(true, |f| f.independent_scale);
-    // The resolver pins the value domain past the data (headroom), so the plot reaches past its
-    // last tick. A mirror's ghost labels hang off the plot's right edge; where nothing paints
-    // into the headroom (no value labels, layers or stack), they start a label gap past the
-    // last tick or the longest bar instead, not past the empty headroom.
-    let headroom_unpainted = mirror_active
-        && facet.is_none()
-        && !cat_on_right
-        && layers.is_empty()
-        && !is_stacked
-        && label_layers.is_empty()
-        && date_axis.is_none();
-    let longest_bar = rows.iter().filter_map(|row| row_num(row, val_field)).fold(0.0_f64, f64::max);
-    let headroom_pull = |plot_w: f64, ticks: &[f64]| -> f64 {
-        if !headroom_unpainted {
-            return 0.0;
-        }
-        let painted_end = ticks.last().copied().unwrap_or(0.0).max(longest_bar);
-        plot_w * ((linear_domain_max - painted_end) / (linear_domain_max - linear_domain_min)).max(0.0)
-    };
     let (plot_left, plot_top, plot_w, plot_h, vega_title_pos, vega_legend, canvas_w, canvas_h, cell_ink) = {
         // The lines each value label paints on, kept beside the widths the last call returned.
         let val_label_rows = std::cell::RefCell::new(Vec::<usize>::new());
-        let measure_labels = |labels: &[String]| -> Result<Vec<f64>, String> {
+        // The mirror's labels on the far edge, kept beside the primary's like their line counts.
+        let ghost_label_ws = std::cell::RefCell::new(Vec::<f64>::new());
+        let measure_labels = |ticks: &[f64], labels: &[String]| -> Result<Vec<f64>, String> {
             *val_label_rows.borrow_mut() = labels.iter().map(|l| crate::text::line_count(l)).collect();
-            labels.iter().filter(|_| !val_labels_hidden).map(|l| fonts.measure_shaped(l, val_family, val_font_size)).collect()
+            let measure = |l: &str| fonts.measure_shaped(l, val_family, val_font_size);
+            let ws: Vec<f64> = labels.iter().filter(|_| !val_labels_hidden).map(|l| measure(l)).collect::<Result<_, _>>()?;
+            if let Some(g) = ghost.as_ref().filter(|_| !val_labels_hidden) {
+                *ghost_label_ws.borrow_mut() = g.widths(ticks, labels, &ws, measure)?;
+            }
+            Ok(ws)
         };
-        let mut val_label_ws = measure_labels(&val_tick_labels)?;
+        let mut val_label_ws = measure_labels(&tick_values, &val_tick_labels)?;
         // Rotated left axis title: ink extends `round(0.21·fs)+round(0.8·fs)`
         // past its anchor at −(labelPadding + titlePadding); bottom title:
         // one text row (with its own baseline-rounding quirk) below
@@ -1312,49 +1264,52 @@ pub(super) fn render_horizontal_panel(
                         b.union(&vega_fit::Bounds::new(x, ph / 2.0 - cat_title_w / 2.0, x, ph / 2.0 + cat_title_w / 2.0));
                     }
                 }
-                // The ghost keeps the primary's anchor and label padding on the
-                // opposite edge, so its text reaches past the plot by that much.
-                let (mut axes_x1, mut axes_x2) = (band_x1.min(0.0), band_x2.max(pw));
-                if mirror_active && facet.is_none() {
-                    let align = if ghost_anchor == "start" { "left" } else { "right" };
-                    let ghost_x = if cat_on_right { -(ax_off + ghost_gutter) } else { pw - headroom_pull(pw, tick_values) + ax_off + ghost_gutter };
-                    let ghost = vega_fit::text_ink(ghost_x, ph / 2.0, ghost_w_at(ph), cat_font_size, align, "middle");
-                    axes_x1 = axes_x1.min(ghost.x1);
-                    axes_x2 = axes_x2.max(ghost.x2);
-                    b.union(&ghost);
-                }
-                // Bottom value axis labels (anchored per `flush_threshold`);
-                // Vega's parity overlap hides every other one under the
-                // theme's min_gap, and only the visible labels' ink counts.
+                let (axes_x1, axes_x2) = (band_x1.min(0.0), band_x2.max(pw));
+                // A mirror keeps the primary's parity verdict so both edges label the same ticks.
                 let rows = val_label_rows.borrow();
-                let label_ink: Vec<vega_fit::Bounds> = tick_values
-                    .iter()
-                    .zip(val_label_ws.iter())
-                    .zip(rows.iter())
-                    .map(|((&tv, &lw), &lines)| {
-                        let span = linear_domain_max - linear_domain_min;
-                        let x = if span != 0.0 { pw * (tv - linear_domain_min) / span } else { 0.0 };
-                        let align = match flush_edge(x, pw, flush_thr) {
-                            Some(true) => "left",
-                            Some(false) => "right",
-                            None => "center",
-                        };
-                        vega_fit::text_ink_rows(x, ph + val_pad, lw.min(val_limit), val_font_size, align, "top", lines)
-                    })
-                    .collect();
+                let edge_ink = |edge: crate::common::XEdge, ws: &[f64]| -> Vec<vega_fit::Bounds> {
+                    tick_values
+                        .iter()
+                        .zip(ws.iter())
+                        .zip(rows.iter())
+                        .map(|((&tv, &lw), &lines)| {
+                            let span = linear_domain_max - linear_domain_min;
+                            let x = if span != 0.0 { pw * (tv - linear_domain_min) / span } else { 0.0 };
+                            let align = match flush_edge(x, pw, flush_thr) {
+                                Some(true) => "left",
+                                Some(false) => "right",
+                                None => "center",
+                            };
+                            vega_fit::text_ink_rows(x, edge.at(ph, val_pad), lw.min(val_limit), val_font_size, align, edge.baseline(), lines)
+                        })
+                        .collect()
+                };
+                let label_ink = edge_ink(val_edge, val_label_ws);
                 let visible = vega_fit::parity_visible(&label_ink, val_separation);
-                let mut x_axis_y2 = ph;
-                for (ink, _) in label_ink.iter().zip(&visible).filter(|(_, &v)| v) {
+                let ghost_ws = ghost_label_ws.borrow();
+                let ghost_ink: Vec<vega_fit::Bounds> = if mirror_active { edge_ink(ghost_edge, &ghost_ws) } else { Vec::new() };
+                let (mut val_y1, mut val_y2) = (0.0_f64, ph);
+                for (ink, _) in label_ink.iter().chain(ghost_ink.iter()).zip(visible.iter().chain(visible.iter())).filter(|(_, &v)| v) {
                     if val_axis_in_panel {
                         b.union(ink);
                     }
-                    x_axis_y2 = x_axis_y2.max(ink.y2);
+                    val_y1 = val_y1.min(ink.y1);
+                    val_y2 = val_y2.max(ink.y2);
                 }
                 val_visible.replace(Some(visible));
                 if val_title_extra > 0.0 {
-                    x_axis_y2 += val_title_extra;
+                    let (y1, y2) = match val_edge {
+                        crate::common::XEdge::Bottom => {
+                            val_y2 += val_title_extra;
+                            (0.0, val_y2)
+                        }
+                        crate::common::XEdge::Top => {
+                            val_y1 -= val_title_extra;
+                            (val_y1, ph)
+                        }
+                    };
                     if val_axis_in_panel {
-                        b.union(&vega_fit::Bounds::new(pw / 2.0 - val_title_w / 2.0, 0.0, pw / 2.0 + val_title_w / 2.0, x_axis_y2));
+                        b.union(&vega_fit::Bounds::new(pw / 2.0 - val_title_w / 2.0, y1, pw / 2.0 + val_title_w / 2.0, y2));
                     }
                 }
                 // The bars' own rects, stroke-expanded (`boundStroke`, full
@@ -1386,7 +1341,7 @@ pub(super) fn render_horizontal_panel(
                         .map_or((axes_x1, axes_x2), |bars| (axes_x1.min(bars.x1), axes_x2.max(bars.x2)));
                     let size = (lg.box_w, lg.box_h());
                     let x_bounds = (x_bounds.0, x_bounds.1.max(crate::annotation::text_x2(&annotation_ctx((0.0, 0.0), pw, ph))));
-                    let origin = legend_origin(&r.legend.position, x_bounds, (0.0, x_axis_y2), (pw, ph), size);
+                    let origin = legend_origin(&r.legend.position, x_bounds, (val_y1, val_y2), (pw, ph), size);
                     legend_xy.set(origin);
                     if let Some(reach) = legend_fit_bounds(&r.legend.position, origin, size) {
                         b.union(&reach);
@@ -1536,7 +1491,7 @@ pub(super) fn render_horizontal_panel(
             if rungs != tick_values {
                 tick_values = rungs;
                 val_tick_labels = format_tick_labels(&tick_values, ax_y, normalize, "x", fonts)?;
-                val_label_ws = measure_labels(&val_tick_labels)?;
+                val_label_ws = measure_labels(&tick_values, &val_tick_labels)?;
                 m = fit(&tick_values, &val_label_ws);
             }
         }
@@ -1546,7 +1501,7 @@ pub(super) fn render_horizontal_panel(
                 tick_values = refit.ticks.clone();
                 val_tick_labels = refit.labels.clone();
                 date_axis = Some(refit);
-                val_label_ws = measure_labels(&val_tick_labels)?;
+                val_label_ws = measure_labels(&tick_values, &val_tick_labels)?;
                 m = fit(&tick_values, &val_label_ws);
             }
         }
@@ -1599,7 +1554,11 @@ pub(super) fn render_horizontal_panel(
         register_linear("x", linear_domain_min, linear_domain_max, Span::Width);
         register_band("y", &cat_domain, band_pi, band_po, Span::HeightDown)?;
         if facet.is_none() && ax_y.labels.upright() {
-            let spec = AxisSpec { orient: Orient::Bottom, offset: val_pad, shift: 0.0, align: None, baseline: None, angle: 0.0, flush: flush_thr, style: ax_y.labels.item_style()? };
+            let orient = match val_edge {
+                crate::common::XEdge::Bottom => Orient::Bottom,
+                crate::common::XEdge::Top => Orient::Top,
+            };
+            let spec = AxisSpec { orient, offset: val_pad, shift: 0.0, align: None, baseline: None, angle: 0.0, flush: flush_thr, style: ax_y.labels.item_style()? };
             register_axis("x", spec);
         }
         if facet.is_none() && ax_x.labels.upright() {
@@ -1623,6 +1582,7 @@ pub(super) fn render_horizontal_panel(
     );
     let corner_r = r.style.mark.border.radius.unwrap_or(0.0);
     let value_axis = HorizontalValueAxis {
+        edge: val_edge,
         ticks: tick_values.clone(),
         labels: val_tick_labels.iter().filter(|_| !val_labels_hidden).cloned().collect(),
         shown: val_tick_labels.iter().filter(|_| !val_labels_hidden).map(|l| ax_y.labels.clip(l, fonts)).collect::<Result<_, _>>()?,
@@ -1646,6 +1606,23 @@ pub(super) fn render_horizontal_panel(
         right_reach: 0.0,
     }
     .with_reach(plot_w, fonts)?;
+    // Hidden value labels hide the mirror's too.
+    let mirror_axis = match ghost.as_ref().filter(|_| !val_labels_hidden) {
+        Some(g) => {
+            let labels = g.texts(&value_axis.ticks, &value_axis.labels)?;
+            let shown = labels.iter().map(|l| ax_y.labels.clip(l, fonts)).collect::<Result<_, _>>()?;
+            Some(HorizontalValueAxis {
+                edge: ghost_edge,
+                labels,
+                shown,
+                title: String::new(),
+                title_key: None,
+                caption: value_axis.caption.untitled(),
+                ..value_axis.clone()
+            })
+        }
+        None => None,
+    };
     let cat_caption = category_axis_caption(&cat_title_paint, ax_x, &cat_domain)?;
 
     // ── SVG emission ───────────────────────────────────────────────────────
@@ -2390,18 +2367,23 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
         )
     };
     let (cat_label_pad, cat_gutter) = (cat_gutters(plot_h).0 + side_clear.get(), cat_gutters(plot_h).1 + side_clear.get());
-    let ghost_w = ghost_w_at(plot_h);
     let cat_edge_x = if cat_on_right { plot_right + ax_off } else { plot_left - ax_off };
     let cat_side = if cat_on_right { 1.0 } else { -1.0 };
     // Vega lists the x axis before the y axis.
     if val_axis_in_panel {
-        tail.extend(value_axis.nodes(ax_y, plot_left, plot_w, plot_bottom)?);
+        let edge_y = |edge: crate::common::XEdge| match edge {
+            crate::common::XEdge::Bottom => plot_bottom,
+            crate::common::XEdge::Top => plot_top,
+        };
+        tail.extend(value_axis.nodes(ax_y, plot_left, plot_w, edge_y(val_edge))?);
+        if let Some(mirror) = &mirror_axis {
+            tail.extend(mirror.nodes(ax_y, plot_left, plot_w, edge_y(ghost_edge))?);
+        }
     }
     tail.extend(foreground_annotations);
     let mut cat_items: Vec<Node> = Vec::new();
     let mut cat_labels: Vec<CatLabel> = Vec::new();
-    let mut ghost_labels: Vec<CatLabel> = Vec::new();
-    for (cat_i, cat) in cat_domain.iter().enumerate() {
+    for cat in &cat_domain {
         let Some(band_y) = band.position(cat) else { continue };
         let center_y = plot_top + band_y + band.bandwidth() / 2.0;
         // Axis groups carry Vega's +0.5 crispness translate; the band
@@ -2417,7 +2399,6 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
             cat_items.push(cat_node(label_x, cat_anchor, &label));
         }
         cat_labels.push(label);
-        ghost_labels.push(cat_paint(cat, &ghost_cats[cat_i], center_y).map_err(|e| format!("bar: {e}"))?);
     }
 
     // Axis titles.
@@ -2437,34 +2418,15 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
             cat_items,
         )?);
     }
-    if mirror_active && cat_axis_in_panel {
-        let ghost_edge_x = if cat_on_right { plot_left - ax_off } else { plot_right - headroom_pull(plot_w, &tick_values) + ax_off };
-        let ghost_x = ghost_edge_x - cat_side * ghost_gutter + 0.5;
-        let ghost_items: Vec<Node> = ghost_labels.iter().filter(|_| !cat_labels_hidden).map(|label| cat_node(ghost_x, ghost_anchor, label)).collect();
-        tail.extend(crate::contract::axis_group(
-            crate::contract::AxisChannel::Y,
-            &cat_caption.untitled(),
-            (ghost_edge_x + 0.5, plot_top),
-            ghost_items,
-        )?);
-    }
-    // A facet's axis copies: the primary on `axis_y.position`'s side and the
-    // mirror's ghost opposite. The composer's `row_header` holds the left one;
-    // the last column of each row paints the right one at `row_footer`'s anchor,
+    // A facet's axis copy, on `axis_x.position`'s side. The composer's `row_header` holds a
+    // left one; the last column of each row paints a right one at `row_footer`'s anchor,
     // `ceil(cell x2)`.
     let primary_copy = EdgeCopy { dx: cat_side * cat_label_pad + 0.5, anchor: cat_anchor, reach: ax_off + cat_gutter + cat_title_extra };
-    let ghost_copy = (mirror_active && facet.is_some()).then(|| EdgeCopy {
-        dx: -cat_side * ghost_gutter + 0.5,
-        anchor: ghost_anchor,
-        // A ghost anchored outward carries its labels past the gutter.
-        reach: ax_off + ghost_gutter + if ghost_anchor == if cat_on_right { "end" } else { "start" } { ghost_w } else { 0.0 },
-    });
-    let (left_copy, right_copy) = if cat_on_right { (ghost_copy, Some(primary_copy)) } else { (Some(primary_copy), ghost_copy) };
+    let (left_copy, right_copy) = if cat_on_right { (None, Some(primary_copy)) } else { (Some(primary_copy), None) };
     let right_edge = facet.map(|f| &f.right_edge);
     if let (Some(copy), Some(edge)) = (&right_copy, right_edge.filter(|e| e.paint && !cat_axis_in_panel)) {
         let edge_x = plot_left + plot_w + edge.overhang + ax_off;
-        let right_labels = if cat_on_right { &cat_labels } else { &ghost_labels };
-        let mut edge_items: Vec<Node> = right_labels.iter().filter(|_| !cat_labels_hidden).map(|label| cat_node(edge_x + copy.dx, copy.anchor, label)).collect();
+        let mut edge_items: Vec<Node> = cat_labels.iter().filter(|_| !cat_labels_hidden).map(|label| cat_node(edge_x + copy.dx, copy.anchor, label)).collect();
         if cat_on_right {
             edge_items.extend(crate::common::axis_title_rotated(&cat_title_paint, &ax_x.title, edge_x + cat_gutter, plot_top + plot_h / 2.0, 1.0, None));
         }
@@ -2473,8 +2435,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
     let row_header_labels = if cat_axis_in_panel {
         Vec::new()
     } else {
-        let left_labels = if cat_on_right { &ghost_labels } else { &cat_labels };
-        left_labels.iter().filter(|_| !cat_labels_hidden).map(|label| (label.y, label.lines.join(&measure::LINE_SEP.to_string()))).collect()
+        cat_labels.iter().filter(|_| !cat_labels_hidden).map(|label| (label.y, label.lines.join(&measure::LINE_SEP.to_string()))).collect()
     };
 
 

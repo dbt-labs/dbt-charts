@@ -76,7 +76,11 @@ def emitted_x_axis(
         )
         resolves_cartesian_x = True
 
-    normalized = normalize_labeled_temporal(chart_rows, chart.x)
+    normalized = (
+        chart_rows
+        if chart.style.axis_x.type == "nominal"
+        else normalize_labeled_temporal(chart_rows, chart.x)
+    )
     dataset = regroup(chart.panel_axes, chart_rows)
     mutated_dataset = (
         restripe(dataset, normalized) if normalized is not chart_rows else dataset

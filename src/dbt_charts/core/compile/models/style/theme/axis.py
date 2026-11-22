@@ -1137,9 +1137,11 @@ class AxisXStyle(BaseAxisStyle):
         default_factory=DimensionLabelStyle,
         description="Dimension axis label style.",
     )
-    position: Annotated[Literal["top", "bottom"] | None, SkipInheritSlots()] = Field(
+    position: Annotated[
+        Literal["top", "bottom", "left", "right"] | None, SkipInheritSlots()
+    ] = Field(
         default=None,
-        description="X-axis position; None uses Vega-Lite's default (bottom).",
+        description="Category axis edge; left or right on a horizontal bar.",
     )
     # Override base's scale type to XScaleStyle so x_reverse can be authored here.
     scale: Annotated[XScaleStyle | None, SkipInheritSlots()] = Field(
@@ -1152,13 +1154,13 @@ class AxisXStyle(BaseAxisStyle):
         default=None,
         description="Time-unit bucketing for temporal x-axes; None or 'auto' auto-detects from data.",
     )
-    # Authored opt-in scale type for bucketed-time x-axes.
-    # None/"auto" = ordinal when time_unit resolves to a bucketed-calendar grain.
+    # Authored x scale type. None/"auto" = ordinal when time_unit resolves to a
+    # bucketed-calendar grain; "nominal" turns off date detection entirely.
     type: Annotated[
-        Literal["auto", "ordinal", "temporal"] | None, SkipInheritSlots()
+        Literal["auto", "ordinal", "temporal", "nominal"] | None, SkipInheritSlots()
     ] = Field(
         default=None,
-        description="Scale type for bucketed-time x-axes; None/'auto' infers from time_unit grain.",
+        description="X scale type; nominal draws values as plain categories, never dates.",
     )
     # Fill mode for missing time buckets on ordinal bucketed-time x-axes.
     # Required; theme YAML supplies the default ("null") via axis_x.fill.
@@ -1232,11 +1234,12 @@ class AxisYStyle(BaseAxisStyle):
         default_factory=AxisYLabelStyle,
         description="Value axis label style.",
     )
-    position: Annotated[Literal["left", "right", "auto"] | None, SkipInheritSlots()] = (
-        Field(
-            default=None,
-            description="Y-axis position; auto flips when endpoint labels are on the right.",
-        )
+    # Which edges fit depends on orientation, known only at resolve (settle_axis_edges).
+    position: Annotated[
+        Literal["left", "right", "top", "bottom", "auto"] | None, SkipInheritSlots()
+    ] = Field(
+        default=None,
+        description="Value axis edge; top or bottom on a horizontal bar.",
     )
     # y-axis only, never cascaded: resolve paints it into grid/labels/title.
     color: Annotated[str | None, Color(keywords=(AUTO,)), SkipInheritSlots()] = Field(
@@ -1247,7 +1250,7 @@ class AxisYStyle(BaseAxisStyle):
     mirror: Annotated[bool | AxisMirrorStyle | None, SkipInheritSlots()] = Field(
         default=None,
         description=(
-            "Draw the y-scale on both left and right edges (wide charts). "
+            "Draw the value scale on both edges: left and right, or top and bottom on a horizontal bar. "
             "true mirrors the primary axis's label verbatim; an object (format/expr) "
             "relabels only the mirrored edge (e.g. a percent-of-total right axis "
             "next to an absolute-value left axis) while ticks stay aligned to the "

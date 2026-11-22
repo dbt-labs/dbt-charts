@@ -3,14 +3,17 @@ bulk schema, and test_connection."""
 
 from __future__ import annotations
 
-from collections.abc import Generator
+import secrets
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import psycopg
 import pytest
+from pytest_postgresql.executors import PostgreSQLExecutor
 
 from dbt_charts._install_hint import install_hint
 from dbt_charts.core.compile.config import get_execution_config
@@ -429,6 +432,74 @@ def test_probe_never_raises_on_a_driver_error(tmp_path: Path) -> None:
         source_config, Relation(name="nope", schema="does_not_exist")
     )
     assert success is False
+
+
+def _pg_connect(cluster: PostgreSQLExecutor, dbname: str) -> psycopg.Connection:
+    return psycopg.connect(
+        host=cluster.host,
+        port=cluster.port,
+        user=cluster.user,
+        password=cluster.password,
+        dbname=dbname,
+        autocommit=True,
+    )
+
+
+@pytest.fixture(scope="module")
+def column_granted_pg(
+    pg_cluster: PostgreSQLExecutor,
+) -> Generator[Callable[[str], PostgresSourceConfig]]:
+    password = secrets.token_urlsafe(16)
+    roles = ("probe_id_only", "probe_no_grant")
+    with _pg_connect(pg_cluster, pg_cluster.maintenance_dbname) as admin:
+        admin.execute("DROP DATABASE IF EXISTS probe_wh")
+        admin.execute("CREATE DATABASE probe_wh")
+        for role in roles:
+            admin.execute(f"DROP ROLE IF EXISTS {role}")
+            admin.execute(f"CREATE ROLE {role} LOGIN PASSWORD '{password}'")
+    with _pg_connect(pg_cluster, "probe_wh") as con:
+        con.execute("CREATE SCHEMA analytics")
+        con.execute("CREATE TABLE analytics.orders (id INTEGER, secret TEXT)")
+        con.execute(f"GRANT USAGE ON SCHEMA analytics TO {', '.join(roles)}")
+        con.execute("GRANT SELECT (id) ON analytics.orders TO probe_id_only")
+
+    def _as(role: str) -> PostgresSourceConfig:
+        return PostgresSourceConfig(
+            type="postgres",
+            host=pg_cluster.host,
+            port=pg_cluster.port,
+            dbname="probe_wh",
+            user=role,
+            password=password,
+        )
+
+    yield _as
+    with _pg_connect(pg_cluster, pg_cluster.maintenance_dbname) as admin:
+        admin.execute("DROP DATABASE probe_wh WITH (FORCE)")
+        for role in roles:
+            admin.execute(f"DROP ROLE {role}")
+
+
+@pytest.mark.xdist_group("postgres_cluster")
+@pytest.mark.timeout(120)
+class TestProbeUnderColumnGrants:
+    def test_a_grant_on_some_columns_reads_as_readable(
+        self, column_granted_pg: Callable[[str], PostgresSourceConfig]
+    ) -> None:
+        assert probe_relation_readability(
+            column_granted_pg("probe_id_only"),
+            Relation(name="orders", schema="analytics"),
+        ) == (True, "")
+
+    def test_no_grant_still_reads_as_unreadable(
+        self, column_granted_pg: Callable[[str], PostgresSourceConfig]
+    ) -> None:
+        success, message = probe_relation_readability(
+            column_granted_pg("probe_no_grant"),
+            Relation(name="orders", schema="analytics"),
+        )
+        assert success is False
+        assert "permission denied" in message
 
 
 # ── bulk_schema_for_config: the connection-scoped bulk-schema seam ───────────

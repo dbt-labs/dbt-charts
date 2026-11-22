@@ -19,6 +19,7 @@ from dbt_charts.core.compile.models.chart.resolved._annotation import (
     ResolvedValueAnchor,
 )
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
+from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
@@ -294,6 +295,50 @@ def test_a_histogram_takes_no_annotations() -> None:
                 "annotations": [{"type": "rule", "y": 3}],
             }
         )
+
+
+def test_a_nominal_x_anchors_a_month_label_as_its_category() -> None:
+    rows = [
+        {"region": m, "revenue": v}
+        for m, v in (("Aug 2026", 3.0), ("Sep 2026", 4.0), ("Oct 2026", 5.0))
+    ]
+    note = {"type": "note", "x": "Sep 2026", "y": 4, "text": "n"}
+    with pytest.raises(CompilationError, match="'Sep 2026' is not a date"):
+        _one(note, rows=rows)
+    nominal = _one(note, rows=rows, style={"axis_x": {"type": "nominal"}})
+    assert nominal.x == ResolvedCategoryAnchor(kind="category", value="Sep 2026")
+
+
+@pytest.mark.parametrize(
+    "board_style",
+    [
+        {"charts": {"axis_x": {"type": "nominal"}}},
+        {"charts": {"bar": {"axis_x": {"type": "nominal"}}}},
+    ],
+    ids=["charts.axis_x", "charts.bar.axis_x"],
+)
+def test_a_board_level_nominal_x_types_the_channel_nominal(
+    board_style: dict[str, Any],
+) -> None:
+    rows = [{"region": m, "revenue": 3.0} for m in ("Aug 2026", "Sep 2026")]
+    ctx = resolve_chart_style_context(
+        get_theme_style(get_default_theme_name()),
+        StylePatch.model_validate(board_style),
+    )
+    normalized = BarChart.model_validate(
+        {
+            "id": "rev",
+            "type": "bar",
+            "x": "region",
+            "y": "revenue",
+            "query_name": "q",
+            "annotations": [{"type": "note", "x": "Sep 2026", "y": 3, "text": "n"}],
+        }
+    )
+    resolved = resolve(normalized, rows, ctx, rendered_at=NOW)
+    assert isinstance(resolved, ResolvedBarChart)
+    [note] = resolved.annotations
+    assert note.x == ResolvedCategoryAnchor(kind="category", value="Sep 2026")
 
 
 def test_a_band_must_name_a_category_of_the_x_column() -> None:

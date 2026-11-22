@@ -2335,6 +2335,22 @@
     error instead, and a trend over a line or scatter mark is the intended use.'
   summary: Fired when a trend annotation fits a bar mark.
   docs_topic: charts
+- code: WARN-AXIS-POSITION-NOT-APPLIED
+  level: warning
+  title: A board or theme axis position does not reach a horizontal bar
+  template: 'Chart {chart_id!r} is a horizontal bar, so the `{key}` set on its board or theme
+    does not apply to it. On a horizontal bar `{instead}` places that edge.'
+  fix: On a horizontal bar `axis_x.position` (left or right) places the category names and
+    `axis_y.position` (top or bottom) the value axis. Set the one you mean, on the board,
+    the theme or this chart.
+  doc: 'Fired when a board or theme sets `axis_y.position` to `left` or `right`, or `axis_x.position`
+    to `top` or `bottom`, and a horizontal bar inherits it. Each axis key drives the axis it
+    names, so those edges belong to vertical charts and are dropped for the bar. A chart''s
+    own style naming such an edge is an error (`ERR-AXIS-POSITION-WRONG-EDGE`). Built-in
+    themes set only `auto`.'
+  summary: A board or theme axis edge only fits vertical charts and was dropped for a horizontal
+    bar.
+  docs_topic: charts
 - code: WARN-OUTLIERS-TORN-UNSUPPORTED
   level: warning
   title: Bars past the axis cannot be torn off the chart on this chart

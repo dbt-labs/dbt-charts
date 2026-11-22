@@ -85,6 +85,7 @@ from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
     plan_cartesian,
     quantitative_channel_values,
+    x_channel_type,
 )
 from dbt_charts.core.compile.resolve.chart._tooltip import (
     reject_tooltip_beside_date_y,
@@ -150,7 +151,7 @@ def _resolve_scatter(
     # numeric — the dot-plot recipe (a real column classified nominal/ordinal)
     # only ever applies to a single authored y column.
     y_field_scatter = normalized.y if isinstance(normalized.y, str) else None
-    x_ch_type = _classify_to_channel_type(normalized.x, data, is_dimension=True)
+    x_ch_type = x_channel_type(normalized, data, chart_style_context, "scatter")
     y_ch_type = (
         "quantitative"
         if isinstance(normalized.y, list)
@@ -174,6 +175,7 @@ def _resolve_scatter(
         normalized.y,
         has_quantitative_axis=True,
         temporal_band_axes=frozenset(),
+        horizontal=False,
     )
     primary = plan.primary
     scatter = merge_unset(board_family_style(chart_style_context, normalized), primary)

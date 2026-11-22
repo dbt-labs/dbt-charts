@@ -548,8 +548,8 @@ pub(crate) struct FacetSpec<'a> {
     /// the cell's ink (an independent measure scale), so no shared
     /// `row_footer` reserve follows the grid.
     pub(crate) own_value_axes: bool,
-    /// Each panel draws its own y axis inside its cell, which Vega lists after
-    /// the shared x footer.
+    /// Each panel draws its own y axis inside its cell, so no shared value axis
+    /// leaves its panel.
     pub(crate) y_axes_in_cells: bool,
     /// Every panel draws its own x axis inside its cell and no shared
     /// `column-footer` exists (a narrowed x domain): `gridLayout` then runs
@@ -1602,6 +1602,8 @@ fn compose_facet_at(
     // with, carried on `PanelGeometry`, rather than a second, independent
     // read of the axis style.
     let above = spec.axis_y.labels_above();
+    // Every shared axis paints after the cells, over every panel's marks.
+    let mut shared_axes = Vec::new();
     if ghost_left {
         for row_i in 0..panel_rows_n {
             let slot = row_i * panel_cols_n;
@@ -1644,7 +1646,7 @@ fn compose_facet_at(
                     None,
                 ));
             }
-            body.extend(crate::contract::axis_group(
+            shared_axes.extend(crate::contract::axis_group(
                 crate::contract::AxisChannel::Y,
                 &style.caption.untitled(),
                 (canvas_x(dx, geom) + 0.5, canvas_y(dy, geom)),
@@ -1685,7 +1687,7 @@ fn compose_facet_at(
                 -1.0,
                 None,
             ));
-            body.extend(crate::contract::axis_group(
+            shared_axes.extend(crate::contract::axis_group(
                 crate::contract::AxisChannel::Y,
                 &style.caption,
                 (canvas_x(dx, geom), canvas_y(dy, geom)),
@@ -1709,8 +1711,6 @@ fn compose_facet_at(
             body.push(header(&row_labels[row_i], (text_x, text_y), "start")?);
         }
     }
-    // The shared x-axis (`column_footer`) precedes the cells when each panel
-    // owns its value axis, and follows them otherwise.
     let last_row_start = panel_rows_n.saturating_sub(1) * panel_cols_n;
     let footer_bottom = pad_t + margin_top + top0 + footer_y(&cells, &offsets, last_row_start);
     let footer_nodes = || -> Result<Vec<Node>, String> {
@@ -1735,12 +1735,8 @@ fn compose_facet_at(
         }
         Ok(nodes)
     };
-    if spec.y_axes_in_cells {
-        body.extend(footer_nodes()?);
-    }
     let mut cell = Vec::new();
-    // With an x axis in every cell, Vega lists the shared value axis (`row_footer`)
-    // ahead of the cells, so it leaves its panel here.
+    // With an x axis in every cell, the shared value axis (`row_footer`) leaves its panel here.
     let mut row_footers = Vec::new();
     for (i, geom) in final_panels.iter().enumerate() {
         let (dx, dy) = offsets[missing + i];
@@ -1757,7 +1753,6 @@ fn compose_facet_at(
         };
         cell.push(Node::group(Role::Chrome, Attrs::new(), content).translate(canvas_x(dx, geom), canvas_y(dy, geom)));
     }
-    body.extend(row_footers);
     let cell_label = display_text::language::tr("aria.container_group", None, &[])?;
     body.push(Node::group(
         Role::Chrome,
@@ -1767,6 +1762,8 @@ fn compose_facet_at(
             .set("aria-roledescription", cell_label),
         cell,
     ));
+    body.extend(row_footers);
+    body.extend(shared_axes);
     // Vega draws a row's shared value axis (`row_footer`) whether or not the
     // row's last cell holds a panel. The grid's last slot always does: its
     // axis, when it paints one, is repainted at each row whose last slot is
@@ -1836,9 +1833,7 @@ fn compose_facet_at(
     // the CELL's own declared x (`canvas_x(dx) + left_mark_overhang`) — the
     // same plot-origin correction the column header above applies, never
     // the panel's own canvas edge `canvas_x` alone returns.
-    if !spec.y_axes_in_cells {
-        body.extend(footer_nodes()?);
-    }
+    body.extend(footer_nodes()?);
 
     if let Some(chrome) = chrome {
         let origin_y = pad_t + margin_top;
@@ -1882,7 +1877,7 @@ fn compose_facet_at(
         }
     }
 
-    Ok((ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg).svg(body), canvas_h))
+    Ok((ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg).svg(::layout::contract::tick_stubs_under_marks(body)), canvas_h))
 }
 
 #[cfg(test)]

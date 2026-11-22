@@ -193,6 +193,7 @@ _OMITTED_FROM_PROJECTION = {
     "span_date_format": "baked from `style.formats.date_short` for a date-span tooltip",
     "x_tooltip_format": "baked from the query's `formats:` for a numeric scatter x tooltip",
     "color_format": "baked from the query's `formats:` for a numeric color column's legend",
+    "unapplied_axis_edges": "the board and theme axis edges a horizontal bar dropped, read only by WARN-AXIS-POSITION-NOT-APPLIED",
     # Shares a name with an authored field but not a shape: the resolved layer
     # carries the full set of baked mark styles (line_mark/point_mark/...) plus
     # `query_name`, none of which the authored layer accepts. Projecting it

@@ -454,11 +454,11 @@ pub(crate) fn render_vertical_panel(
     // Production's emitter rewrites a labeled or year-shaped x to ISO dates
     // before anything reads it; a layer reading its own query is rewritten
     // the same way below.
-    let rows_normalized = ::bind::temporal::normalize_labeled_temporal(&r.column_types, rows, &r.x)?;
+    let x_axis = r.style.axis_x.x_axis();
+    let rows_normalized = x_axis.law_rows(&r.column_types, rows, &r.x)?;
     let rows = &*rows_normalized;
     let whole_rows = facet.map_or(r.whole_rows.as_deref(), |f| Some(f.chart_rows));
-    let chart_rows_normalized =
-        whole_rows.map(|whole| ::bind::temporal::normalize_labeled_temporal(&r.column_types, whole, &r.x)).transpose()?;
+    let chart_rows_normalized = whole_rows.map(|whole| x_axis.law_rows(&r.column_types, whole, &r.x)).transpose()?;
     let value_domain_rows = facet.map_or_else(|| Some(crate::legend_view::axis_rows(r.whole_rows.as_deref(), rows)), |f| f.value_domain_rows);
     let value_axis_right_overhang = facet.map_or(0.0, |f| f.value_axis_right_overhang);
     // `independent_scale` gates two effects, each at its own read site:
@@ -511,7 +511,7 @@ pub(crate) fn render_vertical_panel(
         }
         let own_rows = resolve_layer_rows(payload, query_name, r.query_name.as_deref(), "bar")?;
         let own_types = crate::families::layers::resolve_layer_types(payload, query_name, r.query_name.as_deref(), "bar")?;
-        ::bind::temporal::normalize_labeled_temporal(own_types, own_rows, x.unwrap_or(cat_field))
+        x_axis.law_rows(own_types, own_rows, x.unwrap_or(cat_field))
     };
     let filled_x = x_resolution(r, chart_rows)?;
     let law = filled_x.resolution;

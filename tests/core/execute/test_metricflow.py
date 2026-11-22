@@ -94,12 +94,12 @@ entities:
 constellations:
 - name: billing
   roles:
-  - {name: account, datatype: entity('account')}
+  - {name: account, datatype: REF(account)}
   - {name: month, datatype: TIMESTAMP}
   metrics:
   - {name: invoiced_total, expr: AGG(invoices.invoiced_total)}
   - {name: charged_amount, expr: AGG(charges.charged_amount)}
-  assignments:
+  facts:
   - dataset: invoices
     roles:
     - {name: account, expr: account}

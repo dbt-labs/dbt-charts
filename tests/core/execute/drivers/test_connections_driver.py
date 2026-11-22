@@ -173,7 +173,7 @@ class TestProbeRelationReadability:
         with fake_lakecompute_driver(pa.table({"x": []})) as (connection, _):
             ok, message = probe_relation_readability(_source(), relation)
         assert (ok, message) == (True, "")
-        assert connection.statements == ['SELECT * FROM "lake"."main"."orders" LIMIT 0']
+        assert connection.statements == ['SELECT 1 FROM "lake"."main"."orders" LIMIT 0']
         assert connection.closed
 
     def test_a_refusal_is_reported_not_raised(self) -> None:

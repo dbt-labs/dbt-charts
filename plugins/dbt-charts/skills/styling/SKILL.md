@@ -74,7 +74,7 @@ Also exist: `code`, `blockquote`, `bold`.
 - `notation` (analytic|narrative): Notation style: 'analytic' for SI-prefix (1B, 1M) or 'narrative' for prose-style (1bn, 1m)
 Also exist: `sign_placement`, `repeat`.
 
-`style.variables`: `visible`, `position`, `title_inline_band_bottom_pad`, `gap`, `label_position`, `title_inline_title_max_width`, `font`, `label`, `value`, `placeholder`, `container_height`, `compact_height`, `border`, `control_gap`, `input`, `presets`, `presets_display`, `overflow`.
+`style.variables`: `position`, `title_inline_band_bottom_pad`, `gap`, `label_position`, `title_inline_title_max_width`, `font`, `label`, `value`, `placeholder`, `container_height`, `compact_height`, `border`, `control_gap`, `input`, `presets`, `presets_display`, `overflow`.
 
 ## Charts
 
@@ -104,7 +104,7 @@ Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min
 ### Axes
 
 `axis_x`:
-- `type` (auto|ordinal|temporal): Scale type for bucketed-time x-axes; None/'auto' infers from time_unit grain
+- `type` (auto|ordinal|temporal|nominal): X scale type; nominal draws values as plain categories, never dates
 - `time_unit` (auto|year|yearquarter|yearmonth|yearweek|yearmonthdate|monthofyear|dayofweek|dayofmonth|dayofyear|hourofday|none): Time-unit bucketing for temporal x-axes; None or 'auto' auto-detects from data
 Also exist: `grid`, `line`, `ticks`, `labels`, `title`, `scale`, `position`, `fill`, `fiscal_year_start_month`.
 

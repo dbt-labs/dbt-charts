@@ -86,7 +86,7 @@ def test_lists_constellations_with_roles_and_metrics(
     assert isinstance(billing, SemanticConstellation)
     assert billing.description == "Billing by account and month."
     assert [(r.name, r.datatype) for r in billing.roles] == [
-        ("account", "entity('account')"),
+        ("account", "REF(account)"),
         ("month", "TIMESTAMP"),
     ]
     assert {m.name: m.expr for m in billing.metrics}["uncharged"] == (

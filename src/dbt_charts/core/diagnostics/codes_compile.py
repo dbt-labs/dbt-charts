@@ -799,6 +799,18 @@ ERR_FUNNEL_VERTICAL = REGISTRY.register(
     )
 )
 
+ERR_AXIS_POSITION_WRONG_EDGE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-AXIS-POSITION-WRONG-EDGE",
+        domain="compile",
+        title="An axis position names an edge that axis cannot take",
+        message_template="Chart {chart_id!r}: `{axis}.position: {position}` names an edge the {role} axis of a {orientation} chart cannot take; it takes {allowed}. {hint}",
+        doc="Fired when a chart's own style places an axis on an edge it cannot reach. `axis_x` is the category axis and `axis_y` the value axis in every orientation: on a horizontal bar `axis_x.position` is `left` or `right` and `axis_y.position` is `top` or `bottom`; on every other cartesian chart `axis_x.position` is `top` or `bottom` and `axis_y.position` is `left` or `right`.",
+        summary="Fired when a chart places an axis on an edge its orientation does not give that axis.",
+        docs_topic="charts",
+    )
+)
+
 ERR_PERCENT_ENTRY_NOT_FUNNEL = REGISTRY.register(
     ErrorCode(
         code="ERR-PERCENT-ENTRY-NOT-FUNNEL",

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Probing a table's readability no longer fails when the credential is granted only some of its columns
+time: 2026-11-20T17:01:30.165108-05:00

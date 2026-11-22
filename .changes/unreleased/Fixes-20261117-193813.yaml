@@ -1,0 +1,3 @@
+kind: Fixes
+body: Error and warning links in CLI output and rendered boards now open the docs page for that code's topic.
+time: 2026-11-17T19:38:13.542388-05:00

@@ -26,6 +26,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
+from dbt_charts.core.compile.models.style.authored import AxisXStylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
 from dbt_charts.core.compile.models.style.theme import AxisXStyle, AxisYStyle
@@ -35,6 +36,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     _bake_cartesian_axes,
     _edge_or_none,
     _extract_axis_overrides,
+    settle_axis_edges,
 )
 from dbt_charts.core.compile.resolve.chart._axis_color import (
     bake_axis_color,
@@ -42,6 +44,7 @@ from dbt_charts.core.compile.resolve.chart._axis_color import (
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _channels_for,
+    _classify_to_channel_type,
     _column_numeric_values,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartRows
@@ -57,6 +60,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 )
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
     AxisOverrides,
+    _family_axis_slot,
     build_resolved_axis,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import CartesianFamilyChart
@@ -69,7 +73,37 @@ __all__ = [
     "build_cartesian_axes",
     "plan_cartesian",
     "quantitative_channel_values",
+    "x_channel_type",
 ]
+
+
+def x_channel_type(
+    normalized: LineChart | BarChart | AreaChart | ScatterChart,
+    data: ChartRows,
+    chart_style_context: ChartStyleContext,
+    chart_type: str,
+) -> str:
+    """The x channel's type: ``nominal`` when the cascade's ``axis_x.type``
+    says so, else what the column's values classify as.
+
+    ``axis_x.type`` sits only on the ``axis_x`` slots (the chart's own, its
+    family's, ``charts.axis_x``), never on a channel-typed slot, so it is
+    read before the channel type that picks those slots is known.
+    """
+    chart_x = normalized.style.axis_x if normalized.style is not None else None
+    family_x = _family_axis_slot(chart_style_context, chart_type, "axis_x")
+    assert family_x is None or isinstance(family_x, AxisXStylePatch), family_x
+    authored = next(
+        (
+            layer.type
+            for layer in (chart_x, family_x, chart_style_context.axis_x)
+            if layer is not None and layer.type is not None
+        ),
+        None,
+    )
+    if authored == "nominal":
+        return "nominal"
+    return _classify_to_channel_type(normalized.x, data, is_dimension=True)
 
 
 def quantitative_channel_values(
@@ -156,6 +190,7 @@ def plan_cartesian(
     *,
     has_quantitative_axis: bool,
     temporal_band_axes: frozenset[Literal["axis_x", "axis_y"]],
+    horizontal: bool | None,
 ) -> CartesianPlan:
     """Run the shared cartesian prelude: channels, axis bake.
 
@@ -197,6 +232,13 @@ def plan_cartesian(
         temporal_band_axes=temporal_band_axes,
     )
     _reject_bent_scale_off_scatter(normalized.id, normalized.type, baked)
+    if horizontal is not None:
+        ax, ay, _ = settle_axis_edges(
+            baked.x.style, baked.y.style, axis_overrides, horizontal, normalized.id
+        )
+        baked = replace(
+            baked, x=replace(baked.x, style=ax), y=replace(baked.y, style=ay)
+        )
     if baked.y.style.color is not None:
         baked = replace(
             baked,

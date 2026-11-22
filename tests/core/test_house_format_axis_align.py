@@ -654,55 +654,6 @@ rows:
     )
 
 
-def test_horizontal_bar_explicit_right_position_does_not_force_align_right():
-    """Horizontal bar with explicit position='right' is not forced to right-align.
-
-    Even when axis_y.position is explicitly 'right', _force_right requires
-    ay_is_quantitative=True. For a horizontal bar, the measure axis is on VL's
-    x channel and ay_is_quantitative=False, so the force is blocked by the
-    is_quantitative gate regardless of the authored position.
-
-    This test proves the is_quantitative guard blocks the force, not just the
-    edge-is-None guard (which would also block it for 'auto'/unset position).
-    """
-    ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
-    # String x + numeric y infers horizontal bar (categorical x -> horizontal).
-    data = [
-        {"category": "A", "value": 1_000},
-        {"category": "B", "value": 2_000},
-        {"category": "C", "value": 3_000},
-    ]
-    chart = BarChart(
-        id="hbar_explicit_right",
-        type="bar",
-        x="category",
-        y="value",
-        style=BarChartStylePatch(
-            axis_y=AxisYStylePatch(
-                position="right",
-                labels=AxisYLabelStylePatch(format="percent"),
-            )
-        ),
-    )
-    resolved = _resolve_bar(
-        chart,
-        partition(None, data),
-        chart_style_context=ctx,
-        width=800.0,
-        title_width=800.0,
-        datasets={},
-        automatic_link_candidate=None,
-        x_date_range=None,
-        rendered_at=None,
-    )
-    # Horizontal bar: ay_is_quantitative=False -> _force_right blocked even with
-    # explicit position='right' and a house alias format.
-    assert resolved.style.axis_y.labels.align != "right", (
-        "Horizontal bar measure axis must not be forced to right-align "
-        "even with explicit position='right' and a house-alias format"
-    )
-
-
 def test_diagnostic_does_not_fire_for_bar_chart():
     """WARN_AXIS_ALIGN_DISCARDED does not fire for BarChart.
 

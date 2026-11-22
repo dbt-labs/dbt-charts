@@ -6,7 +6,7 @@
 use d3rs::format::{format, parse_parts, vega_tick_format, Locale};
 use display_text::language::tr;
 use board_model::primitives::LinkOpen;
-use scene::{Attrs, Node, Role, Shape};
+use scene::{Attrs, Node, Role, Shape, Transform};
 
 /// A Vega mark-set's `.role-mark` group, holding `children`: `chart_interactivity.js`'s
 /// `isDataMark` classifies an element by its NEAREST ancestor carrying
@@ -252,4 +252,83 @@ pub fn link(attrs: Attrs, open: LinkOpen, children: Vec<Node>) -> Node {
     let attrs = opens.map_or(attrs.clone(), |value| attrs.quick("data-dbt-link-open", value));
     let attrs = target.map_or(attrs.clone(), |value| attrs.quick("target", value));
     Node::new(Role::Chrome, attrs, Shape::Link(children))
+}
+
+/// A drawn datum or series: a line, a point, a bar. A line's canvas halo is `Role::Chrome` and an
+/// area's fill sits in the contract's `mark-area` group, so the stubs paint over both, as the
+/// baseline rule does.
+fn holds_marks(node: &Node) -> bool {
+    let area_fill = node.attrs.get("class").is_some_and(|class| class.split_whitespace().any(|c| c == "mark-area"));
+    !area_fill && (matches!(node.role, Role::Mark { .. }) || node.children().iter().any(holds_marks))
+}
+
+fn is_axis(node: &Node) -> bool {
+    node.role == Role::Axis
+}
+
+/// `node` parted into what stays with the labels and its tick stubs. A stub leaves the groups that
+/// held it, so their transforms (`chain`, outermost first) fold into it and it draws where it did.
+fn part_stubs(node: Node, chain: &[Transform]) -> (Option<Node>, Vec<Node>) {
+    match node.shape {
+        Shape::Line { x1, y1, x2, y2 } if node.role == Role::Axis => {
+            let transform = [chain, &node.transform].concat();
+            let shift = transform.iter().try_fold((0.0, 0.0), |(dx, dy), t| match t {
+                Transform::Translate { x, y } => Some((dx + x, dy + y)),
+                _ => None,
+            });
+            let stub = match shift {
+                Some((dx, dy)) => Node { transform: Vec::new(), shape: Shape::Line { x1: x1 + dx, y1: y1 + dy, x2: x2 + dx, y2: y2 + dy }, ..node },
+                None => Node { transform, shape: Shape::Line { x1, y1, x2, y2 }, ..node },
+            };
+            (None, vec![stub])
+        }
+        Shape::Group(children) => {
+            let inner = [chain, &node.transform].concat();
+            let (mut kept, mut stubs) = (Vec::new(), Vec::new());
+            for child in children {
+                let (k, s) = part_stubs(child, &inner);
+                kept.extend(k);
+                stubs.extend(s);
+            }
+            (Some(Node { shape: Shape::Group(kept), ..node }), stubs)
+        }
+        _ => (Some(node), Vec::new()),
+    }
+}
+
+/// Every axis's tick stubs moved beneath the marks it measures, onto the baseline layer, while
+/// its labels and title stay over the marks. Each level holding both an axis and marks gathers
+/// its stubs into one `role-axis-tick` group; nested levels (a facet panel) are their own.
+pub fn tick_stubs_under_marks(nodes: Vec<Node>) -> Vec<Node> {
+    let nodes: Vec<Node> = nodes.into_iter().map(|node| if is_axis(&node) { node } else { nested(node) }).collect();
+    let Some(first_marks) = nodes.iter().position(holds_marks) else { return nodes };
+    if !nodes.iter().any(is_axis) {
+        return nodes;
+    }
+    let (mut out, mut stubs, mut at) = (Vec::new(), Vec::new(), None);
+    for (i, node) in nodes.into_iter().enumerate() {
+        if i == first_marks {
+            at = Some(out.len());
+        }
+        if is_axis(&node) {
+            let (kept, lifted) = part_stubs(node, &[]);
+            out.extend(kept);
+            stubs.extend(lifted);
+        } else {
+            out.push(node);
+        }
+    }
+    if let (Some(at), false) = (at, stubs.is_empty()) {
+        out.insert(at, Node::group(Role::Grid, Attrs::new().set("class", "mark-rule role-axis-tick").set("aria-hidden", "true"), stubs));
+    }
+    out
+}
+
+fn nested(mut node: Node) -> Node {
+    node.shape = match node.shape {
+        Shape::Group(children) => Shape::Group(tick_stubs_under_marks(children)),
+        Shape::Svg { extent, children } => Shape::Svg { extent, children: tick_stubs_under_marks(children) },
+        other => other,
+    };
+    node
 }

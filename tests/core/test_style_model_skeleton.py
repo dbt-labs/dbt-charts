@@ -618,15 +618,6 @@ def test_compiled_kpi_style_has_base_font():
     assert isinstance(kpi.font, SingleLineFontStyle)
 
 
-def test_compiled_spark_bar_style_has_font():
-    """SparkBarCellStyle has font: FontStyle for label text cascade."""
-    from dbt_charts.core.compile.models.primitives import FontStyle
-
-    p = get_theme_style().charts.table.spark.bar
-    assert hasattr(p, "font")
-    assert isinstance(p.font, FontStyle)
-
-
 def test_cascade_root_to_charts_font(model_copy_at):
     """root.font cascades into charts.font when charts.font is unset."""
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
@@ -714,22 +705,6 @@ def test_cascade_kpi_font_to_value_font():
     cascaded = apply_inherit(seed, get_inherit_graph())
     assert cascaded.charts.kpi.value.font.weight == 771.0
     assert cascaded.charts.kpi.value.font.color == cascaded.charts.kpi.font.color
-
-
-def test_cascade_charts_font_to_in_cell_spark_bar():
-    """charts.font cascades into spark.bar.font (in-cell bar variant)."""
-    from dbt_charts.core.compile.models.primitives import FontStyle
-
-    base = get_theme_style()
-    seed = base.model_copy(
-        update={
-            "charts": base.charts.model_copy(
-                update={"font": FontStyle(family="SparkFont")}
-            )
-        }
-    )
-    cascaded = apply_inherit(seed, get_inherit_graph())
-    assert cascaded.charts.table.spark.bar.font.family == "SparkFont"
 
 
 def test_cascade_charts_font_to_spark_bar():

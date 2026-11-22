@@ -61,9 +61,6 @@ class TestStyleTitleSection:
         assert resolved.title.font.color == "#FF00FF"
 
 
-class TestStyleVariablesSection:
-    """Variable controls — feature-behavior tests only."""
-
-    def test_variables_visible_true_by_default(self):
-        # was variables.hidden: false — positive-renamed to visible: true (D-022)
-        assert get_theme_style().variables.visible is True
+class TestStyleFooterSection:
+    def test_footer_visible_true_by_default(self):
+        assert get_theme_style().footer.visible is True

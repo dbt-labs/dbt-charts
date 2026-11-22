@@ -299,11 +299,6 @@ class SparkBarCellStyle(BaseModel):
         description="Default bar width in pixels; a bar column with no spark.width is sized for it."
     )
     border: CornerStyle = Field(description="Corner rounding for spark bar cells.")
-    # InheritSlot: table.spark.bar.font fills from charts.font (not table.font).
-    font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
-        default_factory=FontStyle,
-        description="Spark bar cell font style overrides.",
-    )
 
 
 class SparkAreaStyle(BaseModel):

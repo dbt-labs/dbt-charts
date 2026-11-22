@@ -483,8 +483,9 @@ forbidden_module_paths = [
 # tracked in a follow-up.
 # `metricflow_sql` is the MetricFlow compiler, imported inside
 # core/execute/metricflow.py only for a source that declares `metricflow:`.
-# It is not on PyPI, so it cannot be an extra yet; a missing install is the
-# coded ERR-METRICFLOW-NOT-INSTALLED, never an import error at startup.
+# It is not a dependency of dbt-charts (it needs Python 3.12 or newer); a
+# missing install is the coded ERR-METRICFLOW-NOT-INSTALLED, never an import
+# error at startup.
 allowed_external_imports = [
     "dbt_charts_super_schema",
     "google",

@@ -32,7 +32,8 @@ _REFERENCE_PAGE: dict[str, str] = {
 
 
 def build_doc_url(code: str) -> str:
-    """Build the canonical doc URL — an anchor on the code's generated reference page."""
+    """Build the canonical doc URL: an anchor on the code's topic page of the
+    generated reference (`reference/<errors|warnings>/<docs_topic>/`)."""
     if code.startswith(_LEVEL_PREFIX["error"]):
         page = _REFERENCE_PAGE["error"]
     elif code.startswith(_LEVEL_PREFIX["warning"]):
@@ -41,7 +42,8 @@ def build_doc_url(code: str) -> str:
         raise ValueError(
             f"Code {code!r} has no recognized ERR-/WARN- prefix; cannot build a doc URL."
         )
-    return f"{docs_site_url()}/reference/{page}/#{code.lower()}"
+    topic = REGISTRY.get(code).docs_topic
+    return f"{docs_site_url()}/reference/{page}/{topic}/#{code.lower()}"
 
 
 class DiagnosticCode(BaseModel):

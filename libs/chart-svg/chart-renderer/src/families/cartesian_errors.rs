@@ -119,6 +119,7 @@ struct Legend {
 
 #[derive(Deserialize, Default)]
 struct Style {
+    axis_x: Option<crate::common::AxisStyle>,
     #[serde(default)]
     endpoint_labels: EndpointLabels,
     #[serde(default)]
@@ -214,6 +215,11 @@ impl Facts {
         !matches!(self.style.axis_y.mirror, None | Some(Value::Null) | Some(Value::Bool(false)))
     }
 
+    /// The resolved x axis, which resolve writes on every cartesian chart.
+    fn axis_x(&self) -> Result<&crate::common::AxisStyle, String> {
+        self.style.axis_x.as_ref().ok_or_else(|| format!("{} payload: no style.axis_x", self.chart_type))
+    }
+
     /// `effective_color_field`: the series column, unless the color is a literal.
     fn color_field(&self) -> Option<&str> {
         self.resolved_channels.get("color").filter(|c| c.mode != "literal")?.data_field.as_deref().filter(|f| !f.is_empty())
@@ -268,7 +274,7 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
         // re-slices by each row's raw panel membership (`restripe`: the x can
         // itself be the multiples field), and a panel's rows carry no partition column.
         let checked = match (chart_type, facts.x.as_deref()) {
-            ("bar", Some(x)) => ::bind::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, x)?,
+            ("bar", Some(x)) => facts.axis_x()?.x_axis().law_rows(&payload.schema.rows, &payload.rows, x)?,
             _ => Cow::Borrowed(payload.rows.as_slice()),
         };
         if facts.panel_axes.is_empty() {
@@ -488,17 +494,13 @@ fn mirror(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<(), Diagno
 }
 
 /// The `mirror.format` gate: the ghost relabels the shared y scale, which
-/// is categorical on a horizontal bar, a heatmap and a dot plot, so a number
-/// format can only read numeric-looking categories.
+/// is categorical on a heatmap and a dot plot, so a number format can only
+/// read numeric-looking categories. A horizontal bar mirrors its value axis.
 fn mirror_format(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<(), Diagnostic> {
     let Some(format) = facts.style.axis_y.mirror.as_ref().and_then(|m| m.get("format")).filter(|f| !f.is_null()) else {
         return Ok(());
     };
     let (field, vl_type) = match facts.chart_type.as_str() {
-        "bar" if facts.orientation.as_deref() == Some("horizontal") => {
-            let Some(x) = facts.x.as_deref() else { return Ok(()) };
-            (x, infer_vega_type(types, rows, x)?)
-        }
         "heatmap" => {
             let Some(y) = facts.y.as_ref().and_then(Value::as_str) else { return Ok(()) };
             (y, VegaType::Nominal)
@@ -536,6 +538,10 @@ fn mirror_format(facts: &Facts, types: &ColumnTypes, rows: &[Row]) -> Result<(),
 /// unformatted axis cannot do, nor one with neither a baked ladder nor a
 /// measure field to estimate from (a histogram's count axis).
 fn unmeasurable_align(facts: &Facts) -> Result<(), Diagnostic> {
+    // A horizontal bar's value axis runs along the top and bottom: no side gutter to measure.
+    if facts.chart_type == "bar" && facts.orientation.as_deref() == Some("horizontal") {
+        return Ok(());
+    }
     let axis_y = &facts.style.axis_y;
     let (Some(labels), Some(mirror)) = (&axis_y.labels, &axis_y.mirror) else { return Ok(()) };
     let opposite = if axis_y.position.as_deref() == Some("right") { "left" } else { "right" };
@@ -773,7 +779,8 @@ fn layers(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
 fn layer_x(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
     let Some(base_field) = facts.x.as_deref().filter(|_| facts.layers.iter().any(|l| l.x.is_some())) else { return Ok(()) };
     let Some(base_type) = super::cartesian_x_errors::base_x_type(&payload.resolved, &payload.schema.rows, &payload.rows)? else { return Ok(()) };
-    let base_rows = ::bind::temporal::normalize_labeled_temporal(&payload.schema.rows, &payload.rows, base_field)?;
+    let x_axis = facts.axis_x()?.x_axis();
+    let base_rows = x_axis.law_rows(&payload.schema.rows, &payload.rows, base_field)?;
     let mut base_values = base_rows.iter().filter_map(|row| row.get(base_field)).filter(|v| !v.is_null()).peekable();
     // Only a date-like base takes a temporal layer.
     let base_date_shaped =
@@ -786,7 +793,7 @@ fn layer_x(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
         } else {
             let dataset = super::layers::resolve_layer_rows(payload, layer.query_name.as_deref(), facts.query_name.as_deref(), &facts.chart_type)?;
             let dataset_types = super::layers::resolve_layer_types(payload, layer.query_name.as_deref(), facts.query_name.as_deref(), &facts.chart_type)?;
-            own_rows = ::bind::temporal::normalize_labeled_temporal(dataset_types, dataset, x_field)?;
+            own_rows = x_axis.law_rows(dataset_types, dataset, x_field)?;
             &own_rows
         };
         let types = super::layers::resolve_layer_types(payload, layer.query_name.as_deref(), facts.query_name.as_deref(), &facts.chart_type)?;

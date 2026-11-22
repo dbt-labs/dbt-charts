@@ -64,7 +64,7 @@ fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Paddin
     Ok(Layout {
         insets: fitted.canvas.insets_of(&fitted.data_box),
         data_box: fitted.data_box,
-        nodes: vec![fitted.svg],
+        nodes: ::layout::contract::tick_stubs_under_marks(vec![fitted.svg]),
         diagnostics,
         title_pos: fitted.title_pos,
     })
@@ -1922,7 +1922,7 @@ pub(super) fn fit(
         None
     };
     let x_link_text = match &x_law {
-        _ if ::bind::temporal::has_labeled_bucket(&payload.rows, &r.x) => crate::href::LinkText::Date,
+        _ if !r.style.axis_x.x_axis().is_nominal() && ::bind::temporal::has_labeled_bucket(&payload.rows, &r.x) => crate::href::LinkText::Date,
         Some(_) => crate::href::LinkText::Date,
         None => crate::href::LinkText::Raw,
     };

@@ -836,7 +836,7 @@ Put a number preset on an axis whose ticks can't carry it and the engine raises 
 | `scatter` over a genuinely numeric x, or its usual numeric y | quantitative — applies normally |
 | `scatter` over a categorical y (a dot plot) | band |
 
-A temporal x — `line`/`area`/`scatter` over dates, or a bar past 60 buckets — raises the same code; use a time token (`"%b %Y"`) there instead. A `heatmap` has no measure axis at all: both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own, so a number preset on either axis — including its `y` — raises too. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical — a dot plot's y, and also a default-orientation (horizontal) bar, where the rotation puts the category on that edge. Every one of these used to render something wrong instead — look at the render only if you're debugging the diagnostic itself.
+A temporal x — `line`/`area`/`scatter` over dates, or a bar past 60 buckets — raises the same code; use a time token (`"%b %Y"`) there instead. A `heatmap` has no measure axis at all: both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own, so a number preset on either axis — including its `y` — raises too. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical, as on a dot plot's y; a horizontal bar mirrors its value axis, so a number format applies there. Every one of these used to render something wrong instead — look at the render only if you're debugging the diagnostic itself.
 
 The family slots:
 
@@ -1843,7 +1843,7 @@ Accepted forms:
 > pre-computed position — hiding leaves a blank gap. Use `rows:` when you need
 > items to reflow around hidden entries.
 
-> **Distinction from `variables.visible`:** `variables.<name>.visible: false` hides the
+> **Distinction from `variables.<name>.visible`:** `variables.<name>.visible: false` hides the
 > *input control* in the variable bar only — the variable is still active and URL-settable.
 > Layout-item `visible` controls whether the item renders in the board at all.
 

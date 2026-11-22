@@ -67,6 +67,7 @@ mod v0_10_0;
 mod v0_11_0;
 pub use v0_11_0::respell_retired_variant;
 mod v0_12_0;
+mod v0_13_0;
 mod v0_4_0;
 mod v0_5_0;
 mod v0_6_0;
@@ -99,6 +100,7 @@ pub(crate) const MODULES: &[(&str, Module)] = &[
     ("0.10.0", v0_10_0::declarations),
     ("0.11.0", v0_11_0::declarations),
     ("0.12.0", v0_12_0::declarations),
+    ("0.13.0", v0_13_0::declarations),
 ];
 
 /// The versions with a registered module, for the sweeps.

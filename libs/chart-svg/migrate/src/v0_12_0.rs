@@ -90,7 +90,7 @@ const TWICE: &str = "names the series twice: a legend beside endpoint labels. Se
 
 type Path = Vec<String>;
 
-fn value_at<'a>(doc: &'a Json, p: &[String]) -> Option<&'a Json> {
+pub(crate) fn value_at<'a>(doc: &'a Json, p: &[String]) -> Option<&'a Json> {
     p.iter().try_fold(doc, |node, part| match node {
         Json::Object(m) => m.get(part),
         Json::Array(items) => part.parse::<usize>().ok().and_then(|i| items.get(i)),

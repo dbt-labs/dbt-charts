@@ -74,8 +74,8 @@ string_enum!(
     }
 );
 string_enum!(
-    /// Scale type of a bucketed-time x-axis.
-    XAxisType { Ordinal = "ordinal", Temporal = "temporal" }
+    /// Scale type of an x-axis.
+    XAxisType { Ordinal = "ordinal", Temporal = "temporal", Nominal = "nominal" }
 );
 string_enum!(
     /// How a synthesized missing time bucket is filled.
@@ -90,12 +90,16 @@ string_enum!(
     }
 );
 string_enum!(
-    /// Where the x-axis sits.
-    XAxisPosition { Top = "top", Bottom = "bottom" }
+    /// Which edge the category axis sits on; left and right fit a horizontal bar.
+    XAxisPosition { Top = "top", Bottom = "bottom", Left = "left", Right = "right" }
 );
 string_enum!(
-    /// Which side the y-axis sits on.
+    /// Which side a layer's own y-axis sits on.
     YAxisPosition { Left = "left", Right = "right" }
+);
+string_enum!(
+    /// Which edge the value axis sits on; top and bottom fit a horizontal bar.
+    ValueAxisPosition { Left = "left", Right = "right", Top = "top", Bottom = "bottom" }
 );
 string_enum!(
     /// Where y-axis labels sit against their gridlines.
@@ -922,15 +926,14 @@ pub struct AxisXStyle {
     /// X-axis scale overrides, including `x_reverse`.
     #[model(absent = "no scale override", local)]
     pub scale: Option<XScaleStyle>,
-    /// X-axis position.
-    #[model(absent = "Vega-Lite's default (bottom)", local)]
+    /// Category axis edge; left or right on a horizontal bar.
+    #[model(absent = "the bottom, or a horizontal bar's zero-line side", local)]
     pub position: Option<XAxisPosition>,
     /// Time-unit bucketing for temporal x-axes. 'none' disables bucketing
     /// (continuous temporal).
     #[model(absent = "auto-detected from the data", local)]
     pub time_unit: Option<Engine<TimeUnit, Auto>>,
-    /// Opt-in scale type for bucketed-time x-axes; ordinal when the time unit
-    /// resolves to a bucketed calendar grain.
+    /// X scale type; nominal draws values as plain categories, never dates.
     #[model(absent = "inferred from the time unit grain", local)]
     pub r#type: Option<Engine<XAxisType, Auto>>,
     /// Fill for synthesized missing-bucket rows: null, zero, linear, step-after,
@@ -963,16 +966,17 @@ pub struct AxisYStyle {
     /// Per-axis scale overrides. Each axis variant owns its scale config.
     #[model(absent = "no scale override", local)]
     pub scale: Option<BaseScaleStyle>,
-    /// Y-axis position; 'auto' flips when endpoint labels sit on the right.
+    /// Value axis edge; top or bottom on a horizontal bar.
     #[model(local)]
-    pub position: Engine<YAxisPosition, Auto>,
+    pub position: Engine<ValueAxisPosition, Auto>,
     /// Color of the gridlines, tick labels and title; 'auto' uses the series
     /// color. Never cascaded: resolve paints it into grid, labels and title.
     #[model(absent = "the axis keeps its own colors", local)]
     pub color: Option<Engine<Color, Auto>>,
-    /// Draw the y-scale on both edges (wide charts). `true` mirrors the primary
-    /// axis's label verbatim; `format` or `expr` relabels only the mirrored edge
-    /// while ticks stay aligned to the single shared scale. Only meaningful on axis_y.
+    /// Draw the value scale on both edges: left and right, or top and bottom on a
+    /// horizontal bar. `true` mirrors the primary axis's label verbatim; `format` or
+    /// `expr` relabels only the mirrored edge while ticks stay aligned to the single
+    /// shared scale. Only meaningful on axis_y.
     #[model(absent = "no mirror", local)]
     pub mirror: Option<AxisMirror>,
 }

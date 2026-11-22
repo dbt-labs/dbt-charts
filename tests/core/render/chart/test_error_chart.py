@@ -435,7 +435,7 @@ def test_vl_chart_error_tile_renders_through_engine_with_code_hint_and_error_lin
     assert "ERR-DBT-MODEL-COLUMN-MISSING" in svg
     assert "Did you mean" in svg
     assert (
-        "https://docs.dbtcharts.com/reference/errors/#err-dbt-model-column-missing"
+        "https://docs.dbtcharts.com/reference/errors/queries/#err-dbt-model-column-missing"
         in svg
     )
     assert "About this error" in svg

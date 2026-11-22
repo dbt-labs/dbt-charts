@@ -190,6 +190,8 @@ def resolve_cartesian_x_type(
     x_type_from_data = infer_vega_type_from_data(data, x_field)
     authored_time_unit = axis.time_unit
     authored_type = resolve_authored_x_type(axis)
+    if authored_type == "nominal":
+        return "nominal", x_type_from_data, None
 
     if authored_time_unit is None and x_type_from_data == "temporal":
         time_unit = detect_time_unit(

@@ -38,9 +38,6 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     estimate_cartesian_plot_height,
     estimate_left_axis_reserve_px,
 )
-from dbt_charts.core.compile.resolve.chart._channels import (
-    _classify_to_channel_type,
-)
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
     ChartDataset,
     LayerDatasets,
@@ -96,6 +93,7 @@ from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
     plan_cartesian,
     quantitative_channel_values,
+    x_channel_type,
 )
 from dbt_charts.core.compile.resolve.chart._tooltip import resolve_tooltip
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
@@ -276,7 +274,7 @@ def _resolve_area(
     multiples_scale = (
         normalized.multiples.scale if normalized.multiples is not None else "shared"
     )
-    x_ch_type = _classify_to_channel_type(normalized.x, data, is_dimension=True)
+    x_ch_type = x_channel_type(normalized, data, chart_style_context, "area")
     # Checked before plan_cartesian's axis bake so a doubly-invalid chart
     # reports this encoding error, not the axis bake's. When chart.stack is
     # authored, resolved_stack doesn't need the context and the validator
@@ -306,6 +304,7 @@ def _resolve_area(
         normalized.y,
         has_quantitative_axis=True,
         temporal_band_axes=frozenset(),
+        horizontal=False,
     )
     area = chart_local_style_context.area
     area_conditional = resolve_mark_conditional(area.conditional, data, y=normalized.y)

@@ -2219,6 +2219,19 @@ WARN_TREND_ON_BARS = REGISTRY.register(
     )
 )
 
+WARN_AXIS_POSITION_NOT_APPLIED = REGISTRY.register(
+    WarningCode(
+        code="WARN-AXIS-POSITION-NOT-APPLIED",
+        domain="render",
+        title="A board or theme axis position does not reach a horizontal bar",
+        message_template="Chart {chart_id!r} is a horizontal bar, so the `{key}` set on its board or theme does not apply to it. On a horizontal bar `{instead}` places that edge.",
+        fix_template="On a horizontal bar `axis_x.position` (left or right) places the category names and `axis_y.position` (top or bottom) the value axis. Set the one you mean, on the board, the theme or this chart.",
+        doc="Fired when a board or theme sets `axis_y.position` to `left` or `right`, or `axis_x.position` to `top` or `bottom`, and a horizontal bar inherits it. Each axis key drives the axis it names, so those edges belong to vertical charts and are dropped for the bar. A chart's own style naming such an edge is an error (`ERR-AXIS-POSITION-WRONG-EDGE`). Built-in themes set only `auto`.",
+        summary="A board or theme axis edge only fits vertical charts and was dropped for a horizontal bar.",
+        docs_topic="charts",
+    )
+)
+
 WARN_OUTLIERS_TORN_UNSUPPORTED = REGISTRY.register(
     WarningCode(
         code="WARN-OUTLIERS-TORN-UNSUPPORTED",

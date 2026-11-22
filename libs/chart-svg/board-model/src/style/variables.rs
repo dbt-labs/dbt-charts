@@ -104,8 +104,6 @@ model_core::build_leaf!(Presets);
 #[derive(Debug, Clone, PartialEq, Model)]
 #[model(constraint(range(compact_height, gt = 0)))]
 pub struct VariablesStyle {
-    /// Show the variables control panel.
-    pub visible: bool,
     /// Variables strip placement: stacked under the title (top/bottom) or on
     /// one horizontal band with the board title (title-inline).
     pub position: VariablesPosition,

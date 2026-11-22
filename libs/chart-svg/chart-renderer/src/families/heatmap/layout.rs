@@ -743,7 +743,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     Ok(Layout {
         insets: canvas.insets_of(&data_box),
         data_box,
-        nodes: vec![frame.svg(body)],
+        nodes: ::layout::contract::tick_stubs_under_marks(vec![frame.svg(body)]),
         diagnostics,
         title_pos: m.title_pos,
     })

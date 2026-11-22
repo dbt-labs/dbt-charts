@@ -2136,15 +2136,18 @@
     /*{# (`data-dbt-off-chart`). Hovering that chart draws each such bar at #}*/
     /*{# true length over the board and fades everything but the chart. A bar #}*/
     /*{# that fits straight up to near the board's top edge stays straight; #}*/
-    /*{# otherwise it climbs to a turn and winds into an inward circular #}*/
-    /*{# spiral, whose length grows with the square of its radius. Several #}*/
-    /*{# spirals in one chart curl apart (the left half counterclockwise) and #}*/
-    /*{# turn lower, largest first, to keep clear, never into their plot #}*/
+    /*{# otherwise it climbs past its card's top edge to a turn and winds #}*/
+    /*{# into an inward circular spiral, whose length grows with the square #}*/
+    /*{# of its radius. Turning above the card covers the card's tear and #}*/
+    /*{# passes its value label, which stays where it rests. A spiral sits as #}*/
+    /*{# high as it can, so it leaves its card when there is room; it may #}*/
+    /*{# cross the card's header but never its plot #}*/
     /*{# (`data-dbt-off-chart-plot`, the plot's height in chart pixels). #}*/
-    /*{# Where they cannot, each turns at the board's top and they overlap, #}*/
-    /*{# each on a halo of the chart's canvas so the bars read apart; a #}*/
-    /*{# circle too big to sit above its plot may reach down over it, never #}*/
-    /*{# below the bars' base. A bar too long for any spiral runs straight #}*/
+    /*{# Several spirals in one chart curl apart (the left half #}*/
+    /*{# counterclockwise) and turn lower, largest first, to keep clear. Where #}*/
+    /*{# they cannot, each turns as high as it can and they overlap, each on a #}*/
+    /*{# halo of the chart's canvas so the bars read apart. A bar with no #}*/
+    /*{# spiral outside its plot runs straight #}*/
     /*{# off the top of the board, which cuts it as its card did: a shorter #}*/
     /*{# spiral would state a smaller value. A chart never mixes metaphors: #}*/
     /*{# if any bar has no spiral, every bar in the chart draws straight #}*/
@@ -2287,11 +2290,13 @@
     }
 
     /*{# The smallest spiral whose circle's top is `top` that holds `length`, #}*/
-    /*{# stays on the board and keeps its circle above `floor`, or null. #}*/
+    /*{# turns at or above the bar's card top, stays on the board and keeps #}*/
+    /*{# its circle above `floor`, or null. #}*/
     function fitSpiral(bar, length, top, turn, bounds, floor) {
         const w = bar.width;
         for (let r0 = OFF_CHART_MIN_RADIUS * w; r0 <= (bounds.right - bounds.left) / 2; r0 += 1) {
             const y0 = top + w / 2 + r0;
+            if (y0 > bar.cardTop) return null;
             if (y0 + r0 + w / 2 + OFF_CHART_HALO > floor) return null;
             const lo = turn === 1 ? bar.cx - w / 2 : bar.cx - 2 * r0 - w / 2;
             const hi = turn === 1 ? bar.cx + 2 * r0 + w / 2 : bar.cx + w / 2;
@@ -2338,6 +2343,7 @@
                 cx: (box.left + box.right) / 2,
                 width: box.right - box.left - edge,
                 base: box.bottom,
+                cardTop: box.top,
                 plotTop: box.bottom - parseFloat(el.getAttribute('data-dbt-off-chart-plot')) * toRoot,
                 length: length,
                 view: box.view,
@@ -2377,7 +2383,7 @@
                 bar.points = spiral.points;
                 return;
             }
-            const spiral = fit(ceiling, bar.plotTop) || fit(ceiling, bar.base);
+            const spiral = fit(ceiling, bar.plotTop);
             if (!spiral) {
                 offBoard = true;
                 return;

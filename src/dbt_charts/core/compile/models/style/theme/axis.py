@@ -172,14 +172,14 @@ class BaseAxisGridStyle(BaseModel):
         default=None, description="Show gridlines; None inherits from parent axis."
     )
     opacity: float | None = Field(
-        default=None, description="Gridline opacity; None uses Vega-Lite's default."
+        default=None, description="Gridline opacity; None uses the engine's default."
     )
     width: float | None = Field(
         default=None,
-        description="Gridline width in pixels; None uses Vega-Lite's default.",
+        description="Gridline width in pixels; None uses the engine's default.",
     )
     color: Annotated[str | None, Color()] = Field(
-        default=None, description="Gridline color; None uses Vega-Lite's default."
+        default=None, description="Gridline color; None uses the engine's default."
     )
     # SkipInheritSlots: dash is not inherited — axis family variants each own their dash independently.
     dash: Annotated[list[float] | None, SkipInheritSlots(), Absent("solid line")] = (
@@ -221,10 +221,10 @@ class AxisLineStyle(BaseModel):
     )
     width: float | None = Field(
         default=None,
-        description="Domain line width in pixels; None uses Vega-Lite's default.",
+        description="Domain line width in pixels; None uses the engine's default.",
     )
     color: Annotated[str | None, Color()] = Field(
-        default=None, description="Domain line color; None uses Vega-Lite's default."
+        default=None, description="Domain line color; None uses the engine's default."
     )
 
 
@@ -252,15 +252,15 @@ class AxisTicksStyle(BaseModel):
         description="Show axis ticks; None inherits from parent axis.",
     )
     color: Annotated[str | None, Color()] = Field(
-        default=None, description="Tick color; None uses Vega-Lite's default."
+        default=None, description="Tick color; None uses the engine's default."
     )
     length: float | None = Field(
         default=None,
-        description="Tick length in pixels; None uses Vega-Lite's default.",
+        description="Tick length in pixels; None uses the engine's default.",
     )
     width: float | None = Field(
         default=None,
-        description="Tick stroke width in pixels; None uses Vega-Lite's default.",
+        description="Tick stroke width in pixels; None uses the engine's default.",
     )
     offset: Annotated[float | None, AutoUnset()] = Field(
         default=None,
@@ -270,7 +270,7 @@ class AxisTicksStyle(BaseModel):
     count: Annotated[
         int | Literal["auto"] | None,
         SkipInheritSlots(),
-        Absent("no tick ladder is baked; Vega-Lite picks the ticks"),
+        Absent("no tick ladder is baked; the engine picks the ticks"),
     ] = Field(
         default=None,
         description=(
@@ -361,11 +361,11 @@ class AxisTitleStyle(BaseModel):
     )
     padding: float | None = Field(
         default=None,
-        description="Padding between axis title and labels in pixels; None uses Vega-Lite's default.",
+        description="Padding between axis title and labels in pixels; None uses the engine's default.",
     )
     angle: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Title rotation angle in degrees; 'auto' uses Vega-Lite's default.",
+        description="Title rotation angle in degrees; 'auto' uses the engine's default.",
     )
     # Same left/right/center/inward/outward vocabulary as AxisLabelStyle.align
     # — resolved through the identical _resolve_own_side_align machinery.
@@ -378,13 +378,13 @@ class AxisTitleStyle(BaseModel):
             "Horizontal text alignment of the title. 'left'/'right'/'center' "
             "are absolute. 'inward'/'outward' resolve against the axis's own "
             "left/right edge, same as label.align; a no-op on an axis with no "
-            "left/right edge. 'auto' uses Vega-Lite's default."
+            "left/right edge. 'auto' uses the engine's default."
         ),
     )
     visible: bool | Literal["auto"] | None = Field(
         default=None,
         description=(
-            "Show the axis title; None uses Vega-Lite's default (title shown). "
+            "Show the axis title; None uses the engine's default (title shown). "
             "'auto' shows it only when the chart authors an "
             "x_label/y_label. An explicit true/false from any tier wins."
         ),
@@ -412,11 +412,11 @@ class AxisLabelStyle(BaseModel):
     )
     max_width: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Maximum label width in pixels; 'auto' uses Vega-Lite's default (180px).",
+        description="Maximum label width in pixels; 'auto' uses the engine's default (180px).",
     )
     angle: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Label rotation angle in degrees; 'auto' uses Vega-Lite's default.",
+        description="Label rotation angle in degrees; 'auto' uses the engine's default.",
     )
     # left/right/center are absolute (edge-independent) — passed through as
     # authored. inward/outward are relative to the axis's own final
@@ -433,9 +433,9 @@ class AxisLabelStyle(BaseModel):
             "Horizontal text alignment of labels. 'left'/'right'/'center' are "
             "absolute. 'inward' hugs the plot (own-side: left on a left axis, "
             "right on a right axis); 'outward' hugs away from the plot "
-            "(Vega-Lite's default growth direction). inward/outward are a "
+            "(the engine's default growth direction). inward/outward are a "
             "no-op on an axis with no left/right edge. 'auto' uses "
-            "Vega-Lite's default, except that a right-edge quantitative "
+            "the engine's default, except that a right-edge quantitative "
             "axis with a number format and a tabular label font "
             "decimal-aligns its labels; a house format alias does so even "
             "over an align set here."
@@ -461,11 +461,11 @@ class AxisLabelStyle(BaseModel):
     )
     min_gap: float | None = Field(
         default=None,
-        description="Minimum pixel gap between labels; None uses Vega-Lite's default (0px).",
+        description="Minimum pixel gap between labels; None uses the engine's default (0px).",
     )
     visible: Annotated[bool | None, AutoUnset()] = Field(
         default=None,
-        description="Show axis labels; 'auto' uses Vega-Lite's default (labels shown).",
+        description="Show axis labels; 'auto' uses the engine's default (labels shown).",
     )
     # Left unset on a temporal axis, the render layer fills in a smart conditional
     # labelExpr — see render/chart/time_unit_detect.py.
@@ -477,7 +477,7 @@ class AxisLabelStyle(BaseModel):
     )
     bound: Annotated[bool | float | None, AutoUnset()] = Field(
         default=None,
-        description="Hide labels that overflow the axis range; 'auto' uses Vega-Lite's default.",
+        description="Hide labels that overflow the axis range; 'auto' uses the engine's default.",
     )
     flush: Annotated[bool | float | None, AutoUnset()] = Field(
         default=None,
@@ -485,7 +485,7 @@ class AxisLabelStyle(BaseModel):
     )
     offset: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Pixel offset of the label from its tick anchor; 'auto' uses Vega-Lite's default.",
+        description="Pixel offset of the label from its tick anchor; 'auto' uses the engine's default.",
     )
     format: Annotated[
         FormatAlias | str | FormatConfig | None,
@@ -667,7 +667,7 @@ class ScaleLogStyle(BaseModel):
 
     base: float | None = Field(
         default=None,
-        description="Log base; only meaningful with type: log. None lets Vega-Lite apply its own default (10).",
+        description="Log base; only meaningful with type: log. None uses the engine's default (10).",
     )
 
 
@@ -678,7 +678,7 @@ class ScalePowStyle(BaseModel):
 
     exponent: float | None = Field(
         default=None,
-        description="Power exponent; only meaningful with type: pow. None uses Vega-Lite's default.",
+        description="Power exponent; only meaningful with type: pow. None uses the engine's default.",
     )
 
 
@@ -689,7 +689,7 @@ class ScaleSymlogStyle(BaseModel):
 
     constant: float | None = Field(
         default=None,
-        description="Symlog constant; only meaningful with type: symlog. None uses Vega-Lite's default.",
+        description="Symlog constant; only meaningful with type: symlog. None uses the engine's default.",
     )
 
 
@@ -735,7 +735,7 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
         default=None,
         description=(
             'Force scale zero-baseline: True/False pins it; "auto" runs the '
-            "dbt charts smart-zero heuristic; None passes through to Vega-Lite."
+            "dbt charts smart-zero heuristic; None uses the engine's default."
         ),
     )
     type: Literal["linear", "log", "pow", "sqrt", "symlog", "temporal"] | None = Field(
@@ -749,7 +749,7 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
             "forces a continuous temporal scale instead of the auto-inferred "
             "ordinal/nominal bucketed type, which is required before an "
             "authored ``domain`` of ISO dates can extend the visible range "
-            "past the data extent. None lets dbt charts/Vega-Lite infer from "
+            "past the data extent. None infers the scale type from "
             "the field type."
         ),
     )
@@ -782,10 +782,10 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
     ] = Field(
         default=None,
         description=(
-            "Explicit [low, high] scale domain; None lets Vega-Lite "
-            "auto-determine from data. Must have exactly 2 elements: "
-            "dbt charts only wires a continuous range override through to "
-            "Vega-Lite, not an explicit category enumeration. Neither element "
+            "Explicit [low, high] scale domain; None fits the domain "
+            "to the data. Must have exactly 2 elements: "
+            "dbt charts only supports a continuous range override, "
+            "not an explicit category enumeration. Neither element "
             "may be null; pin both bounds, or omit the key to fit the data. "
             "When ``type: temporal`` is set, both elements must be ISO-8601 "
             "date/datetime strings."
@@ -822,7 +822,7 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
             raise ValueError(
                 "scale.continuous.log.base must be greater than 1, got "
                 f"{self.log.base}. A base at or below 1 flips or flattens the "
-                "scale's decades, so Vega-Lite's nice domain no longer covers the data."
+                "scale's decades, so the nice domain no longer covers the data."
             )
         return self
 
@@ -834,24 +834,23 @@ class BaseScaleStyle(BaseModel):
     ``XScaleStyle`` (``axis_x.scale``). band/point/quantize/mark_size scale
     config was deleted (2026-08 trim): no chart currently needs it, and it
     more than doubled the authoring surface for zero real use. Rely on
-    Vega-Lite's own defaults until a real need for those knobs shows up.
+    the engine's own defaults until a real need for those knobs shows up.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     round: bool | None = Field(
         default=None,
-        description="Round scale outputs to nearest integer; None uses Vega-Lite's default (no rounding).",
+        description="Round scale outputs to nearest integer; None uses the engine's default (no rounding).",
     )
     clamp: bool | None = Field(
         default=None,
-        description="Clamp values to scale domain; None uses Vega-Lite's default (no clamping).",
+        description="Clamp values to scale domain; None uses the engine's default (no clamping).",
     )
     nice: bool | None = Field(
         default=None,
         description=(
-            "Round the axis domain to nice values; None uses Vega-Lite's "
-            "default. Forwards natively to Vega-Lite's scale.nice."
+            "Round the axis domain to nice values; None uses the engine's default."
         ),
     )
     # Unified shortcut. Maps to VL ``scale.padding``, which Vega-Lite itself
@@ -881,7 +880,7 @@ class BaseScaleStyle(BaseModel):
     # DimensionLabelStyle). Moved in from the old BaseAxisStyle.values.
     values: _TickValues | None = Field(
         default=None,
-        description="Explicit tick values; None uses Vega-Lite's auto tick values.",
+        description="Explicit tick values; None lets the engine pick ticks from the data.",
     )
     continuous: ScaleContinuousStyle | None = Field(
         default=None,
@@ -1199,8 +1198,8 @@ class AxisXStyle(BaseAxisStyle):
             "Calendar month (1=Jan..12=Dec) that opens a fiscal year/quarter "
             "for year/yearquarter bucketing; theme default 1 is the calendar "
             "convention (Q1=Jan-Mar). A non-default value always wins over "
-            "axis_x.type: temporal for year/yearquarter grains - Vega-Lite's "
-            "native timeUnit transform has no fiscal-offset concept and "
+            "axis_x.type: temporal for year/yearquarter grains - the default "
+            "time bucketing has no fiscal-offset concept and "
             "would otherwise silently discard the offset."
         ),
     )
@@ -1280,5 +1279,5 @@ class BandAxisStyle(BaseAxisStyle):
 
     band_position: Annotated[float | None, SkipInheritSlots()] = Field(
         default=None,
-        description="Band position within the step (0–1); None uses Vega-Lite's default.",
+        description="Band position within the step (0–1); None uses the engine's default.",
     )

@@ -9,7 +9,7 @@ use board_model::style::charts::ChartsStyle;
 use board_model::style::style::Style;
 use board_model::variable_value::VariableValue;
 use model_core::{Patch, Tri};
-use diagnostic::{codes, refuse, Diagnostic, Level};
+use diagnostic::{codes, refuse, Code, Diagnostic, Level};
 use indexmap::IndexMap;
 use serde_json::{json, Value};
 
@@ -22,7 +22,7 @@ pub const DEFAULT_DOCS_SITE: &str = "https://docs.dbtcharts.com";
 #[derive(Debug, Clone, PartialEq)]
 pub struct FailedText {
     pub code: String,
-    /// The code's own anchor on the error reference page; `http`, `https`, `mailto` or scheme-less.
+    /// The code's own anchor on its topic page of the error reference; `http`, `https`, `mailto` or scheme-less.
     pub href: String,
     /// The diagnostic's message, with the query it ran appended when the message does not end in it.
     pub message: String,
@@ -49,11 +49,7 @@ impl FailedText {
             return Err(refuse!("the hint of {} (written by {generator}) is not supported", code.id).into());
         }
         let message = diagnostic.message().map_err(|e| Diagnostic::from(e.to_string()))?;
-        let page = match code.level {
-            Level::Error => "errors",
-            Level::Warning => "warnings",
-        };
-        let href = format!("{docs_site}/reference/{page}/#{}", code.id.to_lowercase());
+        let href = doc_url(code, docs_site);
         checked_href(&href)?;
         Ok(FailedText {
             code: code.id.to_string(),
@@ -63,6 +59,15 @@ impl FailedText {
             link_text: display_text::language::tr("placard.about_this_error", None, &[])?,
         })
     }
+}
+
+/// `registry.py::build_doc_url`: the code's anchor on its topic page of the generated reference.
+pub fn doc_url(code: &Code, docs_site: &str) -> String {
+    let page = match code.level {
+        Level::Error => "errors",
+        Level::Warning => "warnings",
+    };
+    format!("{docs_site}/reference/{page}/{}/#{}", code.docs_topic, code.id.to_lowercase())
 }
 
 /// The query a failure ran: its `query_name` field (`diagnostic.py::build_diagnostic`).

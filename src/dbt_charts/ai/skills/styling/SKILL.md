@@ -103,7 +103,15 @@ Also exist: `preferred_width`, `padding`, `background`, `aspect_ratio`, `min_hei
 - `marks` ({bar: {}, text: {font: {}, align}}): Bar-family mark overrides
 - `stack` (none|zero|normalize|center): Default stack mode for bar charts; none renders side-by-side columns
 - `orientation` (horizontal|vertical|auto): Preferred bar orientation
-Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `outliers`, `pattern`, `conditional`.
+- `outliers` ({median_multiplier, variant, reveal, cap: {band, length}}): Tear bars far longer than the rest
+Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `pattern`, `conditional`.
+
+`outliers (bar charts)`:
+- `median_multiplier` (number|none): Tear bars at least this many times the median bar; none turns it off
+- `variant` (torn|torn_with_cap): How a torn bar is drawn
+Also exist: `reveal`, `cap`.
+
+Tearing is on by default. `torn` draws vertical bars only; a horizontal, stacked or grouped bar warns, so set `variant: torn_with_cap` for those.
 
 ### Axes
 
@@ -121,14 +129,14 @@ Also exist: `grid`, `line`, `ticks`, `labels`, `title`, `scale`, `position`, `fi
 `axis_x.title`: `font`, `padding`, `angle`, `align`, `visible`.
 
 `axis_y.scale`:
-- `values` (list of any): Explicit tick values; None uses Vega-Lite's auto tick values
-- `nice` (bool): Round the axis domain to nice values; None uses Vega-Lite's default
+- `values` (list of any): Explicit tick values; None lets the engine pick ticks from the data
+- `nice` (bool): Round the axis domain to nice values; None uses the engine's default
 - `headroom` (number): Fractional breathing room at measure-axis edges, exact (never nice-rounded)
 Also exist: `round`, `clamp`, `padding`, `continuous`.
 
 `axis_y.scale.continuous`:
 - `type` (linear|log|pow|sqrt|symlog|temporal): Scale type override; pow, sqrt and symlog bend only a scatter's axes
-- `domain` (tuple[int | float | str, int | float | str]): Explicit [low, high] scale domain; None lets Vega-Lite auto-determine from data
+- `domain` (tuple[int | float | str, int | float | str]): Explicit [low, high] scale domain; None fits the domain to the data
 - `zero` (bool|auto): Force scale zero-baseline
 Also exist: `log`, `pow`, `symlog`.
 

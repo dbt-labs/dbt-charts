@@ -1,0 +1,5 @@
+kind: Fixes
+body: Torn outlier bars no longer hide their chart's title, subtitle, legend, or labels above the plot, and show more bar above the title.
+time: 2026-11-21T22:56:19.903551-08:00
+custom:
+    DbtChartsIssue: "123"

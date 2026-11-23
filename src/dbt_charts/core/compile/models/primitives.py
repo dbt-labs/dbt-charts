@@ -463,8 +463,8 @@ def _checked_pattern(forbidden: str) -> BeforeValidator:
             return pattern
         if unsupported := unsupported_time_directives(pattern):
             raise ValueError(
-                f"directives {unsupported} are not painted identically by Vega "
-                "and Python; use only d3-time-format directives"
+                f"directives {unsupported} are not painted identically by the render "
+                "engine and Python; use only d3-time-format directives"
             )
         if recursive := sorted(set(time_directive_letters(pattern)) & set(forbidden)):
             raise ValueError(
@@ -1352,7 +1352,7 @@ def might_be_palette_role(value: str) -> bool:
     decidable now, and must stay a hard error here rather than be deferred:
 
     - anything carrying ``:N``/``_r`` shorthand or a leading ``#``
-    - a Vega scheme name, which is legal in a gradient but never in a stops slot
+    - a Vega color-scheme name, which is legal in a gradient but never in a stops slot
     - a perceptual anti-pattern (`jet`, `rainbow`, `hsv`), whose rejection is a
       deliberate gate that deferral would silently swallow
     """
@@ -1456,7 +1456,7 @@ class ScaleTargetConfig(ScaleTargetPaletteValidationMixin):
         ScalePaletteName | list[str] | list[float] | str,
         Palette(),
     ] = Field(
-        description="Which colors the scale draws from: a built-in palette name or Vega scheme, a CSS color list for categorical, or a float list for relative stops."
+        description="Which colors the scale draws from: a built-in palette name or Vega color-scheme name, a CSS color list for categorical, or a float list for relative stops."
     )
     domain: Literal["data"] | None = Field(
         default="data",

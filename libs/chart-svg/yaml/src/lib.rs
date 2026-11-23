@@ -34,7 +34,7 @@
 //!   sequence or mapping used as a key, are `ERR-YAML-SYNTAX` too. Keys equal
 //!   in Python (`1`, `1.0`, `true`) are duplicates.
 //! - not carried (`ERR-ENGINE-REFUSED`, Python accepts them): an explicit tag
-//!   (quote the value instead), a timestamp key, keys that are one key in JSON
+//!   (remove the tag), a timestamp key, keys that are one key in JSON
 //!   text but two in Python (`1` and `'1'`) or the reverse (`1` and `1.0`), a
 //!   number JSON cannot hold (an integer beyond 64 bits, `.inf`, `.nan`).
 //!

@@ -655,11 +655,48 @@ fn resolve_names(
     // later refusal.
     let mut unknowns = Vec::new();
     let gathered = resolve_each(patch, file, external, imports, scopes, &mut unknowns);
+    unknowns.extend(unknown_variable_queries(patch));
     if unknowns.is_empty() {
         gathered
     } else {
         Err(HoistError::UnknownQuery(unknowns))
     }
+}
+
+/// A variable's `options.query` or `enabled:` probe that names no declared query. Only a bare name is judged: a dotted or `#` name
+/// is another file's, and SQL text was hoisted into a query of its own.
+fn unknown_variable_queries(patch: &Patch) -> Vec<Diagnostic> {
+    let known: BTreeSet<&str> = patch.body.queries.keys().map(String::as_str).collect();
+    let nested = patch.body.layout.as_ref().map(crate::tree::nested);
+    let boards = nested.iter().flatten().filter_map(|n| n.variables);
+    let mut unknowns = Vec::new();
+    let mut check = |var: &str, field: &str, name: &str| {
+        let name = name.strip_prefix("queries.").unwrap_or(name);
+        let bare = !name.is_empty()
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if bare && !known.contains(name) {
+            unknowns.push(diag::err_unknown_variable_query(
+                var,
+                name,
+                field,
+                known.iter().map(|k| k.to_string()).collect::<Vec<String>>(),
+            ));
+        }
+    };
+    for (name, var) in &patch.body.variables {
+        for (field, query) in crate::lint::patch_variable_reads(var) {
+            check(name, field, &query);
+        }
+    }
+    for vars in boards {
+        for (name, var) in vars {
+            for (field, query) in crate::lint::authored_variable_reads(var) {
+                check(name, field, &query);
+            }
+        }
+    }
+    unknowns
 }
 
 fn resolve_each(

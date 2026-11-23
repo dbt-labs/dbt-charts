@@ -6140,10 +6140,15 @@ mod tests {
         }
 
         fn grouped_card(north: &[f64]) -> String {
+            grouped_card_with(north, |_| {})
+        }
+
+        fn grouped_card_with(north: &[f64], tweak: impl FnOnce(&mut serde_json::Value)) -> String {
             let mut payload_json = make_vertical_payload(&north.iter().enumerate().map(|(i, v)| (["A", "B", "C", "D"][i], *v)).collect::<Vec<_>>(), true);
             let (axis_y, style) = (make_authored_domain_payload(false)["resolved"]["style"]["axis_y"].clone(), make_authored_domain_payload(false)["resolved"]["style"]["outliers"].clone());
             payload_json["resolved"]["style"]["axis_y"] = axis_y;
             payload_json["resolved"]["style"]["outliers"] = style;
+            tweak(&mut payload_json);
             render(&make_payload(payload_json), &test_fonts()).expect("renders")
         }
 
@@ -6307,11 +6312,11 @@ mod tests {
         }
 
         #[test]
-        fn a_legend_over_the_plot_rests_behind_the_bars_ready_to_lift() {
+        fn a_legend_over_the_plot_rests_in_front_of_the_bars() {
             let svg = grouped_card(&[5000.0, 320.0, 320.0, 320.0]);
             let legend_at = svg.find("class=\"mark-group role-legend\"").expect("a legend");
             let bar_at = svg.find("data-dbt-off-chart=").expect("a torn bar");
-            assert!(legend_at < bar_at, "the legend rests behind the bar: {svg}");
+            assert!(legend_at > bar_at, "the legend rests in front of the bar: {svg}");
             let root = &svg[svg[..legend_at].rfind('<').expect("its tag")..legend_at + 200];
             assert!(root.contains("data-dbt-lifted"), "the hover runtime finds it: {root}");
             let legend = &svg[legend_at..];
@@ -6320,20 +6325,108 @@ mod tests {
             assert_eq!(bands(&svg).len(), 1, "one band behind title and legend: {svg}");
         }
 
-        /// In a chart with a bar off the chart, the title, subtitle and legend rest behind the bars
-        /// on one band of the card's color, 85% opaque, as wide as the text needs: the hover
-        /// runtime lifts them over the bars while the chart is hovered, when the bars are drawn at
-        /// true length. The band is one shape, so where two lines' strips meet the bars show
-        /// through it once, never twice.
+        /// The band's rectangles as (x1, y1, x2, y2).
+        fn band_rects(svg: &str) -> Vec<(f64, f64, f64, f64)> {
+            let d = bands(svg)[0].split(" d=\"").nth(1).expect("a path").split('"').next().expect("closes");
+            d.split('M').filter(|sub| !sub.is_empty()).map(|sub| {
+                let n: Vec<f64> = sub.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).filter(|t| !t.is_empty()).map(|t| t.parse().expect("a number")).collect();
+                (n[0], n[1], n[2], n[5])
+            }).collect()
+        }
+
+        /// Text above the plot that paints after the bars (a top axis's labels, a top table row)
+        /// is dark ink on the bar without the band, so it gets the band across the bar it crosses.
         #[test]
-        fn header_content_rests_behind_the_bars_on_one_band_as_wide_as_its_text() {
+        fn text_above_the_plot_crossing_a_torn_bar_gets_the_band() {
+            let svg = card_with(&[320.0, 5000.0, 320.0], "T", |p| p["resolved"]["style"]["axis_x"]["position"] = serde_json::json!("top"));
+            let (left, top) = plot_origin(&svg);
+            let bar = &torn_bars(&svg)[0];
+            let (x1, x2) = (left + bar.x(), left + bar.x2);
+            assert!(band_rects(&svg).iter().any(|r| r.0 <= x1 + 0.01 && r.2 >= x2 - 0.01 && r.3 <= top + 0.01 && r.3 > top - 20.0), "the category label is backed across its bar: {svg}");
+            assert!((0.0..=8.0).contains(&arrow_y(&svg, "5000")), "the value label drops clear of it");
+        }
+
+        /// A top table's cell on a torn bar is backed, and the value label drops clear of it.
+        #[test]
+        fn a_top_table_cell_on_a_torn_bar_gets_the_band() {
+            let svg = card_with(&[320.0, 5000.0, 320.0], "T", |p| {
+                p["resolved"]["support_table"] = serde_json::json!({"entries": [{"source": "revenue", "format": "d", "label": "Revenue"}]});
+                p["resolved"]["effective_support_table_style"] = support_table_style_json();
+            });
+            let (left, top) = plot_origin(&svg);
+            let bar = &torn_bars(&svg)[0];
+            assert!(band_rects(&svg).iter().any(|r| r.0 <= left + bar.x() + 0.01 && r.2 >= left + bar.x2 - 0.01 && r.1 > 40.0 && r.3 <= top + 0.01), "the cell is backed: {svg}");
+            let y = texts(&svg).iter().find(|(tag, _)| tag.contains("data-dbt-off-chart-label")).map(|(tag, _)| attr(tag, "y")).expect("a value label");
+            assert!((0.0..=8.0).contains(&y), "the value label drops: {y}");
+        }
+
+        /// A top axis with its labels hidden leaves nothing on the plot's top to clear.
+        #[test]
+        fn a_top_axis_with_hidden_labels_leaves_the_value_label_under_its_tear() {
+            let svg = card_with(&[320.0, 320.0, 320.0, 5000.0], "", |p| {
+                p["resolved"]["title"] = serde_json::Value::Null;
+                p["resolved"]["style"]["axis_x"]["position"] = serde_json::json!("top");
+                p["resolved"]["style"]["axis_x"]["labels"]["visible"] = serde_json::json!(false);
+            });
+            assert!(arrow_y(&svg, "5000") < 0.0, "nothing covers it: {svg}");
+        }
+
+        /// A label of several lines is a tspan each, and the band backs every one.
+        #[test]
+        fn a_wrapped_label_is_backed_on_every_line() {
+            let size = 11.0;
+            let wrapped = crate::text::label(scene::Role::Axis, (100.0, 20.0), scene::Attrs::new().num("font-size", size).vega("font-family", "Inter"), format!("North{}America", measure::LINE_SEP));
+            let one = crate::text::label(scene::Role::Axis, (100.0, 20.0), scene::Attrs::new().num("font-size", size).vega("font-family", "Inter"), "North");
+            let (wrapped, one) = (off_chart::measured_bounds(&wrapped, &test_fonts(), true).expect("measures").expect("a box"), off_chart::measured_bounds(&one, &test_fonts(), true).expect("measures").expect("a box"));
+            assert_eq!(wrapped.y1, one.y1, "its top is the first line's ink");
+            assert!(wrapped.y2 > one.y2 + size && wrapped.x2 > one.x2, "it reaches the last and widest line: {wrapped:?}");
+        }
+
+        /// Two strips nearly touching would leave a hairline of bar between two lines of text.
+        #[test]
+        fn strips_that_nearly_touch_leave_no_sliver_of_bar() {
+            let svg = grouped_card_with(&[5000.0, 320.0, 320.0, 320.0], |p| {
+                p["resolved"]["title"] = serde_json::json!("Signups by region");
+                p["resolved"]["legend"]["title"]["visible"] = serde_json::json!(false);
+            });
+            let mut ys: Vec<(f64, f64)> = band_rects(&svg).iter().map(|r| (r.1, r.3)).collect();
+            ys.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut reach = ys[0].1;
+            for (y1, y2) in &ys[1..] {
+                assert!(*y1 <= reach + 0.01 || *y1 - reach >= 8.0, "a sliver between strips: {ys:?}");
+                reach = reach.max(*y2);
+            }
+        }
+
+        /// No bar can cross a legend beside the plot, so its box never widens the title's band
+        /// over the plot.
+        #[test]
+        fn a_legend_beside_the_plot_stays_off_the_band() {
+            let svg = grouped_card_with(&[5000.0, 320.0, 320.0, 320.0], |p| {
+                p["resolved"]["legend"]["position"] = serde_json::json!({"edge": "right", "align": "start", "overlay": false});
+            });
+            let (_, top) = plot_origin(&svg);
+            let d = bands(&svg)[0].split(" d=\"").nth(1).expect("a path").split('"').next().expect("closes");
+            let nums: Vec<f64> = d.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).filter(|t| !t.is_empty()).map(|t| t.parse().expect("a number")).collect();
+            let bottom = nums.chunks(2).map(|p| p[1]).fold(f64::MIN, f64::max);
+            assert!(bottom <= top, "the band ends above the plot: {bottom} vs {top}");
+            let legend = &svg[svg.find("class=\"mark-group role-legend\"").expect("a legend")..];
+            assert!(!legend[..legend.find('>').expect("closes")].contains("data-dbt-lifted"), "nothing to lift over");
+        }
+
+        /// In a chart with a bar off the chart, the title, subtitle and legend rest in front of the
+        /// bars on one band of the card's color, 85% opaque, as wide as the text needs; the hover
+        /// runtime copies them over the bars it draws at true length. The band is one shape, so
+        /// where two lines' strips meet the bars show through it once, never twice.
+        #[test]
+        fn header_content_rests_in_front_of_the_bars_on_one_band_as_wide_as_its_text() {
             let crossed = card_with(&[5000.0, 320.0, 320.0, 320.0], "Signups by region this quarter", |p| p["resolved"]["subtitle"] = serde_json::json!("Trailing thirty days"));
             let bar_at = crossed.find("data-dbt-off-chart=").expect("a torn bar");
             let bands = bands(&crossed);
             assert_eq!(bands.len(), 1, "one band: {crossed}");
             let band = bands[0];
             let band_at = crossed.find(band).expect("in the card");
-            assert!(band_at < bar_at, "the band rests behind the bar");
+            assert!(band_at > bar_at, "the band rests in front of the bar");
             assert!(band.contains("fill=\"#ffffff\"") && attr(band, "fill-opacity") == 0.85, "{band}");
             let d = &band[band.find(" d=\"").expect("a path") + 4..];
             let d = &d[..d.find('"').expect("closes")];
@@ -6346,7 +6439,7 @@ mod tests {
             assert!(hi < width - 20.0, "ends past the text, short of the card's far edge: {hi} of {width}");
             for class in ["role-title-text", "role-title-subtitle"] {
                 let (at, tag) = text_tag(&crossed, class);
-                assert!(at > band_at && at < bar_at, "the {class} rests on the band, behind the bar: {crossed}");
+                assert!(at > band_at && at > bar_at, "the {class} rests on the band, in front of the bar: {crossed}");
                 assert!(!tag.contains("stroke="), "no halo: {tag}");
                 assert!(tag.contains("data-dbt-lifted"), "the hover runtime finds it: {tag}");
             }
@@ -6354,7 +6447,46 @@ mod tests {
             let missed = card(&[320.0, 320.0, 320.0, 5000.0], "T");
             assert!(text_tag(&missed, "role-title-text").1.contains("data-dbt-lifted"), "an uncrossed title lifts too");
             let plain = card(&[320.0, 320.0, 320.0, 3000.0], "T");
-            assert!(!plain.contains("data-dbt-lifted"), "a chart with nothing off the chart lifts nothing");
+            assert!(!plain.contains("data-dbt-lifted") && !plain.contains("fill-opacity=\"0.85\""), "a chart with nothing off the chart has no band and lifts nothing");
+        }
+
+        /// The band's top edge, in card coordinates.
+        fn band_top(svg: &str) -> f64 {
+            let band = bands(svg)[0];
+            let d = &band[band.find(" d=\"").expect("a path") + 4..];
+            let d = &d[..d.find('"').expect("closes")];
+            d.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).filter(|t| !t.is_empty()).map(|t| t.parse::<f64>().expect("a number")).skip(1).step_by(2).fold(f64::MAX, f64::min)
+        }
+
+        /// The band's top follows the tallest glyph's ink (an accent on a capital included) plus a
+        /// small pad, not a full em.
+        #[test]
+        fn the_band_top_clears_the_tallest_ink_of_the_title_and_no_more() {
+            let svg = card(&[5000.0, 320.0, 320.0, 320.0], "\u{c9}PIC Q1");
+            let (_, title) = text_tag(&svg, "role-title-text");
+            let (baseline, size) = (attr(title, "y"), attr(title, "font-size"));
+            let family = title.split("font-family=\"").nth(1).expect("a family").split('"').next().expect("closes");
+            let ink = test_fonts().ink_ascent("\u{c9}PIC Q1", family, size).expect("measures");
+            let top = band_top(&svg);
+            assert!(top < baseline - ink, "the accent sits wholly on the band: {top} vs {}", baseline - ink);
+            assert!((top - (baseline - ink - 0.12 * size)).abs() < 0.01, "a small pad over the ink: {top}");
+            assert!(top > baseline - 1.18 * size, "lower than the em-high top it replaces: {top}");
+        }
+
+        /// A bar crossing the band tears no deeper than a share of the room above it, its highest
+        /// points still on the card's top; a bar clear of every strip tears as it naturally does.
+        #[test]
+        fn a_tear_over_the_band_fits_the_room_above_it_and_a_clear_one_does_not() {
+            let crossed = card(&[5000.0, 320.0, 320.0, 320.0], "A title over the first bar");
+            let natural = card_with(&[5000.0, 320.0, 320.0, 320.0], "", |p| p["resolved"]["title"] = serde_json::Value::Null);
+            let room = band_top(&crossed);
+            assert!(tear_depth(&natural) > 0.4 * room + 0.5, "the room is tight enough to matter: {} vs {room}", tear_depth(&natural));
+            assert!(tear_depth(&crossed) <= 0.4 * room + 0.01, "{} vs {room}", tear_depth(&crossed));
+            let (_, top) = plot_origin(&crossed);
+            let edge = torn_top(&crossed);
+            assert!(edge.iter().any(|p| (p.1 + top).abs() < 0.01), "solid bar reaches the card's top above the title");
+            let (clear, clear_natural) = (card(&[320.0, 320.0, 320.0, 5000.0], "T"), card_with(&[320.0, 320.0, 320.0, 5000.0], "", |p| p["resolved"]["title"] = serde_json::Value::Null));
+            assert!(bands(&clear).len() == 1 && (tear_depth(&clear) - tear_depth(&clear_natural)).abs() < 1e-9, "{} vs {}", tear_depth(&clear), tear_depth(&clear_natural));
         }
 
         /// The torn top as (x, y) points in the bar's path, plot coordinates, before it drops to the base.

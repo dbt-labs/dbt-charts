@@ -3878,6 +3878,10 @@ pub(crate) fn render_vertical_panel(
     // Category gridlines end at the break; the torn bars and their caps tear along one wave.
     let mut torn_caps = Caps::on(Vec::new());
     let mut off_chart = off_chart_max.map(|_| OffChart::new(r, linear_domain_max, -plot_top));
+    // The header's band is known before the bars tear: each tear fits the room above it.
+    if let Some(off) = off_chart.as_mut() {
+        off.lift(&mut head, (plot_left, plot_top), plot_w, &["role-title-text", "role-title-subtitle"], fonts)?;
+    }
     if let Some(t) = &torn {
         if ax_x.grid.visible.unwrap_or(false) {
             let xc = crate::common::required_ink(ax_x.grid.color.as_deref(), "bar", "axis_x.grid.color")?;
@@ -4316,12 +4320,8 @@ pub(crate) fn render_vertical_panel(
     if let Some(t) = &torn {
         plot.extend(t.caps(torn_caps, &linear, r, payload.board_style.as_ref(), fonts)?);
     }
-    // Header content is marked first: a label it would cover when lifted drops below it.
     if let Some(off) = off_chart.as_mut() {
-        off.lift(&mut head, (plot_left, plot_top), &["role-title-text", "role-title-subtitle"], fonts)?;
-    }
-    if let Some(off) = off_chart.as_mut() {
-        plot.extend(off.labels(r, payload.board_style.as_ref(), fonts)?);
+        plot.extend(off.labels(val_corners.above, r, payload.board_style.as_ref(), fonts)?);
     }
 
     // An overlay layer paints on the base's own `band` x scale but its OWN
@@ -5419,6 +5419,9 @@ under,
     }
     let cuts = facet.map(|_| facet_compose::PanelInk::new(&head, &plot_group, &plot, &tail, Some(facet_compose::ValueAxisAt::Tail(value_axis_start..value_axis_end))));
     let svg: Node = {
+        if let Some(off) = off_chart.as_mut() {
+            off.back(&mut tail, scene::Affine::IDENTITY, (plot_left, plot_top), fonts)?;
+        }
         let mut body = head;
         body.push(plot_group(plot));
         body.extend(off_chart.as_mut().map(OffChart::front).unwrap_or_default());

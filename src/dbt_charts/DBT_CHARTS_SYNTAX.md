@@ -304,6 +304,9 @@ gives a single detail board a clean per-entity URL:
 # charts/milestone.yml  (canonical URL: /milestone)
 aliases:
   - /milestones/<name>
+queries:
+  milestone_options:
+    sql: SELECT slug FROM milestones
 variables:
   name: { input: select, options: { query: milestone_options, column: slug } }
 ```
@@ -859,8 +862,8 @@ specs shown), or an object with `spec`, `prefix`, `suffix` and `notation`
 keys (see "Currency and other affixes" below). The three `percent_number*` /
 `percentage_points_delta` aliases are native and Python-formatted: valid only
 in KPI value/support and table-cell `format` slots; an axis format (a
-Vega-painted slot) rejects them with `ERR-FORMAT-NATIVE-IN-VEGA-SLOT`.
-`duration` and `bytes` are native too but also carry a Vega form, so they paint
+chart-painted slot) rejects them with `ERR-FORMAT-NATIVE-IN-VEGA-SLOT`.
+`duration` and `bytes` are native too but also carry a d3 spec form, so they paint
 on axes, value labels and tooltips as well as in a KPI or table:
 
 | Alias | Spec | Renders like |
@@ -1094,7 +1097,7 @@ x: day_of_week
 y: hour
 color: event_count
 
-# histogram — pre-bin in SQL OR use Vega-Lite binning behavior
+# histogram — pre-bin in SQL OR let the histogram bin raw rows
 type: histogram
 x: amount
 
@@ -1675,6 +1678,9 @@ Filter-generation field: `operator` — SQL operator used when generating predic
 Options sources (for `select`, `multiselect`, `radio`):
 
 ```yaml
+queries:
+  products_list:
+    sql: SELECT product_name, product_label FROM products
 variables:
   product:
     input: select
@@ -1697,6 +1703,11 @@ Top-level `column` is `table.column`, and the table may be schema-qualified when
 Enabled/disabled forms (`enabled: false` means the control is inactive):
 
 ```yaml
+queries:
+  territory_options:
+    sql: SELECT DISTINCT territory FROM sales
+  control_state:
+    sql: SELECT true AS territory_enabled
 variables:
   # Static bool — enabled: false disables the control
   closed: { input: checkbox, enabled: false }

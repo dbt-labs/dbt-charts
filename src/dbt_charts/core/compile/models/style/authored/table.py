@@ -284,7 +284,7 @@ class ColumnScaleTargetConfig(ScaleTargetConfig):
         ScalePaletteName | list[str] | str,
         Palette(),
     ] = Field(
-        description="Which colors the scale draws from: a built-in palette name or Vega scheme, or a CSS color list."
+        description="Which colors the scale draws from: a built-in palette name or Vega color-scheme name, or a CSS color list."
     )
 
 

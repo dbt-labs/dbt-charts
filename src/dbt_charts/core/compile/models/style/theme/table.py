@@ -604,7 +604,7 @@ class TableChartStyle(
         description=(
             "Pure whitespace between the title's descent and the subtitle's "
             "ascent, in pixels, not a baseline-to-baseline distance. Combined "
-            "with the title and subtitle font sizes to reproduce Vega-Lite's "
+            "with the title and subtitle font sizes to reproduce the chart-family "
             "title->subtitle spacing at any font size, not one calibrated "
             "pair. Font size and "
             "color for the subtitle itself come from style.title.subtitle "

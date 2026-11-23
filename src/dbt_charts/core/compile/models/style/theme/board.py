@@ -277,22 +277,22 @@ class TitleWidthOffsetsStyle(BaseModel):
 
 
 class TitlePositionStyle(BaseModel):
-    """Vega-Lite title positioning pass-throughs grouped as a sub-object."""
+    """Title positioning controls grouped as a sub-object."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     anchor: str = Field(description="Title anchor position; theme always sets this.")
     angle: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Title rotation angle in degrees; 'auto' lets Vega-Lite choose.",
+        description="Title rotation angle in degrees; 'auto' lets the engine choose.",
     )
     offset: float | None = Field(
         default=None,
-        description="Title offset from its anchor in pixels; None uses Vega-Lite's default.",
+        description="Title offset from its anchor in pixels; None uses the engine's default.",
     )
     baseline: Annotated[TextBaseline | None, AutoUnset()] = Field(
         default=None,
-        description="Title text baseline alignment; 'auto' uses Vega-Lite's default.",
+        description="Title text baseline alignment; 'auto' uses the engine's default.",
     )
 
 
@@ -402,7 +402,7 @@ class _TitleBase(BaseModel):
     )
     # SkipInheritSlots(cascade=True): see width_offsets above.
     position: Annotated[TitlePositionStyle, SkipInheritSlots(cascade=True)] = Field(
-        description="Vega-Lite title positioning: anchor, angle, offset, baseline."
+        description="Title positioning: anchor, angle, offset, baseline."
     )
     # Author/theme override for heading level. "auto" = compute from titled-ancestor count;
     # an integer locks all titles in this scope to that H-level and propagates to descendants.

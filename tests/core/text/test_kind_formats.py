@@ -374,7 +374,9 @@ _NO_ARM_CHARTS = {
 
 @pytest.mark.parametrize("name", ["duration", "bytes"])
 @pytest.mark.parametrize("slot", sorted(_NO_ARM_CHARTS))
-def test_a_native_is_rejected_where_vega_cannot_paint_it(slot: str, name: str) -> None:
+def test_a_native_is_rejected_in_a_slot_with_no_d3_spec_form(
+    slot: str, name: str
+) -> None:
     chart = _NO_ARM_CHARTS[slot].replace("NAME", name)
     # These families read the board's tooltip format, not a chart-local one.
     board_style = (
@@ -386,7 +388,7 @@ def test_a_native_is_rejected_where_vega_cannot_paint_it(slot: str, name: str) -
         f"title: T\n{board_style}{_NO_ARM_QUERIES}charts:\n  c:{chart}rows:\n  - c\n"
     )
     [error] = render_board_svg_result(board).chart_errors
-    assert "is a native formatter with no Vega arm" in error.message
+    assert "is a native formatter with no d3 spec form" in error.message
 
 
 @pytest.mark.parametrize("name", ["duration", "bytes"])

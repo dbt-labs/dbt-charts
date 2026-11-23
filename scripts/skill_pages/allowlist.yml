@@ -81,8 +81,13 @@ objects:
   s_family:
     path: chart:bar.style
     label: style.charts.bar, a bar chart's style
-    keys: [background, padding, aspect_ratio, color, axis_x, axis_y, key, marks, stack, orientation]
+    keys: [background, padding, aspect_ratio, color, axis_x, axis_y, key, marks, stack, orientation, outliers]
     detail: [axis_x, axis_y]
+  s_outliers:
+    path: chart:bar.style.outliers
+    label: outliers (bar charts)
+    keys: [median_multiplier, variant]
+    detail: [median_multiplier]
   s_axis_x:
     path: chart:bar.style.axis_x
     label: axis_x

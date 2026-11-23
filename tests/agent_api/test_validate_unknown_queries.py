@@ -27,3 +27,24 @@ def test_each_chart_naming_an_unknown_query_is_reported(
     unknown = [e for e in result.errors if e.code == "ERR-UNKNOWN-QUERY"]
     assert [e.message.count("missing_") for e in unknown] == [1, 1, 1]
     assert [f"missing_{i}" in e.message for i, e in enumerate(unknown)] == [True] * 3
+
+
+def test_variable_options_query_naming_an_unknown_query_is_reported(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    board = (
+        "title: t\nsource: local_db\nqueries:\n  ok:\n    sql: SELECT 1 AS a\n"
+        "variables:\n  region:\n    options:\n      query: regoin_options\n"
+        "  other:\n    options:\n      query: ok\n"
+        "charts:\n  c:\n    type: bar\n    query: ok\n    x: a\n    y: a\n"
+        "rows:\n  - c\n"
+    )
+    charts = tmp_path / "charts"
+    charts.mkdir()
+    (charts / "b.yml").write_text(board)
+
+    [result] = validate_paths([charts / "b.yml"], project=local_project(tmp_path))
+
+    [error] = [e for e in result.errors if e.code == "ERR-UNKNOWN-VARIABLE-QUERY"]
+    assert "regoin_options" in error.message
+    assert "'region'" in error.message

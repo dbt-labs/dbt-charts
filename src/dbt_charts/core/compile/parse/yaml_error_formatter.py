@@ -1147,8 +1147,8 @@ def _extra_field_diagnostic(
             if field_name == "border"
             else f"`style.{field_name}` is not supported on "
             f"`type: {card_style_chart_type}` — {card_style_chart_type} has no "
-            "per-chart card to paint it onto (it renders via Vega-Lite with no "
-            "card surface separate from the board frame). The field has no "
+            "per-chart card to paint it onto (it draws on the board frame with no "
+            "card surface of its own). The field has no "
             "effect and should be removed."
         )
         return _ExtraFieldDiagnostic(message=message, hint=hint, fields=fields)

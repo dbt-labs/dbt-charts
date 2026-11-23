@@ -44,7 +44,7 @@ fn conversion_failed(what: &str) -> diagnostic::Diagnostic {
         &diagnostic::codes::ERR_INTERNAL,
         [(
             "message",
-            serde_json::Value::String(format!("Vega-Lite to SVG conversion failed: {error}")),
+            serde_json::Value::String(format!("SVG conversion failed: {error}")),
         )],
     )
 }

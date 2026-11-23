@@ -736,10 +736,8 @@ class AreaMarkStyle(BaseModel):
     """Area mark fill opacity and shape.
 
     Stroke/halo geometry for the area's top-edge line lives on ``LineMarkStyle``
-    (area's ``marks.line`` slot) — Vega-Lite itself compiles an area's edge
-    line as a genuine separate ``line`` mark (confirmed: ``mark: {type: area,
-    line: {...}}`` compiles to independent ``area``/``line``/``symbol`` marks
-    in the Vega output), and dbt charts' emitter does the same by hand. Area
+    (area's ``marks.line`` slot) — an area's edge line is a genuine
+    separate ``line`` mark. Area
     owns only what's genuinely area-shaped: fill opacity and the interpolation
     curve (curve is a single shared value across the fill AND its edge line —
     they trace the same silhouette, so there is exactly one source of truth).
@@ -977,7 +975,7 @@ class CircleMarkStyle(BaseModel):
     stroke: Annotated[StrokeStyle | None, SkipInheritSlots(), Absent("no stroke")] = (
         Field(
             default=None,
-            description="Unset emits no stroke; Vega-Lite's default applies.",
+            description="Unset emits no stroke; the engine's default applies.",
         )
     )
 

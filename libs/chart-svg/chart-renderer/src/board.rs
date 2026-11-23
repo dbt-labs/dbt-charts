@@ -2087,42 +2087,26 @@ fn render_details_summary(
     ))
 }
 
-/// `_docs_site.py::DEFAULT_DOCS_SITE_URL`.
-const DEFAULT_DOCS_SITE_URL: &str = "https://docs.dbtcharts.com";
-
 /// `_docs_site.py::docs_site_url` — `DCT_DOCS_URL` overrides the shipped
 /// default when set to a non-empty value.
 fn docs_site_url() -> String {
     let raw = std::env::var("DCT_DOCS_URL").unwrap_or_default();
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        DEFAULT_DOCS_SITE_URL.to_string()
+        bind::failed::DEFAULT_DOCS_SITE.to_string()
     } else {
         trimmed.trim_end_matches('/').to_string()
     }
 }
 
-/// `diagnostics/registry.py::build_doc_url` — a pure function of the code
-/// string alone, never the registry, so it applies identically to a real
-/// registered diagnostic's code AND to this composer's own invented
-/// `ERR-ENGINE-REFUSED` code. This is the code badge's own anchor
+/// `diagnostics/registry.py::build_doc_url`: the code badge's own anchor
 /// (`callout.py::render_callout_svg`'s `code_svg`), the target of the tile's
-/// closing "About this error" link.
+/// closing "About this error" link. It names the code's docs topic, so a code
+/// outside the registry has none.
 fn build_doc_url(code: &str) -> Result<String, String> {
-    let page = if code.starts_with("ERR-") {
-        "errors"
-    } else if code.starts_with("WARN-") {
-        "warnings"
-    } else {
-        return Err(format!(
-            "code {code:?} has no recognized ERR-/WARN- prefix; cannot build a doc URL"
-        ));
-    };
-    Ok(format!(
-        "{}/reference/{page}/#{}",
-        docs_site_url(),
-        code.to_lowercase()
-    ))
+    let registered = diagnostic::codes::lookup(code)
+        .ok_or_else(|| format!("code {code:?} is not registered; cannot build a doc URL"))?;
+    Ok(bind::failed::doc_url(registered, &docs_site_url()))
 }
 
 /// `diagnostics/diagnostic.py::display_message` — appends `" (query:
@@ -5789,7 +5773,7 @@ mod error_card_tests {
         assert!(svg.contains("<pattern"));
         // The link's anchor always resolves via `build_doc_url`.
         assert!(svg.contains(
-            r#"href="https://docs.dbtcharts.com/reference/errors/#err-engine-refused""#
+            r#"href="https://docs.dbtcharts.com/reference/errors/charts/#err-engine-refused""#
         ));
         assert!(svg.find("ERR-ENGINE-REFUSED") < svg.find("bar: not supported"));
         assert!(svg.find("bar: not supported") < svg.find("About this error"));

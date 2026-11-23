@@ -483,11 +483,12 @@ rewrites the files themselves to the latest released syntax; see
 ```
 board YAML → compile (validate, resolve theme + layout)
            → execute (SQL against your warehouse via dbt adapters)
-           → render  (Vega-Lite specs → live HTML, static HTML, PDF, PNG, SVG)
+           → render  (live HTML, static HTML, PDF, PNG, SVG)
 ```
 
-Built on Pydantic (schema validation), Jinja2 (templating, as in dbt), Vega-Lite via
-`vl-convert` (charting), and FastAPI (the preview server).
+Built on Pydantic (schema validation), Jinja2 (templating, as in dbt), its own
+Rust render engine (charting; `vl-convert` converts the SVG to PNG and PDF), and
+FastAPI (the preview server).
 
 ---
 

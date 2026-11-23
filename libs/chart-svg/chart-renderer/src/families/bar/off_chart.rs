@@ -4,7 +4,7 @@
 //! clear for the title: the tear and the arrow say the bar goes on.
 
 use measure::FontBook;
-use scene::{Attrs, Node, Role, Shape, Transform};
+use scene::{Attrs, Node, Role, Run, Shape, Transform};
 
 use super::BarResolved;
 use super::labels::{LabelLayer, label_font, label_text};
@@ -42,14 +42,16 @@ pub(super) struct OffChart {
     bars: Vec<Outlier>,
     /// The boxes of the lifted header content, halo included, in plot coordinates.
     content: Vec<scene::Bounds>,
-    /// Under `reveal: none`, the header content on its band, painted over the bars.
+    /// The band's rectangles, in card coordinates.
+    strips: Vec<scene::Bounds>,
+    /// The header content that paints over the bars, on the band.
     front: Vec<Node>,
 }
 
 impl OffChart {
     pub(super) fn new(r: &BarResolved, max: f64, top: f64) -> Self {
         let reveal = r.style.outliers.as_ref().map_or(Reveal::Chart, |o| o.reveal);
-        Self { reveal, max, top, canvas: r.canvas.clone(), bars: Vec::new(), content: Vec::new(), front: Vec::new() }
+        Self { reveal, max, top, canvas: r.canvas.clone(), bars: Vec::new(), content: Vec::new(), strips: Vec::new(), front: Vec::new() }
     }
 
     /// Blanks the value labels of the bars that run off the chart: this chart names them itself.
@@ -70,7 +72,17 @@ impl OffChart {
     /// to, and `ceiling` the axis maximum's, the plot's top, which its drawing keeps clear of.
     pub(super) fn tear(&mut self, value: f64, x: (f64, f64), (baseline, reach, ceiling): (f64, f64, f64), ink: &str, mut nodes: Vec<Node>) -> Vec<Node> {
         if value > self.max {
-            let edge = crate::torn::ragged(x, self.top, 1.0, x.1 - x.0, value.to_bits());
+            let mut edge = crate::torn::ragged(x, self.top, 1.0, x.1 - x.0, value.to_bits());
+            // Room above the highest band strip the bar crosses: a tear deeper than its share
+            // scales down, so solid bar shows over the title.
+            let room = self.content.iter().filter(|b| b.x1 < x.1 && b.x2 > x.0).map(|b| b.y1 - self.top).fold(f64::INFINITY, f64::min);
+            let bite = edge.iter().map(|p| p.1 - self.top).fold(0.0, f64::max);
+            if room > 0.0 && bite > TEAR_ROOM_SHARE * room {
+                let fit = TEAR_ROOM_SHARE * room / bite;
+                for p in &mut edge {
+                    p.1 = self.top + (p.1 - self.top) * fit;
+                }
+            }
             let depth = edge.iter().map(|p| p.1 - self.top).fold(0.0, f64::max);
             let mut path = scene::PathData::new().move_to(x.0, baseline);
             for &(px, py) in &edge {
@@ -87,8 +99,9 @@ impl OffChart {
 
     /// Every outlier's value, upright inside its bar from just under its tear, its arrow at the
     /// top. A label the lifted header content would cover drops to just inside the plot's top
-    /// instead; content sits in the same place lifted or not, so a label never moves on hover.
-    pub(super) fn labels(&mut self, r: &BarResolved, board_style: Option<&crate::BoardStyle>, fonts: &FontBook) -> Result<Vec<Node>, String> {
+    /// instead. With `row_above`, a row
+    /// sits on the plot's top in every category (a top axis's labels, a top table), so all drop.
+    pub(super) fn labels(&mut self, row_above: bool, r: &BarResolved, board_style: Option<&crate::BoardStyle>, fonts: &FontBook) -> Result<Vec<Node>, String> {
         if self.bars.is_empty() {
             return Ok(Vec::new());
         }
@@ -105,7 +118,7 @@ impl OffChart {
             let text = format!("{} \u{2192}", label_text(ml, r.style.label_is_house, bar.value, None)?);
             let length = fonts.measure_at_weight(&text, &font.family, size, Some(BOLD))?;
             let under_tear = self.top + bar.depth + TEAR_GAP;
-            let covered = self.content.iter().any(|b| b.x1 < bar.x.1 && b.x2 > bar.x.0 && b.y1 < under_tear + length && b.y2 > under_tear);
+            let covered = row_above || self.content.iter().any(|b| b.x1 < bar.x.1 && b.x2 > bar.x.0 && b.y1 < under_tear + length && b.y2 > under_tear);
             let end = if covered { PLOT_GAP } else { under_tear };
             let at = ((bar.x.0 + bar.x.1) / 2.0 + measure::baseline_shift("middle", size), end);
             // A bar narrower than the type keeps its label legible on the card's color instead.
@@ -122,51 +135,45 @@ impl OffChart {
 }
 
 impl OffChart {
-    /// Marks in `head` (card coordinates, the plot at `origin`) every header line of a class in
-    /// `lines` and the legend above the plot as content the hover runtime lifts over the bars
-    /// (`data-dbt-lifted`), when this chart has a torn bar, and puts one band of the card's color,
-    /// `BAND_OPACITY` opaque and as wide as the text it backs, in front of the first. With a hover
-    /// reveal all of it stays where `head` paints, behind the bars: the static picture is torn bars
-    /// over the header, and only a hovered chart, drawing each bar at true length, lifts the header
-    /// over them. With none, nothing lifts it, so it moves to `front` on its band and paints over
-    /// the bars at rest, as on a screen nobody points at or on paper. The band is one shape, the
-    /// strips behind each line merged, so where two meet the bars show through it once. All of it
-    /// lifts, crossed or not: a true-length drawing can pass over any of it.
-    pub(super) fn lift(&mut self, head: &mut Vec<Node>, origin: (f64, f64), lines: &[&str], fonts: &FontBook) -> Result<(), String> {
-        if self.bars.is_empty() {
-            return Ok(());
-        }
+    /// Moves every header line of a class in `lines` and the legend above the plot (in `head`,
+    /// card coordinates, the plot `plot_w` wide at `origin`) to `front`, on one band of the card's color,
+    /// `BAND_OPACITY` opaque and as wide as the text it backs, so the header always paints over the
+    /// torn bars. Call it before the bars tear: each tear fits the room above the band. With a
+    /// hover reveal the band and the lines carry `data-dbt-lifted`, which the hover runtime copies
+    /// over the bars it draws at true length, crossed or not. The band is one shape, the strips
+    /// behind each line merged, so where two meet the bars show through it once.
+    pub(super) fn lift(&mut self, head: &mut Vec<Node>, origin: (f64, f64), plot_w: f64, lines: &[&str], fonts: &FontBook) -> Result<(), String> {
         let hover = self.reveal.published().is_some();
         let mut strips: Vec<scene::Bounds> = Vec::new();
         let mut lifted: Vec<usize> = Vec::new();
-        let mut first = None;
         for (i, node) in head.iter_mut().enumerate() {
             let class = node.attrs.get("class").unwrap_or_default();
             let strip = if class.split(' ').any(|c| c == "role-legend") {
-                measured_bounds(node, fonts)?.filter(|b| b.y1 < origin.1).map(|b| {
+                // A legend beside the plot is out of every bar's reach.
+                let over_plot = |b: &scene::Bounds| b.y1 < origin.1 && b.x1 < origin.0 + plot_w && b.x2 > origin.0;
+                measured_bounds(node, fonts, false)?.filter(over_plot).map(|b| {
                     let pad = BAND_PAD * (b.y2 - b.y1);
                     scene::Bounds { x1: b.x1 - pad, y1: b.y1 - pad, x2: b.x2 + pad, y2: b.y2 + pad }
                 })
             } else if lines.iter().any(|line| class.split(' ').any(|c| c == *line)) {
                 let size = node.attrs.get_num("font-size").ok_or("bar: a header line without a font-size")?;
                 let pad = BAND_PAD * size;
-                let b = measured_bounds(node, fonts)?.ok_or("bar: a header line without a font-family")?;
-                Some(scene::Bounds { x1: b.x1 - pad, y1: b.y1 - pad, x2: b.x2 + pad, y2: b.y2 + DESCENT * size + pad })
+                let b = measured_bounds(node, fonts, true)?.ok_or("bar: a header line without a font-family")?;
+                Some(scene::Bounds { x1: b.x1 - pad, y1: b.y1, x2: b.x2 + pad, y2: b.y2 + DESCENT * size + pad })
             } else {
                 None
             };
             if let Some(strip) = strip {
                 strips.push(strip);
                 lifted.push(i);
-                first.get_or_insert(i);
                 if hover {
                     node.attrs = std::mem::take(&mut node.attrs).set("data-dbt-lifted", "");
                 }
             }
         }
-        let Some(first) = first else {
+        if lifted.is_empty() {
             return Ok(());
-        };
+        }
         strips.sort_by(|a, b| a.y1.total_cmp(&b.y1));
         let mut merged: Vec<scene::Bounds> = Vec::new();
         for strip in strips {
@@ -175,27 +182,72 @@ impl OffChart {
                 _ => merged.push(strip),
             }
         }
-        let mut band = scene::PathData::new();
         for b in &merged {
-            band = band.move_to(b.x1, b.y1).line_to(b.x2, b.y1).line_to(b.x2, b.y2).line_to(b.x1, b.y2).close();
             self.content.push(scene::Bounds { x1: b.x1 - origin.0, y1: b.y1 - origin.1, x2: b.x2 - origin.0, y2: b.y2 - origin.1 });
         }
-        let attrs = Attrs::new().set("fill", &self.canvas).num("fill-opacity", BAND_OPACITY);
-        if hover {
-            head.insert(first, Node::new(Role::Chrome, attrs.set("data-dbt-lifted", ""), Shape::Path(band)));
-            return Ok(());
-        }
-        self.front.push(Node::new(Role::Chrome, attrs, Shape::Path(band)));
+        self.strips = merged;
         for i in lifted.into_iter().rev() {
-            self.front.insert(1, head.remove(i));
+            self.front.insert(0, head.remove(i));
         }
         Ok(())
     }
 
-    /// The header content `lift` moved over the bars, in card coordinates: empty unless
-    /// `reveal: none` tore a bar.
+    /// Backs each text of `after` (nodes painted after the bars, in card coordinates) that sits
+    /// above the plot on a torn bar, a top axis's label or a top table's cell, with the band across
+    /// that bar: its ink is chosen for the card, not for the bar.
+    pub(super) fn back(&mut self, after: &mut [Node], outer: scene::Affine, origin: (f64, f64), fonts: &FontBook) -> Result<(), String> {
+        for node in after {
+            let at = outer.then_inner(&node.affine());
+            if let Shape::Group(children) | Shape::Link(children) = &mut node.shape {
+                self.back(children, at, origin, fonts)?;
+                continue;
+            }
+            if !matches!(&node.shape, Shape::Text { at, runs, .. } if text_lines(*at, runs).iter().any(|(text, _)| !text.trim().is_empty())) {
+                continue;
+            }
+            let Some(size) = node.attrs.get_num("font-size") else { continue };
+            let Some(text) = measured_bounds(node, fonts, true)?.map(|b| b.transformed(&at)) else { continue };
+            if text.y2 > origin.1 {
+                continue;
+            }
+            let mut crossed = false;
+            for &Outlier { x: (left, right), .. } in &self.bars {
+                let (left, right) = (origin.0 + left, origin.0 + right);
+                if text.x1 < right && text.x2 > left {
+                    let y2 = (text.y2 + (DESCENT + BAND_PAD) * size).min(origin.1);
+                    self.strips.push(scene::Bounds { x1: text.x1.min(left), y1: text.y1, x2: text.x2.max(right), y2 });
+                    crossed = true;
+                }
+            }
+            if crossed && self.reveal.published().is_some() {
+                node.attrs = std::mem::take(&mut node.attrs).set("data-dbt-lifted", "");
+            }
+        }
+        Ok(())
+    }
+
+    /// The band, then the header content `lift` moved over the bars, in card coordinates. Two
+    /// strips that nearly touch join where they share x, so no sliver of bar shows between lines.
     pub(super) fn front(&mut self) -> Vec<Node> {
-        std::mem::take(&mut self.front)
+        if self.strips.is_empty() {
+            return std::mem::take(&mut self.front);
+        }
+        let mut band = scene::PathData::new();
+        let rect = |band: scene::PathData, x: (f64, f64), y: (f64, f64)| band.move_to(x.0, y.0).line_to(x.1, y.0).line_to(x.1, y.1).line_to(x.0, y.1).close();
+        for a in &self.strips {
+            band = rect(band, (a.x1, a.x2), (a.y1, a.y2));
+            for b in &self.strips {
+                let (x1, x2, gap) = (a.x1.max(b.x1), a.x2.min(b.x2), b.y1 - a.y2);
+                if x1 < x2 && gap > 0.0 && gap < BAND_SLIVER {
+                    band = rect(band, (x1, x2), (a.y2, b.y1));
+                }
+            }
+        }
+        let attrs = Attrs::new().set("fill", &self.canvas).num("fill-opacity", BAND_OPACITY);
+        let attrs = if self.reveal.published().is_some() { attrs.set("data-dbt-lifted", "") } else { attrs };
+        let mut front = vec![Node::new(Role::Chrome, attrs, Shape::Path(band))];
+        front.append(&mut self.front);
+        front
     }
 }
 
@@ -203,29 +255,42 @@ impl OffChart {
 const BAND_OPACITY: f64 = 0.85;
 /// The band's reach around a header line, as a share of its type size, or around a legend, of its box's height.
 const BAND_PAD: f64 = 0.18;
+/// A header line's band top above its tallest ink, as a share of its type size.
+const BAND_TOP_PAD: f64 = 0.12;
+/// The deepest a tear may bite into the room above the band it crosses, as a share of that room.
+const TEAR_ROOM_SHARE: f64 = 0.4;
+/// The gap between two strips under which the bar between them reads as a sliver, in px.
+const BAND_SLIVER: f64 = 8.0;
 /// How far a line's descenders reach below its baseline, as a share of its type size.
 const DESCENT: f64 = 0.25;
 
 /// A node's box in its parent's frame, its text measured with `fonts`: header text carries no
-/// measured box of its own.
-fn measured_bounds(node: &Node, fonts: &FontBook) -> Result<Option<scene::Bounds>, String> {
+/// measured box of its own. With `fit_ink` a text's top is its tallest glyph's ink plus
+/// `BAND_TOP_PAD`, not a full em.
+pub(super) fn measured_bounds(node: &Node, fonts: &FontBook, fit_ink: bool) -> Result<Option<scene::Bounds>, String> {
     let own = match &node.shape {
-        Shape::Text { at, .. } => {
-            let (Some(text), Some(family), Some(size)) = (node.text_content(), node.attrs.get("font-family"), node.attrs.get_num("font-size")) else {
+        Shape::Text { at, runs, .. } => {
+            let (Some(family), Some(size)) = (node.attrs.get("font-family"), node.attrs.get_num("font-size")) else {
                 return Ok(None);
             };
-            let width = fonts.measure(&text, family, size)?;
-            let left = match node.attrs.get("text-anchor") {
-                Some("middle") => at.0 - width / 2.0,
-                Some("end") => at.0 - width,
-                _ => at.0,
-            };
-            Some(scene::Bounds { x1: left, y1: at.1 - size, x2: left + width, y2: at.1 })
+            let mut union: Option<scene::Bounds> = None;
+            for (text, (x, y)) in text_lines(*at, runs) {
+                let width = fonts.measure(&text, family, size)?;
+                let left = match node.attrs.get("text-anchor") {
+                    Some("middle") => x - width / 2.0,
+                    Some("end") => x - width,
+                    _ => x,
+                };
+                let above = if fit_ink { fonts.ink_ascent(&text, family, size)? + BAND_TOP_PAD * size } else { size };
+                let line = scene::Bounds { x1: left, y1: y - above, x2: left + width, y2: y };
+                union = Some(union.map_or(line, |u| u.union(line)));
+            }
+            union
         }
         Shape::Group(children) | Shape::Link(children) => {
             let mut union: Option<scene::Bounds> = None;
             for child in children {
-                if let Some(b) = measured_bounds(child, fonts)? {
+                if let Some(b) = measured_bounds(child, fonts, fit_ink)? {
                     let b = b.transformed(&child.affine());
                     union = Some(union.map_or(b, |u| u.union(b)));
                 }
@@ -235,6 +300,27 @@ fn measured_bounds(node: &Node, fonts: &FontBook) -> Result<Option<scene::Bounds
         _ => node.bounds(),
     };
     Ok(own)
+}
+
+/// A text's lines with their anchors: its own characters, then a tspan wherever one steps down.
+fn text_lines(at: (f64, f64), runs: &[Run]) -> Vec<(String, (f64, f64))> {
+    let mut lines = vec![(String::new(), at)];
+    for run in runs {
+        let (chars, to) = match run {
+            Run::Chars(chars) => (chars.text.clone(), None),
+            Run::Title(_) => continue,
+            Run::Tspan { x, y, dy, runs, .. } => {
+                let chars = runs.iter().filter_map(|r| if let Run::Chars(c) = r { Some(c.text.as_str()) } else { None }).collect();
+                let from = lines[lines.len() - 1].1;
+                (chars, (y.is_some() || dy.is_some()).then(|| (x.unwrap_or(from.0), y.unwrap_or(from.1) + dy.unwrap_or(0.0))))
+            }
+        };
+        match to {
+            Some(to) => lines.push((chars, to)),
+            None => lines.last_mut().expect("starts with a line").0.push_str(&chars),
+        }
+    }
+    lines
 }
 
 /// What the hover runtime needs to draw a bar at true length, in plot pixels.

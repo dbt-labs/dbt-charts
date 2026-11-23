@@ -37,12 +37,9 @@ from dbt_charts.core.compile.models.style.theme.marks import (
 class AreaLineStyle(BaseModel):
     """Stroke/halo/labels for an area chart's top-edge line and value labels.
 
-    Vega-Lite itself compiles an area's edge line as a genuine separate
-    ``line`` mark (``mark: {type: area, line: {...}}`` produces independent
-    ``area``/``line`` marks in the compiled Vega spec), and dbt charts'
-    emitter builds the same separate line mark by hand. So the edge's
-    stroke geometry belongs here, on the "line" identity — not on
-    ``AreaMarkStyle`` (fill only).
+    An area's edge line is a genuine separate ``line`` mark, independent of
+    the fill. So the edge's stroke geometry belongs here, on the "line"
+    identity — not on ``AreaMarkStyle`` (fill only).
 
     Deliberately NOT the full ``LineMarkStyle``: no ``curve``/``connect``.
     Curve is a single shared value driving both the fill AND this edge line

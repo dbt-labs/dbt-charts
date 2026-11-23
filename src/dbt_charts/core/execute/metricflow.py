@@ -93,6 +93,11 @@ def _require_metricflow() -> None:
 # same layer anywhere, and an edit is a new key, so a layer cannot go stale.
 _LAYERS: OrderedDict[tuple[str, bool], SemanticLayer] = OrderedDict()
 _LAYERS_LOCK = threading.Lock()
+# Held for a whole build. metricflow-sql decodes fragments through msgspec, whose
+# first-use type construction is process-wide and unsafe from two threads, so no two
+# builds overlap, whatever their bundles; a build also runs once per bundle, because
+# the cache is checked again inside the lock.
+_BUILD_LOCK = threading.Lock()
 # Each edit of a bundle adds a layer, and a layer is its whole registry, roughly ten
 # times the bundle's size in memory: a long-lived server keeps the few in use, not
 # every version it has seen.
@@ -145,6 +150,22 @@ class SemanticLayer:
                 _LAYERS.move_to_end(key)
                 return shared
         _require_metricflow()
+        with _BUILD_LOCK:
+            with _LAYERS_LOCK:
+                if (shared := _LAYERS.get(key)) is not None:
+                    _LAYERS.move_to_end(key)
+                    return shared
+            layer = cls._build(files, relpath, bundle.required)
+            with _LAYERS_LOCK:
+                _LAYERS[key] = layer
+                while len(_LAYERS) > _LAYER_CACHE_SIZE:
+                    _LAYERS.popitem(last=False)
+            return layer
+
+    @classmethod
+    def _build(
+        cls, files: dict[str, bytes], relpath: str, required: bool
+    ) -> SemanticLayer:
         from metricflow_sql.registry.memory import InMemoryRegistry
         from metricflow_sql.registry.operation import Batch, Insert
         from metricflow_sql.schemas.bundle import (
@@ -172,13 +193,7 @@ class SemanticLayer:
             raise ExecutionError.from_code(
                 ERR_METRICFLOW_NOT_INSTALLED, install=INSTALL_HINT
             ) from exc
-        layer = cls(registry, catalog, bundle.required)
-        # Two threads that miss together both build; the later store wins.
-        with _LAYERS_LOCK:
-            _LAYERS[key] = layer
-            while len(_LAYERS) > _LAYER_CACHE_SIZE:
-                _LAYERS.popitem(last=False)
-        return layer
+        return cls(registry, catalog, required)
 
     def _tables(self, sql: str, dialect: str) -> list[exp.Table]:
         """The tables `sql`, written in `dialect`, reads, its CTEs' names left

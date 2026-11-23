@@ -203,7 +203,7 @@ pub fn chart_title(chart_id: &str, text: &str, subtitle: Option<&str>, style: &S
     let (lines, sub_lines) = (block.title.len(), block.subtitle.len());
     let rounds_apart = |size: f64| measure::baseline_shift("top", size) != (size * TITLE_ASCENT_RATIO).round();
     if (lines > 1 || sub_fitted.is_some()) && (lines > 0 && rounds_apart(size) || sub_fitted.is_some() && rounds_apart(sub_face.font.size)) {
-        return Err(Diagnostic::refused(refuse!("a wrapped or subtitled chart title at a size whose Vega baseline rounds off its ascent is not supported")));
+        return Err(Diagnostic::refused(refuse!("a wrapped or subtitled chart title at a size whose title baseline rounds off its ascent is not supported")));
     }
     // With no title the subtitle is the block's only row: it leads at its own size, with no gap above.
     let (lead, sub_block) = match (lines, &sub_fitted) {

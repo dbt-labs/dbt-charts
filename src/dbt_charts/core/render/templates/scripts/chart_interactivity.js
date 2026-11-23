@@ -2169,20 +2169,10 @@
 
     /*{# Header content of a chart with torn bars (`data-dbt-lifted`: one #}*/
     /*{# band, then the title, subtitle and legend lines on it). The engine #}*/
-    /*{# draws it behind the bars, which is what an export shows; it lifts #}*/
-    /*{# over them only while the chart is hovered and its bars are drawn at #}*/
-    /*{# true length. A hovered outlier is drawn over it (showFront). #}*/
+    /*{# paints it over the torn bars, so it never moves; the copies layer #}*/
+    /*{# repeats it over the true-length drawings. A hovered outlier is #}*/
+    /*{# drawn over it (showFront). #}*/
     const LIFTED = '[data-dbt-lifted]';
-
-    function placeContent(chartEl, lift) {
-        chartEl.querySelectorAll(LIFTED).forEach(function (node) {
-            const parent = node.parentNode;
-            const plot = Array.prototype.find.call(parent.children, function (child) { return child !== node && child.querySelector(OFF_CHART); });
-            if (!plot) return;
-            if (lift) parent.appendChild(node);
-            else parent.insertBefore(node, plot);
-        });
-    }
 
     function mountOffChart(svg) {
         if (!svg.querySelector(OFF_CHART) || svg.querySelector('.' + OFF_CHART_LAYER)) return;
@@ -2442,7 +2432,6 @@
         copies.removeAttribute('display');
         state.offChart.shown.push(copies);
         fadeAround(svg, chartEl, state.offChart.faded);
-        placeContent(chartEl, true);
         state.offChart.chart = chartEl;
         state.offChart.only = only;
         state.offChart.svg = svg;
@@ -2494,7 +2483,6 @@
 
     function clearOffChart(state) {
         if (state.offChart.chart) {
-            placeContent(state.offChart.chart, false);
             state.offChart.svg.querySelector('.dbt-off-chart-front').setAttribute('display', 'none');
         }
         state.offChart.shown.forEach(function (path) { path.setAttribute('display', 'none'); });

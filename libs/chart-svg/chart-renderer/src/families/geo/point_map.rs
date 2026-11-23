@@ -260,7 +260,7 @@ fn coordinate_fields<'a>(payload: &Payload, r: &'a Resolved) -> Result<Option<(&
         (Some(lat), Some(lon)) => Ok(Some((lat, lon))),
         (None, None) => Ok(None),
         _ if r.size.is_none() => Err(payload.painted_no_marks()),
-        _ => Err(diagnostic::refuse!("production errors too, Vega's scenegraph throws: a sized point map with one of latitude and longitude is not supported").into()),
+        _ => Err(diagnostic::refuse!("production errors too: a sized point map with one of latitude and longitude is not supported").into()),
     }
 }
 

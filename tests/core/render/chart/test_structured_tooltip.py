@@ -35,6 +35,7 @@ from dbt_charts.core.render.chart.emitters._tooltip import (
 )
 
 from ..._engine_render import render_pie_svg
+from ..._svg_render import render_board_to_svg
 
 _BOARD_RS, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
@@ -112,3 +113,71 @@ def test_pie_mutes_raw_count_and_total_but_not_the_share_lead():
 
 
 # --- Edge cases (final slice) ------------------------------------------------
+
+
+_NUMERIC_X_BOARD = """
+title: T
+queries:
+  curve:
+    columns: [amount, cost, region]
+    values:
+      - [0, 0, east]
+      - [100, 30, east]
+      - [200, 90, east]
+      - [300, 180, east]
+{west_rows}    formats:
+      amount: currency_whole
+      cost: currency_whole
+charts:
+  curve:
+    type: {chart_type}
+    query: curve
+    x: amount
+    y: cost
+{extra}
+rows:
+  - curve
+"""
+
+_AUTHORED_X_FORMAT = """    style:
+      axis_x:
+        labels:
+          format: ".0%"
+"""
+
+_FACETED = "    multiples:\n      rows: region\n"
+
+
+_WEST_ROWS = """      - [0, 0, west]
+      - [100, 20, west]
+      - [200, 60, west]
+      - [300, 120, west]
+"""
+
+
+def _numeric_x_labels(chart_type: str, extra: str = "") -> list[str]:
+    svg = render_board_to_svg(
+        _NUMERIC_X_BOARD.format(
+            chart_type=chart_type,
+            extra=extra,
+            west_rows=_WEST_ROWS if extra == _FACETED else "",
+        )
+    )
+    return re.findall(r'aria-label="([^"]*)"', svg)
+
+
+@pytest.mark.parametrize("chart_type", ["line", "area"])
+def test_a_numeric_x_header_follows_the_query_format(chart_type: str):
+    labels = _numeric_x_labels(chart_type)
+    assert any(lb.endswith("$200; Cost: $90") for lb in labels), labels
+
+
+def test_an_authored_axis_format_wins_over_the_query_format_in_the_header():
+    labels = _numeric_x_labels("line", _AUTHORED_X_FORMAT)
+    assert any(lb.endswith("20000%; Cost: $90") for lb in labels), labels
+
+
+def test_a_faceted_numeric_x_follows_the_query_format():
+    labels = _numeric_x_labels("line", _FACETED)
+    assert any("$200" in lb and "Cost: $90" in lb for lb in labels), labels
+    assert not any(re.search(r": 200(\.0)?(;|$)", lb) for lb in labels), labels

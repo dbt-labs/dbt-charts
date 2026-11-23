@@ -420,12 +420,6 @@ pub(super) fn fit(
     let subday_header = crate::families::subday::Header::of(&timed, r.style.axis_x.labels.clock).filter(|_| header_tu.is_none());
     // A bucket start or time part prints as written; only an unbucketed aware axis reads the board zone.
     let instants_aware = timed.aware() && matches!(law.fill_grain, ::bind::x_type::Grain::None) && x_part.is_none();
-    let header_text = |date: &str, at: Option<f64>, written: Option<(i32, u8, u8)>, x_is_standard_date: bool, grain_format: Option<AuthoredTimeFormat>| -> Result<String, String> {
-        match (&subday_header, at) {
-            (Some(header), Some(at)) => header.text(at),
-            _ => crate::contract::tooltip_header_text(super::bind::x_text(date), written, header_tu, x_is_standard_date, grain_format),
-        }
-    };
     // `axis_y.mirror` on a GENUINELY NOMINAL x (not quantitative, not
     // calendar-bucketed temporal) hits the point-to-band scale flip:
     // mirror's own ghost mechanism adds an invisible interaction `rule`
@@ -534,6 +528,25 @@ pub(super) fn fit(
         x_domain
     };
     let quant_extent = quant_x.as_ref().map(|lin| lin.domain_at(svg_w));
+    // A quantitative x prints in its tooltip header and facet rows in the format its axis ticks take
+    // (`axis_x.labels.format`, which resolve fills from the author's style, else the query's `formats:`);
+    // with none it prints as written.
+    let quant_x_text = |x: &str| -> Result<Option<String>, String> {
+        let (Some(_), Some(format)) = (&quant_x, &r.style.axis_x.labels.format) else {
+            return Ok(None);
+        };
+        let value = super::bind::x_number(x).ok_or_else(|| format!("quantitative x value {x:?} is not a number"))?;
+        format.paint(value).map(Some)
+    };
+    let header_text = |date: &str, at: Option<f64>, written: Option<(i32, u8, u8)>, x_is_standard_date: bool, grain_format: Option<AuthoredTimeFormat>| -> Result<String, String> {
+        if let Some(text) = quant_x_text(date)? {
+            return Ok(text);
+        }
+        match (&subday_header, at) {
+            (Some(header), Some(at)) => header.text(at),
+            _ => crate::contract::tooltip_header_text(super::bind::x_text(date), written, header_tu, x_is_standard_date, grain_format),
+        }
+    };
     // Every layer's own x column widens the shared x scale, as production's
     // `overlay_x_domain_values` does; only a categorical scale warns that the
     // widened order is paint order (a continuous scale orders itself).
@@ -1909,7 +1922,7 @@ pub(super) fn fit(
             let temporal_vega_arm = detected_data_tu.is_some() || bare_temporal;
             if authored_ordinal || !temporal_vega_arm {
                 return Err(diagnostic::refuse!(
-                    "{fam}: axis_x.ticks.time_unit {unit:?} off a temporal x axis on a Vega arm is not supported: production raises ERR_TICKS_INTERVAL_NOT_TEMPORAL on a non-temporal or authored-ordinal axis, and the legacy margin arm draws no calendar ticks"
+                    "{fam}: axis_x.ticks.time_unit {unit:?} off a temporal x axis on an engine-drawn axis is not supported: production raises ERR_TICKS_INTERVAL_NOT_TEMPORAL on a non-temporal or authored-ordinal axis, and the legacy margin arm draws no calendar ticks"
                 ).into());
             }
             Some(authored_tick_interval(unit, ax_x.ticks.step).map_err(|e| e.in_context(fam))?)
@@ -2655,7 +2668,7 @@ pub(super) fn fit(
                     row_days.sort_unstable();
                     if interval_tick_days((extent.0 as i64, extent.1 as i64), interval)? != row_days {
                         return Err(diagnostic::refuse!(
-                            "{fam}: a bucketed temporal x axis with a bucket no row fills is not supported {why}: Vega ticks the empty bucket (type_inference.py:1049-1052)"
+                            "{fam}: a bucketed temporal x axis with a bucket no row fills is not supported {why}: production ticks the empty bucket (type_inference.py:1049-1052)"
                         ).into());
                     }
                     None
@@ -6089,7 +6102,7 @@ pub(super) fn fit(
                 let date = x.time.date(&x_domain[i]).ok_or_else(|| format!("unparsed date {:?}", x_domain[i]))?;
                 crate::families::temporal::default_time_unit_text(date, detected_data_tu)?
             } else {
-                x_domain[i].clone()
+                quant_x_text(&x_domain[i])?.unwrap_or_else(|| x_domain[i].clone())
             };
             let mut rows = vec![
                 (x_title_text.as_str(), x_text),

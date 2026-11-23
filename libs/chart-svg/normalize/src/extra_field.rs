@@ -267,8 +267,8 @@ pub(crate) fn hint(path: &[String], allowed: &[&str], board: &Node) -> Option<St
             } else {
                 format!(
                     "`style.{field}` is not supported on `type: {t}` — {t} has no per-chart card \
-                     to paint it onto (it renders via Vega-Lite with no card surface separate \
-                     from the board frame). The field has no effect and should be removed."
+                     to paint it onto (it draws on the board frame with no card surface \
+                     of its own). The field has no effect and should be removed."
                 )
             });
         }

@@ -93,6 +93,18 @@ ERR_UNKNOWN_QUERY = REGISTRY.register(
     )
 )
 
+ERR_UNKNOWN_VARIABLE_QUERY = REGISTRY.register(
+    ErrorCode(
+        code="ERR-UNKNOWN-VARIABLE-QUERY",
+        domain="compile",
+        title="Variable references an unknown query",
+        message_template="Variable {variable_name!r} references unknown query {query_name!r} in `{field}`. Available queries: {available}. Declare the query under `queries:` or fix the typo.",
+        doc="Fired when a variable's `options.query` or `enabled.query` names a query that is not declared under `queries:` in the board or any included meta.yml. Check for typos and ensure the query is declared.",
+        summary="Fired when a variable's options or enabled query isn't declared under `queries:`.",
+        docs_topic="queries",
+    )
+)
+
 ERR_UNKNOWN_CHART = REGISTRY.register(
     ErrorCode(
         code="ERR-UNKNOWN-CHART",
@@ -852,8 +864,8 @@ ERR_TICKS_COUNT_REQUIRES_NON_LOG_SCALE = REGISTRY.register(
         code="ERR-TICKS-COUNT-REQUIRES-NON-LOG-SCALE",
         domain="compile",
         title="ticks.count is not supported with log scale",
-        message_template="Chart {chart_id!r}: axis_y.ticks.count is not supported with scale.type: log: a target tick count on a log axis is nonsense; Vega-Lite computes log-decade ticks natively. Remove ticks.count.",
-        doc="Fired when `axis_y.ticks.count` is combined with `axis_y.scale.type: log`. A target tick count on a log axis is meaningless because Vega-Lite computes log-decade ticks natively. Remove `ticks.count`.",
+        message_template="Chart {chart_id!r}: axis_y.ticks.count is not supported with scale.type: log: a target tick count on a log axis is nonsense; log ticks fall on decades. Remove ticks.count.",
+        doc="Fired when `axis_y.ticks.count` is combined with `axis_y.scale.type: log`. A target tick count on a log axis is meaningless because log ticks fall on decades. Remove `ticks.count`.",
         summary="Fired when a target tick count is combined with a log y-axis scale.",
         docs_topic="charts",
     )
@@ -1008,8 +1020,8 @@ ERR_AREA_LOG_SCALE_INDEPENDENT_MULTIPLES = REGISTRY.register(
         code="ERR-AREA-LOG-SCALE-INDEPENDENT-MULTIPLES",
         domain="compile",
         title="Log-scale area and independent-scale multiples are incompatible",
-        message_template="Chart {chart_id!r} (area): axis_y.scale.type: log with multiples scale: independent is not supported: the explicit domain area bakes on a log scale (to avoid Vega-Lite's degenerate log-area rendering) is computed once from every panel's data combined, so it would apply the same domain to every panel regardless of scale: independent. Use multiples scale: shared, or drop the log scale.",
-        doc="Fired when an area chart authors both `axis_y.scale.type: log` and `multiples: {scale: independent}`. Area on a log scale needs an explicit baked domain to avoid Vega-Lite's degenerate rendering (see ERR-AREA-STACKED-LOG-SCALE-NOT-SUPPORTED's sibling note), but that domain is necessarily one shared value; baking it would contradict `scale: independent`'s promise of a per-panel domain, and suppressing it would silently reintroduce the degenerate rendering. Use `scale: shared`, or drop the log scale.",
+        message_template="Chart {chart_id!r} (area): axis_y.scale.type: log with multiples scale: independent is not supported: the explicit domain area bakes on a log scale (to avoid a degenerate log-area rendering) is computed once from every panel's data combined, so it would apply the same domain to every panel regardless of scale: independent. Use multiples scale: shared, or drop the log scale.",
+        doc="Fired when an area chart authors both `axis_y.scale.type: log` and `multiples: {scale: independent}`. Area on a log scale needs an explicit baked domain to avoid a degenerate rendering (see ERR-AREA-STACKED-LOG-SCALE-NOT-SUPPORTED's sibling note), but that domain is necessarily one shared value; baking it would contradict `scale: independent`'s promise of a per-panel domain, and suppressing it would silently reintroduce the degenerate rendering. Use `scale: shared`, or drop the log scale.",
         summary="Fired when a log-scale area chart also authors multiples: {scale: independent}.",
         docs_topic="charts",
     )
@@ -1310,10 +1322,10 @@ ERR_FORMAT_NATIVE_IN_VEGA_SLOT = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-NATIVE-IN-VEGA-SLOT",
         domain="compile",
-        title="Native formatter used in a Vega-rendered format slot",
-        message_template='Format {spec!r} at {field_path} is a native formatter with no Vega arm and cannot be used in Vega-rendered slots (axis labels, mark value labels, support_table, heatmap and map tooltips). Move it to a table cell (or a KPI value, for the percent names), or transform the value in the query to match a plain d3 spec (for a whole-number percent, divide by 100 and then use a d3 percent spec such as ".1%"). Valid alternatives: {available}.',
-        doc="Fired when a native name appears in a Vega-rendered format slot it cannot paint: `percent_number`, `percent_number_delta` and `percentage_points_delta` anywhere Vega paints (axis label, mark value-label format), and every native (`duration` and `bytes` too) in a support_table format or a heatmap or map tooltip. These names bypass d3 entirely and are only valid in Python-rendered slots (KPI headline and table cells). To keep the value in a Vega-rendered slot, transform it in the query to match a plain d3 spec: for a whole-number percent, divide by 100 and then use a d3 percent spec such as `.1%`.",
-        summary="Python-only native formatter used in a Vega-rendered slot.",
+        title="Native formatter used in a chart format slot",
+        message_template='Format {spec!r} at {field_path} is a native formatter with no d3 spec form and cannot be used in chart slots (axis labels, mark value labels, support_table, heatmap and map tooltips). Move it to a table cell (or a KPI value, for the percent names), or transform the value in the query to match a plain d3 spec (for a whole-number percent, divide by 100 and then use a d3 percent spec such as ".1%"). Valid alternatives: {available}.',
+        doc="Fired when a native name appears in a chart format slot it cannot paint: `percent_number`, `percent_number_delta` and `percentage_points_delta` anywhere a chart paints (axis label, mark value-label format), and every native (`duration` and `bytes` too) in a support_table format or a heatmap or map tooltip. These names bypass d3 entirely and are only valid in Python-rendered slots (KPI headline and table cells). To keep the value in a chart slot, transform it in the query to match a plain d3 spec: for a whole-number percent, divide by 100 and then use a d3 percent spec such as `.1%`.",
+        summary="Python-only native formatter used in a chart slot.",
         docs_topic="charts",
     )
 )
@@ -1334,10 +1346,10 @@ ERR_FORMAT_TEXT_IN_VEGA_SLOT = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-TEXT-IN-VEGA-SLOT",
         domain="compile",
-        title="Text format name used in a Vega-rendered format slot",
-        message_template="Format {spec!r} at {field_path} is a text format and cannot be used in Vega-rendered slots (axis labels, mark value labels, support_table). Use it on a table column or KPI value; a number or date slot takes a number or time name or a d3 spec.",
-        doc="Fired when `email` or `url` appears in a slot Vega paints. They name text a table cell or KPI value links, and have no number or date spec for Vega to apply.",
-        summary="`email` / `url` is not a number or time format for a Vega slot.",
+        title="Text format name used in a chart format slot",
+        message_template="Format {spec!r} at {field_path} is a text format and cannot be used in chart slots (axis labels, mark value labels, support_table). Use it on a table column or KPI value; a number or date slot takes a number or time name or a d3 spec.",
+        doc="Fired when `email` or `url` appears in a chart slot. They name text a table cell or KPI value links, and have no number or date spec to apply.",
+        summary="`email` / `url` is not a number or time format for a chart slot.",
         docs_topic="charts",
     )
 )
@@ -1445,7 +1457,7 @@ ERR_GEO_PROJECTION_REQUIRED = REGISTRY.register(
         domain="compile",
         title="A map has no projection and no geo source to take one from",
         message_template="Chart {chart_id!r} is a {chart_type} with no {field_path}, and its geo source (if any) sets none. Set `projection:` (for example `projection: mercator`) or set `geo_source:` to a source that has one. See {maps_docs_url} for the available projections.",
-        doc="A map is drawn through a projection, and dbt Charts picks none on its own. A built-in `geo_source` (us-states, world-countries, ...) carries the projection suited to its region; a chart with no such source, such as a point_map without a basemap or a geoshape read from a raw URL, must say which projection to use. Set `projection:` to one of Vega's projection names, or to an object with `type` plus parameters like `center` and `scale`.",
+        doc="A map is drawn through a projection, and dbt Charts picks none on its own. A built-in `geo_source` (us-states, world-countries, ...) carries the projection suited to its region; a chart with no such source, such as a point_map without a basemap or a geoshape read from a raw URL, must say which projection to use. Set `projection:` to one of Vega's projection names (`mercator`, `albersUsa`, ...), or to an object with `type` plus parameters like `center` and `scale`.",
         summary="Map chart without `projection:` and without a built-in `geo_source`.",
         docs_topic="charts",
     )
@@ -1515,10 +1527,10 @@ ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED",
         domain="compile",
-        title="strftime directive in a Vega-rendered time format cannot be measured",
-        message_template="Format {spec!r} at {field_path} uses {directives}, which dbt Charts cannot render identically to what Vega paints on the axis: either it is not part of d3-time-format's directive set at all (Vega paints the literal letter), or Python renders it through the host's C locale or local timezone rather than d3's UTC/en-US output. This slot is baked onto a Vega-painted axis, whose label width is also measured from this same spec -- a mismatch here is a wrong render that looks right until the label overlaps its neighbor. Supported directives: {available}.",
-        doc="Fired when an authored Vega-painted time slot (an axis `labels.format`) uses a strftime directive dbt Charts cannot render byte-identical to what Vega's `utcFormat` paints. `%C`/`%k`/`%l`/`%z` and most other letters are not d3-time-format grammar at all -- Vega paints the literal letter, not a computed value. `%Z` is real d3 grammar too but empty on a naive datetime, unlike d3's `+0000`-style offset. `%s` is real d3 grammar but Python's value follows the host's local timezone rather than a true UTC epoch count; `%Q` (epoch milliseconds) is the supported equivalent. A format string outside a Vega-painted slot (a table column, the footer timestamp) is unaffected -- those render through Python directly, so no measure-vs-paint divergence is possible there.",
-        summary="A time-format directive Vega paints differently than dbt Charts measures.",
+        title="strftime directive in a chart time format cannot be measured",
+        message_template="Format {spec!r} at {field_path} uses {directives}, which dbt Charts cannot render identically to what the axis paints: either it is not part of d3-time-format's directive set at all (the axis paints the literal letter), or Python renders it through the host's C locale or local timezone rather than d3's UTC/en-US output. This slot is baked onto the axis, whose label width is also measured from this same spec -- a mismatch here is a wrong render that looks right until the label overlaps its neighbor. Supported directives: {available}.",
+        doc="Fired when an authored axis time slot (an axis `labels.format`) uses a strftime directive dbt Charts cannot render byte-identical to what d3's `utcFormat` paints. `%C`/`%k`/`%l`/`%z` and most other letters are not d3-time-format grammar at all -- the axis paints the literal letter, not a computed value. `%Z` is real d3 grammar too but empty on a naive datetime, unlike d3's `+0000`-style offset. `%s` is real d3 grammar but Python's value follows the host's local timezone rather than a true UTC epoch count; `%Q` (epoch milliseconds) is the supported equivalent. A format string outside an axis slot (a table column, the footer timestamp) is unaffected -- those render through Python directly, so no measure-vs-paint divergence is possible there.",
+        summary="A time-format directive the axis paints differently than dbt Charts measures.",
         docs_topic="charts",
     )
 )

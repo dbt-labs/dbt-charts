@@ -58,6 +58,8 @@ impl Level {
 /// `codes.rs`. `fix` is a template for a warning and verbatim text for an error.
 /// `hint` names the Python generator that writes the diagnostic's hint from its fields;
 /// Rust cannot run it, so a surface that shows hints refuses a code that has one.
+/// `docs_topic` names the docs reference page the code is documented on
+/// (`reference/<errors|warnings>/<docs_topic>/`).
 pub struct Code {
     pub id: &'static str,
     pub level: Level,
@@ -66,6 +68,7 @@ pub struct Code {
     pub template: &'static str,
     pub fix: Option<&'static str>,
     pub hint: Option<&'static str>,
+    pub docs_topic: &'static str,
 }
 
 /// A byte range into the source text of the file a diagnostic is about.

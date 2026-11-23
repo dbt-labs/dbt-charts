@@ -93,7 +93,7 @@ const NO_CARD_FAMILIES: &[&str] = &[
 const BORDER_FIELDS: &[&str] = &["width", "color", "dash_array", "line_cap", "dash_offset"];
 
 fn no_card_reason(family: &str) -> String {
-    format!("{family} has no per-chart card to paint it onto (it renders via Vega-Lite with no card surface separate from the board frame). The field had no effect and has been removed.")
+    format!("{family} has no per-chart card to paint it onto (it draws on the board frame with no card surface of its own). The field had no effect and has been removed.")
 }
 
 fn paint_reason(tail: &[&str]) -> Option<&'static str> {

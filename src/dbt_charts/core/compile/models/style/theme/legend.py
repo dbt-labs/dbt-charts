@@ -42,7 +42,7 @@ class LegendElementStyle(BaseModel):
 class LegendLabelStyle(LegendElementStyle):
     max_width: float | None = Field(
         default=None,
-        description="Maximum label width in pixels; maps to VL labelLimit. None uses Vega-Lite's default.",
+        description="Maximum label width in pixels; maps to VL labelLimit. None uses the engine's default.",
     )
 
 
@@ -165,7 +165,7 @@ class _LegendStyleBase(BaseModel):
         ge=1,
         description=(
             "Maximum number of legend entries to display; maps to VL symbolLimit. "
-            "None uses Vega-Lite's default (no cap). "
+            "None uses the engine's default (no cap). "
             "Set to a positive integer to prevent legend overflow on high-cardinality series."
         ),
     )

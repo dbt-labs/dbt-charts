@@ -9366,6 +9366,30 @@ mod tests {
         assert!(xs.windows(2).all(|w| w[0] < w[1]), "ascending x: {xs:?}");
     }
 
+    /// A quantitative x's hover header and point label print in the x axis' label format, as its
+    /// ticks do; with no format they print the value as written.
+    fn numeric_x_aria(axis_format: Option<serde_json::Value>) -> String {
+        let rows = [(serde_json::json!(1), 100.0, 30.0), (serde_json::json!(2), 200.0, 90.0)];
+        let mut p = connected_payload(&rows, None);
+        p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
+        if let Some(format) = axis_format {
+            p["resolved"]["style"]["axis_x"]["labels"]["format"] = format;
+        }
+        render_connected(p).expect("renders")
+    }
+
+    #[test]
+    fn a_quantitative_x_heads_its_tooltip_in_the_axis_label_format() {
+        let svg = numeric_x_aria(Some(serde_json::json!({"spec": ",.0f", "prefix": "$"})));
+        assert!(svg.contains("$200; Signups: 90\""), "{svg}");
+    }
+
+    #[test]
+    fn a_quantitative_x_without_a_label_format_heads_its_tooltip_as_written() {
+        let svg = numeric_x_aria(None);
+        assert!(svg.contains("200.0; Signups: 90\""), "{svg}");
+    }
+
     /// Rows that tie on the order column keep the order the query returned them in.
     #[test]
     fn connect_ties_keep_query_order() {
@@ -16511,6 +16535,35 @@ mod tests {
             payload_json["height"] = json!(400.0);
             payload_json["padding"] = json!(null);
             payload_json
+        }
+
+        /// A numeric x under `multiples` prints in the x axis' label format in its aria rows, as its
+        /// ticks do; with no format it prints as written.
+        fn numeric_x_facet_aria(axis_format: Option<serde_json::Value>) -> String {
+            let mut p = make_facet_line_payload("shared");
+            p["resolved"]["x"] = json!("day");
+            p["resolved"]["style"]["axis_x"]["is_quantitative"] = json!(true);
+            p["resolved"]["style"]["tooltip_format"] = json!(",.0f");
+            if let Some(format) = axis_format {
+                p["resolved"]["style"]["axis_x"]["labels"]["format"] = format;
+            }
+            for (row, day) in p["rows"].as_array_mut().unwrap().iter_mut().zip([100.0, 200.0, 300.0, 100.0, 200.0, 300.0]) {
+                row["day"] = json!(day);
+            }
+            render_facet_payload(p).expect("renders")
+        }
+
+        #[test]
+        fn a_faceted_quantitative_x_prints_in_the_axis_label_format() {
+            let svg = numeric_x_facet_aria(Some(json!({"spec": ",.0f", "prefix": "$"})));
+            assert!(svg.contains("$200"), "{svg}");
+            assert!(!svg.contains(": 200.0"), "{svg}");
+        }
+
+        #[test]
+        fn a_faceted_quantitative_x_without_a_label_format_prints_as_written() {
+            let svg = numeric_x_facet_aria(None);
+            assert!(svg.contains(": 200.0"), "{svg}");
         }
 
         fn render_facet_payload(payload_json: serde_json::Value) -> Result<String, String> {

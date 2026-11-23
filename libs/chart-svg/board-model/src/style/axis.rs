@@ -494,7 +494,7 @@ pub struct TicksRest {
     /// renderer computes a round-numbered ladder of at most this many ticks; on
     /// axis_x it passes through as Vega-Lite's tickCount. An ordinal axis_x has
     /// no tick-count concept and ignores it. Each axis variant sets its own.
-    #[model(absent = "no tick ladder is baked; Vega-Lite picks the ticks", local)]
+    #[model(absent = "no tick ladder is baked; the engine picks the ticks", local)]
     pub count: Option<Engine<i64, Auto>>,
     /// Tick interval on axis_x. Alongside `time_unit` it is a multiple of that
     /// calendar grain; on its own it is a numeric interval for a quantitative
@@ -704,7 +704,7 @@ pub struct ScaleSymlogStyle {
         message = "scale.continuous.type: log requires a positive domain — a log scale is undefined at and below 0, got domain {domain}. Use positive bounds or drop the log scale."
     )),
     constraint(range("log.base", gt = 1,
-        message = "scale.continuous.log.base must be greater than 1, got {log.base}. A base at or below 1 flips or flattens the scale's decades, so Vega-Lite's nice domain no longer covers the data."
+        message = "scale.continuous.log.base must be greater than 1, got {log.base}. A base at or below 1 flips or flattens the scale's decades, so the nice domain no longer covers the data."
     ))
 )]
 pub struct ScaleContinuousStyle {

@@ -1394,6 +1394,10 @@ pub fn err_unknown_variable_override(variable: impl Into<Value>, available: impl
     Diagnostic::new(&codes::ERR_UNKNOWN_VARIABLE_OVERRIDE, [("variable", variable.into()), ("available", available.into())])
 }
 
+pub fn err_unknown_variable_query(variable_name: impl Into<Value>, query_name: impl Into<Value>, field: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_UNKNOWN_VARIABLE_QUERY, [("variable_name", variable_name.into()), ("query_name", query_name.into()), ("field", field.into()), ("available", available.into())])
+}
+
 pub fn err_unknown_warning_code(code: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_UNKNOWN_WARNING_CODE, [("code", code.into())])
 }

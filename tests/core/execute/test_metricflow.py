@@ -11,6 +11,9 @@ from __future__ import annotations
 import importlib.util
 import sys
 import textwrap
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -456,6 +459,79 @@ def test_only_the_most_recently_used_layers_are_kept(
     assert load(3) is newest
     assert load(2) is middle
     assert load(1) is not oldest
+
+
+@pytest.fixture
+def decode_overlaps(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Concurrent bundle decodes seen while the test runs: one entry per decode,
+    the number of decodes in flight when it began."""
+
+    from metricflow_sql.schemas import bundle
+
+    inflight = 0
+    guard = threading.Lock()
+    seen: list[int] = []
+    real = bundle.bundle_dialect
+
+    def slow_decode(*args: Any, **kwargs: Any) -> Any:
+        nonlocal inflight
+        with guard:
+            inflight += 1
+            seen.append(inflight)
+        try:
+            time.sleep(0.05)
+            return real(*args, **kwargs)
+        finally:
+            with guard:
+                inflight -= 1
+
+    monkeypatch.setattr(bundle, "bundle_dialect", slow_decode)
+    return seen
+
+
+def _load_together(
+    project: FilesystemProject, declared: list[MetricFlowConfig]
+) -> list[SemanticLayer]:
+    barrier = threading.Barrier(len(declared))
+
+    def load(config: MetricFlowConfig) -> SemanticLayer:
+        barrier.wait()
+        return SemanticLayer.load(project, config)
+
+    with ThreadPoolExecutor(len(declared)) as pool:
+        return list(pool.map(load, declared))
+
+
+@needs_metricflow
+def test_concurrent_loads_of_one_bundle_build_it_once(
+    tmp_path: Path, registry_builds: list[Any], decode_overlaps: list[int]
+) -> None:
+    project = _project(tmp_path)
+
+    layers = _load_together(project, [MetricFlowConfig(path="semantics")] * 4)
+
+    assert len(registry_builds) == 1
+    assert max(decode_overlaps) == 1
+    assert all(layer is layers[0] for layer in layers)
+
+
+@needs_metricflow
+def test_concurrent_loads_of_different_bundles_never_decode_together(
+    tmp_path: Path, decode_overlaps: list[int]
+) -> None:
+    project = _project(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "fragment.yaml").write_text(
+        FRAGMENT.replace("bundle: shop", "bundle: shop2")
+    )
+
+    layers = _load_together(
+        project, [MetricFlowConfig(path="semantics"), MetricFlowConfig(path="other")]
+    )
+
+    assert layers[0] is not layers[1]
+    assert max(decode_overlaps) == 1
 
 
 def test_a_changed_bundle_changes_the_cache_key(tmp_path: Path) -> None:

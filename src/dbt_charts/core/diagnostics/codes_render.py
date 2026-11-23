@@ -316,7 +316,7 @@ ERR_FORMAT_CONVERTER_UNAVAILABLE = REGISTRY.register(
         domain="render",
         title="Format conversion library is not installed",
         message_template="{format!r} rendering requires vl-convert-python. Install it with: pip install vl-convert-python",
-        doc="Fired when a PNG or PDF export (or any render path that needs vl-convert-python to turn a Vega-Lite spec into SVG/PNG/PDF) runs in an environment where vl-convert-python is not installed. Install it: `pip install vl-convert-python`.",
+        doc="Fired when a PNG or PDF export runs in an environment where vl-convert-python is not installed. Install it: `pip install vl-convert-python`.",
         docs_topic="errors",
     )
 )
@@ -414,8 +414,8 @@ ERR_HISTOGRAM_PREAGGREGATED = REGISTRY.register(
         code="ERR-HISTOGRAM-PREAGGREGATED",
         domain="render",
         title="Histogram data looks pre-aggregated, not raw rows",
-        message_template="Histogram chart {chart_id!r} received data where {field!r} forms a gapless run of whole numbers alongside unused numeric column(s) {count_fields}: this looks like pre-aggregated data (one row per bucket, e.g. `GROUP BY {field}`), not the raw, ungrouped rows a histogram bins itself. Vega-Lite would bin and count these already-counted rows again, silently discarding whatever real measure they carry. Use `type: bar` with `x: {field}` and one of {count_fields} as `y` to chart pre-aggregated data instead.",
-        doc="Fired when a histogram chart receives data where its x field forms a gapless run of whole numbers alongside an unused numeric column, the shape of already-aggregated, one-row-per-bucket data. Histograms rely on Vega-Lite's own binning + counting over raw, ungrouped rows; pre-aggregated data silently produces a wrong, miscounted histogram instead of erroring. Aggregate in the query and use `type: bar` instead.",
+        message_template="Histogram chart {chart_id!r} received data where {field!r} forms a gapless run of whole numbers alongside unused numeric column(s) {count_fields}: this looks like pre-aggregated data (one row per bucket, e.g. `GROUP BY {field}`), not the raw, ungrouped rows a histogram bins itself. A histogram would bin and count these already-counted rows again, silently discarding whatever real measure they carry. Use `type: bar` with `x: {field}` and one of {count_fields} as `y` to chart pre-aggregated data instead.",
+        doc="Fired when a histogram chart receives data where its x field forms a gapless run of whole numbers alongside an unused numeric column, the shape of already-aggregated, one-row-per-bucket data. Histograms bin and count raw, ungrouped rows themselves; pre-aggregated data silently produces a wrong, miscounted histogram instead of erroring. Aggregate in the query and use `type: bar` instead.",
         docs_topic="charts",
     )
 )
@@ -426,7 +426,7 @@ ERR_LABEL_FORMAT_AXIS_MISMATCH = REGISTRY.register(
         domain="render",
         title="a non-time axis format needs numeric tick values",
         message_template="style.{setting} ({fmt!r}) cannot be read on this axis: {field!r} holds non-numeric tick labels. {remedy}",
-        doc="Fired when `style.axis_x.labels.format`, `style.axis_y.labels.format` or `style.axis_y.mirror.format` is anything but a d3 time spec on an axis whose field resolves to nominal, ordinal or temporal. All three matter: nominal is a plain category column, ordinal covers the date-like buckets (`2024-01`, `Q1 2024`, `FY2024`) that are still band-scale strings, and temporal is a real date/time field. On a band scale Vega coerces every tick to `NaN` rather than failing; on a temporal one it reads the spec as a time spec instead and paints its literal text (`$,.0f`) across the axis. Either way it raises here now. A horizontal bar is the case worth calling out: its `axis_x` addresses the categories, which the rotation draws down the left edge, so an author formatting what looks like the value axis reaches the wrong channel. The measure is `axis_y` in both orientations; on a heatmap the value is the color channel and neither axis carries it; on a scatter dot plot the measure is `axis_x` instead, since the categorical channel there is `axis_y`. Numeric categories on a band scale are NOT gated: they format cleanly, so nothing distinguishes an intended format from a misaddressed one — a temporal axis has no such exemption, since no reading of a number format over dates was ever the author's intent.",
+        doc="Fired when `style.axis_x.labels.format`, `style.axis_y.labels.format` or `style.axis_y.mirror.format` is anything but a d3 time spec on an axis whose field resolves to nominal, ordinal or temporal. All three matter: nominal is a plain category column, ordinal covers the date-like buckets (`2024-01`, `Q1 2024`, `FY2024`) that are still band-scale strings, and temporal is a real date/time field. On a band scale every tick becomes `NaN` rather than failing; on a temporal one it reads the spec as a time spec instead and paints its literal text (`$,.0f`) across the axis. Either way it raises here now. A horizontal bar is the case worth calling out: its `axis_x` addresses the categories, which the rotation draws down the left edge, so an author formatting what looks like the value axis reaches the wrong channel. The measure is `axis_y` in both orientations; on a heatmap the value is the color channel and neither axis carries it; on a scatter dot plot the measure is `axis_x` instead, since the categorical channel there is `axis_y`. Numeric categories on a band scale are NOT gated: they format cleanly, so nothing distinguishes an intended format from a misaddressed one — a temporal axis has no such exemption, since no reading of a number format over dates was ever the author's intent.",
         summary="Fired when a non-time format is authored on an axis holding category or date tick labels.",
         docs_topic="charts",
     )
@@ -438,7 +438,7 @@ ERR_TIME_FORMAT_NOT_TEMPORAL = REGISTRY.register(
         domain="render",
         title="a time format needs date values",
         message_template="style.{setting} ({fmt!r}) is a date pattern, but {field!r} holds {found}, not dates. {remedy}",
-        doc="Fired when a d3 time format (`%b %Y`) is authored on an axis whose field holds values that are not ISO dates (`2024-01`, `2024-01-31`) or date objects: category names, numbers, or non-ISO bucket labels such as `Q1 2024`. Vega would paint `Invalid Date` on every tick. A chart written with the retired `style.time_format` migrates onto `style.axis_x.labels.format` whatever x holds, so this is where a board whose x was never a date is told.",
+        doc="Fired when a d3 time format (`%b %Y`) is authored on an axis whose field holds values that are not ISO dates (`2024-01`, `2024-01-31`) or date objects: category names, numbers, or non-ISO bucket labels such as `Q1 2024`. Every tick would paint `Invalid Date`. A chart written with the retired `style.time_format` migrates onto `style.axis_x.labels.format` whatever x holds, so this is where a board whose x was never a date is told.",
         summary="Fired when a date pattern is authored on an axis that holds no dates.",
         docs_topic="charts",
     )
@@ -462,7 +462,7 @@ ERR_TICKS_STEP_NOT_QUANTITATIVE = REGISTRY.register(
         domain="render",
         title="a bare ticks.step requires a quantitative x-axis",
         message_template="style.axis_x.ticks.step without ticks.time_unit is a numeric tick interval, but {field!r} resolved to a {vl_type!r} scale. {remedy}",
-        doc="Fired when `style.axis_x.ticks.step` is set without `ticks.time_unit` on an x-axis that does not resolve to a quantitative scale. A bare `step` is the numeric cadence lever (it emits Vega-Lite's `tickMinStep`) and only a quantitative scale has a numeric tick interval. On a temporal axis, author `ticks.time_unit` alongside `step` to name a calendar cadence. On a discrete axis (ordinal or nominal) there is no tick interval to set; remove `ticks.step`. A horizontal bar is the case worth calling out: its `axis_x` is the categorical axis and its measure is `axis_y`, so `orientation: vertical` is usually what the author wanted.",
+        doc="Fired when `style.axis_x.ticks.step` is set without `ticks.time_unit` on an x-axis that does not resolve to a quantitative scale. A bare `step` is the numeric cadence lever (it sets the minimum tick step, Vega-Lite's `tickMinStep`) and only a quantitative scale has a numeric tick interval. On a temporal axis, author `ticks.time_unit` alongside `step` to name a calendar cadence. On a discrete axis (ordinal or nominal) there is no tick interval to set; remove `ticks.step`. A horizontal bar is the case worth calling out: its `axis_x` is the categorical axis and its measure is `axis_y`, so `orientation: vertical` is usually what the author wanted.",
         summary="Fired when a bare `ticks.step` is set on a non-quantitative x-axis.",
         docs_topic="charts",
     )
@@ -545,8 +545,8 @@ ERR_SCALE_DOMAIN_REQUIRES_CONTINUOUS_X = REGISTRY.register(
         code="ERR-SCALE-DOMAIN-REQUIRES-CONTINUOUS-X",
         domain="render",
         title="axis_x.scale.domain requires a continuous x-axis scale",
-        message_template="Chart {chart_id!r}: axis_x.scale.domain is set, but the x-axis resolved to a {vl_type!r} (categorical) scale, not a continuous one. An explicit [low, high] domain only extends a continuous scale: on a categorical scale Vega-Lite reads it as exactly two category values, collapsing every mark onto the first one. If the x field is a date, add `axis_x.scale.type: temporal` to force a continuous temporal scale.",
-        doc="Fired when `axis_x.scale.domain` is set but the x-axis resolves to a categorical (ordinal/nominal) scale rather than a continuous one. An explicit [low, high] domain only extends a continuous scale; on a categorical scale Vega-Lite reads it as exactly two category values. Add `axis_x.scale.type: temporal` to force a continuous temporal scale if needed.",
+        message_template="Chart {chart_id!r}: axis_x.scale.domain is set, but the x-axis resolved to a {vl_type!r} (categorical) scale, not a continuous one. An explicit [low, high] domain only extends a continuous scale: on a categorical scale it is read as exactly two category values, collapsing every mark onto the first one. If the x field is a date, add `axis_x.scale.type: temporal` to force a continuous temporal scale.",
+        doc="Fired when `axis_x.scale.domain` is set but the x-axis resolves to a categorical (ordinal/nominal) scale rather than a continuous one. An explicit [low, high] domain only extends a continuous scale; on a categorical scale it is read as exactly two category values. Add `axis_x.scale.type: temporal` to force a continuous temporal scale if needed.",
         summary="Fired when an explicit x-axis domain is set but the x-axis resolves to a categorical scale.",
         docs_topic="charts",
     )
@@ -617,7 +617,7 @@ ERR_LAYER_COLOR_ALL_NULL = REGISTRY.register(
         domain="render",
         title="A layer's color column holds no values",
         message_template="Chart {chart_id!r}: layer {layer_index} is colored by {color_field!r}, which is null in every row, so there is nothing to color by. Fill the column, or drop `color:` from the layer.",
-        doc="A layer colored by a column with no values has an empty color scale. Vega-Lite builds a legend of NaN ticks or collapses the whole chart, so the layer is refused by name.",
+        doc="A layer colored by a column with no values has an empty color scale. An empty scale builds a legend of NaN ticks or collapses the whole chart, so the layer is refused by name.",
         docs_topic="charts",
     )
 )
@@ -778,8 +778,8 @@ ERR_MULTIPLES_LAYER_PARTITION = REGISTRY.register(
         code="ERR-MULTIPLES-LAYER-PARTITION",
         domain="render",
         title="multiples cannot be combined with an own-query layer that returns the partition field",
-        message_template="Chart {chart_id!r}: multiples cannot be combined with an own-query overlay layer whose query returns the partition field(s) {fields}; Vega-Lite cannot split one inline layer dataset per panel. Remove the partition column(s) from the layer's query to repeat the layer in every panel, or drop multiples.",
-        doc="Fired when a chart authors both `multiples:` and a `layers:` entry with its own `query:` whose result includes the partition column(s). Vega-Lite's facet operator only partitions the root dataset, never a layer's own inline dataset, so per-panel layer data cannot be represented. A layer whose query does not return the partition column is unaffected; it repeats identically in every panel, which is correct for a global reference line.",
+        message_template="Chart {chart_id!r}: multiples cannot be combined with an own-query overlay layer whose query returns the partition field(s) {fields}; a panel cannot take a different inline dataset for one layer. Remove the partition column(s) from the layer's query to repeat the layer in every panel, or drop multiples.",
+        doc="Fired when a chart authors both `multiples:` and a `layers:` entry with its own `query:` whose result includes the partition column(s). Multiples partition only the root dataset, never a layer's own inline dataset, so per-panel layer data cannot be represented. A layer whose query does not return the partition column is unaffected; it repeats identically in every panel, which is correct for a global reference line.",
         docs_topic="charts",
     )
 )
@@ -997,7 +997,7 @@ WARN_LOCAL_TIME_LABEL_EXPR_ON_BUCKETED_AXIS = REGISTRY.register(
         title="Authored axis label expression uses local time on a bucketed axis",
         message_template="Chart {chart_id!r}: axis_x.labels.expr calls {accessor}(), which reads datum.value in the render process's time zone. Static rendering pins that to UTC, so the {time_unit!r} bucketing's UTC-midnight tick values resolve in UTC today, not necessarily the zone you or the chart's viewers are actually in, and dbt charts has no way to render this in a different zone.",
         fix_template="Replace local-time accessors with their utc-prefixed equivalents (utcFormat()/utcyear()/utcmonth()/...), e.g. utcFormat(toDate(datum.value), '%b %Y'), to make the UTC result explicit instead of implying a local-time read that never happens.",
-        doc="Fires on bar (vertical + horizontal, single-metric + multi-metric), line, and area charts when axis_x.labels.expr contains a local-time accessor (timeFormat(), year(), month(), date(), quarter(), ...) while the chart's x-axis buckets to a UTC-midnight calendar grain (yearmonth, yearquarter, year, ...), whether authored via axis_x.time_unit or auto-detected from the query data. Vega-Lite's bucketed timeUnit transform produces UTC-midnight Date values, and dbt charts always renders statically in UTC, so a local-time accessor reads them as UTC today, the same result its utc-prefixed equivalent would give, and no longer dependent on which machine renders the chart. It still cannot be made to read in a different zone: a bucket is its calendar date's UTC midnight whatever the board's regional.time_zone. Heatmap and scatter are not yet covered. dbt charts never rewrites an authored label expression, so this only warns; switch to utcFormat() or utcmonth()/utcyear()/... to say what actually happens.",
+        doc="Fires on bar (vertical + horizontal, single-metric + multi-metric), line, and area charts when axis_x.labels.expr contains a local-time accessor (timeFormat(), year(), month(), date(), quarter(), ...) while the chart's x-axis buckets to a UTC-midnight calendar grain (yearmonth, yearquarter, year, ...), whether authored via axis_x.time_unit or auto-detected from the query data. A bucketed time unit produces UTC-midnight Date values, and dbt charts always renders statically in UTC, so a local-time accessor reads them as UTC today, the same result its utc-prefixed equivalent would give, and no longer dependent on which machine renders the chart. It still cannot be made to read in a different zone: a bucket is its calendar date's UTC midnight whatever the board's regional.time_zone. Heatmap and scatter are not yet covered. dbt charts never rewrites an authored label expression, so this only warns; switch to utcFormat() or utcmonth()/utcyear()/... to say what actually happens.",
         summary="Fired on bar/line/area charts when an authored axis label expression calls a local-time accessor (timeFormat(), year(), month(), ...) on a bucketed temporal axis; static rendering resolves it as UTC regardless, so the accessor's name misleadingly implies a local-time read that never happens.",
         docs_topic="charts",
     )
@@ -1259,7 +1259,7 @@ WARN_TOO_MANY_COLOR_CATEGORIES = REGISTRY.register(
         title="Color encoding has more categories than a reader can tell apart",
         message_template="Chart {chart_id!r}: color encoding on {field!r} yields {count} distinct series, more than the {max_categories} a reader can tell apart.",
         fix_template="Cut the categories in the query, not the chart: keep the top N and fold the rest into Other, e.g. `CASE WHEN rank <= 6 THEN category ELSE 'Other' END AS category` over a `RANK() OVER (ORDER BY total DESC)` CTE, then re-aggregate by that column.",
-        doc="Fires when a categorical color encoding has more distinct values than the larger of the chart's palette length and eight; past that a reader cannot match legend entries to marks, and a short palette recycles colors. A handful of series on a short palette stays quiet. The message states the series count and the threshold. Gated on the Vega-Lite color encoding type so a continuous (quantitative) color gradient never trips it. A wide chart (y: [a, b]) is counted by the series its fold renders -- the measures, crossed with the color: dimension's values when one is authored.",
+        doc="Fires when a categorical color encoding has more distinct values than the larger of the chart's palette length and eight; past that a reader cannot match legend entries to marks, and a short palette recycles colors. A handful of series on a short palette stays quiet. The message states the series count and the threshold. Only a categorical color encoding is counted, so a continuous (quantitative) color gradient never trips it. A wide chart (y: [a, b]) is counted by the series its fold renders -- the measures, crossed with the color: dimension's values when one is authored.",
         docs_topic="charts",
     )
 )
@@ -1360,7 +1360,7 @@ WARN_AXIS_TITLE_TRUNCATED = REGISTRY.register(
         title="Axis title was too long and was truncated with an ellipsis",
         message_template="Chart {chart_id!r}: {authored_field!r} was truncated: the authored text {authored_text!r} did not fit within two lines at the available extent.",
         fix_template="Shorten the axis title, or widen the chart so the title has more room.",
-        doc="Fires when an axis title is pre-wrapped to at most two lines (to prevent Vega-Lite's autosize from collapsing the plot) and the authored text is still too long: the last line is cut with a Unicode ellipsis (…) and the remainder of the title is lost. The title text in the message is the full authored text before truncation, so you can see exactly what was cut.",
+        doc="Fires when an axis title is pre-wrapped to at most two lines (so a long title cannot collapse the plot) and the authored text is still too long: the last line is cut with a Unicode ellipsis (…) and the remainder of the title is lost. The title text in the message is the full authored text before truncation, so you can see exactly what was cut.",
         docs_topic="charts",
     )
 )
@@ -1944,7 +1944,7 @@ ERR_LINK_SCHEME_UNSAFE_AT_RENDER = REGISTRY.register(
         domain="render",
         title="A rendered link uses a disallowed URL scheme",
         message_template="Rendered link {href!r} uses scheme {scheme!r}. Allowed: board paths (/, ./, ?, #), http, https, mailto.",
-        doc="Fired when a link resolved at render time — a table cell/row link built from query row data, or a chart link whose scheme only becomes known after Vega renders it — uses a scheme other than http, https, or mailto. Compile-time validation (ERR-LINK-SCHEME-UNSAFE) cannot see this: the value only exists once the query has run, or once a chart-link sentinel prefix used to survive Vega's own sanitizer has been stripped. The affected chart renders an inline error instead of the unsafe link.",
+        doc="Fired when a link resolved at render time — a table cell/row link built from query row data, or a chart link whose scheme only becomes known after the chart renders — uses a scheme other than http, https, or mailto. Compile-time validation (ERR-LINK-SCHEME-UNSAFE) cannot see this: the value only exists once the query has run, or once a chart-link sentinel prefix used to survive sanitizing has been stripped. The affected chart renders an inline error instead of the unsafe link.",
         docs_topic="charts",
     )
 )

@@ -221,7 +221,7 @@ def _reject_moved_keys(project_data: _YamlTree, filename: str) -> None:
     if "vega" in project_data:
         raise _moved_key_error(
             "vega",
-            "Vega-Lite styling is theme-owned; set the matching fields under "
+            "Chart styling is theme-owned; set the matching fields under "
             "`style:` in charts/meta.yml.",
         )
     section = project_data.get("chart_rendering")

@@ -77,7 +77,7 @@ class ChartDescription(BaseModel):
     query: str
     title: str | None = None
     encoding: dict[str, Any] = Field(
-        default_factory=dict, description="Vega-Lite encoding channels keyed by role."
+        default_factory=dict, description="Encoding channels keyed by role."
     )
     template: str | None = Field(
         default=None,

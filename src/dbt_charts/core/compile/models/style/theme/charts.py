@@ -313,7 +313,7 @@ class ChartsStyle(_PaintedChartStyleBase):
     )
 
     # View
-    view: ViewStyle = Field(description="Vega-Lite view dimensions and border.")
+    view: ViewStyle = Field(description="View dimensions and border.")
 
     # Global mark defaults — tier-1 of the three-tier mark cascade
     marks: GlobalMarksStyle = Field(

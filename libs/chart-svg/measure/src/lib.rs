@@ -341,6 +341,32 @@ impl FontBook {
         Ok(widest)
     }
 
+    fn parsed_face(&self, i: usize) -> &ttf_parser::Face<'static> {
+        self.parsed[i].get_or_init(|| {
+            ttf_parser::Face::parse(self.face_data(i), 0).expect("validated at load")
+        })
+    }
+
+    /// How far above the baseline the tallest glyph of `text` reaches at `size` px, in the face
+    /// `family_list` resolves to (default instance). A character the face has no glyph for
+    /// (emoji, CJK) counts as a full em: the face that paints it instead can be that tall.
+    pub fn ink_ascent(&self, text: &str, family_list: &str, size: f64) -> Result<f64, String> {
+        let i = self
+            .face_for(family_list)
+            .ok_or_else(|| format!("text: no font face resolved for {family_list:?}"))?;
+        let face = self.parsed_face(i);
+        let em = face.units_per_em() as f64;
+        Ok(text
+            .chars()
+            .map(|c| match face.glyph_index(c) {
+                Some(g) => face
+                    .glyph_bounding_box(g)
+                    .map_or(0.0, |b| (b.y_max as f64 / em * size).max(0.0)),
+                None => size,
+            })
+            .fold(0.0, f64::max))
+    }
+
     fn measure_line_at_weight(
         &self,
         text: &str,
@@ -351,9 +377,7 @@ impl FontBook {
         let i = self
             .face_for(family_list)
             .ok_or_else(|| format!("text: no font face resolved for {family_list:?}"))?;
-        let face = self.parsed[i].get_or_init(|| {
-            ttf_parser::Face::parse(self.face_data(i), 0).expect("validated at load")
-        });
+        let face = self.parsed_face(i);
         let codepoints: Vec<u32> = text.chars().map(|c| c as u32).collect();
         let deltas = match weight {
             Some(w) => {
@@ -509,5 +533,19 @@ mod tests {
             long
         );
         assert!(short < long);
+    }
+
+    #[test]
+    fn ink_ascent_is_the_tallest_glyph_and_a_missing_glyph_is_an_em() {
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../src/dbt_charts/core/render/fonts"
+        );
+        let fonts = FontBook::load_dir(dir).expect("shipped fonts load");
+        let ink = |text: &str| fonts.ink_ascent(text, "Inter", 100.0).unwrap();
+        assert_eq!(ink(""), 0.0);
+        assert!(ink("x") < ink("H") && ink("H") < ink("\u{c9}") && ink("\u{c9}") < 100.0);
+        assert_eq!(ink("H "), ink("H"), "a space has no ink");
+        assert_eq!(ink("H\u{4e2d}"), 100.0, "a character the face lacks counts as a full em");
     }
 }

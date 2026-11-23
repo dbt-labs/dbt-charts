@@ -172,7 +172,7 @@ fn decode_text(source: &GeoSource, text: &str) -> Result<Decoded, Diagnostic> {
     let (role, url) = (source.role, source.url);
     if !matches!(source.format_type, "topojson" | "json") {
         let other = source.format_type;
-        return Err(diagnostic::refuse!("production errors too, Vega raises \"Unknown data format type\": geo_format_type {other:?} is not supported").into());
+        return Err(diagnostic::refuse!("production errors too with \"Unknown data format type\": geo_format_type {other:?} is not supported").into());
     }
     if source.format_type == "topojson" {
         let name = source.feature.ok_or_else(|| format!("{role}: a topojson source names no geo_feature"))?;
@@ -216,7 +216,7 @@ fn parse_object(source: &GeoSource, text: &str) -> Result<Value, Diagnostic> {
 /// The items of a `json` source: the array at `geo_property`, as the document spells them.
 fn json_items<'a>(source: &GeoSource, doc: &'a Value) -> Result<&'a Vec<Value>, String> {
     let (role, url) = (source.role, source.url);
-    let path = source.property.ok_or_else(|| diagnostic::refuse!("a json geo source with no geo_property, which Vega fits to NaN and draws as NaN paths, is not supported"))?;
+    let path = source.property.ok_or_else(|| diagnostic::refuse!("a json geo source with no geo_property, which draws as NaN paths, is not supported"))?;
     path.split('.')
         .try_fold(doc, |value, key| value.get(key))
         .and_then(Value::as_array)

@@ -44,20 +44,24 @@ fn text_queries(text: &str, kind: Kind) -> BTreeSet<String> {
     }
 }
 
-/// The names of the queries one variable declaration reads: its options and its `enabled:` probe.
-fn variable_reads(options: Option<&OptionsQuery>, enabled: Option<&Enabled>) -> Vec<String> {
+/// The queries one variable declaration reads, each with the field that names it: its options
+/// and its `enabled:` probe.
+fn variable_reads(
+    options: Option<&OptionsQuery>,
+    enabled: Option<&Enabled>,
+) -> Vec<(&'static str, String)> {
     let options = match options {
-        Some(OptionsQuery::Name(q)) => Some(bare(q.as_str()).to_string()),
+        Some(OptionsQuery::Name(q)) => Some(("options.query", bare(q.as_str()).to_string())),
         Some(OptionsQuery::Sql(_)) | None => None,
     };
     let probe = match enabled {
-        Some(Enabled::Probe(p)) => Some(bare(&p.query).to_string()),
+        Some(Enabled::Probe(p)) => Some(("enabled.query", bare(&p.query).to_string())),
         _ => None,
     };
     options.into_iter().chain(probe).collect()
 }
 
-fn patch_variable_reads(var: &VariablePatch) -> Vec<String> {
+pub(crate) fn patch_variable_reads(var: &VariablePatch) -> Vec<(&'static str, String)> {
     let options = match &var.options {
         Tri::Value(o) => match &o.query {
             Tri::Value(q) => Some(q),
@@ -68,7 +72,7 @@ fn patch_variable_reads(var: &VariablePatch) -> Vec<String> {
     variable_reads(options, enabled(&var.enabled))
 }
 
-fn authored_variable_reads(var: &VariableAuthored) -> Vec<String> {
+pub(crate) fn authored_variable_reads(var: &VariableAuthored) -> Vec<(&'static str, String)> {
     let options = match &var.options {
         Tri::Value(o) => match &o.query {
             Tri::Value(q) => Some(q),
@@ -153,12 +157,20 @@ fn referenced_queries(
             .filter_map(|n| probe_query(n.visible))
             .map(|q| bare(q).to_string()),
     );
-    names.extend(patch.body.variables.values().flat_map(patch_variable_reads));
+    names.extend(
+        patch
+            .body
+            .variables
+            .values()
+            .flat_map(patch_variable_reads)
+            .map(|(_, q)| q),
+    );
     names.extend(
         below
             .iter()
             .filter_map(|n| n.variables)
-            .flat_map(|vars| vars.values().flat_map(authored_variable_reads)),
+            .flat_map(|vars| vars.values().flat_map(authored_variable_reads))
+            .map(|(_, q)| q),
     );
     for facts in queries.values() {
         names.extend(facts.embeds.iter().cloned());

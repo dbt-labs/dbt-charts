@@ -102,8 +102,7 @@ _LonLat = tuple[float, float]
 class Projection(BaseModel):
     """A map projection: a Vega projection type plus its typed parameters.
 
-    Spelled as Vega spells it (``clipAngle``), so the authored object is the
-    one Vega-Lite receives. Unlike the rest of this module it is closed: an
+    Parameters are spelled as Vega spells them (``clipAngle``). Unlike the rest of this module it is closed: an
     unknown type or key is an authoring error, not a pass-through.
     """
 

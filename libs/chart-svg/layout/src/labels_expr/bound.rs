@@ -66,7 +66,7 @@ fn with_referenced<R>(vals: &[Val], read: impl FnOnce(&mut Scale) -> R) -> Res<R
 
 /// A dataset Vega-Lite's compiler mints, whose contents this engine does not carry.
 fn derived_dataset(name: &str) -> EvalError {
-    EvalError::Unmodeled(diagnostic::refuse!("labels.expr reading the dataset {name:?}, which Vega-Lite derives from the chart, is not supported"))
+    EvalError::Unmodeled(diagnostic::refuse!("labels.expr reading the dataset {name:?}, which is derived from the chart, is not supported"))
 }
 
 /// The tuples of the dataset `name`: `[]` for one that does not exist, an error for one Vega-Lite's compiler mints

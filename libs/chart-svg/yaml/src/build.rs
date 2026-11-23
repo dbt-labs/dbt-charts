@@ -113,7 +113,7 @@ impl<'a> Builder<'a> {
         refused(
             span.line,
             span.column,
-            "an explicit YAML tag (quote the value instead)",
+            "an explicit YAML tag (remove the tag; quote a value to keep it text)",
         )
     }
 

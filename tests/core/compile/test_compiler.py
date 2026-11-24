@@ -421,9 +421,9 @@ _VARIABLE = "{input: select, options: {static: [a]}}"
             "grid.items.1",
         ),
         (
-            "tabs:\n  items:\n    - title: A\n      rows:\n        - c\n"
-            f"        - queries:\n            q: {_QUERY}\n          rows: [c]\n",
-            "tabs.items.0.rows.1",
+            "tabs:\n  A:\n    rows:\n      - c\n"
+            f"      - queries:\n          q: {_QUERY}\n        rows: [c]\n",
+            "tabs.A.rows.1",
         ),
     ],
 )

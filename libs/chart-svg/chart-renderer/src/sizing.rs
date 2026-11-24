@@ -124,6 +124,40 @@ pub fn grid_span_width(track_width: f64, span: i64, gap: f64) -> f64 {
     track_width * span as f64 + gap * (span - 1) as f64
 }
 
+/// compile/sizing.py::cols_item_width (its ERR-COLS-WIDTH-BELOW-GAP mirrored as text)
+pub fn cols_item_width(
+    user_width: Option<&str>,
+    row_width: f64,
+    gap: f64,
+) -> Result<Option<f64>, String> {
+    match user_width {
+        Some(v) if v.trim().ends_with('%') => match parse_dimension(Some(v), row_width + gap) {
+            Some(share) if share <= gap => Err(format!(
+                "A cols item's width: {v} is {}px in a {row_width}px row with a {gap}px gap. \
+                 A percentage is a share of the row with its gap counted in, so it must be \
+                 wider than one gap; raise it, or give the item a px width.",
+                share - gap
+            )),
+            share => Ok(share.map(|share| share - gap)),
+        },
+        _ => Ok(parse_dimension(user_width, row_width)),
+    }
+}
+
+/// compile/sizing.py::cols_item_widths
+pub fn cols_item_widths(
+    user_widths: &[Option<&str>],
+    row_width: f64,
+    gap: f64,
+) -> Result<Vec<f64>, String> {
+    let n = user_widths.len();
+    let specified = user_widths
+        .iter()
+        .map(|w| cols_item_width(*w, row_width, gap))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(resolve_cols_widths(&specified, row_width - gap * (n as f64 - 1.0), n))
+}
+
 /// compile/sizing.py::resolve_cols_widths
 pub fn resolve_cols_widths(
     specified_widths: &[Option<f64>],
@@ -1562,10 +1596,9 @@ pub fn resolve_active_tab_index(
     n_items: usize,
     tab_variable: Option<&str>,
     tab_slugs: &[String],
-    default_tab: i64,
     variable_values: &serde_json::Map<String, Value>,
 ) -> Result<usize, String> {
-    let mut active = default_tab.max(0) as usize;
+    let mut active = 0;
     if let Some(var_name) = tab_variable {
         if !tab_slugs.is_empty() && !variable_values.is_empty() {
             if let Some(var_value) = variable_values.get(var_name) {
@@ -1611,7 +1644,6 @@ pub fn calculate_tabs_boxes(
     available_height: f64,
     tab_variable: Option<&str>,
     tab_slugs: &[String],
-    default_tab: i64,
     ctx: &SizingCtx,
 ) -> Result<Vec<ItemBox>, String> {
     if items.is_empty() {
@@ -1621,7 +1653,6 @@ pub fn calculate_tabs_boxes(
         items.len(),
         tab_variable,
         tab_slugs,
-        default_tab,
         ctx.variable_values,
     )?;
     // The pane sits below the bar (`top`) or right of the rail and its
@@ -1843,13 +1874,9 @@ fn measure_cols(
     ctx: &SizingCtx,
 ) -> Result<ColsMeasure, String> {
     let n = items.len();
-    let total_gap = (ctx.gap + ctx.card_gap) * (n as i64 - 1) as f64;
-    let content_width = available_width - total_gap;
-    let specified_widths: Vec<Option<f64>> = items
-        .iter()
-        .map(|item| parse_dimension(item.authoring.user_width.as_deref(), content_width))
-        .collect();
-    let widths = resolve_cols_widths(&specified_widths, content_width, n);
+    let user_widths: Vec<Option<&str>> =
+        items.iter().map(|item| item.authoring.user_width.as_deref()).collect();
+    let widths = cols_item_widths(&user_widths, available_width, ctx.gap + ctx.card_gap)?;
 
     let mut max_specified = 0.0_f64;
     let mut max_auto = 0.0_f64;
@@ -2133,9 +2160,9 @@ mod tests {
         let slugs = vec!["first".to_string(), "second".to_string()];
         let mut values = serde_json::Map::new();
         values.insert("tab".to_string(), Value::String("second".into()));
-        assert_eq!(resolve_active_tab_index(2, Some("tab"), &slugs, 0, &values), Ok(1));
+        assert_eq!(resolve_active_tab_index(2, Some("tab"), &slugs, &values), Ok(1));
         values.insert("tab".to_string(), Value::String("nope".into()));
-        let err = resolve_active_tab_index(2, Some("tab"), &slugs, 0, &values).unwrap_err();
+        let err = resolve_active_tab_index(2, Some("tab"), &slugs, &values).unwrap_err();
         assert!(err.starts_with("ERR-TAB-UNKNOWN:"), "{err}");
         assert!(err.ends_with("(tabs: first, second)"), "{err}");
     }
@@ -2318,6 +2345,25 @@ mod tests {
         assert_eq!(item_chart_type(None, Some(&failure)), Some("table"));
         assert!(is_content_sized_item(None, Some(&failure)));
         assert!(!is_content_sized_item(None, None));
+    }
+
+    #[test]
+    fn cols_percent_width_is_independent_of_column_count() {
+        // 4 x 25% and 3 x 25% in a 1128 row with a 16 gap: every card is
+        // 0.25 * (1128 + 16) - 16 = 270, and the four-card row fills exactly.
+        let four = cols_item_widths(&[Some("25%"); 4], 1128.0, 16.0).unwrap();
+        let three = cols_item_widths(&[Some("25%"); 3], 1128.0, 16.0).unwrap();
+        assert_eq!(four, vec![270.0; 4]);
+        assert_eq!(three, vec![270.0; 3]);
+        assert_eq!(four.iter().sum::<f64>() + 3.0 * 16.0, 1128.0);
+    }
+
+    #[test]
+    fn cols_percent_width_narrower_than_the_gap_is_an_error() {
+        // compile/sizing.py::cols_item_width raises ERR-COLS-WIDTH-BELOW-GAP:
+        // 0.01 * (1128 + 16) - 16 leaves the card no width.
+        let err = cols_item_widths(&[Some("1%"), None], 1128.0, 16.0).unwrap_err();
+        assert!(err.contains("width: 1%"), "{err}");
     }
 
     #[test]

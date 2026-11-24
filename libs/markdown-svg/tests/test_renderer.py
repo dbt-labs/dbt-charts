@@ -146,6 +146,18 @@ class TestBasicRendering:
         assert "<a href=" in svg
         assert "example.com" in svg
 
+    @pytest.mark.parametrize(
+        "markdown",
+        ["**[link](https://example.com)**", "[**link**](https://example.com)"],
+    )
+    def test_render_bold_link_is_one_bold_anchor(self, markdown: str) -> None:
+        svg = render(markdown)
+        anchor = re.search(r'<a href="https://example.com">(.*?)</a>', svg)
+        assert anchor is not None
+        assert "font-weight" in anchor.group(1)
+        assert re.sub(r"<[^>]+>", "", anchor.group(1)) == "link"
+        assert "*" not in svg and "](" not in svg
+
     def test_render_link_uses_tight_solid_underline(self) -> None:
         """Links use native SVG underline styling."""
         svg = render("[link](https://example.com)")

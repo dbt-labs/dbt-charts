@@ -347,7 +347,7 @@ fn layout_height(board: &Node, measured: &Measured, gap: f64) -> f64 {
             let (rows, _) = grid_rows(&items, 0.0);
             rows.values().sum::<f64>() + gap * (rows.len() - 1) as f64
         }
-        Kind::Tabs { pane_top, rail, .. } => (pane_top + items[0].slot.content).max(rail),
+        Kind::Tabs { pane_top, rail, .. } => (pane_top + rows_measure(&items[..1], 0.0)).max(rail),
     };
     height.max(board.min_height)
 }
@@ -598,10 +598,11 @@ fn place(
             ..
         } => {
             let available = room - pane_top;
-            let height = if board.fill_height {
-                available
-            } else {
-                items[0].slot.content.min(available)
+            // A pane is a one-item row of the pane box: an authored height is its ceiling.
+            let height = match rows_specified(&items[..1], available)[0] {
+                Some(authored) => authored,
+                None if board.fill_height => available,
+                None => items[0].slot.content.min(available),
             };
             items
                 .iter()

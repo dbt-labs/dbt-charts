@@ -48,6 +48,7 @@ PatternMotif = Literal[
     "dither",
 ]
 PatternRamp = Literal["hatch-crosshatch", "hatch-dots", "dots"]
+PatternLadder = Literal["one-ink"]
 PatternPaletteKind = Literal["categorical", "sequential", "diverging"]
 
 
@@ -59,10 +60,11 @@ class Palette(BaseModel):
     colors: list[str] | None = None
     aliases: dict[str, PaletteAliasValue] | None = None
     description: str | None = None
-    # Pattern palettes: a categorical one lists motifs, a sequential or diverging
-    # one names a ramp.
+    # Pattern palettes: a categorical one lists motifs or names a ladder (fills
+    # chosen by the chart's series count), a sequential or diverging one names a ramp.
     kind: PatternPaletteKind | None = None
     motifs: tuple[PatternMotif, ...] | None = None
+    ladder: PatternLadder | None = None
     ramp: PatternRamp | None = None
     steps: Annotated[int, Field(ge=3, le=9)] | None = None
     # Authoring-aid / metadata fields; declared explicitly so extra="forbid"
@@ -76,25 +78,35 @@ class Palette(BaseModel):
         if self.kind is None:
             if (
                 self.motifs is not None
+                or self.ladder is not None
                 or self.ramp is not None
                 or self.steps is not None
             ):
                 raise ValueError(
-                    f"palette '{self.name}' names motifs or a ramp without a pattern kind."
+                    f"palette '{self.name}' names motifs, a ladder or a ramp without a pattern kind."
                 )
         else:
             if self.colors is not None:
                 raise ValueError(f"pattern palette '{self.name}' draws no colors.")
             if self.kind == "categorical":
-                if not self.motifs or self.ramp is not None or self.steps is not None:
+                if (
+                    bool(self.motifs) == (self.ladder is not None)
+                    or self.ramp is not None
+                    or self.steps is not None
+                ):
                     raise ValueError(
-                        f"categorical pattern palette '{self.name}' needs `motifs:` "
-                        "and no `ramp:` or `steps:`."
+                        f"categorical pattern palette '{self.name}' needs exactly one of "
+                        "`motifs:` or `ladder:`, and takes no `ramp:` or `steps:`."
                     )
-            elif self.ramp is None or self.steps is None or self.motifs is not None:
+            elif (
+                self.ramp is None
+                or self.steps is None
+                or self.motifs is not None
+                or self.ladder is not None
+            ):
                 raise ValueError(
                     f"{self.kind} pattern palette '{self.name}' needs `ramp:` and "
-                    "`steps:` (3-9) and no `motifs:`."
+                    "`steps:` (3-9) and no `motifs:` or `ladder:`."
                 )
         return self
 

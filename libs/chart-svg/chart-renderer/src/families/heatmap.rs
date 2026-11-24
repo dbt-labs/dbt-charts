@@ -411,15 +411,8 @@ impl CategoryScale {
 /// orders them (an empty list draws a title-only legend), each keeping the
 /// palette slot its place in the domain gave it.
 pub(crate) fn category_legend_entries<'a>(scale: &'a CategoryScale, authored: Option<&[String]>) -> Vec<LegendEntry<'a>> {
-    let order = match authored {
-        Some([]) => Vec::new(),
-        Some(authored) => {
-            let names: Vec<&str> = scale.domain.iter().map(String::as_str).collect();
-            ::bind::legend::resolve_legend_values(authored, &names, None)
-        }
-        None => (0..scale.domain.len()).collect(),
-    };
-    order
+    let names: Vec<&str> = scale.domain.iter().map(String::as_str).collect();
+    ::bind::legend::legend_order(authored, &names)
         .into_iter()
         .map(|i| LegendEntry {
             label: &scale.domain[i],

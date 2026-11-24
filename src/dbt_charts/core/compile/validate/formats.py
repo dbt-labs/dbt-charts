@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Mapping
 
+from jinja2 import Environment, TemplateSyntaxError, nodes as jinja_nodes
 from pydantic import BaseModel
 
 from d3_format import parse as _d3_parse
@@ -46,6 +47,7 @@ from dbt_charts.core.compile.models.primitives import (
 )
 from dbt_charts.core.compile.models.query.normalized import Query, ValuesQuery
 from dbt_charts.core.compile.resolve.style.axis_cascade import AUTO_AXIS_FORMAT
+from dbt_charts.core.compile.template.markdown_fence import mask_fenced_code
 from dbt_charts.core.compile.validate.walk import board_queries, boards
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_AFFIX_TIME_UNSUPPORTED,
@@ -375,9 +377,9 @@ def _validate_spec(
             ERR_FORMAT_INVALID,
             spec=spec,
             field_path=field_path,
-            kind_noun="number",
+            kind_noun="date/time or number" if time_capable else "number",
             explanation=_number_spec_explanation(spec, e),
-            available=sorted({*aliases, *ALL_PREDEFINED_NAMES}),
+            available=sorted({*aliases, *ALL_PREDEFINED_NAMES - GRAIN_NAMES}),
         ) from e
     # d3 accepts any letter (an unknown one formats as `.12~g`); the engine
     # draws only its implemented types, so anything else is refused at render.
@@ -391,7 +393,7 @@ def _validate_spec(
                 f"type {parsed.type!r} is not one the engine draws. Use one of "
                 f"{', '.join(sorted(ENGINE_NUMBER_TYPES))}, or omit the type."
             ),
-            available=sorted({*aliases, *ALL_PREDEFINED_NAMES}),
+            available=sorted({*aliases, *ALL_PREDEFINED_NAMES - GRAIN_NAMES}),
         )
 
 
@@ -551,14 +553,15 @@ def format_names_used(
     chart_styles: Mapping[
         str, BaseModel | None
     ],  # type-state: optional — None when the chart authors no style
-) -> set[str]:
+) -> set[str] | None:
     """Format names read by a slot, a query column, or a text ``format('name')``
     call, on this board or any nested board.
 
     ``chart_styles`` maps chart id to the style patch the chart itself authored.
+    None when a text ``format`` call names its format by an expression (or the
+    text does not parse): that call may read any name at render.
     """
     used: set[str] = set()
-    text_call = re.compile(r"""\bformat\(\s*(['"])(.+?)\1""")
     for each in boards(board):
         slots = [
             *_iter_format_slots(each.authored_style, "", False),
@@ -575,11 +578,31 @@ def format_names_used(
         for query in board_queries(each):
             if query.formats is not None:
                 used.update(query.formats.values())
-    texts = (
-        text for text in _strings(board.model_dump(mode="python")) if "format(" in text
-    )
-    used.update(match[1] for text in texts for match in text_call.findall(text))
+    for text in _strings(board.model_dump(mode="python")):
+        if "format" not in text:
+            continue
+        try:
+            tree = Environment().parse(mask_fenced_code(text)[0])
+        except TemplateSyntaxError:
+            return None
+        for call in tree.find_all(jinja_nodes.Filter):
+            args = call.args
+            if call.name == "map" and args and _is_const(args[0], "format"):
+                args = args[1:]
+            elif call.name != "format":
+                continue
+            if call.dyn_args is not None or call.dyn_kwargs is not None:
+                return None
+            specs = [*args[:1], *(kw.value for kw in call.kwargs if kw.key == "spec")]
+            for spec in specs:
+                if not isinstance(spec, jinja_nodes.Const):
+                    return None
+                used.add(spec.value)
     return used - {""}
+
+
+def _is_const(node: jinja_nodes.Expr, value: str) -> bool:
+    return isinstance(node, jinja_nodes.Const) and node.value == value
 
 
 def _strings(

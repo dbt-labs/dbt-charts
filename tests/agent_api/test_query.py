@@ -987,21 +987,20 @@ queries:
   root_q:
     sql: "select 1 as a"
 tabs:
-  items:
-    - title: One
-      rows:
-        - queries:
-            nested_q:
-              sql: "select {{ n }} as n"
-          variables:
-            n:
-              input: number
-              default: 5
-          charts:
-            c:
-              query: nested_q
-              type: table
-          rows: [c]
+  One:
+    rows:
+      - queries:
+          nested_q:
+            sql: "select {{ n }} as n"
+        variables:
+          n:
+            input: number
+            default: 5
+        charts:
+          c:
+            query: nested_q
+            type: table
+        rows: [c]
 """
 
 
@@ -1129,6 +1128,34 @@ rows:
         assert result.success, result.errors
         assert result.row_count == 1
         assert result.truncated is True
+
+    def test_query_board_inlining_a_cache_ref_reader(self, tmp_path: Path) -> None:
+        """A query that inlines a `.cache` reader composes over the cached rows."""
+        from dbt_charts.agent_api.query import query_board
+
+        board = """
+source: db
+queries:
+  a:
+    sql: SELECT n FROM t
+  b:
+    sql: SELECT * FROM {{ queries.a.cache }}
+  c:
+    sql: SELECT count(*) AS n FROM {{ queries.b }}
+charts:
+  c:
+    query: c
+    type: table
+rows:
+  - c
+"""
+        path = _write_board(tmp_path, board)
+        project = FilesystemProject(tmp_path)
+        rows = [{"n": n} for n in range(3)]
+        env = scripted_env(ScriptedBackend(rows), project=project)
+        result = query_board("c", path, project, env=env, limit=50)
+        assert result.success, result.errors
+        assert result.data == [{"n": 3}]
 
 
 def test_query_board_cuts_a_values_query_to_the_row_ceiling(

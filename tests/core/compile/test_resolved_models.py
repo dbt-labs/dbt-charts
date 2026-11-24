@@ -40,6 +40,7 @@ def _bake_test_axes(chart_type: str):
         "temporal",
         "quantitative",
         AxisOverrides(),
+        True,
     )
     ax_merged, ay_merged, ax_band_position, ay_band_position = (
         baked.x.style,

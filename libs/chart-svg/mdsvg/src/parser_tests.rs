@@ -180,6 +180,102 @@ fn a_plain_label_is_not_a_code_link() {
     );
 }
 
+// --- TestEmphasisAndLinksNest ---
+
+fn spans_of(md: &str) -> Vec<(SpanType, String, Option<String>, bool, bool)> {
+    let doc = parse(md);
+    let AnyBlock::Paragraph(p) = &doc[0] else {
+        panic!("expected paragraph")
+    };
+    p.spans
+        .iter()
+        .map(|s| (s.span_type, s.text.clone(), s.url.clone(), s.bold, s.italic))
+        .collect()
+}
+
+#[test]
+fn bold_and_a_link_nest_as_a_bold_link() {
+    let url = Some("./summary.yml".to_string());
+    for md in [
+        "**[Summary](./summary.yml)** board",
+        "[**Summary**](./summary.yml) board",
+    ] {
+        assert_eq!(
+            spans_of(md),
+            [
+                (SpanType::Link, "Summary".into(), url.clone(), true, false),
+                (SpanType::Text, " board".into(), None, false, false),
+            ]
+        );
+    }
+}
+
+#[test]
+fn bold_around_a_link_keeps_the_bold_text_beside_it() {
+    assert_eq!(
+        spans_of("**[Example](https://example.com):** done"),
+        [
+            (
+                SpanType::Link,
+                "Example".into(),
+                Some("https://example.com".into()),
+                true,
+                false
+            ),
+            (SpanType::Bold, ":".into(), None, false, false),
+            (SpanType::Text, " done".into(), None, false, false),
+        ]
+    );
+}
+
+#[test]
+fn italic_inside_a_link_label_is_an_italic_link() {
+    let u = Some("u".to_string());
+    assert_eq!(
+        spans_of("[see *this*](u)"),
+        [
+            (SpanType::Link, "see ".into(), u.clone(), false, false),
+            (SpanType::Link, "this".into(), u, false, true),
+        ]
+    );
+}
+
+#[test]
+fn underscores_inside_a_word_stay_literal() {
+    for label in ["g32_backslash_escape.yml", "a__b__c.yml", "a___b___c"] {
+        assert_eq!(
+            spans_of(&format!("[{label}](u)")),
+            [(SpanType::Link, label.into(), Some("u".into()), false, false)]
+        );
+    }
+}
+
+#[test]
+fn underscore_emphasis_still_opens_beside_punctuation() {
+    assert_eq!(
+        spans_of("a __init__ (_x_)"),
+        [
+            (SpanType::Text, "a ".into(), None, false, false),
+            (SpanType::Bold, "init".into(), None, false, false),
+            (SpanType::Text, " (".into(), None, false, false),
+            (SpanType::Italic, "x".into(), None, false, false),
+            (SpanType::Text, ")".into(), None, false, false),
+        ]
+    );
+}
+
+#[test]
+fn italic_inside_bold_is_bold_italic() {
+    assert_eq!(
+        spans_of("**a *b* c**"),
+        [
+            (SpanType::Bold, "a ".into(), None, false, false),
+            (SpanType::Italic, "b".into(), None, true, false),
+            (SpanType::Bold, " c".into(), None, false, false),
+        ]
+    );
+}
+
 // --- TestLists ---
 
 #[test]
@@ -872,9 +968,9 @@ fn test_inline_patterns_have_the_group_counts_the_matcher_destructures() {
         (inline_code(), 1),
         (image_re(), 4),
         (link_re(), 3),
-        (bold_italic_re(), 2),
-        (bold_re(), 2),
-        (italic_re(), 2),
+        (bold_italic_re(), 3),
+        (bold_re(), 3),
+        (italic_re(), 3),
     ] {
         assert_eq!(pattern.captures_len() - 1, groups, "{pattern}");
     }

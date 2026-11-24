@@ -187,6 +187,25 @@ def _layout_positions(layout_xml: str) -> dict[str, list[tuple[str, str, str]]]:
     return pages
 
 
+def _listed_positions(
+    sigma: _Sigma, workbook_id: str, pages: list[dict[str, Any]]
+) -> dict[str, list[tuple[str, str, str]]]:
+    """Page membership, without grid positions, for a workbook whose layout is empty.
+
+    Sigma's API returns an empty layout for some workbooks; each page's element
+    listing still names its tiles, in API order.
+    """
+    positions: dict[str, list[tuple[str, str, str]]] = {}
+    for page in pages:
+        path = f"workbooks/{workbook_id}/pages/{page['pageId']}/elements"
+        try:
+            entries = sigma.paged(path)
+        except BundleError as exc:
+            raise BundleError(f"page {page['name']!r}: {exc}") from None
+        positions[page["pageId"]] = [(e["elementId"], "", "") for e in entries]
+    return positions
+
+
 # Filter-spec keys that are identity or resolved into the line's column name.
 _NOT_SETTINGS = frozenset({"id", "columnId", "source", "state"})
 # Element keys shown in the tile heading or as their own lines, not as options.
@@ -420,12 +439,11 @@ def _outline(
         lines += [f"## Page: {page['name']}{hidden}", ""]
         for element_id, grid_col, grid_row in positions.get(page["pageId"], []):
             if element_id in by_id:
-                lines += element(
-                    by_id[element_id], f" — cols {grid_col}, rows {grid_row}"
-                )
+                where = f" — cols {grid_col}, rows {grid_row}" if grid_col else ""
+                lines += element(by_id[element_id], where)
         lines.append("")
-    # Sigma's API returns an empty layout for some workbooks, and a query element
-    # can sit outside every page's grid; its SQL still belongs in the bundle.
+    # A query element can sit outside every page's grid, or on no page at all;
+    # its SQL still belongs in the bundle.
     placed = {element_id for items in positions.values() for element_id, _, _ in items}
     unplaced = [
         el
@@ -566,6 +584,8 @@ def _fill_bundle(
         else:
             uncompiled[element_id] = query["error"]
     positions = _layout_positions(workbook["contents"]["layout"])
+    if not any(positions.values()):
+        positions = _listed_positions(sigma, workbook_id, pages)
 
     jobs: dict[str, dict[str, Any]] = {}
     visible = {p["pageId"] for p in pages if not p.get("hidden")}

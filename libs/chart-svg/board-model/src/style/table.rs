@@ -846,9 +846,14 @@ pub struct ColumnScaleConfig {
 
 /// Configuration for a single table column.
 #[derive(Debug, Clone, PartialEq, Model)]
+#[allow(clippy::duplicated_attributes)]
 #[model(
     constraint(requires(glyph, when(set(glyph_color)),
         message = "TableColumnConfig glyph_color requires glyph to be set"
+    )),
+    constraint(requires(glyph,
+        when(items_set(conditional, tone, glyph_color), no_items_set(conditional, glyph)),
+        message = "TableColumnConfig: a 'conditional' rule sets tone or glyph_color without a glyph: set glyph in a rule or on the column."
     )),
     constraint(at_most_one_of(width, max_width,
         message = "TableColumnConfig: 'width' and 'max_width' are mutually exclusive. Use 'width' for a hard pin, or 'max_width' to cap auto-sizing."

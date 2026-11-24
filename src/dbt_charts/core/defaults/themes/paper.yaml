@@ -172,11 +172,9 @@ style:
       border:
         color: chrome[4]
         radius: 4.0
-    # One scaffold rung past paper's own measure gridline, at twice that
-    # gridline's width.
+    # The drop lines take paper's annotation rule color.
     hover_emphasis:
-      drop_line_color: chrome[6]
-      drop_line_width: 3.0
+      drop_line_color: muted
     support_table:
       neutral_color: chrome[8]
       ribbon_color: chrome[8]

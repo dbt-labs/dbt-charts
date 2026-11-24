@@ -254,6 +254,10 @@ pub fn err_color_token(scope: impl Into<Value>, reason: impl Into<Value>) -> Dia
     Diagnostic::new(&codes::ERR_COLOR_TOKEN, [("scope", scope.into()), ("reason", reason.into())])
 }
 
+pub fn err_cols_width_below_gap(width: impl Into<Value>, resolved: impl Into<Value>, row_width: impl Into<Value>, gap: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_COLS_WIDTH_BELOW_GAP, [("width", width.into()), ("resolved", resolved.into()), ("row_width", row_width.into()), ("gap", gap.into())])
+}
+
 pub fn err_column_not_found(column: impl Into<Value>, schema: impl Into<Value>, table: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_COLUMN_NOT_FOUND, [("column", column.into()), ("schema", schema.into()), ("table", table.into())])
 }
@@ -576,6 +580,10 @@ pub fn err_glob_too_many(source_name: impl Into<Value>, table_name: impl Into<Va
 
 pub fn err_heatmap_color_no_values(field: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_HEATMAP_COLOR_NO_VALUES, [("field", field.into())])
+}
+
+pub fn err_heatmap_sort_date_axes(sort_by: impl Into<Value>, x: impl Into<Value>, y: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_HEATMAP_SORT_DATE_AXES, [("sort_by", sort_by.into()), ("x", x.into()), ("y", y.into())])
 }
 
 pub fn err_histogram_non_numeric(chart_id: impl Into<Value>, field: impl Into<Value>, vl_type: impl Into<Value>) -> Diagnostic {
@@ -1188,10 +1196,6 @@ pub fn err_support_table_no_x_encoding() -> Diagnostic {
 
 pub fn err_support_table_position_invalid(message: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_SUPPORT_TABLE_POSITION_INVALID, [("message", message.into())])
-}
-
-pub fn err_tab_default_unknown(default: impl Into<Value>, slug: impl Into<Value>, slugs: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_TAB_DEFAULT_UNKNOWN, [("default", default.into()), ("slug", slug.into()), ("slugs", slugs.into())])
 }
 
 pub fn err_tab_title_duplicate_slug(slug: impl Into<Value>) -> Diagnostic {

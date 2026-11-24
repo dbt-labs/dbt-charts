@@ -1,7 +1,8 @@
 //! The boards nested in a layout, seen through what the passes over the merged root read of them.
-//! A tab is a nested board of its own in Python; here it is one with a text and nothing else.
+//! A tab's pane is a nested board like any other.
 
 use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored};
+use board_model::board::BoardBodyAuthored;
 use board_model::board::value::VisibleAuthored;
 use board_model::variable::VariableAuthored;
 use indexmap::IndexMap;
@@ -22,27 +23,36 @@ pub fn nested(layout: &LayoutAuthored) -> Vec<Nested<'_>> {
     out
 }
 
+fn board<'a>(
+    body: &'a BoardBodyAuthored,
+    visible: Option<&'a VisibleAuthored>,
+    out: &mut Vec<Nested<'a>>,
+) {
+    out.push(Nested {
+        title: match &body.title {
+            Tri::Value(t) => Some(t.as_str()),
+            _ => None,
+        },
+        text: match &body.text {
+            Tri::Value(t) => Some(t.as_str()),
+            _ => None,
+        },
+        visible,
+        variables: Some(&body.variables),
+    });
+    if let Some(inner) = &body.layout {
+        walk(inner, out);
+    }
+}
+
 fn walk<'a>(layout: &'a LayoutAuthored, out: &mut Vec<Nested<'a>>) {
     let item = |item: &'a LayoutItemAuthored, out: &mut Vec<Nested<'a>>| {
         if let LayoutItemAuthored::Board(b) = item {
-            out.push(Nested {
-                title: match &b.body.title {
-                    Tri::Value(t) => Some(t.as_str()),
-                    _ => None,
-                },
-                text: match &b.body.text {
-                    Tri::Value(t) => Some(t.as_str()),
-                    _ => None,
-                },
-                visible: match &b.visible {
-                    Tri::Value(v) => Some(v),
-                    _ => None,
-                },
-                variables: Some(&b.body.variables),
-            });
-            if let Some(inner) = &b.body.layout {
-                walk(inner, out);
-            }
+            let visible = match &b.visible {
+                Tri::Value(v) => Some(v),
+                _ => None,
+            };
+            board(&b.body, visible, out);
         }
     };
     match layout {
@@ -55,21 +65,6 @@ fn walk<'a>(layout: &'a LayoutAuthored, out: &mut Vec<Nested<'a>>) {
             .flatten()
             .filter_map(|cell| cell.item.as_ref())
             .for_each(|i| item(i, out)),
-        LayoutAuthored::Tabs(t) => {
-            for tab in t.items.iter().flatten() {
-                out.push(Nested {
-                    title: None,
-                    text: match &tab.text {
-                        Tri::Value(t) => Some(t.as_str()),
-                        _ => None,
-                    },
-                    visible: None,
-                    variables: None,
-                });
-                if let Some(inner) = &tab.layout {
-                    walk(inner, out);
-                }
-            }
-        }
+        LayoutAuthored::Tabs(t) => t.values().for_each(|tab| board(&tab.body, None, out)),
     }
 }

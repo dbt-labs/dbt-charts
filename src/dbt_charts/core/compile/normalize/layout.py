@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory
 
+from dbt_charts.core.compile.authoring.paths import join_path
 from dbt_charts.core.compile.errors import CompilationError, ReferenceError
 from dbt_charts.core.compile.file_refs import resolve_ref
 from dbt_charts.core.compile.models.board.authored import (
@@ -17,10 +19,8 @@ from dbt_charts.core.compile.models.board.authored import (
     AuthoredBoard,
     GridLayout,
     LayoutType,
-    TabLayout,
 )
 from dbt_charts.core.compile.models.board.normalized import (
-    Board,
     Layout,
     LayoutItem,
 )
@@ -42,14 +42,12 @@ from dbt_charts.core.compile.normalize.charts import (
     normalize_chart,
 )
 from dbt_charts.core.compile.normalize.variables import validate_authored_name
-from dbt_charts.core.compile.template.listings import check_listing_calls
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BOARD_FILE_PLACED_TWICE,
     ERR_BOARD_IMPORT_CYCLE,
     ERR_DUPLICATE_CHART_NAME,
     ERR_DUPLICATE_QUERY_NAME,
     ERR_MARKDOWN_NOT_BOARD,
-    ERR_TAB_DEFAULT_UNKNOWN,
     ERR_TAB_TITLE_DUPLICATE_SLUG,
     ERR_TAB_TITLE_EMPTY_SLUG,
 )
@@ -227,27 +225,31 @@ def build_unified_layout(
         )
 
     elif board.tabs:
-        tabs_obj = board.tabs
-        items, tab_titles = _resolve_tab_items(
-            tabs_obj,
+        tab_titles = list(board.tabs)
+        items = _resolve_layout_items(
+            list(board.tabs.values()),
+            charts,
             query_registry,
             board_id,
             depth,
+            "tab",
             base_dir,
             default_source,
             board_cache,
             chart_registry,
             theme,
-            resolved_style=resolved_style,
-            chart_style_context=chart_style_context,
+            used_chart_ids,
+            parent_variables,
             parent_level=parent_level,
             cache_root=cache_root,
             sources=sources,
             html_policy=html_policy,
             regional=regional,
             links=links,
+            local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
             placements=placements,
+            labels=tab_titles,
         )
 
         # Compute tab slugs and variable name
@@ -268,21 +270,8 @@ def build_unified_layout(
                     )
                 seen.add(slug)
 
-        # Use explicit id, or generate a unique name from board_id
-        # (avoids collisions when multiple tabs layouts exist in nested boards)
-        tab_variable = tabs_obj.id or f"_tab_{board_id}"
-
-        default_tab = 0
-        if tabs_obj.default:
-            default_slug = slugify(tabs_obj.default)
-            if default_slug not in tab_slugs:
-                raise CompilationError.from_code(
-                    ERR_TAB_DEFAULT_UNKNOWN,
-                    default=tabs_obj.default,
-                    slug=default_slug,
-                    slugs=tab_slugs,
-                )
-            default_tab = tab_slugs.index(default_slug)
+        # Unique per board, so nested tabs layouts never share a variable.
+        tab_variable = f"_tab_{board_id}"
 
         return Layout(
             type=LayoutType.TABS,
@@ -290,8 +279,6 @@ def build_unified_layout(
             tab_titles=tab_titles,
             tab_slugs=tab_slugs,
             tab_variable=tab_variable,
-            default_tab=default_tab,
-            tab_position=tabs_obj.position,
         )
 
     elif board.charts:
@@ -350,6 +337,7 @@ def _resolve_layout_items(
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
     placements: Placements,
+    labels: Sequence[str] | None = None,
 ) -> list[LayoutItem]:
     """Resolve layout items to LayoutItem objects.
 
@@ -368,6 +356,8 @@ def _resolve_layout_items(
         chart_registry: Raw chart definitions for nested board normalization
         used_chart_ids: Set of already-used chart IDs for uniqueness
         parent_variables: Variables from parent scope for template resolution
+        labels: The tab labels keying ``items`` in a tabs layout, which name
+            each item's authoring path
 
     Returns:
         List of resolved LayoutItem objects
@@ -402,6 +392,9 @@ def _resolve_layout_items(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
+            source_path=_layout_source_path(path_prefix, f"{prefix}{idx}")
+            if labels is None
+            else prefixed(path_prefix, join_path(("tabs", labels[idx]))),
             placements=placements,
         )
         resolved.append(layout_item)
@@ -432,6 +425,7 @@ def _resolve_single_item(
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
+    source_path: str,
     placements: Placements,
 ) -> LayoutItem:
     """Resolve a single layout item.
@@ -477,7 +471,7 @@ def _resolve_single_item(
                 regional=regional,
                 links=links,
                 placements=placements,
-                source_path=_layout_source_path(path_prefix, item_id),
+                source_path=source_path,
             )
         elif item in charts:
             if chart_registry is None:
@@ -503,14 +497,11 @@ def _resolve_single_item(
                 f"Named chart dict must have exactly one key, got: {list(item.keys())}"
             )
         chart_name, chart_def = next(iter(item.items()))
-        validate_authored_name(
-            "Chart", chart_name, _layout_source_path(path_prefix, item_id) or item_id
-        )
+        validate_authored_name("Chart", chart_name, source_path or item_id)
         chart_dict = chart_def.model_dump(exclude_unset=True, exclude={"visible"})
         if used_chart_ids is None:
             used_chart_ids = set(charts.keys())
         inline_id = generate_inline_chart_id(chart_dict, item_id, used_chart_ids)
-        source_path = _layout_source_path(path_prefix, item_id)
         chart = normalize_chart(
             inline_id,
             chart_dict,
@@ -543,7 +534,7 @@ def _resolve_single_item(
 
         # Composed here, beside board_id, from the same tree position: both are
         # derived from where the item sits, so they cannot drift.
-        nested_path = _layout_source_path(path_prefix, item_id)
+        nested_path = source_path
         compiled_nested = normalize_board(
             item,
             board_id=f"{board_id}_{item_id}",
@@ -600,7 +591,6 @@ def _resolve_single_item(
         # omitted and an authored null on an absence field survives.
         chart_dict = item.model_dump(exclude_unset=True, exclude={"visible"})
         inline_id = generate_inline_chart_id(chart_dict, item_id, used_chart_ids)
-        source_path = _layout_source_path(path_prefix, item_id)
         chart = normalize_chart(
             inline_id,
             chart_dict,
@@ -645,11 +635,6 @@ def prefixed(path_prefix: AuthoringPathPrefix, segment: str) -> str:
     if path_prefix is None:
         return ""
     return f"{path_prefix}.{segment}" if path_prefix else segment
-
-
-def _tab_source_path(path_prefix: AuthoringPathPrefix, idx: int) -> str:
-    """A tab's absolute authoring path. See ``_layout_source_path`` for ``path_prefix``."""
-    return prefixed(path_prefix, f"tabs.items.{idx}")
 
 
 def _layout_source_path(path_prefix: AuthoringPathPrefix, item_id: str) -> str:
@@ -970,6 +955,7 @@ def _resolve_grid_items(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
+            source_path=_layout_source_path(path_prefix, f"grid{idx}"),
             placements=placements,
         )
 
@@ -1004,163 +990,3 @@ def _resolve_grid_items(
         resolved.append(layout_item)
 
     return resolved
-
-
-def _resolve_tab_items(
-    tabs: TabLayout,
-    query_registry: dict[str, AnyQuery],
-    board_id: str,
-    depth: int,
-    base_dir: ProjectDirectory | None = None,
-    default_source: str | None = None,
-    board_cache: CachePatch = INHERIT_CACHE,
-    chart_registry: dict[str, RegisteredChart] | None = None,
-    theme: str | None = None,
-    *,
-    resolved_style: ResolvedStyle,
-    chart_style_context: ChartStyleContext,
-    parent_level: int = 0,
-    sources: dict[str, Any],
-    html_policy: HtmlPolicy,
-    regional: Regional,
-    links: BoardLinks,
-    cache_root: CachePatch | None = None,
-    path_prefix: AuthoringPathPrefix = "",
-    placements: Placements,
-) -> tuple[list[LayoutItem], list[str]]:
-    """Resolve tab layout items.
-
-    Args:
-        tabs: TabLayout definition
-        query_registry: Query registry
-        board_id: Parent board ID
-        theme: Vega-Lite theme to inherit to nested boards
-        depth: Nesting depth
-        base_dir: ProjectDirectory handle for resolving external file references
-        default_source: Default source for inline queries
-        board_cache: The declaring dashboard's `cache:` layer, inherited
-            by every query normalized below it
-        chart_registry: Raw chart definitions for nested board normalization
-
-    Returns:
-        Tuple of (items, tab_titles)
-    """
-    from dbt_charts.core.compile.normalize.dispatch import (
-        compiled_meta,
-        normalize_board,
-    )
-
-    resolved: list[LayoutItem] = []
-    titles: list[str] = []
-
-    for idx, tab_item in enumerate(tabs.items):
-        titles.append(tab_item.title)
-
-        # Tab items can have nested layouts. exclude_unset (not exclude_none)
-        # so an explicit `style: {formats: null, ...}` round-trips as an
-        # authored null rather than collapsing into "never mentioned" — the
-        # same explicit-null-vs-unset distinction merge_patches relies on for
-        # every other nested-board path, which only this dict round-trip loses.
-        tab_dict = tab_item.model_dump(exclude_unset=True)
-
-        if any(tab_dict.get(k) is not None for k in ["rows", "cols", "grid", "tabs"]):
-            # Tab is a nested board. Pop TabItem-only fields not on AuthoredBoard,
-            # then model_validate so style errors include the "style." loc prefix.
-            tab_dict.pop("icon", None)
-            # The tab bar carries the title; the pane must not repeat it.
-            tab_dict.pop("title", None)
-            nested_board = AUTHORED_BOARD_ADAPTER.validate_python(
-                tab_dict, context=AUTHORED_INPUT
-            )
-            tab_path = _tab_source_path(path_prefix, idx)
-            compiled_nested = normalize_board(
-                nested_board,
-                board_id=f"{board_id}_tab{idx}",
-                parent_context={
-                    "parent_id": board_id,
-                    "base_dir": base_dir,
-                    "default_source": default_source,
-                    "cache_root": cache_root,
-                    "board_cache": board_cache,
-                    "sources": sources,
-                    "theme": theme,
-                    "html_policy": html_policy,
-                    "regional": regional,
-                    "links": links,
-                    "placements": placements,
-                },
-                query_registry=query_registry,
-                chart_registry=chart_registry,
-                depth=depth + 1,
-                base_dir=base_dir,
-                parent_level=parent_level,
-                path_prefix=tab_path or None,
-            )
-            resolved.append(
-                LayoutItem(
-                    type="board",
-                    board=compiled_nested,
-                    source_path=_tab_source_path(path_prefix, idx),
-                    notes=tab_item.notes,
-                )
-            )
-
-        elif tab_item.text:
-            check_listing_calls(tab_item.title, tab_item.text)
-            # Content-only tab. resolved_style/chart_style_context here are the
-            # parent's — a transient placeholder that normalize_board's later
-            # _propagate_resolved_style pass overwrites from authored_style,
-            # same as every other nested board (see the nested-board branch above).
-            content_board = Board(
-                id=f"{board_id}_tab{idx}",
-                notes=tab_item.notes or "",  # type-state: silent_fallback — notes: str
-                base_dir=None if base_dir is None else base_dir.relpath,
-                text=tab_item.text,
-                layout=Layout(type=LayoutType.ROWS, items=[]),
-                theme=theme,
-                html_policy=html_policy,
-                regional=regional,
-                links=links,
-                authored_style=tab_item.style,
-                resolved_style=resolved_style,
-                chart_style_context=chart_style_context,
-                level=parent_level + 1,
-                meta=compiled_meta(),
-            )
-            resolved.append(
-                LayoutItem(
-                    type="board",
-                    board=content_board,
-                    source_path=_tab_source_path(path_prefix, idx),
-                    notes=tab_item.notes,
-                )
-            )
-
-        else:
-            # Empty tab. Same transient-placeholder note as the content-only
-            # branch above — _propagate_resolved_style resolves the real value.
-            empty_board = Board(
-                id=f"{board_id}_tab{idx}",
-                notes=tab_item.notes or "",  # type-state: silent_fallback — notes: str
-                base_dir=None if base_dir is None else base_dir.relpath,
-                layout=Layout(type=LayoutType.ROWS, items=[]),
-                theme=theme,
-                html_policy=html_policy,
-                regional=regional,
-                links=links,
-                authored_style=tab_item.style,
-                resolved_style=resolved_style,
-                chart_style_context=chart_style_context,
-                level=parent_level + 1,
-                meta=compiled_meta(),
-            )
-            resolved.append(
-                LayoutItem(
-                    type="board",
-                    board=empty_board,
-                    source_path=_tab_source_path(path_prefix, idx),
-                    notes=tab_item.notes,
-                )
-            )
-
-    return resolved, titles

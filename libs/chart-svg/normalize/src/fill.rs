@@ -4,6 +4,7 @@
 
 use crate::files::ProjectFiles;
 use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored};
+use board_model::board::BoardBodyAuthored;
 use board_model::board::{Board, HtmlPolicy};
 use board_model::query::{QueryAuthored, Row};
 use board_model::rule::Auto;
@@ -210,24 +211,9 @@ fn inherit(
     parent: Option<HtmlPolicy>,
     ceiling: HtmlPolicy,
 ) -> Result<(), FillError> {
-    let mut item = |item: &mut LayoutItemAuthored| -> Result<(), FillError> {
-        let LayoutItemAuthored::Board(nested) = item else {
-            return Ok(());
-        };
-        if nested.body.card_gap == Some(true) {
-            return Err(FillError::NestedCardGap);
-        }
-        let own = nested.body.html_policy.or(parent);
-        nested.body.html_policy = own.map(|p| cap(p, ceiling));
-        nested
-            .body
-            .variables
-            .values_mut()
-            .for_each(|v| settle_input!(v));
-        match nested.body.layout.as_mut() {
-            Some(inner) => inherit(inner, nested.body.html_policy, ceiling),
-            None => Ok(()),
-        }
+    let mut item = |item: &mut LayoutItemAuthored| match item {
+        LayoutItemAuthored::Board(nested) => inherit_board(&mut nested.body, parent, ceiling),
+        _ => Ok(()),
     };
     match layout {
         LayoutAuthored::Rows(items) | LayoutAuthored::Cols(items) => {
@@ -240,10 +226,27 @@ fn inherit(
             .filter_map(|cell| cell.item.as_mut())
             .try_for_each(&mut item),
         LayoutAuthored::Tabs(tabs) => tabs
-            .items
-            .iter_mut()
-            .flatten()
-            .filter_map(|tab| tab.layout.as_mut())
-            .try_for_each(|inner| inherit(inner, parent, ceiling)),
+            .values_mut()
+            .try_for_each(|tab| inherit_board(&mut tab.body, parent, ceiling)),
+    }
+}
+
+fn inherit_board(
+    body: &mut BoardBodyAuthored,
+    parent: Option<HtmlPolicy>,
+    ceiling: HtmlPolicy,
+) -> Result<(), FillError> {
+    if body.card_gap == Some(true) {
+        return Err(FillError::NestedCardGap);
+    }
+    let own = body.html_policy.or(parent);
+    body.html_policy = own.map(|p| cap(p, ceiling));
+    body
+        .variables
+        .values_mut()
+        .for_each(|v| settle_input!(v));
+    match body.layout.as_mut() {
+        Some(inner) => inherit(inner, body.html_policy, ceiling),
+        None => Ok(()),
     }
 }

@@ -36,13 +36,12 @@ charts:
     y: v
     height: 120
 tabs:
-  items:
-    - title: One
-      rows:
-        - c
-    - title: Two
-      rows:
-        - c
+  One:
+    rows:
+      - c
+  Two:
+    rows:
+      - c
 """
 
 

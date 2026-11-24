@@ -12,7 +12,8 @@
 //! at the width the hug decided.
 
 use bind::bound::DrawnSet;
-use board_model::board::layout::{GridItem, Layout, LayoutItem, Placement, TabItem, TabLayout};
+use board_model::board::layout::{GridItem, Layout, LayoutItem, NestedBoard, Placement};
+use indexmap::IndexMap;
 use board_model::board::value::Length;
 use board_model::board::{items, Board, BoardBody};
 use board_model::ids::{ChartId, ItemId};
@@ -75,7 +76,7 @@ pub trait Facts {
     /// The effective style patch tab `tab` of the tabs board `body` lays out with.
     fn pane_style(&self, body: &BoardBody, tab: usize) -> Result<&StylePatch, Diagnostic>;
     /// Where the pane of `body`'s tabs layout starts below its tab strip.
-    fn pane_top(&mut self, body: &BoardBody, tabs: &TabLayout) -> Result<f64, Diagnostic>;
+    fn pane_top(&mut self, body: &BoardBody, tabs: &IndexMap<String, NestedBoard>) -> Result<f64, Diagnostic>;
     /// The height of `body`'s details summary bar.
     fn summary_height(&mut self, body: &BoardBody) -> Result<f64, Diagnostic>;
     /// How far below its bar a details section's content sits (`layout.details.content_y_offset`).
@@ -329,11 +330,14 @@ fn node(
     if details.is_none_or(|d| !d.collapsed) {
         match &body.layout {
             Layout::Tabs(tabs) => {
-                let open = drawn.active_tab(&body.id).ok_or_else(|| diag::err_internal(format!("no open tab for the tabs board {}", body.id)))?;
-                for (index, tab) in tabs.items.iter().enumerate() {
-                    let id = at.key("tabs").key("items").index(index);
+                for (index, tab) in tabs.values().enumerate() {
+                    let id = at.key("tabs").index(index);
+                    if drawn.is_hidden(&id) {
+                        continue;
+                    }
+                    let open = drawn.active_tab(&body.id).ok_or_else(|| diag::err_internal(format!("no open tab for the tabs board {}", body.id)))?;
                     let (pane, inner) = pane(body, tab, index, closed || index != open, Some(items(body, at).filter(|p| p.pane == [index]).collect::<Vec<_>>()), drawn, facts)?;
-                    node_items.push(Item { width: None, height: None, place: None, drawn: index == open, drawn_without_data: true, content: Content::Board(pane) });
+                    node_items.push(Item { width: tab.width.map(dim), height: tab.height.map(dim), place: None, drawn: index == open, drawn_without_data: true, content: Content::Board(pane) });
                     ids.push((id, Held::Board(inner)));
                 }
             }
@@ -375,32 +379,38 @@ fn kind_of(layout: &Layout, geometry: &BoardGeometry) -> (Kind, f64) {
 }
 
 /// One tab's pane: a nested board of the tab's own layout, in the tab's scope (`pane_style`), holding
-/// `placements` when it is the open tab. A tab with `text`, an icon or notes, and a
-/// tabs layout written inside a pane, are refused by name.
+/// `placements` when it is the open tab. A pane with anything of a nested board's own beyond its
+/// layout, style and size, and a tabs layout written inside a pane, are refused by name.
 fn pane(
     body: &BoardBody,
-    tab: &TabItem,
+    tab: &NestedBoard,
     index: usize,
     closed: bool,
     placements: Option<Vec<Placement>>,
     drawn: &DrawnSet,
     facts: &mut impl Facts,
 ) -> Result<(Node, Ids), Diagnostic> {
-    for (set, what) in [(tab.text.is_some(), "text"), (tab.icon.is_some(), "icon"), (tab.notes.is_some(), "notes")] {
+    let pane = &tab.body;
+    for (set, what) in [
+        (pane.text.is_some(), "text"),
+        (pane.notes.is_some(), "notes"),
+        (pane.title.is_some(), "title"),
+        (pane.details.is_some(), "details"),
+    ] {
         if set {
             return Err(Diagnostic::refused(refuse!("a tab with its own `{what}` is not supported")));
         }
     }
-    if matches!(tab.layout, Layout::Tabs(_)) {
+    if matches!(pane.layout, Layout::Tabs(_)) {
         return Err(Diagnostic::refused(refuse!("a tabs layout inside a tab is not supported")));
     }
     let geometry = board_geometry(facts.pane_style(body, index)?)?;
-    let (kind, layout_gap) = kind_of(&tab.layout, &geometry);
+    let (kind, layout_gap) = kind_of(&pane.layout, &geometry);
     let (chrome, chrome_height, chrome_top) = geometry.chrome();
     let mut node_items = Vec::new();
     let mut ids = Vec::new();
     for placement in placements.into_iter().flatten().filter(|p| !drawn.is_hidden(&p.id) && !(closed && opens_a_closed_tab_cannot_hold(p.item))) {
-        let (item, inner) = item(&tab.layout, &placement, closed, drawn, facts)?;
+        let (item, inner) = item(&pane.layout, &placement, closed, drawn, facts)?;
         node_items.push(item);
         ids.push((placement.id, inner));
     }

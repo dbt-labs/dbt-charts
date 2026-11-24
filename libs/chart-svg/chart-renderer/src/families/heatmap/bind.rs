@@ -14,9 +14,9 @@ use super::{
 };
 use crate::common::{MirrorGhost};
 use ::bind::rows::{dimension_sort_domain, row_str, SortAggregate};
-use diagnostic::Diagnostic;
+use diagnostic::{diag, Diagnostic};
 use crate::families::color_scale::ContinuousColor;
-use crate::families::heatmap_facet::{date_dimension, first_appearance};
+use crate::families::heatmap_facet::{axis_sort, date_dimension, first_appearance};
 use ::bind::temporal::{infer_vega_type, VegaType};
 use ::bind::temporal::{TimeUnit};
 use crate::{BoardStyle, Padding, Payload};
@@ -140,18 +140,18 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let rows = drop_invalid_color_rows(rows, &r.color, kind);
 
     // ── Band domains: first appearance over the rows, or an authored
-    // `chart.sort`'s per-category MIN order. `_write_dimension_sort`
-    // (`emitters/heatmap.py:70-75`) pins `sort: null` on both dimensions when
-    // nothing is authored: Vega-Lite's `domainSort` (`compile/scale/domain.ts`
-    // `// sort == null`) emits no domain sort, and Vega's `valuesRef`
-    // (`parsers/scale.js` `singularDomain`) then keeps the aggregate's encounter
-    // order. `_write_dimension_sort` reaches BOTH dimensions identically, so
-    // `r.sort` is read once rather than per-axis.
-    let dimension_domain = |field: &str| -> Result<Vec<String>, String> {
-        dimension_sort_domain(&rows, field, first_appearance(&rows, field), r.sort.as_ref(), SortAggregate::Min, "heatmap")
+    // `chart.sort`'s per-category MIN order on a category axis. A date axis
+    // keeps its calendar order (`axis_sort`), so with both axes dates a sort
+    // has nothing to rank.
+    if let (Some(sort), Some(_), Some(_)) = (&r.sort, x_grain, y_grain) {
+        return Err(diag::err_heatmap_sort_date_axes(sort.by.as_str(), r.x.as_str(), r.y.as_str()));
+    }
+    let dimension_domain = |field: &str, grain: Option<TimeUnit>| -> Result<Vec<String>, String> {
+        let sort = axis_sort(r.sort.as_ref(), grain);
+        dimension_sort_domain(&rows, field, first_appearance(&rows, field), sort, SortAggregate::Min, "heatmap")
     };
-    let x_domain = dimension_domain(&r.x)?;
-    let y_domain = dimension_domain(&r.y)?;
+    let x_domain = dimension_domain(&r.x, x_grain)?;
+    let y_domain = dimension_domain(&r.y, y_grain)?;
 
     let coloring = if kind == ColorKind::Dates {
         let (min, max, aware) = date_color_extent(&types, &rows, &r.color)?;

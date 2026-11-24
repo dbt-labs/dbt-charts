@@ -178,19 +178,31 @@ fn bind_slices(
     } else {
         None
     };
+    let ladder_domain = match color_field {
+        Some(cf) if r.patterns.is_ladder() => Some(series_domain(r, rows, cf)),
+        _ => None,
+    };
     let slices = patches
         .into_iter()
         .enumerate()
         .map(|(idx, patch)| {
             let fill = match (color_field, category_scale) {
                 _ if patch.fill.is_some() => crate::pattern::Paint::Color(patch.fill.clone().unwrap_or_default()),
-                (None, _) => r.patterns.category(0, &r.style.single_series_fill)?,
+                (None, _) => r.patterns.category(0, 0, 1, &r.style.single_series_fill)?,
                 (Some(cf), Some(scale)) if !matches!(rows[idx].get(cf), None | Some(Value::Null)) => {
                     crate::common::category_paint(scale, &row_str(&rows[idx], cf), &r.palette, &r.patterns)?
                 }
                 _ => {
                     let slot = palette_slot(r, rows, color_field, idx);
-                    r.patterns.category(slot, &r.palette[slot])?
+                    let (rung, count) = match (&ladder_domain, color_field) {
+                        (Some(domain), Some(cf)) => {
+                            let value = row_str(&rows[idx], cf);
+                            let rung = domain.iter().position(|v| *v == value).ok_or_else(|| format!("pie: {value:?} has no place among the series {domain:?}"))?;
+                            (rung, domain.len())
+                        }
+                        _ => (slot, rows.len()),
+                    };
+                    r.patterns.category(slot, rung, count, &r.palette[slot])?
                 }
             };
             let aria = value_title
@@ -201,6 +213,22 @@ fn bind_slices(
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok(slices)
+}
+
+/// The series a pie's slices are: a linked legend's options, else the color values in row order,
+/// each once (a null is none). A ladder's count and rungs index it.
+fn series_domain(r: &Resolved, rows: &[serde_json::Map<String, Value>], color_field: &str) -> Vec<String> {
+    if let Some(options) = r.legend_view.as_ref().and_then(|view| view.series()) {
+        return options.to_vec();
+    }
+    let mut domain: Vec<String> = Vec::new();
+    for row in rows.iter().filter(|row| !matches!(row.get(color_field), None | Some(Value::Null))) {
+        let value = row_str(row, color_field);
+        if !domain.contains(&value) {
+            domain.push(value);
+        }
+    }
+    domain
 }
 
 /// The palette position of row `idx`'s slice: its series' slot in a linked legend, else its row
@@ -284,6 +312,9 @@ fn bind_labels(
                     .unwrap_or_else(|| "#333".into())
             })
         });
+        // A ladder's wedges show one ink, so their labels take it, not a series color the chart
+        // never draws.
+        let fill = r.patterns.ladder_ink().map_or(fill, str::to_string);
         // A rule's fill replaces the slice's paint, so its label ink follows it unless the
         // rule inks the label itself.
         let patch = &patches[idx];

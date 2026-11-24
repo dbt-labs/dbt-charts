@@ -89,9 +89,7 @@ impl OffChart {
                 path = path.line_to(px, py);
             }
             retrace(&mut nodes, &path.line_to(x.1, baseline).close());
-            if let Some(reveal) = self.reveal.published() {
-                stamp_hover(&mut nodes, &Hover { length: baseline - reach, plot: baseline - ceiling, reveal }, &self.canvas);
-            }
+            stamp_hover(&mut nodes, &Hover { length: baseline - reach, plot: baseline - ceiling, reveal: self.reveal.published() }, &self.canvas);
             self.bars.push(Outlier { x, value, ink: ink.to_string(), depth });
         }
         nodes
@@ -112,7 +110,7 @@ impl OffChart {
             Some(color) => color.clone(),
             None => dbt_charts_color::ensure_readable_ink(&font.ink, &r.canvas, crate::common::OUTSIDE_INK_CONTRAST)?,
         };
-        let face = Face { family: &font.family, size, hover: self.reveal.published().is_some() };
+        let face = Face { family: &font.family, size };
         let mut nodes = Vec::new();
         for bar in &self.bars {
             let text = format!("{} \u{2192}", label_text(ml, r.style.label_is_house, bar.value, None)?);
@@ -138,12 +136,11 @@ impl OffChart {
     /// Moves every header line of a class in `lines` and the legend above the plot (in `head`,
     /// card coordinates, the plot `plot_w` wide at `origin`) to `front`, on one band of the card's color,
     /// `BAND_OPACITY` opaque and as wide as the text it backs, so the header always paints over the
-    /// torn bars. Call it before the bars tear: each tear fits the room above the band. With a
-    /// hover reveal the band and the lines carry `data-dbt-lifted`, which the hover runtime copies
+    /// torn bars. Call it before the bars tear: each tear fits the room above the band. The
+    /// band and the lines carry `data-dbt-lifted`, which the hover runtime copies
     /// over the bars it draws at true length, crossed or not. The band is one shape, the strips
     /// behind each line merged, so where two meet the bars show through it once.
     pub(super) fn lift(&mut self, head: &mut Vec<Node>, origin: (f64, f64), plot_w: f64, lines: &[&str], fonts: &FontBook) -> Result<(), String> {
-        let hover = self.reveal.published().is_some();
         let mut strips: Vec<scene::Bounds> = Vec::new();
         let mut lifted: Vec<usize> = Vec::new();
         for (i, node) in head.iter_mut().enumerate() {
@@ -166,9 +163,7 @@ impl OffChart {
             if let Some(strip) = strip {
                 strips.push(strip);
                 lifted.push(i);
-                if hover {
-                    node.attrs = std::mem::take(&mut node.attrs).set("data-dbt-lifted", "");
-                }
+                node.attrs = std::mem::take(&mut node.attrs).set("data-dbt-lifted", "");
             }
         }
         if lifted.is_empty() {
@@ -219,7 +214,7 @@ impl OffChart {
                     crossed = true;
                 }
             }
-            if crossed && self.reveal.published().is_some() {
+            if crossed {
                 node.attrs = std::mem::take(&mut node.attrs).set("data-dbt-lifted", "");
             }
         }
@@ -244,7 +239,7 @@ impl OffChart {
             }
         }
         let attrs = Attrs::new().set("fill", &self.canvas).num("fill-opacity", BAND_OPACITY);
-        let attrs = if self.reveal.published().is_some() { attrs.set("data-dbt-lifted", "") } else { attrs };
+        let attrs = attrs.set("data-dbt-lifted", "");
         let mut front = vec![Node::new(Role::Chrome, attrs, Shape::Path(band))];
         front.append(&mut self.front);
         front
@@ -357,15 +352,12 @@ fn stamp_hover(nodes: &mut [Node], hover: &Hover, canvas: &str) {
 struct Face<'a> {
     family: &'a str,
     size: f64,
-    /// Publish the label for the hover runtime to copy over a true-length drawing.
-    hover: bool,
 }
 
 impl Face<'_> {
     fn text(&self, at: (f64, f64), anchor: &str, text: &str, weight: f32, fill: &str) -> Node {
-        let attrs = Attrs::new().set("text-anchor", anchor).vega("font-family", self.family).num("font-size", self.size).set("font-weight", format!("{weight}")).set("fill", fill);
         // The hover runtime copies an outlier's label over its true-length drawing.
-        let attrs = if self.hover { attrs.set("data-dbt-off-chart-label", "") } else { attrs };
+        let attrs = Attrs::new().set("text-anchor", anchor).vega("font-family", self.family).num("font-size", self.size).set("font-weight", format!("{weight}")).set("fill", fill).set("data-dbt-off-chart-label", "");
         Node::text(Role::Label, at, attrs, text)
     }
 }

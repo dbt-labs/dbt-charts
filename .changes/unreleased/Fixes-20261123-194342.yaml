@@ -1,0 +1,5 @@
+kind: Fixes
+body: Charts in titled boards side by side in a `cols:` row end level again when one board's title wraps.
+time: 2026-11-23T19:43:42.562500372Z
+custom:
+    DbtChartsIssue: "111"

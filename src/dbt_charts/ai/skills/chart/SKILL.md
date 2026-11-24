@@ -49,7 +49,7 @@ Data files (`.csv`, `.json`, `.parquet`) in the project root and `data/` need no
 - `rows` (list of text|mapping|map of mapping): Vertical stack layout: list of chart names or inline chart/board definitions
 - `cols` (list of text|mapping|map of mapping): Horizontal layout: list of chart names or inline chart/board definitions
 - `grid` ({columns, items}): CSS-grid style layout with explicit row/column placement
-- `tabs` ({id, position, default, items}): Tabbed navigation layout where each tab contains its own layout
+- `tabs` (map of mapping): Tabs: each tab's label, in display order, to the board it shows
 - `width` (text|int): Width when nested (e.g., '50%', '400px', or an integer in pixels)
 - `height` (text|int): Height when nested (e.g., '300px' or an integer in pixels)
 - `style` (mapping): Appearance overrides for this board (background, border, and more)

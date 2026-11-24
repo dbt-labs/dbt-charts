@@ -174,7 +174,7 @@ Pick exactly one of:
 - `rows: [chart_a, chart_b]` — vertical stack
 - `cols: [chart_a, chart_b]` — horizontal arrangement
 - `grid: { columns: 24, items: [...] }` — CSS-grid placement
-- `tabs: { items: [{title: ..., rows: [...]}] }` — tabbed navigation
+- `tabs: {<label>: {rows: [...]}}` — tabbed navigation; each key is a tab's label, its value a nested board
 
 **See also:** the Board section (full top-level reference),
 the Queries section, the Charts section, the Variables section, the Layout section,
@@ -1800,20 +1800,15 @@ grid:
 
 # tabs — tabbed navigation
 tabs:
-  id: view                                # URL param + variable name (auto if omitted)
-  position: top                           # top | left
-  default: overview
-  items:
-    - title: Overview
-      icon: 📊
-      notes: "KPIs and trend"
-      rows: [kpi_revenue, trend_chart]
-    - title: Details
-      rows: [detail_table]
-    - title: Notes
-      text: |
-        Operational notes go here.
-      style: { padding: 16 }
+  Overview:
+    notes: "KPIs and trend"
+    rows: [kpi_revenue, trend_chart]
+  Details:
+    rows: [detail_table]
+  Notes:
+    text: |
+      Operational notes go here.
+    style: { padding: 16 }
 ```
 
 ### Section-level fields (per `rows` / `cols` entry)

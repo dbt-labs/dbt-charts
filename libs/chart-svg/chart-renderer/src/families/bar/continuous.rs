@@ -1340,6 +1340,8 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                     ink: None,
                     font_color: patch.label_color.clone(),
                     font_weight: patch.label_weight.clone(),
+                    on: crate::pattern::LabelOn::Color,
+                    rect: None,
                 })
             })
             .collect::<Result<Vec<LabelPoint>, String>>()?;

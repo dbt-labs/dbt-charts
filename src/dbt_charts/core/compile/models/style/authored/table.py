@@ -29,6 +29,7 @@ from dbt_charts.core.compile.models.constraints import (
     Constraint,
     Forbids,
     IsSet,
+    ItemsSet,
     Requires,
     ValueIn,
 )
@@ -311,6 +312,15 @@ class TableColumnConfig(ConstrainedModel):
             ("glyph",),
             "TableColumnConfig glyph_color requires glyph to be set",
             when=(IsSet("glyph_color"),),
+        ),
+        Requires(
+            ("glyph",),
+            "TableColumnConfig: a 'conditional' rule sets tone or glyph_color "
+            "without a glyph: set glyph in a rule or on the column.",
+            when=(
+                ItemsSet("conditional", ("tone", "glyph_color")),
+                ItemsSet("conditional", ("glyph",), negate=True),
+            ),
         ),
         AtMostOneOf(
             ("width", "max_width"),

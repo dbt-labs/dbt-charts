@@ -9,6 +9,7 @@ pub mod fetch;
 pub mod find_queries;
 pub mod layout;
 pub mod marks;
+pub mod pattern;
 pub mod pie;
 pub mod semantics;
 pub mod window;

@@ -186,11 +186,10 @@ charts:
     query: b
     value: n
 tabs:
-  items:
-    - title: One
-      rows: [ka]
-    - title: Two
-      rows: [kb]
+  One:
+    rows: [ka]
+  Two:
+    rows: [kb]
 """
 
 

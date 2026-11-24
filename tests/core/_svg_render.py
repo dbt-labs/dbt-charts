@@ -50,7 +50,10 @@ def pinned_clock() -> datetime:
 
 
 def render_board_svg_result(
-    yaml_content: str = SAMPLE_BOARD_YAML, *, controls: bool = False
+    yaml_content: str = SAMPLE_BOARD_YAML,
+    *,
+    controls: bool = False,
+    variables: dict[str, Any] | None = None,
 ) -> RenderResult:
     """``controls=True`` renders as a live host would — the board a page binds,
     rather than a static export (which alone still carries the pagination
@@ -63,14 +66,24 @@ def render_board_svg_result(
         clock=pinned_clock,
     )
     return render(
-        result.board, executor.ctx, executor.ledger, format="svg", controls=controls
+        result.board,
+        executor.ctx,
+        executor.ledger,
+        format="svg",
+        controls=controls,
+        variables=variables,
     )
 
 
 def render_board_to_svg(
-    yaml_content: str = SAMPLE_BOARD_YAML, *, controls: bool = False
+    yaml_content: str = SAMPLE_BOARD_YAML,
+    *,
+    controls: bool = False,
+    variables: dict[str, Any] | None = None,
 ) -> str:
-    return render_board_svg_result(yaml_content, controls=controls).output
+    return render_board_svg_result(
+        yaml_content, controls=controls, variables=variables
+    ).output
 
 
 def board_with_mark(

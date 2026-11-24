@@ -105,7 +105,6 @@ from dbt_charts.core.execute.lookup import (
 )
 from dbt_charts.core.execute.observability import WarehouseObserver, notify_observers
 from dbt_charts.core.execute.plan import (
-    CACHE_REF_JINJA_RE,
     ExecContext,
     QueryRun,
     cache_policy,
@@ -138,6 +137,7 @@ from dbt_charts.core.execute.query_result import (
     connection_failure,
     handle_adapter_error,
     plain_error,
+    primary_truncation_reason,
     resolve_effective_row_limit,
     take,
 )
@@ -241,11 +241,7 @@ def _waves(misses: Sequence[Miss]) -> list[list[Miss]]:
         miss.name: {
             name
             for name in (
-                *(
-                    CACHE_REF_JINJA_RE.findall(miss.entry["sql"])
-                    if miss.entry["type"] == "sql"
-                    else ()
-                ),
+                *miss.planned.upstreams,
                 *(run.name for run in miss.planned.option_types.values()),
             )
             if name in by_name
@@ -393,8 +389,8 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
     except DbtChartsError as e:
         return failed(e)
 
-    # Cache-ref composition ({{ queries.X.cache }}) is detected on the
-    # *authored* SQL, before reference resolution. The composing query runs
+    # Cache-ref composition ({{ queries.X.cache }}, also inside an inlined
+    # {{ queries.Y }}) is decided by the plan's upstreams. The composing query runs
     # over the upstream rows in an isolated in-process DuckDB — never
     # string-interpolated onto the source adapter or an application-database
     # connection. It is incompatible with an incremental tail: the whole
@@ -402,13 +398,18 @@ def execute_miss(ctx: ExecContext, ledger: Ledger, miss: Miss) -> Outcome:
     # predicate can be appended.
     if planned.upstreams:
         assert entry["type"] == "sql"
-        composed, cache_ref_reason = _execute_cache_ref_query(
+        composed, reason = _execute_cache_ref_query(
             ctx, ledger, entry, planned.upstreams, query_name, query_plan
         )
+        for upstream in planned.upstreams:
+            if (cut := ledger.truncations.get(upstream)) is not None:
+                reason = primary_truncation_reason(reason, cut.reason)
         truncation = (
             None
-            if cache_ref_reason is None
-            else TruncationInfo(query_name, len(composed.rows), cache_ref_reason)
+            if reason is None
+            else TruncationInfo(
+                query_name, len(composed.rows), reason, tuple(planned.upstreams)
+            )
         )
         return Rows(composed, ctx.clock(), truncation=truncation)
 
@@ -598,8 +599,7 @@ def _execute_cache_ref_query(
     memory during composition, before any post-fetch check runs.
 
     Args:
-        entry: The composing query's plan entry, authored SQL
-            (``{{ queries.X.cache }}`` and ``{{ variable }}`` templates still present).
+        entry: The composing query's plan entry.
         upstreams: The run of each referenced X.
         query_name: Name of the composing query (for error messages).
         query_plan: The plan whose variable values it binds.
@@ -614,11 +614,9 @@ def _execute_cache_ref_query(
     """
     require_cache_refs(ctx, query_name)
     assert entry["type"] == "sql"
-    sql = entry["sql"]
-
-    ref_names = list(
-        dict.fromkeys(CACHE_REF_JINJA_RE.findall(sql))
-    )  # preserve order, dedupe
+    # Expanded first, so a cache ref inside an inlined query renders to its
+    # sentinel like one written here.
+    sql = expanded_sql(ctx.plan, query_name)
 
     # name → upstream rows, registered as isolated-DuckDB tables below; the
     # declared schema beside them, so an upstream with no row still gets a
@@ -626,8 +624,8 @@ def _execute_cache_ref_query(
     named_rows: dict[str, CacheRows] = {}
     schemas: dict[str, dict[str, ColumnType]] = {}
 
-    for ref_name in ref_names:
-        upstream = _settled_rows(ledger, upstreams[ref_name])
+    for ref_name, upstream_run in upstreams.items():
+        upstream = _settled_rows(ledger, upstream_run)
         check_formats(ctx, ref_name, upstream)
         named_rows[ref_name] = upstream.rows
         schemas[ref_name] = upstream.schema

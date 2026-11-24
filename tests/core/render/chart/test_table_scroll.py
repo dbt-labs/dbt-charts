@@ -308,3 +308,64 @@ def test_an_image_or_pdf_export_fits_the_table_instead_of_scrolling(
     # The same board on screen still scrolls.
     screen = renderer_module.render(result.board, ctx, Ledger(), format="svg").output
     assert "data-dbt-table-scroll" in screen
+
+
+def _chart_height(svg: str) -> float:
+    match = re.search(r'data-chart-id="t"[^>]*data-chart-height="([^"]+)"', svg)
+    assert match, "expected chart t"
+    return float(match.group(1))
+
+
+def test_an_export_sizes_the_slot_for_the_fitted_table(
+    monkeypatch: pytest.MonkeyPatch,
+    local_project: Callable[..., FilesystemProject],
+) -> None:
+    """A squeezed table's text wraps taller than the scrolling one: the export's
+    slot is the one an authored `fit` gets, so no row pages out under the footer."""
+    from dbt_charts.core.execute.lookup import Ledger
+    from dbt_charts.core.execute.plan import make_context, utc_now
+    from dbt_charts.core.render import renderer as renderer_module
+
+    converted: list[str] = []
+
+    def capture(svg: str, *_args: object) -> bytes:
+        converted.append(svg)
+        return b"bytes"
+
+    monkeypatch.setattr(renderer_module, "to_png", capture)
+    keys = [f"c{i}" for i in range(20)]
+    rows = "\n".join(
+        "      - {" + ", ".join(f"{k}: value {r}-{k}" for k in keys) + "}"
+        for r in range(3)
+    )
+    pins = "      columns:\n" + "".join(
+        f"        {k}:\n          width: 300\n" for k in keys[:2]
+    )
+
+    def board(style: str) -> str:
+        return (
+            "queries:\n  q:\n    type: values\n    rows:\n" + rows + "\n"
+            "charts:\n  t:\n    query: q\n    type: table\n    style:\n"
+            + style
+            + pins
+            + "rows:\n  - t\n"
+        )
+
+    env = build_exec_env(local_project(Path.cwd()))
+
+    def render(yaml_text: str, fmt: str) -> RenderResult:
+        compiled = compile_board(yaml_text)
+        assert compiled.board is not None
+        ctx = make_context(
+            compiled.board,
+            plan_of(compiled.board, env, utc_now(), all_queries=True),
+            env,
+        )
+        return renderer_module.render(compiled.board, ctx, Ledger(), format=fmt)
+
+    exported = render(board(""), "png")
+    (svg,) = converted
+    fitted = render(board("      column_layout:\n        overflow: fit\n"), "svg")
+    assert isinstance(fitted.output, str)
+    assert _chart_height(svg) == _chart_height(fitted.output)
+    assert "WARN-TABLE-PAGE-SQUEEZED" not in _codes(exported)

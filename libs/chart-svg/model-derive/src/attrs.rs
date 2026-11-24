@@ -315,6 +315,10 @@ fn condition(span: Span, name: &str, args: &[Item]) -> Result<TokenStream> {
             let (v, neg) = (values(rest, span)?, name == "not_in");
             quote!(::model_core::Condition::ValueIn { key: #k, values: &[#(#v),*], negate: #neg })
         }
+        "items_set" | "no_items_set" => {
+            let (n, neg) = (strs(rest, span)?, name == "no_items_set");
+            quote!(::model_core::Condition::ItemsSet { key: #k, item_keys: &[#(#n),*], negate: #neg })
+        }
         "call" | "not_call" => {
             let (n, neg) = (strs(rest, span)?, name == "not_call");
             quote!(::model_core::Condition::IsCall { key: #k, names: &[#(#n),*], negate: #neg })
@@ -322,7 +326,7 @@ fn condition(span: Span, name: &str, args: &[Item]) -> Result<TokenStream> {
         _ => {
             return Err(Error::new(
                 span,
-                "a condition is `set`, `list`, `is_in`, `not_in`, `call` or `not_call`",
+                "a condition is `set`, `list`, `is_in`, `not_in`, `call`, `not_call`, `items_set` or `no_items_set`",
             ))
         }
     })

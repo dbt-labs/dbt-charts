@@ -275,8 +275,6 @@ def render_tabs_layout_terminal(
     available_width: int,
     available_height: int,
     tab_titles: list[str] | None = None,
-    default_tab: int = 0,
-    tab_position: str = "top",
     background: str | None = None,
     *,
     resolved_style: ResolvedStyle,
@@ -293,8 +291,6 @@ def render_tabs_layout_terminal(
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
         tab_titles: Optional list of tab titles
-        default_tab: Default active tab (not used in terminal)
-        tab_position: Tab position ("top" or "left", not used in terminal)
         background: Optional background color (not used in terminal)
         resolved_style: Board-scoped style for grid column config.
 

@@ -31,8 +31,8 @@ pub struct Knocked {
 
 /// `marks` with the `canvas`-colored stroke of every shape taken off and moved into an
 /// undercoat and the mask `name` (within the chart's id `scope`) over `region` (the plot box) and any mark past it. A shape
-/// drawn in its own ink (`data-dbt-ink`) keeps its stroke. Marks with no canvas stroke come back
-/// unchanged. A caller whose marks paint over nothing but the canvas (pie slices, map regions)
+/// drawn in its own ink keeps its stroke; `data-dbt-ink` does not exempt a canvas stroke.
+/// Marks with no canvas stroke come back unchanged. A caller whose marks paint over nothing but the canvas (pie slices, map regions)
 /// discards the undercoat.
 pub fn knock_out(
     marks: Vec<Node>,
@@ -257,7 +257,6 @@ impl Found<'_> {
             attrs
                 .get_num("stroke-width")
                 .is_some_and(|width| width > 0.0)
-                && attrs.get("data-dbt-ink").is_none()
                 && attrs
                     .get("data-dbt-rest-stroke")
                     .or(attrs.get("stroke"))
@@ -352,6 +351,20 @@ mod tests {
             (10.0, 0.0, 20.0, h),
             Attrs::new().set("fill", "#336699").set("stroke", "#ffffff").num("stroke-width", 1.0),
         )
+    }
+
+    /// A patterned wedge carries its ink for the hover runtime beside a canvas gap stroke: the gap is
+    /// cut like any other canvas stroke, so it leaves the shape and enters the mask.
+    #[test]
+    fn a_shape_carrying_its_ink_beside_a_canvas_stroke_is_still_cut() {
+        let wedge = Node::rect(
+            Role::Chrome,
+            (10.0, 0.0, 20.0, 40.0),
+            Attrs::new().set("fill", "#336699").set("data-dbt-ink", "#222222").set("stroke", "#ffffff").num("stroke-width", 3.0),
+        );
+        let knocked = knock_out(vec![wedge], "#ffffff", "ko0", "c", (0.0, 0.0, 100.0, 100.0));
+        assert_eq!(knocked.marks.len(), 2, "the mask, then the shape");
+        assert_eq!(knocked.marks[1].attrs.get("stroke"), None, "the gap stroke came off the shape");
     }
 
     /// A board can place one chart twice with the same ids, so a mask is named for what it cuts

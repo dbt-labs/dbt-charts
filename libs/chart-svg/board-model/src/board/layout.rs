@@ -8,21 +8,14 @@
 use crate::board::value::{Length, Visible};
 use crate::board::BoardBody;
 use crate::chart::Chart;
-use crate::facet::{DisplayText, Markdown};
+use crate::facet::DisplayText;
 use crate::ids::{ChartId, ItemId};
-use crate::string_enum;
-use crate::style::style::Style;
 use indexmap::IndexMap;
 use model_core::{
     build_payload, Build, Cx, FromNode, Leaf, Merge, Node, Spell, TypeExpr, Unset, Walk,
 };
 use model_derive::Model;
 use yaml::{Kind, Value};
-
-string_enum!(
-    /// Which edge the tab bar sits on.
-    TabPosition { Top = "top", Left = "left" }
-);
 
 /// A board arranged on one axis, or in a grid, or in tabs. Exactly one is written;
 /// a second key is an error, and a board that writes none is arranged by normalize
@@ -35,8 +28,10 @@ pub enum Layout {
     Cols(Vec<LayoutItem>),
     /// CSS-grid style layout with explicit row/column placement.
     Grid(GridLayout),
-    /// Tabbed navigation where each tab contains its own layout.
-    Tabs(TabLayout),
+    /// Each tab's label, in display order, to the board it shows. A board's tabs are what it
+    /// wrote: an inherited tab is never merged in by label.
+    #[model(merge = override)]
+    Tabs(IndexMap<String, NestedBoard>),
 }
 
 /// A board nested in a parent's layout: its place in the parent, and its own content.
@@ -220,45 +215,6 @@ pub struct GridLayout {
     pub items: Vec<GridItem>,
 }
 
-/// One tab: a title and a layout of its own.
-#[derive(Debug, Clone, PartialEq, Model)]
-pub struct TabItem {
-    /// Tab label displayed in the tab bar.
-    pub title: DisplayText,
-    /// Icon shown in the tab (an emoji or icon name).
-    #[model(absent = "no icon")]
-    pub icon: Option<String>,
-    /// Optional metadata for AI search, emitted into the SVG DOM as `data-layout-notes`;
-    /// never painted.
-    #[model(absent = "no notes")]
-    pub notes: Option<DisplayText>,
-    /// Markdown text content shown in this tab.
-    #[model(absent = "no text")]
-    pub text: Option<Markdown>,
-    /// Appearance overrides for this tab's content area.
-    #[model(absent = "the board's style applies")]
-    pub style: Option<Box<Style>>,
-    /// The tab's content: one of `rows`, `cols`, `grid`, `tabs`.
-    #[model(keys, fill = fill_rows)]
-    pub layout: Layout,
-}
-
-/// Tab layout configuration. `id` names the variable and URL parameter that select a tab.
-#[derive(Debug, Clone, PartialEq, Model)]
-pub struct TabLayout {
-    /// Variable name and URL param base for tab selection.
-    #[model(absent = "generated from the board id")]
-    pub id: Option<String>,
-    /// Which edge the tab bar sits on.
-    #[model(fill = "top")]
-    pub position: TabPosition,
-    /// Title of the tab opened on load.
-    #[model(absent = "the first tab opens")]
-    pub default: Option<DisplayText>,
-    /// Tabs in display order.
-    pub items: Vec<TabItem>,
-}
-
 /// One layout item of a body, where it sits and how it is placed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Placement<'a> {
@@ -269,6 +225,79 @@ pub struct Placement<'a> {
     pub pane: Vec<usize>,
     /// The grid cell holding the item, for the grid's own placement fields.
     pub cell: Option<&'a GridItem>,
+}
+
+/// The keys of a position id, each with its index (`rows[2]` is `("rows", Some(2))`).
+fn position_steps(at: &ItemId) -> Vec<(&str, Option<usize>)> {
+    let rest = at.as_str().trim_start_matches('@');
+    if rest.is_empty() {
+        return Vec::new();
+    }
+    rest.split('.')
+        .map(|part| match part.split_once('[') {
+            Some((key, n)) => (key, n.trim_end_matches(']').parse().ok()),
+            None => (part, None),
+        })
+        .collect()
+}
+
+/// The authored path of the item at `at` below `body`, segment by segment (`rows`, `3`; `tabs`,
+/// `Overview`, `rows`, `2`): a position's indices become segments, and a tab is its label.
+pub fn authored_path(body: &BoardBody, at: &ItemId) -> Result<Vec<String>, String> {
+    let missing = || format!("the position {at} names no layout item");
+    let mut out = Vec::new();
+    let mut layout = &body.layout;
+    for (key, index) in position_steps(at) {
+        out.push(key.to_string());
+        let Some(i) = index else { continue };
+        let item = match (key, layout) {
+            ("rows", Layout::Rows(v)) | ("cols", Layout::Cols(v)) => v.get(i),
+            ("items", Layout::Grid(g)) => g.items.get(i).map(|cell| &cell.item),
+            ("tabs", Layout::Tabs(t)) => {
+                let (label, tab) = t.get_index(i).ok_or_else(missing)?;
+                out.push(label.clone());
+                layout = &tab.body.layout;
+                continue;
+            }
+            _ => None,
+        };
+        out.push(i.to_string());
+        match item.ok_or_else(missing)? {
+            LayoutItem::Board(nested) => layout = &nested.body.layout,
+            LayoutItem::Chart { .. } => {}
+        }
+    }
+    Ok(out)
+}
+
+/// [`authored_path`] in a parsed root layout, before normalize builds it.
+pub fn authored_path_parsed(root: Option<&LayoutAuthored>, at: &ItemId) -> Result<Vec<String>, String> {
+    let missing = || format!("the position {at} names no layout item");
+    let mut out = Vec::new();
+    let mut layout = root;
+    for (key, index) in position_steps(at) {
+        out.push(key.to_string());
+        let Some(i) = index else { continue };
+        let item = match (key, layout) {
+            ("rows", Some(LayoutAuthored::Rows(v))) | ("cols", Some(LayoutAuthored::Cols(v))) => v.get(i),
+            ("items", Some(LayoutAuthored::Grid(g))) => {
+                g.items.iter().flatten().nth(i).and_then(|cell| cell.item.as_ref())
+            }
+            ("tabs", Some(LayoutAuthored::Tabs(t))) => {
+                let (label, tab) = t.get_index(i).ok_or_else(missing)?;
+                out.push(label.clone());
+                layout = tab.body.layout.as_ref();
+                continue;
+            }
+            _ => None,
+        };
+        out.push(i.to_string());
+        match item.ok_or_else(missing)? {
+            LayoutItemAuthored::Board(nested) => layout = nested.body.layout.as_ref(),
+            LayoutItemAuthored::Chart(_) | LayoutItemAuthored::InlineChart(_) => {}
+        }
+    }
+    Ok(out)
 }
 
 /// The items of `body`'s own layout, tab panes' layouts included, in authored order, one level
@@ -304,9 +333,9 @@ fn walk<'a>(layout: &'a Layout, at: ItemId, pane: &mut Vec<usize>, out: &mut Vec
             place(id, &cell.item, Some(cell));
         }),
         Layout::Tabs(t) => {
-            for (i, tab) in t.items.iter().enumerate() {
+            for (i, tab) in t.values().enumerate() {
                 pane.push(i);
-                walk(&tab.layout, at.key("tabs").key("items").index(i), pane, out);
+                walk(&tab.body.layout, at.key("tabs").index(i), pane, out);
                 pane.pop();
             }
         }
@@ -329,8 +358,7 @@ pub fn place_visible(layout: &mut Layout, charts: &IndexMap<String, Chart>) {
         Layout::Rows(items) | Layout::Cols(items) => items.iter_mut().for_each(place),
         Layout::Grid(g) => g.items.iter_mut().for_each(|cell| place(&mut cell.item)),
         Layout::Tabs(t) => t
-            .items
-            .iter_mut()
-            .for_each(|tab| place_visible(&mut tab.layout, charts)),
+            .values_mut()
+            .for_each(|tab| place_visible(&mut tab.body.layout, charts)),
     }
 }

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, ParamSpec, TypeAlias, TypeVar
 
 import yaml
 
+from dbt_charts.core.compile.authoring.paths import join_path
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
     JsonValue,
@@ -295,16 +296,16 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
             continue
         if edit["kind"] == "write":
             yaml_text = set_board_values(
-                yaml_text, {".".join(edit["path"]): edit["value"]}
+                yaml_text, {join_path(edit["path"]): edit["value"]}
             )
             continue
         source, destination = edit["from"], edit["to"]
         if edit["expansion"]:
-            yaml_text = set_board_values(yaml_text, {".".join(source): None})
+            yaml_text = set_board_values(yaml_text, {join_path(source): None})
             yaml_text = set_board_values(
                 yaml_text,
                 {
-                    ".".join((*source, leaf)): leaf_value
+                    join_path((*source, leaf)): leaf_value
                     for leaf, leaf_value in edit["after"].items()
                     if isinstance(leaf_value, (str, int, float, bool))
                 },
@@ -332,7 +333,9 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
         # A value_map changes the value itself (html_policy's bool -> string),
         # so it needs the scalar setter, not a rename.
         if source[:-1] == destination[:-1] and not edit["value_map"]:
-            yaml_text = rename_key_at_path(yaml_text, ".".join(source), destination[-1])
+            yaml_text = rename_key_at_path(
+                yaml_text, join_path(source), destination[-1]
+            )
             continue
         if isinstance(value, dict) and not edit["value_map"]:
             yaml_text = _delete_paths_in_yaml_text(yaml_text, [_document_path(source)])
@@ -349,13 +352,13 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
             )
         if edit["value_map"]:
             value = edit["after"]
-        updates[".".join(destination)] = value
+        updates[join_path(destination)] = value
         # An identity-path Move (source == destination) rewrites the key's
         # value in place -- it must not also be queued as a removal, or the
         # removals/updates dicts below would collide on the same key and the
         # merge would delete the rewritten value instead of setting it.
         if source != destination:
-            removals.add(".".join(source))
+            removals.add(join_path(source))
 
     # staged != raw: only stamp a file this call actually changed something
     # in; a structurally-current file must never be rewritten for the stamp
@@ -405,9 +408,9 @@ def _replay_rewrite(
 
     A mapping kept under its parent is renamed in place and then edited leaf
     by leaf, so comments beside untouched leaves survive. A scalar rewritten in
-    place is set where it stands. Anything else is struck and its successor
-    written leaf by leaf at the destination. A value the rewrite drops is only
-    struck.
+    place is set where it stands. A list rewritten as a mapping, and anything
+    else, is struck and its successor written at the destination. A value the
+    rewrite drops is only struck.
     """
     from dbt_charts.core.compile.authoring.yaml_patch import (
         rename_key_at_path,
@@ -419,7 +422,14 @@ def _replay_rewrite(
     if source == destination and isinstance(rewritten, (str, int, float, bool)):
         if rewritten == value:
             return yaml_text
-        return set_board_values(yaml_text, {".".join(destination): rewritten})
+        return set_board_values(yaml_text, {join_path(destination): rewritten})
+    if tuple(source[: len(destination)]) == tuple(destination) and isinstance(
+        rewritten, dict
+    ):
+        # Folded into its holder (`tabs.items` becoming `tabs`): the holder is written whole.
+        return _replace_block_in_yaml_text(
+            yaml_text, _document_path(destination), rewritten
+        )
     if source[:-1] != destination[:-1]:
         if not isinstance(rewritten, Dropped):
             # A `null` where the successor's mapping goes gives way to it.
@@ -427,21 +437,26 @@ def _replay_rewrite(
             for depth in range(1, len(destination)):
                 ancestor = destination[:depth]
                 if _null_at(written, ancestor):
-                    yaml_text = set_board_values(yaml_text, {".".join(ancestor): None})
+                    yaml_text = set_board_values(yaml_text, {join_path(ancestor): None})
                     break
             yaml_text = _write_rewritten(yaml_text, edit, destination, rewritten)
         # A scalar leaves as a key removal, which strikes the mappings it empties
         # (the engine does the same after the successor lands); a mapping is
         # struck as it stands.
         if value is None or isinstance(value, (str, int, float, bool)):
-            return set_board_values(yaml_text, {".".join(source): None})
+            return set_board_values(yaml_text, {join_path(source): None})
         return _delete_paths_in_yaml_text(yaml_text, [_document_path(source)])
+    if isinstance(value, list) and isinstance(rewritten, dict):
+        # A list re-keyed as a mapping moves every item's path: it is written whole.
+        return _replace_block_in_yaml_text(yaml_text, _document_path(source), rewritten)
     if isinstance(value, dict):
         if source != destination:
-            yaml_text = rename_key_at_path(yaml_text, ".".join(source), destination[-1])
+            yaml_text = rename_key_at_path(
+                yaml_text, join_path(source), destination[-1]
+            )
         old_leaves = _scalar_leaves(value)
     else:
-        yaml_text = set_board_values(yaml_text, {".".join(source): None})
+        yaml_text = set_board_values(yaml_text, {join_path(source): None})
         old_leaves = {}
     if isinstance(rewritten, Dropped):
         return (
@@ -458,12 +473,12 @@ def _replay_rewrite(
     edits: dict[str, ScalarLeaf | None] = {}
     for leaf, leaf_value in new_leaves.items():
         if leaf not in old_leaves or old_leaves[leaf] != leaf_value:
-            edits[".".join((*destination, *leaf))] = leaf_value
+            edits[join_path((*destination, *leaf))] = leaf_value
     # A `null` leaf the rewrite struck goes too; `_scalar_leaves` skips it.
     for leaf in _leaf_paths(value if isinstance(value, dict) else {}) - _leaf_paths(
         rewritten
     ):
-        edits[".".join((*destination, *leaf))] = None
+        edits[join_path((*destination, *leaf))] = None
     return set_board_values(yaml_text, edits) if edits else yaml_text
 
 
@@ -492,7 +507,7 @@ def _write_rewritten(
     if isinstance(held, dict) and isinstance(rewritten, dict):
         return _write_merged(yaml_text, tuple(destination), held, rewritten)
     if isinstance(rewritten, (dict, list)) and _holds_list(rewritten):
-        return set_board_block(yaml_text, ".".join(destination), rewritten)
+        return set_board_block(yaml_text, join_path(destination), rewritten)
     return set_board_values(
         yaml_text, dict(_destination_leaves(edit, destination, rewritten))
     )
@@ -526,9 +541,9 @@ def _write_merged(
         if isinstance(held, dict) and isinstance(child, dict):
             yaml_text = _write_merged(yaml_text, here, held, child)
         elif isinstance(child, (dict, list)):
-            yaml_text = set_board_block(yaml_text, ".".join(here), child)
+            yaml_text = set_board_block(yaml_text, join_path(here), child)
         else:
-            yaml_text = set_board_values(yaml_text, {".".join(here): child})
+            yaml_text = set_board_values(yaml_text, {join_path(here): child})
     return yaml_text
 
 
@@ -563,14 +578,14 @@ def _destination_leaves(
     value: JsonValue | Dropped,
 ) -> dict[str, ScalarLeaf]:
     if isinstance(value, (str, int, float, bool)):
-        return {".".join(destination): value}
+        return {join_path(destination): value}
     if not isinstance(value, dict):
         raise MigrationError(
             f"Cannot rewrite {edit['declared']!r}: only scalars and "
             "mappings can be written to the file; migrate this field manually."
         )
     return {
-        ".".join((*destination, *leaf)): leaf_value
+        join_path((*destination, *leaf)): leaf_value
         for leaf, leaf_value in _scalar_leaves(value).items()
     }
 
@@ -666,27 +681,56 @@ def _delete_paths_in_yaml_text(yaml_text: str, paths: Sequence[DocumentPath]) ->
             continue
         index, column = located
         to_delete.add(index)
-        # The key's whole nested block: every line down to the last one
-        # indented past it (blank and comment lines inside that span
-        # included), and the items of a sequence written at the key's own
-        # column. A scalar leaf has none, and the range stays empty.
-        block_end = index
-        cursor = index + 1
-        while cursor < len(lines):
-            line = lines[cursor]
-            if not _YAML_BLANK_OR_COMMENT_RE.match(line):
-                indent = len(line) - len(line.lstrip(" "))
-                sequence_item = line.lstrip(" ").startswith("- ")
-                if indent < column or (indent == column and not sequence_item):
-                    break
-                block_end = cursor
-            cursor += 1
+        block_end = _block_end(lines, index, column)
         to_delete.update(range(index + 1, block_end + 1))
         if lines[index].lstrip(" ").startswith("- "):
             promotions.append((block_end, column))
     for block_end, column in promotions:
         _promote_list_item_dash(lines, block_end, column, to_delete)
     return "\n".join(line for i, line in enumerate(lines) if i not in to_delete)
+
+
+def _block_end(lines: Sequence[str], index: int, column: int) -> int:
+    """The last line of the nested block under the key at *index*: every line
+    indented past *column*, and the entries of a sequence written at the key's
+    own column (blank and comment lines inside that span included). A scalar
+    leaf has none, and it is *index* itself.
+    """
+    block_end = index
+    for cursor in range(index + 1, len(lines)):
+        line = lines[cursor]
+        if not _YAML_BLANK_OR_COMMENT_RE.match(line):
+            indent = len(line) - len(line.lstrip(" "))
+            if indent < column or (
+                indent == column and not line.lstrip(" ").startswith("- ")
+            ):
+                break
+            block_end = cursor
+    return block_end
+
+
+def _replace_block_in_yaml_text(
+    yaml_text: str, path: DocumentPath, value: dict[str, JsonValue]
+) -> str:
+    """Replace the nested block under the key at *path* with *value*, as block YAML.
+
+    The key's line keeps everything up to its colon; the old block goes whole,
+    comments included. A path that is no block-mapping key line of its own is
+    left as is, and ``migrate_yaml_text``'s final check refuses the divergence.
+    """
+    from dbt_charts.core.compile.authoring.yaml_patch import block_lines
+
+    lines = yaml_text.split("\n")
+    located = _yaml_key_lines(yaml_text).get(path)
+    if located is None:
+        return yaml_text
+    index, column = located
+    head = lines[index].split(":", 1)[0] + ":"
+    lines[index : _block_end(lines, index, column) + 1] = [
+        head,
+        *block_lines(value, column),
+    ]
+    return "\n".join(lines)
 
 
 def _promote_list_item_dash(

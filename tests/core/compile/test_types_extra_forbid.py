@@ -12,8 +12,6 @@ from pydantic import ValidationError
 from dbt_charts.core.compile.models.board.authored import (
     GridItem,
     GridLayout,
-    TabItem,
-    TabLayout,
 )
 from dbt_charts.core.compile.models.chart.authored import (
     ChartSort,
@@ -40,8 +38,6 @@ from dbt_charts.core.compile.models.variable.authored import VariableOptions
         (ChartSort, {"by": "col"}),
         (GridItem, {"item": "my_chart"}),
         (GridLayout, {}),
-        (TabItem, {"title": "Tab 1"}),
-        (TabLayout, {}),
     ],
 )
 def test_extra_field_rejected(cls: type, kwargs: dict) -> None:

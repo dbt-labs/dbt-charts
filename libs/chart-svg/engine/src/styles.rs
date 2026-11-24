@@ -48,7 +48,7 @@ pub fn chart_styles(compiled: &CompiledBoard) -> Result<ChartStyles, Diagnostic>
             styles.rhythm.insert(at.clone(), slot);
         }
     }
-    styles.tabs = layout.tabs.iter().map(|(at, t)| (at.clone(), TabsFacts { variable: t.variable.clone(), slugs: t.slugs.clone(), default_tab: t.default_tab })).collect();
+    styles.tabs = layout.tabs.iter().map(|(at, t)| (at.clone(), TabsFacts { variable: t.variable.clone(), slugs: t.slugs.clone() })).collect();
     for key in compiled.structure.policies.keys() {
         let id = normalize::sql::query_id(key, &compiled.structure.file).map_err(|e| diag::err_internal(format!("the root's query {key}: {e:?}")))?;
         styles.root_queries.insert(key.clone(), id);

@@ -70,9 +70,16 @@ regex_field!(decimal_digit, r"^\d$");
 
 // Regex patterns for inline elements.
 regex_field!(inline_code, r"`([^`]+)`");
-regex_field!(bold_italic_re, r"\*\*\*(.+?)\*\*\*|___(.+?)___");
-regex_field!(bold_re, r"\*\*(.+?)\*\*|__(.+?)__");
-regex_field!(italic_re, r"\*([^*]+)\*|_([^_]+)_");
+// CommonMark: an underscore inside a word (snake_case) is never emphasis.
+// Python's `(?<!\w)` / `(?!\w)` lookarounds become a consumed non-word edge
+// (or the text's ends); group 2 is the delimited run, so the match still
+// starts and ends at the underscores (`emphasis_bounds`).
+regex_field!(
+    bold_italic_re,
+    r"\*\*\*(.+?)\*\*\*|(?:^|\W)(___(.+?)___)(?:\W|$)"
+);
+regex_field!(bold_re, r"\*\*(.+?)\*\*|(?:^|\W)(__(.+?)__)(?:\W|$)");
+regex_field!(italic_re, r"\*([^*]+)\*|(?:^|\W)(_([^_]+)_)(?:\W|$)");
 regex_field!(
     link_re,
     r#"\[([^\]]+)\]\(([^)\s]+)(?:\s+["']([^"']+)["'])?\)"#
@@ -728,6 +735,19 @@ impl MarkdownParser {
                     }
                 };
             }
+            macro_rules! consider_emphasis {
+                ($re:expr, $kind:literal) => {
+                    if let Some(caps) = $re.captures(remaining) {
+                        let (start, end, inner) = emphasis_bounds(&caps);
+                        if start < earliest_pos {
+                            earliest_pos = start;
+                            earliest_end = end;
+                            match_type = Some($kind);
+                            groups = vec![Some(inner)];
+                        }
+                    }
+                };
+            }
 
             // Priority order matches the Python: code, image, link,
             // bold_italic, bold, italic — later checks only win on a
@@ -735,9 +755,9 @@ impl MarkdownParser {
             consider!(inline_code(), "code");
             consider!(image_re(), "image");
             consider!(link_re(), "link");
-            consider!(bold_italic_re(), "bold_italic");
-            consider!(bold_re(), "bold");
-            consider!(italic_re(), "italic");
+            consider_emphasis!(bold_italic_re(), "bold_italic");
+            consider_emphasis!(bold_re(), "bold");
+            consider_emphasis!(italic_re(), "italic");
 
             let Some(kind) = match_type else {
                 if !remaining.is_empty() {
@@ -777,22 +797,18 @@ impl MarkdownParser {
                     let [Some(link_text), Some(url), title] = groups.as_slice() else {
                         broken("the link pattern has three groups, and the text and url participate")
                     };
-                    spans.extend(link_spans(link_text, url, title.clone()));
+                    spans.extend(self.link_spans(link_text, url, title.clone()));
                 }
                 "bold_italic" | "bold" | "italic" => {
-                    let [first, second] = groups.as_slice() else {
-                        broken("an emphasis pattern has two groups")
+                    let [Some(inner)] = groups.as_slice() else {
+                        broken("`consider_emphasis` records the one inner run")
                     };
-                    let inner = first
-                        .as_ref()
-                        .or(second.as_ref())
-                        .held("one of the two emphasis groups participates");
                     let span_type = match kind {
                         "bold_italic" => SpanType::BoldItalic,
                         "bold" => SpanType::Bold,
                         _ => SpanType::Italic,
                     };
-                    spans.extend(emphasis_spans(inner, span_type));
+                    spans.extend(self.emphasis_spans(inner, span_type));
                 }
                 _ => broken("`kind` is one of the six patterns considered above"),
             }
@@ -804,52 +820,73 @@ impl MarkdownParser {
     }
 }
 
-/// `parser.py::_link_spans`: the link spans of a *label*, each inline-code run
-/// its own span with `code` set, so the backticks never reach the page.
-fn link_spans(label: &str, url: &str, title: Option<String>) -> Vec<Span> {
-    let link = |text: &str, code: bool| Span {
-        code,
-        ..Span::new(text, SpanType::Link, Some(url.to_string()), title.clone())
-    };
-    let mut spans = Vec::new();
-    let mut cursor = 0;
-    for caps in inline_code().captures_iter(label) {
-        let run = caps.get(0).held("group 0 always participates");
-        if run.start() > cursor {
-            spans.push(link(&label[cursor..run.start()], false));
+/// Where an emphasis match starts and ends, and its inner run: the whole
+/// match for the `*` form, group 2 (the underscores and what they enclose)
+/// for the `_` form, whose pattern also consumes the non-word edges.
+fn emphasis_bounds(caps: &regex::Captures) -> (usize, usize, String) {
+    match caps.get(2) {
+        Some(run) => {
+            let inner = caps.get(3).held("the `_` form's inner group participates");
+            (run.start(), run.end(), inner.as_str().to_string())
         }
-        spans.push(link(&caps[1], true));
-        cursor = run.end();
+        None => {
+            let m = caps.get(0).held("group 0 always participates");
+            let inner = caps.get(1).held("the `*` form's inner group participates");
+            (m.start(), m.end(), inner.as_str().to_string())
+        }
     }
-    if cursor < label.len() {
-        spans.push(link(&label[cursor..], false));
-    }
-    spans
 }
 
-/// `parser.py::_emphasis_spans`: the spans of emphasized text, each
-/// inline-code run in it emphasized code.
-fn emphasis_spans(inner: &str, span_type: SpanType) -> Vec<Span> {
-    let bold = matches!(span_type, SpanType::Bold | SpanType::BoldItalic);
-    let italic = matches!(span_type, SpanType::Italic | SpanType::BoldItalic);
-    let mut spans = Vec::new();
-    let mut cursor = 0;
-    for caps in inline_code().captures_iter(inner) {
-        let run = caps.get(0).held("group 0 always participates");
-        if run.start() > cursor {
-            spans.push(Span::new(&inner[cursor..run.start()], span_type, None, None));
-        }
-        spans.push(Span {
-            bold,
-            italic,
-            ..Span::new(&caps[1], SpanType::Code, None, None)
-        });
-        cursor = run.end();
+fn is_bold(span: &Span) -> bool {
+    span.bold || matches!(span.span_type, SpanType::Bold | SpanType::BoldItalic)
+}
+
+fn is_italic(span: &Span) -> bool {
+    span.italic || matches!(span.span_type, SpanType::Italic | SpanType::BoldItalic)
+}
+
+impl MarkdownParser {
+    /// `parser.py::_link_spans`: the link spans of a *label*, one per inline
+    /// run, keeping its code and emphasis, so neither backticks nor asterisks
+    /// reach the page.
+    fn link_spans(&self, label: &str, url: &str, title: Option<String>) -> Vec<Span> {
+        self.parse_inline(label)
+            .iter()
+            .map(|span| Span {
+                code: span.span_type == SpanType::Code,
+                bold: is_bold(span),
+                italic: is_italic(span),
+                ..Span::new(
+                    span.text.clone(),
+                    SpanType::Link,
+                    Some(url.to_string()),
+                    title.clone(),
+                )
+            })
+            .collect()
     }
-    if cursor < inner.len() {
-        spans.push(Span::new(&inner[cursor..], span_type, None, None));
+
+    /// `parser.py::_emphasis_spans`: plain runs take *span_type*; any other
+    /// run (code, a link, nested emphasis) keeps its type and inherits the
+    /// emphasis.
+    fn emphasis_spans(&self, inner: &str, span_type: SpanType) -> Vec<Span> {
+        let bold = matches!(span_type, SpanType::Bold | SpanType::BoldItalic);
+        let italic = matches!(span_type, SpanType::Italic | SpanType::BoldItalic);
+        self.parse_inline(inner)
+            .into_iter()
+            .map(|span| {
+                if span.span_type == SpanType::Text {
+                    Span::new(span.text, span_type, None, None)
+                } else {
+                    Span {
+                        bold: span.bold || bold,
+                        italic: span.italic || italic,
+                        ..span
+                    }
+                }
+            })
+            .collect()
     }
-    spans
 }
 
 impl Default for MarkdownParser {

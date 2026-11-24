@@ -185,7 +185,7 @@ macro_rules! hoisted {
 hoisted!(ChartId, QueryName, TemplateRef);
 
 /// A layout item's place in the board tree, in the grammar of a position id (`@rows[2]`,
-/// `@grid.items[2].item`, `@tabs.items[0].rows[1]`). A nested-board item's `ItemId` is the position
+/// `@grid.items[2].item`, `@tabs[0].rows[1]`). A nested-board item's `ItemId` is the position
 /// of its body, so the one string names the item and the board it places. With
 /// [`items`](crate::board::items) it is the one layout-item identity and walk: `bind` derives
 /// positions from them and `layout` will.
@@ -298,7 +298,8 @@ macro_rules! ref_kind {
                 } else {
                     Err(format!(
                         "Invalid {} reference {}. Expected '<file>.{}.<name>', \
-                         optionally prefixed with '../' segments.",
+                         optionally prefixed with '../' segments; the file and the name \
+                         each start with a letter or underscore.",
                         $shape,
                         repr(v),
                         $section

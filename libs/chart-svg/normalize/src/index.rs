@@ -4,7 +4,7 @@
 //! Names are Python's, exactly (`normalize/layout.py`). A board's Python id is the root's
 //! `id` / slugified title / `untitled_board`, then `{parent}_{row|col|grid}{n}` for an item and
 //! `{parent}_tab{n}` for a tab pane, whatever `id:` a nested board writes. The facts are keyed by
-//! tree position, the YAML path of the board (`@`, `@rows[1]`, `@rows[1].tabs.items[0]`).
+//! tree position, the YAML path of the board (`@`, `@rows[1]`, `@rows[1].tabs[0]`).
 //!
 //! [`LayoutFacts`] reads the authored board for each tabs layout's variable, slugs and default
 //! tab, each details board's variable and default, each board's structural title level, and the
@@ -16,10 +16,10 @@ use crate::hoist::BoardScope;
 use crate::rhythm;
 use crate::slug::slugify;
 use crate::variables::{default_of, Var, VariableFacts};
-use board_model::board::layout::{
-    LayoutAuthored, LayoutItemAuthored, NestedBoardAuthored, TabLayoutAuthored,
-};
+use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored, NestedBoardAuthored};
+use indexmap::IndexMap;
 use board_model::board::{Board, BoardBodyAuthored};
+use board_model::board::value::VisibleAuthored;
 use board_model::facet::DisplayText;
 use board_model::ids::{BoardId, ChartId, ItemId, QueryId};
 use diagnostic::{diag, Diagnostic};
@@ -75,12 +75,13 @@ pub struct BoardIndex {
     pub facts: crate::search::BoardFacts,
 }
 
-/// A tabs layout: the variable that selects a tab, each tab's slug and the one open on load.
+/// A tabs layout: the variable that selects a tab, and each tab's slug.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TabsFacts {
     pub variable: String,
     pub slugs: Vec<String>,
-    pub default_tab: usize,
+    /// Each tab's `visible:` where it is a literal, `None` where a condition decides it at render time.
+    pub shown: Vec<Option<bool>>,
 }
 
 /// A collapsible nested board: the variable that holds its state and whether it starts open.
@@ -133,11 +134,6 @@ pub enum FactsError {
     DuplicateSlug {
         slug: String,
     },
-    UnknownDefault {
-        default: String,
-        slug: String,
-        slugs: Vec<String>,
-    },
     /// A variable default the index cannot read as a value.
     Variable {
         name: String,
@@ -169,11 +165,6 @@ impl From<crate::files::ReadError> for FactsError {
 impl FactsError {
     pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
         vec![match self {
-            Self::UnknownDefault {
-                default,
-                slug,
-                slugs,
-            } => diag::err_tab_default_unknown(default.as_str(), slug.as_str(), slugs.clone()),
             Self::VariableName(d) => (**d).clone(),
             Self::EmptySlug { title } => diag::err_tab_title_empty_slug(title.as_str()),
             Self::DuplicateSlug { slug } => diag::err_tab_title_duplicate_slug(slug.as_str()),
@@ -203,9 +194,6 @@ impl fmt::Display for FactsError {
                         Ok(text) => f.write_str(&text),
                         Err(_) => f.write_str(d.code),
                     })
-            }
-            Self::UnknownDefault { default, slug, .. } => {
-                write!(f, "tabs.default '{default}' (slug '{slug}') names no tab")
             }
             Self::NoBoardId { pos } => {
                 write!(f, "the board at {pos} has no id in the layout facts")
@@ -357,7 +345,7 @@ struct Walk<'a> {
     /// The chart placements as (owning board's id, place, chart name), in the order the walk met
     /// them.
     order: Vec<Placement>,
-    /// Where the board being walked sits in its file's authored tree (`rows.0.tabs.items.1`, empty
+    /// Where the board being walked sits in its file's authored tree (`rows.0.tabs.1`, empty
     /// at the root), `None` under an imported board, whose keys have no path in this file.
     prefix: Option<String>,
     /// Where each variable name of the tree was first declared (Python's `declared_at`).
@@ -375,7 +363,8 @@ fn under(prefix: &Option<String>, segment: &str) -> Option<String> {
     })
 }
 
-/// The authored path of the layout item `item_id` (`row2`, `col0`, `grid1`) of a board at `prefix`.
+/// The authored path of the layout item `item_id` (`row2`, `col0`, `grid1`) of a board at
+/// `prefix`.
 fn item_path(prefix: &Option<String>, item_id: &str) -> Result<Option<String>, FactsError> {
     let unknown = || FactsError::ItemId(item_id.to_string());
     let (kind, n) = item_id
@@ -395,8 +384,7 @@ fn item_path(prefix: &Option<String>, item_id: &str) -> Result<Option<String>, F
 }
 
 /// The hidden checkbox variable a nested board with `details:` holds its state in.
-fn details_variable(nested: &NestedBoardAuthored, item_id: &str) -> Option<String> {
-    let body = &nested.body;
+fn details_variable(body: &BoardBodyAuthored, item_id: &str) -> Option<String> {
     matches!(body.details, Tri::Value(_)).then(|| match &body.id {
         Some(own) => own.as_str().to_string(),
         None => format!("_details_{item_id}"),
@@ -405,17 +393,14 @@ fn details_variable(nested: &NestedBoardAuthored, item_id: &str) -> Option<Strin
 
 fn item_details_variable(item: &LayoutItemAuthored, item_id: &str) -> Option<String> {
     match item {
-        LayoutItemAuthored::Board(nested) => details_variable(nested, item_id),
+        LayoutItemAuthored::Board(nested) => details_variable(&nested.body, item_id),
         _ => None,
     }
 }
 
 /// The hidden select variable that holds the open tab of a tabs layout of the board `id`.
-fn tab_variable(t: &TabLayoutAuthored, id: &str) -> String {
-    match &t.id {
-        Tri::Value(v) if !v.is_empty() => v.clone(),
-        _ => format!("_tab_{id}"),
-    }
+fn tab_variable(id: &str) -> String {
+    format!("_tab_{id}")
 }
 
 /// The hidden variables Python generates for the layout of board `id`: the tab selector, or the
@@ -439,8 +424,14 @@ fn layout_variables(layout: Option<&LayoutAuthored>, id: &str) -> Vec<String> {
             .enumerate()
             .filter_map(|(i, cell)| item_details_variable(cell.item.as_ref()?, &format!("grid{i}")))
             .collect(),
-        Some(LayoutAuthored::Tabs(t)) if t.items.iter().flatten().next().is_some() => {
-            vec![tab_variable(t, id)]
+        Some(LayoutAuthored::Tabs(t)) if t.values().next().is_some() => {
+            std::iter::once(tab_variable(id))
+                .chain(
+                    t.values()
+                        .enumerate()
+                        .filter_map(|(i, tab)| details_variable(&tab.body, &format!("tab{i}"))),
+                )
+                .collect()
         }
         _ => Vec::new(),
     }
@@ -607,22 +598,27 @@ impl Walk<'_> {
                 }
                 Ok(())
             }
-            LayoutItemAuthored::Board(nested) => self.nested(nested, item_id, &id, dir, pos, level),
+            LayoutItemAuthored::Board(nested) => {
+                let inner = item_path(&self.prefix, item_id)?;
+                self.nested(&nested.body, item_id, inner, &id, dir, pos, level)
+            }
             LayoutItemAuthored::InlineChart(_) => Ok(()),
         }
     }
 
+    /// `inner` is the nested board's authored path.
+    #[allow(clippy::too_many_arguments)]
     fn nested(
         &mut self,
-        nested: &NestedBoardAuthored,
+        body: &BoardBodyAuthored,
         item_id: &str,
+        inner: Option<String>,
         id: &str,
         dir: &str,
         pos: &ItemId,
         parent_level: u32,
     ) -> Result<(), FactsError> {
-        let body = &nested.body;
-        if let (Tri::Value(d), Some(variable)) = (&body.details, details_variable(nested, item_id))
+        if let (Tri::Value(d), Some(variable)) = (&body.details, details_variable(body, item_id))
         {
             // `expanded` fills `false` (BoardDetails) when unwritten.
             let expanded = d.expanded.unwrap_or(false);
@@ -630,7 +626,6 @@ impl Walk<'_> {
                 .details
                 .insert(pos.clone(), DetailsFacts { variable, expanded });
         }
-        let inner = item_path(&self.prefix, item_id)?;
         let outer = std::mem::replace(&mut self.prefix, inner);
         let walked = self.body(body, id, dir, pos, parent_level);
         self.prefix = outer;
@@ -639,38 +634,17 @@ impl Walk<'_> {
 
     fn tabs(
         &mut self,
-        t: &TabLayoutAuthored,
+        t: &IndexMap<String, NestedBoardAuthored>,
         id: &str,
         dir: &str,
         pos: &ItemId,
         level: u32,
     ) -> Result<(), FactsError> {
-        let base = pos.key("tabs").key("items");
+        let base = pos.key("tabs");
         let mut slugs = Vec::new();
-        for (i, tab) in t.items.iter().flatten().enumerate() {
-            let title = tab.title.as_ref().map_or("", |t| t.as_str());
-            let pane = base.index(i);
-            match &tab.layout {
-                Some(l) => {
-                    self.facts
-                        .structural_title_level
-                        .insert(pane.clone(), level);
-                    let pane_id = format!("{id}_tab{i}");
-                    self.facts.board_ids.insert(pane.clone(), pane_id.clone());
-                    let inner = under(&self.prefix, &format!("tabs.items.{i}"));
-                    let outer = std::mem::replace(&mut self.prefix, inner);
-                    self.declare(&[], &layout_variables(Some(l), &pane_id));
-                    let walked = self.layout(l, &pane_id, dir, &pane, level);
-                    self.prefix = outer;
-                    walked?;
-                }
-                None => {
-                    self.facts
-                        .board_ids
-                        .insert(pane.clone(), format!("{id}_tab{i}"));
-                    self.facts.structural_title_level.insert(pane, level + 1);
-                }
-            }
+        for (i, (title, tab)) in t.iter().enumerate() {
+            let inner = under(&self.prefix, &diagnostic::dotted(&["tabs", title.as_str()]));
+            self.nested(&tab.body, &format!("tab{i}"), inner, &format!("{id}_tab{i}"), dir, &base.index(i), level)?;
             let slug = slugify(title);
             if slug.is_empty() {
                 return Err(FactsError::EmptySlug {
@@ -684,26 +658,19 @@ impl Walk<'_> {
                 return Err(FactsError::DuplicateSlug { slug: s.clone() });
             }
         }
-        let default_tab = match &t.default {
-            Tri::Value(d) if !d.as_str().is_empty() => {
-                let slug = slugify(d.as_str());
-                slugs
-                    .iter()
-                    .position(|s| *s == slug)
-                    .ok_or_else(|| FactsError::UnknownDefault {
-                        default: d.as_str().to_string(),
-                        slug: slug.clone(),
-                        slugs: slugs.clone(),
-                    })?
-            }
-            _ => 0,
-        };
         self.facts.tabs.insert(
             pos.clone(),
             TabsFacts {
-                variable: tab_variable(t, id),
+                variable: tab_variable(id),
                 slugs,
-                default_tab,
+                shown: t
+                    .values()
+                    .map(|tab| match &tab.visible {
+                        Tri::Value(VisibleAuthored::Flag(drawn)) => Some(*drawn),
+                        Tri::Value(VisibleAuthored::Expression(_) | VisibleAuthored::Probe(_)) => None,
+                        _ => Some(true),
+                    })
+                    .collect(),
             },
         );
         Ok(())
@@ -751,7 +718,7 @@ impl Walk<'_> {
         let node = parsed_text
             .map_err(|d| fail(d.iter().map(|d| d.code).collect::<Vec<_>>().join(", ")))?;
         let node = read_board(node, self.today).node;
-        crate::shape::refuse(&node, false).map_err(|d| fail(d.code.to_string()))?;
+        crate::shape::refuse(&node).map_err(|d| fail(d.code.to_string()))?;
         crate::names::refuse(&node, false).map_err(|d| fail(d.code.to_string()))?;
         let parsed = parse::<Board>(&node, None);
         if let Some(e) = parsed.errors.first() {

@@ -145,6 +145,61 @@ class TestLinks:
         assert doc[0].spans[0].code is False
 
 
+class TestEmphasisAndLinksNest:
+    """CommonMark: emphasis and links nest in either order."""
+
+    @pytest.mark.parametrize(
+        "markdown",
+        [
+            "**[Summary](./summary.yml)** board",
+            "[**Summary**](./summary.yml) board",
+        ],
+    )
+    def test_bold_and_a_link_nest_as_a_bold_link(self, markdown: str) -> None:
+        doc = parse(markdown)
+        assert isinstance(doc[0], Paragraph)
+        assert [(s.span_type, s.text, s.url, s.bold) for s in doc[0].spans] == [
+            (SpanType.LINK, "Summary", "./summary.yml", True),
+            (SpanType.TEXT, " board", None, False),
+        ]
+
+    def test_bold_around_a_link_keeps_the_bold_text_beside_it(self) -> None:
+        doc = parse("**[Example](https://example.com):** done")
+        assert isinstance(doc[0], Paragraph)
+        assert [(s.span_type, s.text, s.url, s.bold) for s in doc[0].spans] == [
+            (SpanType.LINK, "Example", "https://example.com", True),
+            (SpanType.BOLD, ":", None, False),
+            (SpanType.TEXT, " done", None, False),
+        ]
+
+    def test_italic_inside_a_link_label_is_an_italic_link(self) -> None:
+        doc = parse("[see *this*](u)")
+        assert isinstance(doc[0], Paragraph)
+        assert [(s.span_type, s.text, s.italic) for s in doc[0].spans] == [
+            (SpanType.LINK, "see ", False),
+            (SpanType.LINK, "this", True),
+        ]
+
+    @pytest.mark.parametrize(
+        "markdown",
+        ["[g32_backslash_escape.yml](u)", "[a__b__c.yml](u)", "[a___b___c](u)"],
+    )
+    def test_underscores_inside_a_word_stay_literal(self, markdown: str) -> None:
+        label = markdown[1 : markdown.index("]")]
+        doc = parse(markdown)
+        assert isinstance(doc[0], Paragraph)
+        assert [(s.span_type, s.text) for s in doc[0].spans] == [(SpanType.LINK, label)]
+
+    def test_italic_inside_bold_is_bold_italic(self) -> None:
+        doc = parse("**a *b* c**")
+        assert isinstance(doc[0], Paragraph)
+        assert [(s.span_type, s.text, s.bold) for s in doc[0].spans] == [
+            (SpanType.BOLD, "a ", False),
+            (SpanType.ITALIC, "b", True),
+            (SpanType.BOLD, " c", False),
+        ]
+
+
 class TestCodeInsideEmphasis:
     """CommonMark: a code span inside emphasis is emphasized code."""
 
@@ -183,6 +238,68 @@ class TestCodeInsideEmphasis:
         assert isinstance(doc[0], Paragraph)
         [span] = doc[0].spans
         assert (span.span_type, span.text) == (SpanType.CODE, "**message**")
+
+
+class TestBackslashEscapes:
+    """CommonMark: a backslash before ASCII punctuation makes it literal."""
+
+    def _spans(self, markdown: str) -> list[tuple[SpanType, str]]:
+        doc = parse(markdown)
+        assert isinstance(doc[0], Paragraph)
+        return [(s.span_type, s.text) for s in doc[0].spans]
+
+    def test_escaped_punctuation_prints_without_the_backslash(self) -> None:
+        markdown = r"\*Count: \_underscore\_, \# hash, \[brackets\], 5 \* 3."
+        assert self._spans(markdown) == [
+            (SpanType.TEXT, "*Count: _underscore_, # hash, [brackets], 5 * 3.")
+        ]
+
+    def test_escaped_star_inside_emphasis_stays_literal(self) -> None:
+        assert self._spans(r"*a \* b*") == [(SpanType.ITALIC, "a * b")]
+
+    def test_escaped_backslash_is_one_backslash(self) -> None:
+        assert self._spans(r"a \\*b*") == [
+            (SpanType.TEXT, "a \\"),
+            (SpanType.ITALIC, "b"),
+        ]
+
+    def test_backslash_before_a_non_punctuation_character_stays(self) -> None:
+        assert self._spans(r"C:\path\n") == [(SpanType.TEXT, r"C:\path\n")]
+
+    @pytest.mark.parametrize(
+        ("markdown", "spans"),
+        [
+            (r"`\*`", [(SpanType.CODE, r"\*")]),
+            (r"`\`", [(SpanType.CODE, "\\")]),
+            (
+                r"path `C:\Users\` here",
+                [
+                    (SpanType.TEXT, "path "),
+                    (SpanType.CODE, "C:\\Users\\"),
+                    (SpanType.TEXT, " here"),
+                ],
+            ),
+            (r"`a\`b`", [(SpanType.CODE, "a\\"), (SpanType.TEXT, "b`")]),
+            (r"**`\*`**", [(SpanType.CODE, r"\*")]),
+            (r"[`\*`](https://example.com)", [(SpanType.LINK, r"\*")]),
+        ],
+    )
+    def test_backslash_escapes_are_literal_in_a_code_span(
+        self, markdown: str, spans: list[tuple[SpanType, str]]
+    ) -> None:
+        assert self._spans(markdown) == spans
+
+    def test_escaped_backtick_does_not_open_a_code_span(self) -> None:
+        assert self._spans(r"\`not code`") == [(SpanType.TEXT, "`not code`")]
+
+    def test_text_holding_a_stand_in_character_raises(self) -> None:
+        with pytest.raises(ValueError, match="U\\+10FF2A"):
+            parse("a \U0010ff2a b")
+
+    def test_escaped_bracket_is_not_a_link(self) -> None:
+        assert self._spans(r"\[label](https://example.com)") == [
+            (SpanType.TEXT, "[label](https://example.com)")
+        ]
 
 
 class TestLists:

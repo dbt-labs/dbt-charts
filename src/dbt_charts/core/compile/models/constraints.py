@@ -71,7 +71,17 @@ class IsList:
     key: str
 
 
-Condition = IsSet | ValueIn | IsCall | IsList
+@dataclasses.dataclass(frozen=True)
+class ItemsSet:
+    """Holds when some item of the list at ``key`` sets one of ``item_keys`` (or,
+    negated, no item does). An absent list has no items."""
+
+    key: str
+    item_keys: tuple[str, ...]
+    negate: bool = False
+
+
+Condition = IsSet | ValueIn | IsCall | IsList | ItemsSet
 
 
 @dataclasses.dataclass(frozen=True)
@@ -229,6 +239,14 @@ def _holds(model: BaseModel, condition: Condition) -> bool:
             return (_value_at(model, f"{key}.fn") in names) != negate
         case IsList(key):
             return isinstance(_value_at(model, key), (list, tuple))
+        case ItemsSet(key, item_keys, negate):
+            items = _value_at(model, key)
+            found = isinstance(items, (list, tuple)) and any(
+                isinstance(item, BaseModel) and _is_set(item, k, nonempty=False)
+                for item in items
+                for k in item_keys
+            )
+            return found != negate
 
 
 class _Placeholders(dict[str, object]):

@@ -199,20 +199,19 @@ cols:
 
 
 def test_heading_in_the_first_tab_does_not_warn() -> None:
-    """A tab always labels itself (`TabItem.title` is required), so its body
-    heading belongs to the tab, not to the board header."""
+    """A tab always labels itself (its label keys it), so its body heading
+    belongs to the tab, not to the board header."""
     yaml = f"""
 title: dbt charts Cloud
 {_QUERIES_AND_CHARTS}
 tabs:
-  items:
-    - title: Overview
-      text: |
-        # dbt charts Cloud
+  Overview:
+    text: |
+      # dbt charts Cloud
 
-        Prose.
-    - title: Detail
-      rows: [untitled]
+      Prose.
+  Detail:
+    rows: [untitled]
 """
     assert "WARN-DOUBLE-HEADER" not in _codes(yaml)
 
@@ -421,14 +420,13 @@ def test_a_heading_opening_a_tab_pane_does_not_warn() -> None:
         f"""
 {_QUERIES_AND_CHARTS}
 tabs:
-  items:
-    - title: One
-      text: |
-        ## Pane heading
+  One:
+    text: |
+      ## Pane heading
 
-        Prose.
-    - title: Two
-      rows: [untitled]
+      Prose.
+  Two:
+    rows: [untitled]
 """
     )
 
@@ -438,18 +436,17 @@ def test_a_section_row_inside_a_tab_pane_warns() -> None:
         f"""
 {_QUERIES_AND_CHARTS}
 tabs:
-  items:
-    - title: One
-      rows:
-        - untitled
-        - text: |
-            ## Inside the pane
+  One:
+    rows:
+      - untitled
+      - text: |
+          ## Inside the pane
 
-            Prose.
+          Prose.
 """
     )
 
-    assert [w.path for w in warnings] == ["tabs.items.0.rows.1.text"]
+    assert [w.path for w in warnings] == ["tabs.One.rows.1.text"]
 
 
 def _markdown_warnings(tmp_path: Path, body: str) -> list[str]:
@@ -896,6 +893,29 @@ rows:
     assert not _unused(result)
 
 
+def _text_board(text: str) -> str:
+    body = "".join(f"      {line}\n" for line in text.splitlines())
+    return f"title: T\n{_MINE}\nrows:\n  - text: |\n{body}"
+
+
+@pytest.mark.parametrize(
+    ("text", "warns"),
+    [
+        ("{{ [1234] | map('format', 'mine') | join }}", False),
+        ("{% set s = 'mine' %}{{ [1234] | map('format', s) | join }}", False),
+        ("{{ 1234 | format(spec='mine') }}", False),
+        ("{% set s = 'mine' %}{{ 1234 | format(spec=s) }}", False),
+        ("{{ 1234 | format('mine') ", False),
+        ("```\n{{ 1234 | format('mine') }}\n```", True),
+        ("```\n{% set s = 'x' %}{{ 1234 | format(s) }}\n```", True),
+    ],
+)
+def test_text_format_call_shapes(text: str, warns: bool) -> None:
+    result = compile(_text_board(text))
+    assert result.success, result.errors
+    assert bool(_unused(result)) is warns
+
+
 def test_text_format_filter_reference_counts_as_used() -> None:
     board = _format_board(
         _MINE, chart_extra="    title: \"{{ 1234 | format('mine') }}\"\n"
@@ -903,6 +923,27 @@ def test_text_format_filter_reference_counts_as_used() -> None:
     result = compile(board)
     assert result.success
     assert not _unused(result)
+
+
+def test_text_format_filter_naming_its_spec_by_expression_counts_every_name_used() -> (
+    None
+):
+    board = _format_board(
+        _MINE,
+        chart_extra=(
+            "    title: \"{% set spec = 'mine' %}{{ 1234 | format(spec) }}\"\n"
+        ),
+    )
+    result = compile(board)
+    assert result.success
+    assert not _unused(result)
+
+
+def test_unused_name_still_warns_beside_a_literal_format_of_another_name() -> None:
+    board = _format_board(
+        _MINE, chart_extra="    title: \"{{ 1234 | format('number') }}\"\n"
+    )
+    assert [w.path for w in _unused(compile(board))] == ["style.formats.mine"]
 
 
 def test_name_used_only_by_a_nested_board_counts_as_used() -> None:

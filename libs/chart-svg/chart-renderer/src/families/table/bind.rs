@@ -6,6 +6,7 @@
 use crate::families::color_scale::nice_domain;
 use d3rs::color::{format_hex, interpolate_rgb, piecewise, Color, Rgb};
 use super::sanitize_color;
+use ::bind::table::sanitized_color;
 use super::svg_font_family;
 use super::text_format;
 use super::Blank;
@@ -479,22 +480,6 @@ pub(super) fn resolve_style_input(
         Some(Value::Null) => None,
         Some(Value::String(s)) if s.is_empty() => None,
         Some(v) => Some(py_str(v)),
-    }
-}
-
-/// `is_sanitizable_color` + `sanitize_color` (colors.py:499-524) for a value
-/// that is present: 3- or 6-digit hex passes, `transparent`/`none` (any case)
-/// is `transparent`, and anything else is not a color.
-pub(crate) fn sanitized_color(color: &str) -> Option<String> {
-    let hex = color
-        .strip_prefix('#')
-        .is_some_and(|d| matches!(d.len(), 3 | 6) && d.chars().all(|c| c.is_ascii_hexdigit()));
-    if hex {
-        Some(color.to_string())
-    } else if matches!(color.to_ascii_lowercase().as_str(), "transparent" | "none") {
-        Some("transparent".to_string())
-    } else {
-        None
     }
 }
 
@@ -2713,8 +2698,8 @@ pub(super) fn bind_drawn(chart: &Chart, payload: &Payload) -> Result<Drawn, Diag
         .and_then(|f| f.color.as_deref())
         .filter(|c| !chart.rows.first().is_some_and(|row| row.contains_key(*c)));
     let body_color = sanitize_color(default_ink)?
-        .or(th.font.color.as_deref())
-        .unwrap_or("#222222");
+        .or_else(|| th.font.color.clone())
+        .unwrap_or_else(|| "#222222".to_string());
     sanitize_color(th.row.stripe.as_ref().and_then(|s| s.color.as_deref()))?;
     let link_color = sanitize_color(
         payload
@@ -2730,7 +2715,7 @@ pub(super) fn bind_drawn(chart: &Chart, payload: &Payload) -> Result<Drawn, Diag
         .as_deref()
         .map(svg_font_family)
         .unwrap_or_else(|| body_family.clone());
-    let header_color = sanitize_color(th.header.font.color.as_deref())?.unwrap_or(body_color);
+    let header_color = sanitize_color(th.header.font.color.as_deref())?.unwrap_or_else(|| body_color.clone());
     let header_weight = match th
         .header
         .font_compact
@@ -2745,9 +2730,9 @@ pub(super) fn bind_drawn(chart: &Chart, payload: &Payload) -> Result<Drawn, Diag
         header_size,
         header_family,
         header_weight,
-        header_color: header_color.to_string(),
-        body_color: body_color.to_string(),
-        link_color: link_color.map(str::to_string),
+        header_color,
+        body_color,
+        link_color,
         body_family,
         numeral_family,
         pad: th.column_layout.cell_padding.trunc(),

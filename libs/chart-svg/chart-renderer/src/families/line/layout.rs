@@ -119,6 +119,47 @@ pub(super) struct Fitted {
     pub(super) strip_hidden: bool,
 }
 
+/// A patterned stacked band's outline: its top and bottom edges, the ink of its line, its width, and
+/// whether its fill is ink-heavy.
+struct BandRule {
+    tops: Vec<(f64, f64)>,
+    bottoms: Vec<(f64, f64)>,
+    ink_heavy: bool,
+    ink: String,
+    width: f64,
+}
+
+/// The outlines of a stack's patterned bands, centered on their edges, no gap: each band's two sides,
+/// its bottom where nothing is under it, and its top, which is the canvas where the band and the
+/// one directly above it are both ink-heavy and its ink everywhere else, the topmost band's included.
+fn band_rules_nodes(rules: &[BandRule], canvas: &str, curve: d3rs::shape::Curve, cap: &str, join: &str) -> Result<Vec<Node>, String> {
+    let same = |a: &[(f64, f64)], b: &[(f64, f64)]| a.len() == b.len() && a.iter().zip(b).all(|(p, q)| (p.1 - q.1).abs() < 0.01);
+    // A band that is zero everywhere has no height: it is no neighbor, and draws nothing.
+    let real: Vec<&BandRule> = rules.iter().filter(|rule| !same(&rule.tops, &rule.bottoms)).collect();
+    let mut nodes = Vec::new();
+    for rule in real.iter().copied() {
+        let above = real.iter().find(|other| !std::ptr::eq(**other, rule) && same(&other.bottoms, &rule.tops));
+        let below = real.iter().any(|other| !std::ptr::eq(*other, rule) && same(&other.tops, &rule.bottoms));
+        let stroke = |color: &str, path: scene::PathData| {
+            let attrs = Attrs::new().set("fill", "none").set("stroke", color).num("stroke-width", rule.width).set("stroke-linecap", cap).set("stroke-linejoin", join).set("pointer-events", "none");
+            Node::path(Role::Chrome, path, attrs)
+        };
+        let top_color = if above.is_some_and(|above| above.ink_heavy) && rule.ink_heavy { canvas } else { &rule.ink };
+        let edge_path = |points: &[(f64, f64)]| -> Result<scene::PathData, String> {
+            Ok(scene_path(&d3rs::shape::line_segments(points, curve)?.path(0, points.len() - 1)?))
+        };
+        nodes.push(stroke(top_color, edge_path(&rule.tops)?));
+        if !below {
+            nodes.push(stroke(&rule.ink, edge_path(&rule.bottoms)?));
+        }
+        for end in [0, rule.tops.len() - 1] {
+            let side = scene::PathData::new().move_to(rule.tops[end].0, rule.tops[end].1).line_to(rule.bottoms[end].0, rule.bottoms[end].1);
+            nodes.push(stroke(&rule.ink, side));
+        }
+    }
+    Ok(nodes)
+}
+
 /// One panel's worth of axes + marks + grid + title/legend chrome for a
 /// line/area chart — `rows`/`svg_w`/`svg_h`/`pad` are the panel's OWN
 /// data and box (the single-chart wrapper above passes the whole `Payload`'s;
@@ -864,6 +905,7 @@ pub(super) fn fit(
                 &r.style.series_label.dark_companion_palette,
                 &r.style.series_label.pin_companions,
                 category_scale,
+                r.patterns.ladder_ink(),
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1668,9 +1710,13 @@ pub(super) fn fit(
     // Where the rail's labels land after the cascade, in data space, for a
     // pane `pane_h` tall. Callers convert to pixels through the scale, which
     // handles either direction. The span is `.abs()`ed, so a descending
-    // domain keeps its slope.
+    // domain keeps its slope. The cascade runs in the scale's transformed
+    // space, where a pixel gap is the same span at every height (a log axis's
+    // decades), and its placement maps back to data.
     let rail_cascade = |pane_h: f64| -> Result<(Vec<(String, f64)>, HashMap<String, crate::families::cartesian::RailPlan>), String> {
-        let y_span = (y_max - y_min).abs();
+        let scale = y_axis([pane_h, 0.0]);
+        let t = |v: f64| scale.transformed(v);
+        let y_span = (t(y_max) - t(y_min)).abs();
         let px_per_unit = (y_span > 0.0).then(|| (pane_h / y_span).abs());
         // The layered rail's shared domain spans every layer's own rows too
         // (`_layered_y_domain`); a series-color rail reads the base rows alone.
@@ -1680,18 +1726,20 @@ pub(super) fn fit(
             layer_rows.iter().filter_map(|row| row_num(row, overlay.y())).fold((lo, hi), |(lo, hi), v| (lo.min(v), hi.max(v)))
         });
         let (lo, hi) = rail_cascade_bounds(is_stacked, is_normalize, max_col_total, authored_domain, extent);
+        let (lo, hi) = (t(lo), t(hi));
         // A view zooms the axis past some series' values: its labels may pack into the room the axis
         // leaves beyond the shown data, down to the half line that keeps their ink inside the plot.
         let (lo, hi) = match (&r.whole_rows, px_per_unit) {
             (Some(_), Some(per_unit)) => {
                 let half_line = vega_fit::middle_rise(sl.font_size) / per_unit;
-                (lo.min(y_min.min(y_max) + half_line), hi.max(y_min.max(y_max) - half_line))
+                (lo.min(t(y_min.min(y_max)) + half_line), hi.max(t(y_min.max(y_max)) - half_line))
             }
             _ => (lo, hi),
         };
+        let anchors: Vec<(String, f64)> = rail_anchors.iter().map(|(name, v)| (name.clone(), t(*v))).collect();
         let (placed, plans, forcing) = crate::families::cartesian::place_rail_labels(
             &r.id,
-            &rail_anchors,
+            &anchors,
             &rail_plans,
             sl.gap_px,
             crate::families::cartesian::rail_line_height(sl.font_size),
@@ -1699,7 +1747,7 @@ pub(super) fn fit(
             (lo, hi),
         )?;
         crate::families::cartesian::warn_rail_plan(&r.id, rail_field, &rail_keys, |key| rail_names[key].clone(), &plans, &forcing);
-        Ok((placed, plans))
+        Ok((placed.into_iter().map(|(name, v)| (name, scale.untransformed(v))).collect(), plans))
     };
 
     // ── Legend measurement (multi-series; endpoint_labels.visible bakes the
@@ -5906,6 +5954,9 @@ pub(super) fn fit(
             .as_deref()
             .ok_or("area: stacked area's line_mark.stroke.color is required")?;
         let mut bands = Vec::new();
+        // The patterned bands' outlines, drawn over every fill once all are laid down: each band's own
+        // two edges and whether its fill is ink-heavy.
+        let mut band_rules: Vec<BandRule> = Vec::new();
         for (series, runs) in &stacked_series_points {
             let paint = area_paint(series, &palette_domain, r, is_multi, category_scale)?;
             let thickest = runs.iter().flatten().map(|&(_, lo, hi)| (hi - lo).abs()).fold(0.0, f64::max);
@@ -5974,7 +6025,9 @@ pub(super) fn fit(
             // A patterned band draws fill-only, then its shared edge line.
             let path = match &mark.ink {
                 Some(_) => {
-                    marks = vec![crate::pattern::edge_node(d.clone(), &mark.edge, crate::pattern::STACK_EDGE_W, &Attrs::new().set("stroke-linecap", cap).set("stroke-linejoin", join))];
+                    let (ink, width) = mark.seam(crate::pattern::STACK_EDGE_W);
+                    let (tops, bottoms): (Vec<(f64, f64)>, Vec<(f64, f64)>) = runs[0].iter().map(|&(x, top, bottom)| ((x, top), (x, bottom))).unzip();
+                    band_rules.push(BandRule { tops, bottoms, ink_heavy: mark.ink_heavy, ink: ink.to_string(), width });
                     Node::path(mark_of(series, None), d, series_key(fill))
                 }
                 None => Node::path(
@@ -5986,6 +6039,7 @@ pub(super) fn fit(
             marks.insert(0, crate::href::linked(anchor, path));
             bands.push(crate::contract::connected_group("area", "layer_2_marks", marks));
         }
+        bands.extend(band_rules_nodes(&band_rules, canvas, curve, cap, join).map_err(cut_error)?);
         // The stack's outer edge borders nothing but what is under it, so a canvas-colored stroke
         // there knocks out; the seams between series keep theirs.
         let edge_is_halo = stroke_color.eq_ignore_ascii_case(canvas) && line_w > 0.0 && band_marks.values().all(|mark| mark.ink.is_none());
@@ -6919,6 +6973,7 @@ pub(super) fn fit(
                     &sl.dark_companion_palette,
                     &sl.pin_companions,
                     category_scale,
+                    r.patterns.ladder_ink(),
                 )?
             };
             let plan = &painted_plans[series];
@@ -7075,7 +7130,7 @@ pub(super) fn fit(
             // label and point carry byte-identical aria-labels).
             let aria =
                 if tooltip_labels { Some(point_aria(series, *i, *v)?) } else { None };
-            let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?;
+            let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?.extend(crate::contract::owner_attrs(aria.as_deref()));
             let (label_x, label_y) = req.anchor;
             let anchor = r.link_open.anchor(all_hrefs.get(&(x_domain[*i].clone(), series.to_string())).map(String::as_str));
             let ink = vega_fit::text_ink(label_x + spot.dx, label_y + spot.dy, req.width, value_label_size, spot.align, spot.baseline);

@@ -990,6 +990,19 @@ mod tests {
         assert_eq!(label_fills(&p), ["#183253", "#3c4d65", "#183253"], "channel: dark companions");
     }
 
+    /// A slice's outside label names the slice it belongs to, so hover fades it with that slice;
+    /// the center total belongs to the whole ring and names nothing.
+    #[test]
+    fn a_slice_label_names_its_slice_as_its_category() {
+        let mut p = make_pie_payload_with_labels("{{ category }}");
+        p["resolved"]["total"] = json!({"visible": true, "label": "Total Revenue"});
+        p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let owned: Vec<&str> = svg.split("<text ").skip(1).filter(|t| t.contains("data-dbt-category=")).collect();
+        assert_eq!(owned.len(), 3, "one per slice label, none on the center total: {svg}");
+        assert!(owned.iter().all(|t| !t.contains("data-dbt-series=")), "{owned:?}");
+    }
+
     #[test]
     fn category_only_template_renders_name_without_percent_or_value() {
         let payload = make_payload(make_pie_payload_with_labels("{{ category }}"));

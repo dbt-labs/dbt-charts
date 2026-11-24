@@ -1,0 +1,3 @@
+kind: Fixes
+body: Markdown in boards renders a bold link from bold around or inside the link, and underscores inside a word stay literal.
+time: 2026-11-19T21:56:30.708326-08:00

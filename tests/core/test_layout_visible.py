@@ -666,7 +666,7 @@ def _chart_body(indent: int, visible: str) -> str:
 
 def _board_with_chart(placement: str, visible: str) -> str:
     head = f"title: T\n{_Q}"
-    tab = "tabs:\n  items:\n    - title: One\n      rows:\n"
+    tab = "tabs:\n  One:\n    rows:\n"
     return {
         "inline": f"{head}rows:\n  - {_chart_body(4, visible)}",
         "named-dict": f"{head}rows:\n  - c:\n      {_chart_body(6, visible)}",

@@ -638,7 +638,7 @@ def generate_layout_variables(layout: Layout) -> dict[str, Variable]:
         variables[layout.tab_variable] = Variable(
             input="select",
             visible=False,
-            default=layout.tab_slugs[layout.default_tab or 0],
+            default=layout.tab_slugs[0],
             options=VariableOptions(
                 static=[*layout.tab_slugs],
             ),

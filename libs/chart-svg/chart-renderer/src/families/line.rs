@@ -5169,8 +5169,8 @@ mod tests {
     /// The value labels are ONE text mark set stamped `data-dbt-value-label`
     /// (`converters/chart.py::_stamp_value_label_layers`), each label
     /// carrying the byte-identical aria-label of its own point
-    /// (`charts/line-graphs_10/revenue_labeled`) -- `recedableMarks` reaches
-    /// a text mark only through the stamp.
+    /// (`charts/line-graphs_10/revenue_labeled`) and the `data-dbt-category` /
+    /// `data-dbt-series` stamps the hover runtime lights it by.
     #[test]
     fn value_labels_are_one_stamped_group_twinned_to_their_points() {
         use serde_json::json;
@@ -5607,6 +5607,43 @@ mod tests {
             y_of("100 Zeta") < y_of("100 Alpha"),
             "wide series paint alphabetically, so zeta is on top and takes the top label: {svg}"
         );
+    }
+
+    /// On a log axis the rail's gaps are pixels on the log scale: series a
+    /// decade or half-decade apart end far apart, so no label moves and each
+    /// sits at its line end, spaced as the log values are.
+    #[test]
+    fn a_log_axis_rail_leaves_well_spaced_labels_at_their_line_ends() {
+        use serde_json::json;
+        let names = ["one", "three", "ten", "thirty", "hundred", "three_hundred", "thousand"];
+        let values: [f64; 7] = [1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0];
+        let mut p = make_wide_line_payload();
+        p["resolved"]["wide_measures"] = json!(names);
+        let last: serde_json::Map<String, serde_json::Value> =
+            names.iter().zip(values).map(|(n, v)| (n.to_string(), json!(v))).collect();
+        let mut first = last.clone();
+        first.insert("month".into(), json!("2026-01-01"));
+        let mut last = last;
+        last.insert("month".into(), json!("2026-01-08"));
+        p["rows"] = json!([first, last]);
+        let ay = &mut p["resolved"]["style"]["axis_y"];
+        ay["scale"] = json!({"continuous": {"type": "log"}});
+        ay["tick_values"] = json!([]);
+        ay["domain_max"] = serde_json::Value::Null;
+        ay["tick_label"] = serde_json::Value::Null;
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+        let y_of = |name: &str| -> f64 {
+            let marker = format!(" {name}<");
+            let end = svg.find(&marker).unwrap_or_else(|| panic!("{name} present: {svg}"));
+            let tag_start = svg[..end].rfind("<text").unwrap();
+            svg[tag_start..end].split(" y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+        };
+        let labels = ["One", "Three", "Ten", "Thirty", "Hundred", "Three hundred", "Thousand"];
+        let (top, bottom) = (y_of("Thousand"), y_of("One"));
+        for (label, v) in labels.iter().zip(values) {
+            let expected = bottom + (top - bottom) * v.log10() / 3.0;
+            assert!((y_of(label) - expected).abs() < 1.0, "{label} at {} not its line end {expected}: {svg}", y_of(label));
+        }
     }
 
     /// `wide_series_names` — the sorted, authored-measure-COMPLETE

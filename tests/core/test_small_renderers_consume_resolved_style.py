@@ -58,8 +58,6 @@ class TestRenderTabsLayout:
             tab_titles=["Tab 1"],
             tab_slugs=["tab-1"],
             tab_variable=None,
-            active_tab=0,
-            tab_position="top",
             background=None,
             resolved_style=resolved,
             render_cache={},

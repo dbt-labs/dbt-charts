@@ -42,6 +42,10 @@ queries:
       - {{region: West, revenue: 9}}
       - {{region: Central, revenue: 6}}
       - {{region: Islands, revenue: 0.4}}
+  one:
+    type: values
+    rows:
+      - {{rate: 0.999}}
   q:
     type: values
     rows:
@@ -69,6 +73,7 @@ charts:
           edge: endpoints
   donut: {{title: Donut title, query: parts, type: pie, theta: revenue, color: region}}
   stat: {{label: Big number, query: q, type: kpi, value: revenue}}
+  rate: {{query: one, type: kpi, value: rate}}
 rows:
 {rows}
 """
@@ -382,3 +387,43 @@ def test_spark_bar_title_and_bars_follow_their_shift(
     assert shifted[1] - unshifted[1] == pytest.approx(
         shifted[0] - unshifted[0], abs=0.5
     )
+
+
+def _chart_bottoms(svg: str, chart_id: str) -> list[float]:
+    """Absolute bottom edge of every drawn box of ``chart_id``, in document order."""
+    bottoms: list[float] = []
+
+    def walk(element: ET.Element, y: float) -> None:
+        match = _TRANSLATE.search(element.get("transform") or "")
+        if match:
+            y += float(match[2])
+        if element.get("data-chart-id") == chart_id:
+            bottoms.append(y + float(element.get("data-chart-height") or 0))
+        for child in element:
+            walk(child, y)
+
+    walk(ET.fromstring(svg), 0.0)
+    return bottoms
+
+
+@pytest.mark.parametrize("chart", ["rate", "bare"])
+def test_titled_boards_in_a_row_end_level_when_one_title_wraps(chart: str) -> None:
+    """A wrapped board title drops its neighbors' bodies; their charts still end
+    where the wrapped board's does instead of filling the cell below the drop."""
+    long_title = "A board title long enough that it wraps onto several lines here"
+    rows = f"""
+  - cols:
+      - title: Short
+        rows:
+          - {chart}
+      - title: {long_title}
+        rows:
+          - {chart}
+      - title: Short too
+        rows:
+          - {chart}
+"""
+    svg = render_board_to_svg(_board(rows))
+    bottoms = _chart_bottoms(svg, chart)
+    assert len(bottoms) == 3
+    assert max(bottoms) - min(bottoms) <= 0.5 + 1e-6, bottoms

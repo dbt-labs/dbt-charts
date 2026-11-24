@@ -618,14 +618,21 @@ fn wheel(
     let gap = r.style.slice_mark.gap.unwrap_or(0.0);
     let corner = r.style.slice_mark.corner_radius.unwrap_or(0.0);
     let slices = pie(thetas, 0.0, std::f64::consts::TAU, gap);
-    let mark_style = |themed_stroke: bool, patch: &crate::conditional::MarkPatch| {
-        let mut attrs = Attrs::new();
+    // A slice's stroke, the gap between neighbors: its patch's or the theme's, when either sets one.
+    let slice_stroke = |patch: &crate::conditional::MarkPatch| {
         let themed = r.style.slice_mark.stroke.as_ref();
-        if themed_stroke && (themed.is_some() || patch.stroke.is_some() || patch.stroke_w.is_some()) {
-            attrs = attrs
-                .set("stroke", patch.stroke.as_deref().or(themed.and_then(|s| s.color.as_deref())).unwrap_or("none"))
-                .num("stroke-width", patch.stroke_w.or(themed.and_then(|s| s.width)).unwrap_or(1.0))
-                .set("stroke-linejoin", themed.and_then(|s| s.join.as_deref()).unwrap_or("miter"));
+        (themed.is_some() || patch.stroke.is_some() || patch.stroke_w.is_some()).then(|| {
+            (
+                patch.stroke.as_deref().or(themed.and_then(|s| s.color.as_deref())).unwrap_or("none").to_string(),
+                patch.stroke_w.or(themed.and_then(|s| s.width)).unwrap_or(1.0),
+                themed.and_then(|s| s.join.as_deref()).unwrap_or("miter").to_string(),
+            )
+        })
+    };
+    let mark_style = |patch: &crate::conditional::MarkPatch| {
+        let mut attrs = Attrs::new();
+        if let Some((color, width, join)) = slice_stroke(patch) {
+            attrs = attrs.set("stroke", &color).num("stroke-width", width).set("stroke-linejoin", &join);
         }
         match patch.opacity.or(r.style.slice_mark.opacity) {
             Some(opacity) => attrs.num("opacity", opacity),
@@ -655,20 +662,22 @@ fn wheel(
         // The wedge's short side: its radial depth, or its arc at the mid radius.
         let short_side = (radius - inner).min((slice.end_angle - slice.start_angle).abs() * (radius + inner) / 2.0);
         let mark = bound_slice.fill.for_mark(short_side, "none", 0.0);
-        // A patterned wedge draws fill-only, then its shared edge line.
+        // A patterned wedge parts from its neighbors by the same themed canvas gap a plain one does (its
+        // stroke is knocked out below), then draws its ink line just inside that gap.
         wedges.push(contract::item_group("arc", "layer_0_marks", ItemRole::ArcMark, reads_of(slice.index), |aria| {
             let attrs = Attrs::new()
                 .set("fill", &mark.fill)
                 .quick_some("data-dbt-ink", mark.ink.as_deref())
-                .extend(mark_style(mark.ink.is_none(), &bound_slice.patch))
+                .extend(mark_style(&bound_slice.patch))
                 .extend(aria);
             let role = Role::Mark { layer: 0, series: None, datum: Some(slice.index) };
             crate::href::linked(anchor, Node::path(role, path.clone(), attrs))
         })?);
         if mark.ink.is_some() {
-            let join = r.style.slice_mark.stroke.as_ref().map_or("miter", |s| s.join.as_deref().unwrap_or("miter"));
-            let extra = Attrs::new().set("stroke-linejoin", join);
-            wedges.push(crate::pattern::edge_node(path.clone(), &mark.edge, crate::pattern::PIE_EDGE_W, &extra));
+            // A stroke of no color knocks nothing out, so it leaves no gap for the ink line to sit beside.
+            let gap_w = slice_stroke(&bound_slice.patch).filter(|(color, ..)| color != "none").map_or(0.0, |(_, width, _)| width);
+            let id = format!("{}-rim{}", contract::scoped_id(&r.id), slice.index);
+            wedges.extend(crate::pattern::inner_rule_nodes(&id, path.clone(), &mark.stroke, gap_w));
         }
     }
     // Slices sit on the canvas, so only the mask matters: the undercoat has nothing to cut.

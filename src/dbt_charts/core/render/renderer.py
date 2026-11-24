@@ -161,7 +161,7 @@ from dbt_charts.core.render.layout_sizing import RenderCache, build_chart_datase
 from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render.sizing import resolve_active_tab_index
 from dbt_charts.core.render.svg_utils import strip_pagination_chrome
-from dbt_charts.core.render.tab_scope import scope_tabs
+from dbt_charts.core.render.tab_scope import drop_hidden_tabs, scope_tabs
 from dbt_charts.core.render.thumbnail import cartoonize
 from dbt_charts.core.render.variables_buttons_overflow import (
     ButtonsOverflow,
@@ -262,7 +262,6 @@ def _collect_active_layout_charts(
                 len(items),
                 layout.tab_variable,
                 list(layout.tab_slugs),
-                layout.default_tab,
                 variables,
             )
             items = (items[active],)
@@ -751,23 +750,23 @@ def _render(
     # walk raises that error instead of re-executing.  The render walk never
     # retries a failed query.
     #
-    # A drawn format shows one tab per tabs layout, so it executes, resolves and
-    # checks only those (`scope_tabs`); the board is rebound so nothing below
-    # can reach a hidden tab's query. The formats that print every tab keep the
-    # whole board. The width still hugs the whole board, so it never depends on
-    # which tab is open.
+    # A tab whose `visible:` is falsy is dropped for every format
+    # (`drop_hidden_tabs`), once the queries have run: the tab bar reads a
+    # `{query, column}` probe, so the plan collects it whichever tab is open.
+    # A drawn format shows one tab per tabs layout, so it resolves and checks
+    # only those (`scope_tabs`); the board is rebound so nothing below can reach
+    # another tab's query. The formats that print every tab keep the whole
+    # board. The width still hugs the whole board, so it never depends on which
+    # tab is open.
     prefetch_query_names = frozenset(ctx.plan["prefetch"])
-    whole_board = board
     if format not in EVERY_TAB_FORMATS:
         try:
-            board = scope_tabs(board, merged_variables)
+            # A selection naming no tab is refused before any query runs.
+            scope_tabs(board, merged_variables)
         except DbtChartsError as e:
-            return RenderResult(
-                output=None,
-                board_error=e.to_diagnostic(),
-            )
+            return RenderResult(output=None, board_error=e.to_diagnostic())
     query_names = set(ctx.plan["reads"])
-    tab_variables = _tab_variables(whole_board.layout)
+    tab_variables = _tab_variables(board.layout)
     if strict_variables:
         # scope_tabs empties hidden tabs, but the registry still holds their
         # variables: an override of one is checked against its options, so the
@@ -787,6 +786,35 @@ def _render(
     found = lookup_names(ctx, ledger, query_names, resume_incremental=False)
     outcomes = run_misses(ctx, ledger, found, resolved_max_workers)
     results = collect(ctx, ledger, found, outcomes, merged_variables)
+    try:
+        board, selected = drop_hidden_tabs(
+            board,
+            merged_variables,
+            results,
+            every_tab=format in EVERY_TAB_FORMATS,
+        )
+    except DbtChartsError as e:
+        return RenderResult(output=None, board_error=e.to_diagnostic())
+    except ValueError as e:
+        # A tab `visible:` that reads as no bool, as a layout item's does.
+        return RenderResult(
+            output=None,
+            board_error=RenderError.from_unexpected(e).to_diagnostic(),
+        )
+    if selected != merged_variables:
+        # A hidden default moved its tab selection: the rows are the same, read
+        # under the variables the render now draws with.
+        merged_variables = selected
+        results = collect(ctx, ledger, found, outcomes, merged_variables)
+    whole_board = board
+    if format not in EVERY_TAB_FORMATS:
+        try:
+            board = scope_tabs(board, merged_variables)
+        except DbtChartsError as e:
+            return RenderResult(
+                output=None,
+                board_error=e.to_diagnostic(),
+            )
     results = with_link_schema(results, ctx, board, merged_variables)
     default_view = _collect_default_view(
         board,
@@ -894,6 +922,9 @@ def _render(
     # reuses that resolution rather than resolving a second time.
     from dbt_charts.core.render.board_resolve import build_resolved_board
 
+    # A host converting an SVG to an image itself opens this scope.
+    flat = format in ("png", "pdf") or is_flat_export()
+
     render_cache: RenderCache
     # Open the sizing-pass sinks before build_resolved_board so that chart
     # title truncations detected during render-first sizing are captured.
@@ -934,6 +965,8 @@ def _render(
             )  # type-state: silent_fallback — opt-in host flag, absent means off
         ),
         page_runtime(format == "html"),
+        # The sizer measures a table as the export draws it: squeezed to fit.
+        flat_export(flat),
     ):
         try:
             with (
@@ -1121,8 +1154,7 @@ def _render(
             collect_painted_italic_families(),
             interactive_controls(options.get("controls", False)),
             page_runtime(format == "html"),
-            # A host converting an SVG to an image itself opens this scope.
-            flat_export(format in ("png", "pdf") or is_flat_export()),
+            flat_export(flat),
         ):
             # No board_variables() scope here: render_board_svg opens its own
             # (boards.py).

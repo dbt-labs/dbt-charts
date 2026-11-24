@@ -51,6 +51,7 @@ def _merged_ay(chart_type: str = "line", y_channel_type: str = "quantitative"):
         "temporal",
         y_channel_type,
         AxisOverrides(),
+        True,
     )
     return baked.y.style, baked.y.band_position
 

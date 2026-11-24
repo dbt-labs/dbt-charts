@@ -675,6 +675,34 @@ class TestSidebar:
         assert ">Sales East<" in sidebar
         assert ">sales_east<" not in sidebar
 
+    def test_a_templated_title_is_labeled_by_its_humanized_stem(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        templated = (
+            "title: '{{ queries.info.one.region }} overview'\n"
+            "queries:\n"
+            "  info:\n"
+            "    columns: [region]\n"
+            "    values:\n"
+            "      - [North]\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: info\n"
+            "    type: table\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        html = self._nav(
+            tmp_path,
+            local_project,
+            self._two(**{"regional_overview.yml": templated}),
+            "zeta",
+            "",
+        )
+        sidebar = html[html.index('class="dbt-sidebar"') :]
+        assert ">Regional Overview<" in sidebar
+        assert "{{" not in sidebar
+
     def test_single_board_has_no_sidebar(
         self, tmp_path: Path, local_project: Callable[..., Project]
     ) -> None:

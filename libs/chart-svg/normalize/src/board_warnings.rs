@@ -66,19 +66,19 @@ fn dotted(path: &str) -> ModelPath {
     ModelPath(path.split('.').map(str::to_string).collect())
 }
 
-/// The authored path of a layout item (`rows.3`, `grid.items.0`, `tabs.items.1.rows.2`) as the
-/// source map keys it: an [`ItemId`]'s indices become segments, and a grid cell is its `items`
-/// entry, not the `item` inside it.
-pub(crate) fn authored(at: &ItemId) -> String {
-    let id = at
-        .as_str()
-        .trim_start_matches('@')
-        .replace('[', ".")
-        .replace(']', "");
-    id.split('.')
-        .filter(|segment| *segment != "item")
-        .collect::<Vec<_>>()
-        .join(".")
+/// The authored path of the layout item at `at` below `root` (`rows.3`, `grid.items.0`,
+/// `tabs.Overview.rows.2`) as the source map keys it: a grid cell is its `items` entry, not
+/// the `item` inside it.
+pub(crate) fn authored(root: Option<&LayoutAuthored>, at: &ItemId) -> Result<ModelPath, Diagnostic> {
+    let mut segments =
+        board_model::board::layout::authored_path_parsed(root, at).map_err(diag::err_internal)?;
+    if let Some(i) = segments
+        .windows(4)
+        .position(|w| matches!(w, [grid, items, _, item] if grid == "grid" && items == "items" && item == "item"))
+    {
+        segments.remove(i + 3);
+    }
+    Ok(ModelPath(segments))
 }
 
 /// The board's body for the double-header check: its own `text`, else a bare text block in its
@@ -152,9 +152,9 @@ fn rows_in<'a>(layout: &'a LayoutAuthored, at: &ItemId, out: &mut Vec<(ItemId, &
             }
         }
         LayoutAuthored::Tabs(t) => {
-            let base = at.key("tabs").key("items");
-            for (i, tab) in t.items.iter().flatten().enumerate() {
-                if let Some(l) = &tab.layout {
+            let base = at.key("tabs");
+            for (i, tab) in t.values().enumerate() {
+                if let Some(l) = &tab.body.layout {
                     rows_in(l, &base.index(i), out);
                 }
             }
@@ -174,24 +174,26 @@ pub fn untitled_sections(patch: &Patch, skip_first: bool) -> Vec<Diagnostic> {
         rows.remove(0);
     }
     let root = (
-        "text".to_string(),
+        Ok(path(&["text"])),
         text_of(&patch.body.title),
         text_of(&patch.body.text),
     );
+    let nested = rows.iter().map(|(pos, b)| {
+        let at = authored(patch.body.layout.as_ref(), pos).map(|mut at| {
+            at.0.push("text".to_string());
+            at
+        });
+        (at, text_of(&b.body.title), text_of(&b.body.text))
+    });
     std::iter::once(root)
-        .chain(rows.iter().map(|(pos, b)| {
-            (
-                format!("{}.text", authored(pos)),
-                text_of(&b.body.title),
-                text_of(&b.body.text),
-            )
-        }))
+        .chain(nested)
         .filter(|(_, title, _)| title.is_none())
         .filter_map(|(at, _, text)| Some((at, opening_heading(text?)?)))
-        .map(|(at, (_, heading, line))| {
-            diag::warn_body_heading_no_title(heading)
+        .map(|(at, (_, heading, line))| match at {
+            Ok(at) => diag::warn_body_heading_no_title(heading)
                 .with_sink_param("source_needle", line.into())
-                .at_path(dotted(&at))
+                .at_path(at),
+            Err(missing) => missing,
         })
         .collect()
 }
@@ -266,6 +268,7 @@ fn placed<'a>(layout: &'a LayoutAuthored, at: &ItemId) -> Vec<(ItemId, &'a Layou
 /// no coordinates in this file, so the warning would have nowhere to point.
 pub fn adjacent_text_rows(patch: &Patch, prose_imports: &BTreeSet<ItemId>) -> Vec<Diagnostic> {
     fn walk(
+        root: Option<&LayoutAuthored>,
         layout: &LayoutAuthored,
         at: &ItemId,
         prose_imports: &BTreeSet<ItemId>,
@@ -279,14 +282,15 @@ pub fn adjacent_text_rows(patch: &Patch, prose_imports: &BTreeSet<ItemId>) -> Ve
                 // The mark sits on the second row, the first that should have been merged upward,
                 // with the block it should join alongside (when that one is authored here too).
                 if let (true, Some(Some(second))) = (run.len() >= 2, run.get(1)) {
-                    let found =
-                        diag::warn_adjacent_text_rows(run.len()).at_path(dotted(&authored(second)));
-                    out.push(match run.first() {
-                        Some(Some(first)) => found.relating_path(
-                            dotted(&authored(first)),
-                            "the block this prose should join",
-                        ),
-                        _ => found,
+                    let first = run.first().copied().flatten().map(|first| authored(root, first));
+                    out.push(match (authored(root, second), first) {
+                        (Err(missing), _) | (_, Some(Err(missing))) => missing,
+                        (Ok(second), Some(Ok(first))) => diag::warn_adjacent_text_rows(run.len())
+                            .at_path(second)
+                            .relating_path(first, "the block this prose should join"),
+                        (Ok(second), None) => {
+                            diag::warn_adjacent_text_rows(run.len()).at_path(second)
+                        }
                     });
                 }
                 run.clear();
@@ -304,10 +308,10 @@ pub fn adjacent_text_rows(patch: &Patch, prose_imports: &BTreeSet<ItemId>) -> Ve
         }
         match layout {
             LayoutAuthored::Tabs(t) => {
-                let base = at.key("tabs").key("items");
-                for (i, tab) in t.items.iter().flatten().enumerate() {
-                    if let Some(l) = &tab.layout {
-                        walk(l, &base.index(i), prose_imports, out);
+                let base = at.key("tabs");
+                for (i, tab) in t.values().enumerate() {
+                    if let Some(l) = &tab.body.layout {
+                        walk(root, l, &base.index(i), prose_imports, out);
                     }
                 }
             }
@@ -315,7 +319,7 @@ pub fn adjacent_text_rows(patch: &Patch, prose_imports: &BTreeSet<ItemId>) -> Ve
                 for (pos, item) in items {
                     if let LayoutItemAuthored::Board(b) = item {
                         if let Some(l) = &b.body.layout {
-                            walk(l, &pos, prose_imports, out);
+                            walk(root, l, &pos, prose_imports, out);
                         }
                     }
                 }
@@ -324,7 +328,7 @@ pub fn adjacent_text_rows(patch: &Patch, prose_imports: &BTreeSet<ItemId>) -> Ve
     }
     let mut out = Vec::new();
     if let Some(layout) = &patch.body.layout {
-        walk(layout, &ItemId::root(), prose_imports, &mut out);
+        walk(Some(layout), layout, &ItemId::root(), prose_imports, &mut out);
     }
     out
 }

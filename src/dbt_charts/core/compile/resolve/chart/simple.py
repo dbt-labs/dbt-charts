@@ -52,6 +52,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _resolve_text,
     _shared_kwargs,
     board_family_style,
+    family_card_fill,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _with_color_tokens,
@@ -95,6 +96,9 @@ def _resolve_kpi(
         chart_style_context, normalized
     )
     kpi = unset_auto_support_ink(chart_local_style_context.kpi)
+    card_fill = family_card_fill(chart_style_context)
+    if kpi.background is None and card_fill is not None:
+        kpi = kpi.model_copy(update={"background": card_fill})
     available = set(data[0]) if data else set()
     _validate_kpi_conditional(normalized.id, kpi, available)
     channels = (

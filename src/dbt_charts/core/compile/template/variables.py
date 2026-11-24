@@ -35,6 +35,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_VARIABLE_VALUE_NOT_IN_OPTIONS,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
+from dbt_charts.core.diagnostics.hints import backticked_list
 
 # `?name={{ color }}`: the one link shape whose click sets exactly one variable
 # from the clicked series. The engine's `selected::setter` accepts the same text.
@@ -219,6 +220,7 @@ def coerce_variable_values(
         ):
             result[name] = None  # empty scalar typed input = unset
         elif kind in _CHOICE_INPUTS:
+            _require_single_value(name, kind, value)
             result[name] = coerce_choice_member(name, value, choice_member_type(var))
         elif kind in _DATE_INPUTS:
             result[name] = _coerce_date(name, value)
@@ -322,11 +324,13 @@ def check_option_values(
             or variable_value_is_absent(value)
         ):
             continue
+        if var.input == "multiselect":
+            _require_parsed_list(name, value)
+        else:
+            _require_single_value(name, var.input, value)
         options = options_of(name, var)
         if not options:
             continue
-        if var.input == "multiselect":
-            _require_parsed_list(name, value)
         members = coerce_multiselect(value) if var.input == "multiselect" else [value]
         for member in members:
             if not _is_option(member, options):
@@ -334,7 +338,9 @@ def check_option_values(
                     ERR_VARIABLE_VALUE_NOT_IN_OPTIONS,
                     variable=name,
                     value=member,
-                    options=list(dict.fromkeys(str(option) for option in options)),
+                    options=backticked_list(
+                        list(dict.fromkeys(str(option) for option in options))
+                    ),
                 )
 
 
@@ -376,7 +382,22 @@ def _require_parsed_list(name: str, value: _MultiselectRaw) -> None:
     """
     if isinstance(value, str) and value.lstrip().startswith("["):
         raise _invalid_value(
-            name, f"multiselect value must be a JSON list, got {value!r}"
+            name,
+            f"{value!r} starts with '[' but is not a JSON list. A multiselect "
+            'takes a JSON list such as ["a", "b"], or its name repeated once '
+            "per member; to select this text as one member, write "
+            f"{json.dumps([value], ensure_ascii=False)}",
+        )
+
+
+def _require_single_value(name: str, kind: str, value: _MultiselectRaw) -> None:
+    """Refuse a list for a select or radio, which takes one value."""
+    if isinstance(value, (list, tuple)) and value:
+        given = json.dumps(list(value), ensure_ascii=False, default=str)
+        raise _invalid_value(
+            name,
+            f"a {kind} takes one value, got the list {given}; "
+            "pass one of its options as plain text",
         )
 
 

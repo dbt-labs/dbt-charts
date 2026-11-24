@@ -227,17 +227,24 @@ def _bake_axis(
     chart_id: str,
     axis: str,
     channel_type: str,
+    has_rows: bool,
 ) -> BakedAxis[_S]:
     """Resolve the merged axis's winning ``labels.format`` into a ``ResolvedFormat``.
 
     A categorical axis rejects an affix (a labelExpr would bypass
     the engine's label-format gate); the channel type is only known here.
+    With no rows the channel type is a default, not a classification, and the
+    empty chart paints no ticks, so there is nothing to reject.
     """
     winner = merged.labels.format
     if winner is None:
         return BakedAxis(merged, band_position, None)
     resolved = column_format("number", formats, winner)
-    if channel_type not in ("quantitative", "temporal") and resolved.has_affix:
+    if (
+        has_rows
+        and channel_type not in ("quantitative", "temporal")
+        and resolved.has_affix
+    ):
         raise CompilationError.from_code(
             ERR_FORMAT_AFFIX_NOMINAL_AXIS_UNSUPPORTED,
             field_path=f"charts.{chart_id}.style.{axis}.labels.format",
@@ -262,6 +269,7 @@ def _bake_cartesian_axes(
     x_channel_type: str,
     y_channel_type: str,
     axis_overrides: AxisOverrides,
+    has_rows: bool,
     multiples: MultiplesConfig | None = None,
     y: str | list[str] | None = None,
     temporal_band_axes: frozenset[Literal["axis_x", "axis_y"]] = frozenset(),
@@ -364,6 +372,7 @@ def _bake_cartesian_axes(
         chart_id=chart.id,
         axis="axis_x",
         channel_type=x_channel_type,
+        has_rows=has_rows,
     )
     baked_y = _bake_axis(
         ay,
@@ -372,6 +381,7 @@ def _bake_cartesian_axes(
         chart_id=chart.id,
         axis="axis_y",
         channel_type=y_channel_type,
+        has_rows=has_rows,
     )
     # This getattr is load-bearing, not typing ceremony like x_label/y_label
     # above: HeatmapChart has no `layers` field and DOES resolve through

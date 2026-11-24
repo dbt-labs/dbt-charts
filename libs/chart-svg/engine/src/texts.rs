@@ -104,8 +104,8 @@ fn fill_layout(layout: &mut Layout, shown: &BTreeSet<BoardId>, styles: &ChartSty
         Layout::Rows(items) | Layout::Cols(items) => items.iter_mut().collect(),
         Layout::Grid(grid) => grid.items.iter_mut().map(|cell| &mut cell.item).collect(),
         Layout::Tabs(tabs) => {
-            for tab in &mut tabs.items {
-                fill_layout(&mut tab.layout, shown, styles, run, facts)?;
+            for tab in tabs.values_mut() {
+                fill_layout(&mut tab.body.layout, shown, styles, run, facts)?;
             }
             Vec::new()
         }

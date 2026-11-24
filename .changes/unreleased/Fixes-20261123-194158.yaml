@@ -1,0 +1,3 @@
+kind: Fixes
+body: PNG and PDF exports of a table that scrolls on screen now size its card for the squeezed table, so rows no longer page out under the board footer.
+time: 2026-11-23T19:41:58.964103813Z

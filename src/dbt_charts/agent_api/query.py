@@ -278,6 +278,7 @@ def lookup_board_query_sql(
     from dbt_charts.core.execute.plan import utc_now
     from dbt_charts.core.execute.plan_reader import (
         board_clock as planned_clock,
+        cache_refs,
         expanded_sql,
         plan_variables,
         reachable,
@@ -307,7 +308,6 @@ def lookup_board_query_sql(
     # preview then falls to the default dialect's spelling rather than refusing.
     from dbt_charts.core.compile.models.source import is_file_source
     from dbt_charts.core.dialects import get_dialect
-    from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE
     from dbt_charts.core.execute.sql_literals import (
         INLINE_PLACEHOLDERS,
         inline_params_for_dialect,
@@ -382,7 +382,7 @@ def lookup_board_query_sql(
                         "no source resolved for this query",
                     )
                 # A query over `.cache` rows runs on DuckDB, not its source.
-                reads_cache = CACHE_REF_JINJA_RE.search(query.sql) is not None
+                reads_cache = bool(cache_refs(plan, key))
                 engine = (
                     "duckdb"
                     if reads_cache
@@ -816,12 +816,12 @@ def query_board(
     """
     from dbt_charts.core.board import plan_for_board
     from dbt_charts.core.execute.plan import (
-        CACHE_REF_JINJA_RE,
         untyped_choice_options,
         utc_now,
     )
     from dbt_charts.core.execute.plan_reader import (
         board_clock as planned_clock,
+        cache_refs,
         expanded_sql,
         resolve_planned_source,
     )
@@ -881,7 +881,7 @@ def query_board(
     query = loaded.all_queries[name]
     sql = expanded_sql(plan, key) if entry["type"] == "sql" else None
     noted = query.notes
-    composes_cache = sql is not None and CACHE_REF_JINJA_RE.search(sql) is not None
+    composes_cache = sql is not None and bool(cache_refs(plan, key))
     needs_upstreams = composes_cache or bool(
         untyped_choice_options(plan, loaded.board, key)
     )

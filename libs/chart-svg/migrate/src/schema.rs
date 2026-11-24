@@ -229,6 +229,35 @@ impl Schema {
         out
     }
 
+    /// [`Schema::item_positions`] in the current grammar read beside a retained one: a list where
+    /// it has an open map is one a move of this boundary turns into that map, so its items are
+    /// the map's values. A list it has no items for at all is one a move folds into its holder
+    /// (`tabs.items` becoming `tabs`), so its items read where the list sits.
+    pub fn live_item_positions(&'static self, positions: &[Pos]) -> Vec<Pos> {
+        let held = self.held_items(positions);
+        if held.is_empty() {
+            positions.to_vec()
+        } else {
+            held
+        }
+    }
+
+    fn held_items(&'static self, positions: &[Pos]) -> Vec<Pos> {
+        let mut out = Vec::new();
+        for p in positions {
+            for b in self.branches(p).iter() {
+                if let Some(i) = b
+                    .get("items")
+                    .or_else(|| b.get("additionalProperties"))
+                    .filter(|i| i.is_object())
+                {
+                    out.push(i);
+                }
+            }
+        }
+        out
+    }
+
     /// Property names declared at `positions`, across every branch.
     pub fn declared_names(&'static self, positions: &[Pos]) -> BTreeSet<String> {
         let mut names = BTreeSet::new();
@@ -441,7 +470,7 @@ impl Schema {
             }
             Kind::Seq(items) => {
                 let ip = self.item_positions(positions);
-                let lp = live.item_positions(live_positions);
+                let lp = live.live_item_positions(live_positions);
                 let items = items
                     .iter()
                     .map(|i| self.strip_post_freeze(i, &ip, live, &lp))

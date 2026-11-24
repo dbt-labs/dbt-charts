@@ -110,8 +110,8 @@ string_enum!(
     OutliersVariant { Torn = "torn", TornWithCap = "torn_with_cap" }
 );
 string_enum!(
-    /// What hover redraws at true length: the hovered bar, every torn bar, or nothing.
-    OutliersReveal { Bar = "bar", Chart = "chart", None = "none" }
+    /// What hover redraws at true length: the hovered bar or every torn bar.
+    OutliersReveal { Bar = "bar", Chart = "chart" }
 );
 
 /// Size of the floating cap that stands in for a torn bar's end.
@@ -137,7 +137,7 @@ pub struct BarOutliersStyle {
     pub median_multiplier: Engine<f64, NoOutliers>,
     /// How a torn bar is drawn: past the top of the card, or cut with a floating cap.
     pub variant: OutliersVariant,
-    /// What hover redraws at true length: the hovered bar, every torn bar, or nothing.
+    /// What hover redraws at true length: the hovered bar or every torn bar.
     pub reveal: OutliersReveal,
     /// Cap size, read only by the torn_with_cap variant.
     pub cap: BarOutliersCapStyle,

@@ -218,13 +218,12 @@ charts:
         region:
           link: /d/{{ region }}
 tabs:
-  items:
-    - title: One
-      rows:
-        - b
-    - title: Two
-      rows:
-        - t
+  One:
+    rows:
+      - b
+  Two:
+    rows:
+      - t
 """
 
 

@@ -30,7 +30,7 @@ from ...._results import rows_result
 from ..._engine_render import render_pie_svg
 
 _SLICE_LABEL = re.compile(
-    r'<text [^>]*fill="([^"]+)"[^>]*aria-roledescription="text mark">(.*?)</text>'
+    r'<text [^>]*fill="([^"]+)"[^>]*aria-roledescription="text mark"[^>]*>(.*?)</text>'
 )
 
 

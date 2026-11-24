@@ -137,3 +137,22 @@ def test_fires_only_for_truncated_chart_in_multi_chart_board() -> None:
     warnings = detector.detect(ctx)
     assert len(warnings) == 1
     assert warnings[0].chart == "c_truncated"
+
+
+def test_composed_result_names_its_upstreams_not_a_row_count() -> None:
+    """A result built from cache-ref upstreams keeps a row count that says
+    nothing about the cut (a count(*) keeps one row), so the message names
+    what it reads instead."""
+    chart = _make_chart()
+    truncation = TruncationInfo(
+        query_name="q",
+        kept_row_count=1,
+        reason="max_result_bytes",
+        upstreams=("base",),
+    )
+    ctx = _make_ctx(chart, [{"x": 1}], chart_truncations={"c1": truncation})
+    (w,) = detector.detect(ctx)
+    assert w.chart == "c1"
+    assert "'base'" in w.message
+    assert "max_result_bytes" in w.message
+    assert "truncated to" not in w.message

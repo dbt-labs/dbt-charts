@@ -164,7 +164,7 @@ def _substitute_dbt_calls(sql: str) -> tuple[str, frozenset[str]] | None:
 
 
 def parse_sql_statements(
-    sql: str, dialect: str | None
+    sql: str, dialect: str | None, variables_bind: bool = False
 ) -> tuple[list[exp.Expr], frozenset[str]] | str:
     """Parsed statements of the all-branches skeleton, or the failure reason.
 
@@ -172,6 +172,11 @@ def parse_sql_statements(
     dbt-call substitution (with provenance), all-branches skeletonization, and
     a multi-statement parse. Success returns the statements plus the set of
     table names that arrived via ref()/source().
+
+    ``variables_bind`` reads board variables as bound values (see
+    ``build_skeleton``): true only for a board query's body, whose variables
+    always render as parameters — never ``setup_sql``, which interpolates
+    them as text, nor a dbt model's own jinja.
     """
     substituted = _substitute_dbt_calls(sql)
     if substituted is None:
@@ -184,7 +189,9 @@ def parse_sql_statements(
         # All branches of every {% if %} are kept — a column read only in an
         # {% else %} body is still a dependency. The branch-join can yield
         # multiple statements; columns union across them.
-        skeleton = build_skeleton(substituted_sql, all_branches=True)
+        skeleton = build_skeleton(
+            substituted_sql, all_branches=True, variables_bind=variables_bind
+        )
         parsed = sqlglot.parse(skeleton, read=dialect)
     except _PARSE_ERRORS as exc:
         return f"{PARSE_FAILURE_PREFIX}{exc}"
@@ -326,7 +333,7 @@ def _cte_with_keywords(tokens: list[Token]) -> int:
 
 
 def _refs_for_sql(sql: str, dialect: str | None) -> QueryColumnRefs:
-    parsed = parse_sql_statements(sql, dialect)
+    parsed = parse_sql_statements(sql, dialect, variables_bind=True)
     if isinstance(parsed, str):
         return QueryColumnRefs(indeterminate=parsed)
     statements, via_dbt = parsed

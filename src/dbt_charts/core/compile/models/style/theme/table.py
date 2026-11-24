@@ -501,7 +501,8 @@ class TableChartStyle(
 
     # Color overrides (None = inherit from theme)
     background: Annotated[str | None, Color()] = Field(
-        default=None, description="Table background color; None inherits from theme."
+        default=None,
+        description="Table card fill; defaults to charts.background.",
     )
     # Tables have no series axis — extra_forbidden via GradientColorStyle
     # (no categorical arm). Not an override: _ChartStyleBaseAllOptional carries

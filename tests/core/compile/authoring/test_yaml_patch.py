@@ -1085,3 +1085,19 @@ class TestNumericListLeaves:
             18,
             14.5,
         ]
+
+
+def test_a_quoted_path_segment_finds_a_spaced_or_quoted_key() -> None:
+    text = 'tabs:\n  Q1.5 / Q2:\n    title: Old\n  "📈 Trends":\n    title: Old\n'
+    out = set_board_values(
+        text,
+        {
+            'tabs["Q1.5 / Q2"].title': "New",
+            'tabs["📈 Trends"].title': "Newer",
+        },
+    )
+
+    assert yaml.safe_load(out)["tabs"] == {
+        "Q1.5 / Q2": {"title": "New"},
+        "📈 Trends": {"title": "Newer"},
+    }

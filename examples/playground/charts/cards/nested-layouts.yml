@@ -161,54 +161,45 @@ rows:
       Tabs show one item at a time. Click to switch between tabs.
 
     tabs:
-      items:
-        - title: "Overview"
-          text: |
-            **Tabs** are great for organizing related content.
+      "Overview":
+        text: |
+          **Tabs** are great for organizing related content.
 
-            Each tab can contain:
-            - Text and markdown
-            - Charts and visualizations
-            - Nested layouts (rows, cols, grids)
-          style:
-            background: "rgba(76, 175, 80, 0.12)"
-            border:
-              radius: 4
+          Each tab can contain:
+          - Text and markdown
+          - Charts and visualizations
+          - Nested layouts (rows, cols, grids)
+        style:
+          background: "rgba(76, 175, 80, 0.12)"
+          border:
+            radius: 4
 
-        - title: "With Cols"
-          style:
-            background: "rgba(3, 169, 244, 0.12)"
-            border:
-              radius: 4
-          cols:
-            - title: "Left"
-              text: |
-                Tabs can contain **cols** layouts.
-              style:
-                background: "rgba(255, 193, 7, 0.15)"
-            - title: "Right"
-              text: |
-                Side-by-side content in a tab.
-              style:
-                background: "rgba(233, 30, 99, 0.12)"
+      "With Cols":
+        style:
+          background: "rgba(3, 169, 244, 0.12)"
+          border:
+            radius: 4
+        cols:
+          - title: "Left"
+            text: |
+              Tabs can contain **cols** layouts.
+          - title: "Right"
+            text: |
+              Side-by-side content in a tab.
 
-        - title: "With Grid"
-          style:
-            background: "rgba(156, 39, 176, 0.12)"
-            border:
-              radius: 4
-          grid:
-            columns: 6
-            items:
-              - item:
-                  text: |
-                    Grid inside a tab!
-                  style:
-                    background: "rgba(240, 147, 251, 0.15)"
-                col_span: 3
-              - item:
-                  text: |
-                    Flexible layouts anywhere.
-                  style:
-                    background: "rgba(236, 64, 122, 0.12)"
-                col_span: 3
+      "With Grid":
+        style:
+          background: "rgba(156, 39, 176, 0.12)"
+          border:
+            radius: 4
+        grid:
+          columns: 6
+          items:
+            - item:
+                text: |
+                  Grid inside a tab!
+              col_span: 3
+            - item:
+                text: |
+                  Flexible layouts anywhere.
+              col_span: 3

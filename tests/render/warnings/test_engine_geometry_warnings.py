@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dbt_charts.core.compile.authoring.paths import split_path
 from dbt_charts.core.compile.models.chart.authored._layer import AreaLayer, LineLayer
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.diagnostics import (
@@ -243,7 +244,8 @@ def test_a_moved_note_anchors_on_its_annotation() -> None:
     diagnostic = _only(
         annotation_note_moved.detect(_ctx(WARN_ANNOTATION_NOTE_MOVED, {"index": 2}))
     )
-    assert diagnostic.path == "charts.c1.annotations[2]"
+    assert diagnostic.path == "charts.c1.annotations.2"
+    assert split_path(diagnostic.path) == ["charts", "c1", "annotations", "2"]
     assert "annotation 2" in diagnostic.message
 
 

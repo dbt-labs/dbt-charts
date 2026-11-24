@@ -10,7 +10,7 @@ LayoutType for board layout variants.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Any, ClassVar, Literal, get_args
+from typing import Annotated, Any, ClassVar, get_args
 
 from pydantic import (
     BaseModel,
@@ -273,92 +273,6 @@ class GridLayout(BaseModel):
     items: list[GridItem] = Field(
         description="Cells of this grid, each pairing content with its placement."
     )
-
-
-class TabItem(ConstrainedModel):
-    """Tab layout item."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    __constraints__: ClassVar[tuple[Constraint, ...]] = (
-        AtMostOneOf(
-            ("rows", "cols", "grid", "tabs"),
-            "A tab can only have one layout type (rows, cols, grid, or tabs)",
-        ),
-    )
-
-    title: Annotated[str, DisplayText()] = Field(
-        description="Tab label displayed in the tab bar."
-    )
-    icon: str | None = Field(
-        default=None,
-        description="Optional icon shown in the tab (e.g., emoji or icon name).",
-    )
-    notes: Annotated[str | None, DisplayText()] = Field(
-        default=None,
-        description=(
-            "Optional metadata for AI search. Emitted into the SVG DOM as "
-            "a data-layout-notes attribute; never painted as visible "
-            "pixels."
-        ),
-    )
-    text: Annotated[str | None, Markdown()] = Field(
-        default=None, description="Markdown text content shown in this tab."
-    )
-    style: StylePatch | None = Field(
-        default=None, description="Appearance overrides for this tab's content area."
-    )
-
-    # Layout fields (tab can contain nested layouts)
-    rows: Annotated[
-        list[ChartName | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
-        | None,
-        BeforeValidator(_check_layout_list),
-    ] = Field(default=None, description="Vertical stack layout for this tab's content.")
-    cols: Annotated[
-        list[ChartName | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
-        | None,
-        BeforeValidator(_check_layout_list),
-    ] = Field(default=None, description="Horizontal layout for this tab's content.")
-    grid: GridLayout | None = Field(
-        default=None, description="CSS-grid layout for this tab's content."
-    )
-    tabs: TabLayout | None = Field(
-        default=None, description="A further set of tabs opening inside this one."
-    )
-
-
-class TabLayout(BaseModel):
-    """Tab layout configuration.
-
-    The `id` field controls the variable name and URL param for tab selection.
-    If not provided, auto-generates as 'tab', 'tab_1', etc.
-
-    Example YAML:
-        tabs:
-          id: view              # → URL param ?view=overview
-          default: overview
-          items:
-            - title: Overview
-              rows: [kpi_row]
-            - title: Details
-              rows: [detail_table]
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str | None = Field(
-        default=None,
-        description="Variable name and URL param base for tab selection (auto-generated if omitted).",
-    )
-    position: Literal["top", "left"] = Field(
-        default="top", description="Which edge the tab bar sits on (top or left)."
-    )
-    default: str | None = Field(
-        default=None,
-        description="Title of the tab opened on load; the first tab if omitted.",
-    )
-    items: list[TabItem] = Field(description="Tabs in display order.")
 
 
 # ============================================================================
@@ -669,9 +583,15 @@ class AuthoredBoard(ConstrainedModel):
         default=None,
         description="CSS-grid style layout with explicit row/column placement.",
     )
-    tabs: Annotated[TabLayout | None, Exclusive("layout"), Content()] = Field(
+    # A board's tabs are what it wrote: an inherited tab is never merged in by label.
+    tabs: Annotated[
+        dict[str, AuthoredBoardInput] | None,
+        Exclusive("layout"),
+        Content(),
+        Merge(Strategy.OVERRIDE),
+    ] = Field(
         default=None,
-        description="Tabbed navigation layout where each tab contains its own layout.",
+        description="Tabs: each tab's label, in display order, to the board it shows.",
     )
 
     # Card gap toggle: when true, adds gap between cards.
@@ -792,28 +712,26 @@ class AuthoredBoard(ConstrainedModel):
 # earlier in this file: `AuthoredBoardInput = Annotated[AuthoredBoard, ...]` is
 # a runtime name lookup (unlike those aliases, which wrap types already
 # defined), so it would NameError if written before `class AuthoredBoard`
-# exists. The 5 recursive field annotations above (GridItem.item,
-# TabItem.rows/cols, AuthoredBoard.rows/cols) reference AuthoredBoardInput
+# exists. The recursive field annotations above (GridItem.item,
+# AuthoredBoard.rows/cols) reference AuthoredBoardInput
 # even though they're written earlier in the file -- `from __future__ import
 # annotations` makes them lazy strings, resolved only when model_rebuild()
 # runs, by which point this name exists.
+_THEME_SUGAR = SchemaSugar(
+    name="theme",
+    type_repr="str",
+    enum_values=tuple(sorted(get_args(ThemeName))),
+    description="Built-in theme name; shorthand for `extends: <name>`.",
+)
 AuthoredBoardInput = Annotated[
-    AuthoredBoard,
-    BeforeValidator(desugar_theme),
-    SchemaSugar(
-        name="theme",
-        type_repr="str",
-        enum_values=tuple(sorted(get_args(ThemeName))),
-        description="Built-in theme name; shorthand for `extends: <name>`.",
-    ),
+    AuthoredBoard, BeforeValidator(desugar_theme), _THEME_SUGAR
 ]
 AUTHORED_BOARD_ADAPTER: TypeAdapter[AuthoredBoard] = TypeAdapter(AuthoredBoardInput)
 
 
-# Resolve forward references (GridItem.item and TabItem.rows/cols reference types
-# defined later in the file — rebuild after all classes are in scope)
+# Resolve forward references (GridItem.item and AuthoredBoard.rows/cols/tabs
+# reference types defined later in the file)
 GridItem.model_rebuild()
-TabItem.model_rebuild()
 AuthoredBoard.model_rebuild()
 
 

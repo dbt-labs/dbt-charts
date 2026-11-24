@@ -34,7 +34,8 @@ use std::collections::BTreeMap;
 use bind::board::ChartStyles;
 use bind::failed::FailedText;
 use bind::bound::{self, Failure, Family, Frame, Sizing};
-use board_model::board::layout::LayoutItem;
+use board_model::board::layout::{LayoutItem, NestedBoard};
+use indexmap::IndexMap;
 use board_model::board::{items, Board, BoardBody};
 use board_model::chart::{BarChart, Chart as ModelChart, ScatterChart};
 use board_model::ids::{ChartId, ItemId};
@@ -43,7 +44,6 @@ use diagnostic::{diag, refuse, Diagnostic};
 use serde_json::json;
 
 use crate::texts::ReadsData;
-use board_model::board::layout::TabLayout;
 use layout::board::{bands, chrome};
 use layout::board::band::TitleShift;
 use layout::families::failed::ChartTitle;
@@ -184,12 +184,16 @@ fn walk<'a>(
     }
     let open = bound.drawn().active_tab(&body.id);
     if let board_model::board::Layout::Tabs(tabs) = &body.layout {
-        for (index, tab) in tabs.items.iter().enumerate() {
-            let pane = tab.style.as_deref().ok_or_else(|| diag::err_internal("a normalized tab carries its total style"))?;
-            out.panes.insert(at.key("tabs").key("items").index(index), pane);
+        for (index, tab) in tabs.values().enumerate() {
+            let pane = tab.body.style.as_deref().ok_or_else(|| diag::err_internal("a normalized tab carries its total style"))?;
+            out.panes.insert(at.key("tabs").index(index), pane);
         }
     }
     for placement in items(body, at) {
+        // A hidden tab's items are not walked at all: the board hugs only the tabs it draws.
+        if bound.drawn().is_hidden(&placement.id) {
+            continue;
+        }
         // A closed tab is walked for its width only: the board hugs the widest of all its tabs.
         let closed = closed || open.is_some_and(|open| placement.pane.first() != Some(&open));
         if closed {
@@ -208,9 +212,6 @@ fn walk<'a>(
             if unread {
                 continue;
             }
-        }
-        if bound.drawn().is_hidden(&placement.id) {
-            continue;
         }
         match placement.item {
             LayoutItem::Board(nested) => {
@@ -560,6 +561,22 @@ impl<'a> Slots<'a> {
         }
     }
 
+    /// The opaque canvas the layout at `at` paints (`composite_over_canvas`): its background over that of
+    /// each board and pane that holds it. `None` when the layers do not come to an opaque color.
+    pub fn canvas_of(&self, at: &ItemId) -> Result<Option<String>, Diagnostic> {
+        let holds = |held: &ItemId| {
+            let rest = at.as_str().strip_prefix(held.as_str());
+            held == &ItemId::root() || rest.is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '[']))
+        };
+        let mut holders: Vec<&ItemId> = self.boards.keys().chain(self.panes.keys()).filter(|held| holds(held)).collect();
+        holders.sort_by_key(|held| std::cmp::Reverse(held.as_str().len()));
+        let mut layers = Vec::new();
+        for held in holders {
+            layers.push(self.style_of(held)?.background.as_str());
+        }
+        Ok(color::ink_canvas(&layers).ok())
+    }
+
     pub fn get(&self, at: &ItemId) -> Result<&Slot<'a>, Diagnostic> {
         self.by_placement.get(at).ok_or_else(|| diag::err_internal(format!("the chart at {at} has no slot")))
     }
@@ -707,10 +724,10 @@ impl<F: EngineFacts> Facts for Adapter<'_, '_, F> {
         self.facts.pane_style(body, tab)
     }
 
-    fn pane_top(&mut self, body: &BoardBody, tabs: &TabLayout) -> Result<f64, Diagnostic> {
+    fn pane_top(&mut self, body: &BoardBody, tabs: &IndexMap<String, NestedBoard>) -> Result<f64, Diagnostic> {
         let style = total_style(body)?;
-        let titles = tabs.items.iter().map(|tab| chrome::plain(&tab.title, "a tab title")).collect::<Result<Vec<_>, _>>()?;
-        Ok(chrome::tab_strip(style, tabs.position, &titles, self.book)?.pane_top(style))
+        let titles = tabs.keys().map(|label| chrome::plain(label, "a tab label")).collect::<Result<Vec<_>, _>>()?;
+        Ok(chrome::tab_strip(style, &titles, self.book)?.pane_top(style))
     }
 
     fn summary_height(&mut self, body: &BoardBody) -> Result<f64, Diagnostic> {
@@ -745,7 +762,7 @@ fn authored_items(body: &BoardBody) -> bool {
     match &body.layout {
         Layout::Rows(items) | Layout::Cols(items) => !items.is_empty(),
         Layout::Grid(grid) => !grid.items.is_empty(),
-        Layout::Tabs(tabs) => !tabs.items.is_empty(),
+        Layout::Tabs(tabs) => !tabs.is_empty(),
     }
 }
 

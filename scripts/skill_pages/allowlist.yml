@@ -55,10 +55,6 @@ objects:
     path: AuthoredBoard.grid.items
     label: grid.items[]
     keys: [item, col, row, col_span, row_span]
-  tabs:
-    path: AuthoredBoard.tabs
-    label: tabs
-    keys: [items]
   style_root:
     path: AuthoredBoard.style
     keys: [accent, background, border, charts, font, fonts, footer, formats, frame, gap, layout, margin, opacity, padding, text, timestamp, title, variables]

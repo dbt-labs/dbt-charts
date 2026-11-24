@@ -51,7 +51,8 @@ VAR_REF_PATTERN_STR = Annotated[
     StringConstraints(pattern=VAR_REF_RE.pattern),
     ErrorHint(
         "Invalid variable reference {value!r}. Expected "
-        "'<file>.variables.<name>', optionally prefixed with '../' segments."
+        "'<file>.variables.<name>', optionally prefixed with '../' segments; "
+        "the file and the name each start with a letter or underscore."
     ),
 ]
 QUERY_REF_PATTERN_STR = Annotated[
@@ -59,7 +60,8 @@ QUERY_REF_PATTERN_STR = Annotated[
     StringConstraints(pattern=QUERY_REF_RE.pattern),
     ErrorHint(
         "Invalid query reference {value!r}. Expected "
-        "'<file>.queries.<name>', optionally prefixed with '../' segments."
+        "'<file>.queries.<name>', optionally prefixed with '../' segments; "
+        "the file and the name each start with a letter or underscore."
     ),
 ]
 CHART_REF_PATTERN_STR = Annotated[
@@ -67,7 +69,8 @@ CHART_REF_PATTERN_STR = Annotated[
     StringConstraints(pattern=CHART_REF_RE.pattern),
     ErrorHint(
         "Invalid chart reference {value!r}. Expected "
-        "'<file>.charts.<name>', optionally prefixed with '../' segments."
+        "'<file>.charts.<name>', optionally prefixed with '../' segments; "
+        "the file and the name each start with a letter or underscore."
     ),
 ]
 

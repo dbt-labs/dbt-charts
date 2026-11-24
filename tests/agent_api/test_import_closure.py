@@ -73,12 +73,12 @@ class TestLayoutImports:
         result = board_import_closure(path)
         assert "charts/_b.yml" in [p.relpath for p in result]
 
-    def test_tabs_items_import(self, project: FilesystemProject) -> None:
+    def test_tabs_import(self, project: FilesystemProject) -> None:
         write_board(project, "charts/_tab.yml", "title: Tab\n")
         write_board(
             project,
             "charts/a.yml",
-            "tabs:\n  items:\n    - _tab.yml\n",
+            "tabs:\n  T:\n    rows:\n      - _tab.yml\n",
         )
         path = project.path("charts/a.yml")
         result = board_import_closure(path)

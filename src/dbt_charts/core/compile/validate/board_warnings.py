@@ -772,6 +772,8 @@ def _detect_unused_format_names(
     if not unjudged:
         return
     used = format_names_used(board, chart_styles)
+    if used is None:
+        return
     for name in sorted(unjudged - used):
         warnings.append(
             Diagnostic.from_code(

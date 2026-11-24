@@ -330,8 +330,8 @@ fn nested_links(layout: &LayoutAuthored, out: &mut Vec<Slot>) {
             }
         }
         LayoutAuthored::Tabs(t) => {
-            for tab in t.items.iter().flatten() {
-                scope(&tab.style, tab.layout.as_ref(), out);
+            for tab in t.values() {
+                scope(&tab.body.style, tab.body.layout.as_ref(), out);
             }
         }
     }

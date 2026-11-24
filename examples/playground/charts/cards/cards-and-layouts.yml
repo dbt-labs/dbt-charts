@@ -426,16 +426,15 @@ rows:
           row_span: 1
   - text: "Layout — `tabs:` groups related views behind clickable tabs"
   - tabs:
-      items:
-        - title: Revenue
-          rows:
-            - tabs_revenue_bar
-        - title: Customers
-          rows:
-            - tabs_active_users_line
-        - title: Support
-          rows:
-            - tabs_tickets_line
+      Revenue:
+        rows:
+          - tabs_revenue_bar
+      Customers:
+        rows:
+          - tabs_active_users_line
+      Support:
+        rows:
+          - tabs_tickets_line
   - text: "Layout — `cols:` nested inside `rows:`"
   - cols:
       - text: |

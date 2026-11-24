@@ -89,6 +89,12 @@ impl<T: Spell, const N: usize> Spell for [T; N] {
     }
 }
 
+impl<T: Spell> Spell for IndexMap<String, T> {
+    fn spell(&self) -> Value {
+        Value::Object(self.iter().map(|(k, v)| (k.clone(), v.spell())).collect())
+    }
+}
+
 impl<T: Spell> Spell for Box<T> {
     fn spell(&self) -> Value {
         (**self).spell()

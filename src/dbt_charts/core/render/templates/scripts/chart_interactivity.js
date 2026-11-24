@@ -341,7 +341,12 @@
             if (!byIdentity.has(identity)) byIdentity.set(identity, []);
             byIdentity.get(identity).push({ mark: el, entries: entries });
         });
-        return { byIdentity: byIdentity, symbols: symbols, recedable: recedableMarks(grouped) };
+        const labels = Array.prototype.filter.call(scope.querySelectorAll('[data-dbt-category]'), function (el) {
+            return !!el.closest(MARK_GROUP_SELECTOR);
+        });
+        const recedable = grouped.filter(isRecedableMark);
+        const bars = grouped.filter(function (el) { return el.getAttribute('data-dct-role') === 'bar'; });
+        return { byIdentity: byIdentity, symbols: symbols, recedable: recedable, bars: bars, labels: labels };
     }
 
     /*{# Groups every data mark in the chart whose IDENTITY (header value) #}*/
@@ -516,6 +521,56 @@
         return nearest;
     }
 
+    /*{# Whether the cursor is inside a line or area chart's plot: between its #}*/
+    /*{# first and last time point, within the y axis's height. A line answers #}*/
+    /*{# there whatever is under the pointer, at the nearest time point. #}*/
+    function inConnectedPlot(chartEl, x, y) {
+        if (!isConnectedChart(chartEl)) return false;
+        const spans = Array.prototype.map.call(chartEl.querySelectorAll('.mark-line, .mark-area'), function (el) { return el.getBoundingClientRect(); });
+        const left = Math.min.apply(null, spans.map(function (r) { return r.left; }));
+        const right = Math.max.apply(null, spans.map(function (r) { return r.right; }));
+        return x >= left && x <= right && yAxisBands(chartEl).some(function (band) { return y >= band.top && y <= band.bottom; });
+    }
+
+    /*{# The mark a stamped label under the cursor belongs to: a name above a #}*/
+    /*{# bar is part of its bar's row. #}*/
+    function markOfLabelAt(scope, x, y) {
+        const label = markIndex(scope).labels.find(function (el) {
+            const r = el.getBoundingClientRect();
+            return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+        });
+        return label ? ownerMarkOf(label) : null;
+    }
+
+    /*{# Between two bars nothing is a gap: a cursor inside the box the bars #}*/
+    /*{# span belongs to the bar in its column (its row, for horizontal bars). #}*/
+    function barBetween(scope, x, y) {
+        const bars = markIndex(scope).bars.filter(isVisibleAtRest);
+        const boxes = bars.map(function (el) { return el.getBoundingClientRect(); });
+        if (!boxes.length) return null;
+        const span = function (lo, hi) {
+            return [Math.min.apply(null, boxes.map(lo)), Math.max.apply(null, boxes.map(hi))];
+        };
+        const [left, right] = span(function (r) { return r.left; }, function (r) { return r.right; });
+        const [top, bottom] = span(function (r) { return r.top; }, function (r) { return r.bottom; });
+        if (x < left || x > right || y < top || y > bottom) return null;
+        /*{# Segments of one stacked column share their x span, so identical #}*/
+        /*{# spans count once: the bars stand in columns when those spans #}*/
+        /*{# never overlap, else in rows. #}*/
+        const spans = boxes.map(function (r) { return [r.left, r.right]; }).sort(function (p, q) { return p[0] - q[0] || p[1] - q[1]; })
+            .filter(function (p, i, all) { return i === 0 || p[0] !== all[i - 1][0] || p[1] !== all[i - 1][1]; });
+        const columns = spans.every(function (p, i) { return i === 0 || p[0] >= spans[i - 1][1]; });
+        const gapX = function (r) { return Math.max(r.left - x, 0, x - r.right); };
+        const gapY = function (r) { return Math.max(r.top - y, 0, y - r.bottom); };
+        const [main, cross] = columns ? [gapX, gapY] : [gapY, gapX];
+        let nearest = 0;
+        boxes.forEach(function (r, i) {
+            const best = boxes[nearest];
+            if (main(r) < main(best) || (main(r) === main(best) && cross(r) < cross(best))) nearest = i;
+        });
+        return bars[nearest];
+    }
+
     function escapeHtml(value) {
         if (value === null || value === undefined) return '';
 
@@ -642,33 +697,36 @@
     /*{# Which marks may recede, read off what Vega-Lite already says about #}*/
     /*{# each one rather than from a stamp of our own: VL names every mark's #}*/
     /*{# family in the SVG, and writes its translucency as an attribute. #}*/
-    /*{# Admitting a family is one more entry here, after its own browser #}*/
-    /*{# review. This list lives only in the runtime, so admitting a family #}*/
-    /*{# never touches rendered SVG, and the goldens stay untouched -- unlike #}*/
-    /*{# `data-dbt-magnitude-colored` and `data-dbt-value-label` below, which #}*/
-    /*{# ARE stamped onto the SVG for this feature to read. #}*/
-    /*{#                                                                  #}*/
-    /*{# Vega is not consistent about the strings -- a bar mark is "bar" #}*/
-    /*{# (which also covers a histogram's bins), a pie or donut slice is #}*/
-    /*{# "arc mark", and a heatmap's cell is "rect mark" -- so they are #}*/
-    /*{# matched literally rather than derived from a pattern. This is the #}*/
-    /*{# GEOMETRY half of the gate only ("is receding legible for this mark's #}*/
-    /*{# shape") -- big filled marks recede; a thin overlay line is neither #}*/
-    /*{# admitted here nor covered by the PALETTE half below, since a line's #}*/
-    /*{# own hover treatment (the drop-line marker) is reviewed separately. #}*/
-    /*{# Whether recedING is actually SAFE for a given chart -- whether its #}*/
-    /*{# color encodes identity or magnitude -- is the isMagnitudeColored() #}*/
-    /*{# check further down, and the two are independent: a heatmap cell is #}*/
-    /*{# geometry-eligible here regardless of which palette it uses. #}*/
+    /*{# This is the GEOMETRY half of the gate only ("is receding legible for #}*/
+    /*{# this mark's shape"): bars, wedges, cells, map regions, and the dots of #}*/
+    /*{# a scatter. A dot on a line is the line's own ink, which recedes with #}*/
+    /*{# its series (planHoverEmphasis), not as a mark. Whether receding is #}*/
+    /*{# SAFE for a chart -- whether its color encodes identity or magnitude #}*/
+    /*{# -- is the isMagnitudeColored() check below, and the two are #}*/
+    /*{# independent: a heatmap cell is geometry-eligible regardless of which #}*/
+    /*{# palette it uses. #}*/
     const RECEDE_ROLES = ['bar', 'arc', 'rect'];
-    /*{# Stored renders without data-dct-role are English. #}*/
-    const LEGACY_RECEDE_ROLES = ['bar', 'arc mark', 'rect mark'];
+    /*{# Marks without data-dct-role (stored renders, and the engine's map regions) are named by their description. #}*/
+    const DESCRIBED_RECEDE_ROLES = ['bar', 'arc mark', 'rect mark', 'geoshape'];
+
+    /*{# A line or area chart reads its datum by x. A bar or scatter chart #}*/
+    /*{# carrying a line layer does not: its marks answer one by one. #}*/
+    let connectedCharts = new WeakMap();
+    function isConnectedChart(chartEl) {
+        if (!chartEl) return false;
+        if (!connectedCharts.has(chartEl)) {
+            const type = chartEl.getAttribute('data-chart-type');
+            connectedCharts.set(chartEl, type !== 'bar' && type !== 'scatter' && !!chartEl.querySelector('.mark-line, .mark-area'));
+        }
+        return connectedCharts.get(chartEl);
+    }
 
     function isRecedableMark(el) {
         const role = el.getAttribute('data-dct-role');
         if (role === null) {
-            return LEGACY_RECEDE_ROLES.indexOf(el.getAttribute('aria-roledescription')) !== -1;
+            return DESCRIBED_RECEDE_ROLES.indexOf(el.getAttribute('aria-roledescription')) !== -1;
         }
+        if (role === 'point') return !isConnectedChart(el.closest('.dbt-chart'));
         return RECEDE_ROLES.indexOf(role) !== -1;
     }
 
@@ -699,40 +757,47 @@
         return isColor(canvas) ? canvas : null;
     }
 
-    /*{# The marks that may recede: the bars/arcs, plus each one's OWN value #}*/
-    /*{# label, which must recede WITH its mark or it is left printed at full #}*/
-    /*{# strength over a receded one. `data-dbt-value-label` (stamped by #}*/
-    /*{# converters/chart.py on the text-mark GROUP holding a mark's own #}*/
-    /*{# printed value -- never on a pie/donut center total or outside label, #}*/
-    /*{# which the engine's pie family paints and never go through the #}*/
-    /*{# value-label feature) is what says a text mark is reachable here at #}*/
-    /*{# all; which byte-identical aria-label ties it to its own bar/arc, #}*/
-    /*{# with no sublayer bookkeeping needed. Nothing about a solid blend #}*/
-    /*{# needs a bar specifically -- any solidly painted mark recedes the #}*/
-    /*{# same way. #}*/
-    /*{#                                                                       #}*/
-    /*{# Stated as what may recede rather than what may not, matching the #}*/
-    /*{# rest of this function: a bar chart's series-label rail renders its #}*/
-    /*{# legend as TEXT marks with the same `role-mark` ancestor and the same #}*/
-    /*{# "key: value" aria-label shape as a real datum, and a baseline rule #}*/
-    /*{# carries Vega's own "revenue: 0" -- neither carries #}*/
-    /*{# `data-dbt-value-label`, so neither is reachable here, with no #}*/
-    /*{# exclusion list needed to say so. #}*/
-    /*{# `grouped`: the scope's labeled elements inside a mark group. #}*/
-    function recedableMarks(grouped) {
-        const bars = [];
-        const barLabels = {};
-        grouped.forEach(function (el) {
-            if (!isRecedableMark(el)) return;
-            bars.push(el);
-            barLabels[el.getAttribute('aria-label')] = true;
+    /*{# Whose a mark or a label is: the category (the x value, or a ring #}*/
+    /*{# slice's color value) and the series it prints. A mark states both in #}*/
+    /*{# its description; a label carries them as the renderer's #}*/
+    /*{# `data-dbt-category` and `data-dbt-series`, either of which may be #}*/
+    /*{# absent: a column's total has no series, a series' name no category. #}*/
+    function markOwner(el) {
+        const entries = parseAriaLabel(el.getAttribute('aria-label'));
+        const header = markHeaderEntry(entries);
+        const series = markSeriesEntry(entries);
+        return {
+            category: header ? header.value : null,
+            series: series ? series.value : (header && header.swatch ? header.value : null),
+        };
+    }
+
+    function labelOwner(label) {
+        return { category: label.getAttribute('data-dbt-category'), series: label.getAttribute('data-dbt-series') };
+    }
+
+    /*{# A label is lit with any mark whose category and series it names; what #}*/
+    /*{# it leaves unnamed it does not constrain. #}*/
+    function belongsToAny(label, owners) {
+        const own = labelOwner(label);
+        return owners.some(function (o) {
+            return (own.category === null || own.category === o.category) && (own.series === null || own.series === o.series);
         });
-        const twins = [];
-        grouped.forEach(function (el) {
-            if (isRecedableMark(el) || !el.closest('[data-dbt-value-label]')) return;
-            if (barLabels[el.getAttribute('aria-label')]) twins.push(el);
+    }
+
+    /*{# The mark a label belongs to: the visible one in its panel with the same #}*/
+    /*{# category and, when the label names one, series. Null for a label with #}*/
+    /*{# no mark standing for it (the hover resolves the label itself). #}*/
+    function ownerMarkOf(label) {
+        const chartEl = label.closest('.dbt-chart');
+        if (!chartEl) return null;
+        const own = labelOwner(label);
+        const found = (markIndex(panelScope(label, chartEl)).byIdentity.get(own.category) || []).find(function (candidate) {
+            if (candidate.mark.hasAttribute('data-dbt-category') || !isVisibleAtRest(candidate.mark)) return false;
+            const series = markSeriesEntry(candidate.entries);
+            return own.series === null || (!!series && series.value === own.series);
         });
-        return bars.concat(twins);
+        return found ? found.mark : null;
     }
 
     /*{# Color that encodes MAGNITUDE (a sequential/diverging scale) rather #}*/
@@ -1029,9 +1094,12 @@
         /*{# an unscoped sweep would recede every mark in every OTHER panel #}*/
         /*{# too, not just the ones the tooltip isn't describing. #}*/
         const inked = [];
-        markIndex(panelScope(mark, chartEl)).recedable.forEach(function (el) {
+        const index = markIndex(panelScope(mark, chartEl));
+        const owners = [];
+        index.recedable.forEach(function (el) {
             if (!isVisibleAtRest(el)) return;
             const kept = !!keptLabels[el.getAttribute('aria-label')];
+            if (kept) owners.push(markOwner(el));
             const inkedMark = el.hasAttribute('data-dbt-ink');
             if (kept && inkedMark) inked.push(el);
             if (!emphasize(next, el, background, kept, soft)) return;
@@ -1041,6 +1109,13 @@
                 });
             }
         });
+        /*{# A line chart has no lit mark to name an owner, so nothing fades. #}*/
+        if (owners.length) {
+            index.labels.forEach(function (label) {
+                emphasize(next, label, background, belongsToAny(label, owners), soft);
+            });
+            fadeOtherSeries(next, chartEl, background, owners, soft);
+        }
         if (inked.length) {
             const overlay = markerOverlay(chartEl, state);
             if (overlay) inked.forEach(function (el) { drawWholeOutline(overlay, el); });
@@ -1067,6 +1142,25 @@
                 if (isColor(paint)) paints[prop] = paint;
             });
             if (Object.keys(paints).length) next.set(el, paints);
+        });
+    }
+
+    /*{# Fades the names and key entries of series no lit mark belongs to. #}*/
+    function fadeOtherSeries(next, chartEl, background, owners, soft) {
+        const lit = {};
+        owners.forEach(function (o) { if (o.series !== null) lit[o.series] = true; });
+        if (!Object.keys(lit).length) return;
+        const drawn = {};
+        seriesInk(chartEl).forEach(function (item) { drawn[item.key] = true; });
+        chartEl.querySelectorAll('[data-dbt-series]:not([data-dbt-category])').forEach(function (el) {
+            if (el.closest('.role-legend') || el.hasAttribute('data-dbt-legend-hidden') || !isVisibleAtRest(el)) return;
+            emphasize(next, el, background, !!lit[el.getAttribute('data-dbt-series')], soft);
+        });
+        legendEntries(chartEl).forEach(function (entry) {
+            if (!drawn[entry.key]) return;
+            [entry.label, entry.symbol].forEach(function (group) {
+                if (group) group.querySelectorAll('*').forEach(function (el) { emphasize(next, el, background, !!lit[entry.key], soft); });
+            });
         });
     }
 
@@ -1131,7 +1225,7 @@
     function seriesHandleAt(target, x, y) {
         const chartEl = target.closest('.dbt-chart');
         if (!chartEl || !active.hoverEmphasis.visible || isMagnitudeColored(chartEl) || !chartBackground(chartEl)) return null;
-        const direct = target.closest('text[data-dbt-series]');
+        const direct = target.closest('text[data-dbt-series]:not([data-dbt-category])');
         const entry = direct && !direct.closest('.role-legend') ? null : legendEntryAt(chartEl, x, y);
         const key = entry ? entry.key : direct && direct.getAttribute('data-dbt-series');
         return key ? { chartEl: chartEl, key: key } : null;
@@ -1183,31 +1277,37 @@
                 });
             });
         });
+        const litCategories = {};
+        ink.forEach(function (item) {
+            if (item.key === handle.key && item.el.hasAttribute('aria-label') && isRecedableMark(item.el)) litCategories[markOwner(item.el).category] = true;
+        });
+        markIndex(handle.chartEl).labels.forEach(function (label) {
+            if (!label.hasAttribute('data-dbt-series')) emphasize(next, label, background, !!litCategories[label.getAttribute('data-dbt-category')]);
+        });
         repaint(state, next);
         state.emphasis.preview = handle;
-        raiseSeries(state, handle);
+        raiseSeries(state, handle, ink);
         return true;
     }
 
-    /*{# Lifts the series' line (or area) and dots after their plot's last mark #}*/
-    /*{# group, so they paint over overlapping receded series. A faceted chart #}*/
-    /*{# lifts within each panel. The lifted group takes no pointer events (the #}*/
-    /*{# invisible hover targets keep catching the pointer); clearHoverEmphasis #}*/
-    /*{# puts every node back. #}*/
-    function raiseSeries(state, handle) {
-        const named = function (tag) {
-            return Array.prototype.filter.call(handle.chartEl.querySelectorAll(tag + '[data-dbt-series]'), function (el) {
-                return el.getAttribute('data-dbt-series') === handle.key && !!el.closest('.role-mark');
-            });
-        };
+    /*{# Lifts the series' marks (a line or area, dots, bars, wedges) and the #}*/
+    /*{# labels that belong to them after their plot's last mark group, so #}*/
+    /*{# they paint over overlapping receded series. A name is never lifted: #}*/
+    /*{# it is under the pointer. A faceted chart lifts within each panel. #}*/
+    /*{# The lifted group takes no pointer events; clearHoverEmphasis puts #}*/
+    /*{# every node back. #}*/
+    function raiseSeries(state, handle, ink) {
         const unit = function (el) {
             const node = el.parentNode.tagName.toLowerCase() === 'a' ? el.parentNode : el;
             const group = node.parentNode;
-            const alone = group.children.length === 1 && /\bmark-(line|area)\b/.test(group.getAttribute('class') || '');
-            return alone ? group : node;
+            return group.children.length === 1 && group.classList.contains('role-mark') ? group : node;
         };
         const byPlot = new Map();
-        named('path').concat(named('circle')).map(unit).forEach(function (node) {
+        ink.filter(function (item) {
+            const el = item.el;
+            return item.key === handle.key && !!el.closest('.role-mark')
+                && (el.tagName.toLowerCase() !== 'text' || el.hasAttribute('data-dbt-category'));
+        }).map(function (item) { return unit(item.el); }).forEach(function (node) {
             const plot = node.closest('.role-mark').parentNode;
             byPlot.set(plot, (byPlot.get(plot) || []).concat(node));
         });
@@ -1217,7 +1317,7 @@
             lifted.setAttribute('data-dbt-raised', '');
             lifted.setAttribute('pointer-events', 'none');
             plot.insertBefore(lifted, marks[marks.length - 1].nextSibling);
-            units.forEach(function (node) {
+            Array.from(new Set(units)).forEach(function (node) {
                 state.emphasis.raised.push({ node: node, parent: node.parentNode, next: node.nextSibling });
                 lifted.appendChild(node);
             });
@@ -1494,11 +1594,25 @@
         return index >= 0 && axes[index] ? axes[index] : axes[0];
     }
 
+    /*{# Every drop line is dotted in the theme's width and dash (round caps #}*/
+    /*{# make each dash a dot), so it reads apart from data and gridlines. #}*/
+    function dropLine(x1, y1, x2, y2, stroke) {
+        const emphasis = active.hoverEmphasis;
+        const line = svgNode('line', {
+            x1: x1, y1: y1, x2: x2, y2: y2, stroke: stroke,
+            'stroke-width': emphasis.dropLineWidth,
+            'stroke-linecap': 'round',
+        });
+        /*{# Stored renders lack dropLineDash: their line stays solid. #}*/
+        if (emphasis.dropLineDash) line.setAttribute('stroke-dasharray', emphasis.dropLineDash.join(' '));
+        return line;
+    }
+
     /*{# Line/area: a dot on each datum the tooltip is describing, plus one #}*/
     /*{# drop line at that x from the topmost of them down to the axis. #}*/
     /*{# Hovering a bar keeps the dots and skips the drop line: the bar #}*/
     /*{# already marks the x, and the line would only cross it. #}*/
-    function drawDatumMarkers(overlay, chartEl, points, hovered, dropLine) {
+    function drawDatumMarkers(overlay, chartEl, points, hovered, withDropLine) {
         const background = chartBackground(hovered);
         const spots = [];
         points.forEach(function (point) {
@@ -1555,14 +1669,10 @@
         } else if (bands.length === 1) {
             baselineY = overlayYFromScreen(bandFootAt(bands, datumScreenY), overlay);
         }
-        if (dropLine && baselineY !== null) {
+        if (withDropLine && baselineY !== null) {
             let top = spots[0].y;
             spots.forEach(function (spot) { if (spot.y < top) top = spot.y; });
-            overlay.appendChild(svgNode('line', {
-                x1: anchor.x, y1: top, x2: anchor.x, y2: baselineY,
-                stroke: dropLineColor,
-                'stroke-width': active.hoverEmphasis.dropLineWidth,
-            }));
+            overlay.appendChild(dropLine(anchor.x, top, anchor.x, baselineY, dropLineColor));
         }
 
         spots.forEach(function (spot) {
@@ -1588,6 +1698,43 @@
             stroke: datumColor(mark, chartEl, chartBackground(mark)),
             'stroke-width': MARKER_STROKE_WIDTH,
         }));
+    }
+
+    /*{# Scatter: drop lines from the dot to each axis, in the theme's color #}*/
+    /*{# and width. They stop at the dot as a gridline does: a canvas disk of #}*/
+    /*{# the dot's radius plus 2 px is drawn over them and the dot again on #}*/
+    /*{# top, so no line shows inside a hollow circle, triangle, plus or #}*/
+    /*{# cross. An axis the chart does not draw (or draws once per panel) gets #}*/
+    /*{# no line rather than a guessed one. #}*/
+    const DROP_KNOCKOUT_GAP = 2;
+    function drawDropLines(overlay, chartEl, point) {
+        const at = localOriginIn(point, overlay);
+        const background = chartBackground(point);
+        if (!at || !background) return;
+        const line = function (x2, y2) {
+            overlay.appendChild(dropLine(at.x, at.y, x2, y2, active.hoverEmphasis.dropLineColor));
+        };
+        const xAxis = panelXAxis(point, chartEl);
+        const base = xAxis && localOriginIn(xAxis, overlay);
+        if (base) line(at.x, base.y);
+        /*{# Stored renders without data-dct-role are English. #}*/
+        const yAxes = chartEl.querySelectorAll('.role-axis[data-dct-role="y-axis"] > g, .role-axis:not([data-dct-role])[aria-label^="Y-axis"] > g');
+        const edge = yAxes.length === 1 && localOriginIn(yAxes[0], overlay);
+        if (edge) line(edge.x, at.y);
+        const box = point.getBBox();
+        overlay.appendChild(svgNode('circle', {
+            cx: at.x, cy: at.y, r: Math.max(box.width, box.height) / 2 + DROP_KNOCKOUT_GAP, fill: background,
+        }));
+        const to = overlay.getScreenCTM();
+        const from = point.parentNode.getScreenCTM();
+        if (!to || !from) return;
+        const m = to.inverse().multiply(from);
+        const placed = svgNode('g', { transform: 'matrix(' + [m.a, m.b, m.c, m.d, m.e, m.f].join(' ') + ')' });
+        const copy = point.cloneNode(false);
+        ['aria-label', 'role', 'aria-roledescription', 'data-dct-role', 'style', 'id'].forEach(function (name) { copy.removeAttribute(name); });
+        copy.setAttribute('pointer-events', 'none');
+        placed.appendChild(copy);
+        overlay.appendChild(placed);
     }
 
     /*{# A column-faceted chart's mirrored right-edge y-axis (features/ #}*/
@@ -1639,7 +1786,7 @@
         /*{# to the axis it is measured against. A scatter point is already a #}*/
         /*{# free position, so it only needs to be picked out. #}*/
         const hoveredPoint = resolveSymbolMark(mark, chartEl);
-        if (chartEl.querySelector('.mark-line, .mark-area')) {
+        if (isConnectedChart(chartEl)) {
             /*{# Anchor on a point, never on the hovered mark when that is a bar: #}*/
             /*{# a bar path's own origin is its top-left corner, so anchoring #}*/
             /*{# there would put the drop line on the bar's edge and paint it the #}*/
@@ -1647,6 +1794,7 @@
             /*{# point it lands on the band's center, which is the bar's center. #}*/
             drawDatumMarkers(overlay, chartEl, points, hoveredPoint || points[0], !isRecedableMark(mark));
         } else if (hoveredPoint) {
+            drawDropLines(overlay, chartEl, hoveredPoint);
             drawPointRing(overlay, hoveredPoint);
         }
     }
@@ -1703,13 +1851,17 @@
         return /^[A-Za-z0-9#.,%()\/\s+-]*$/.test(color) ? color : 'transparent';
     }
 
-    /*{# A pattern mark's key is a tiny SVG rect at the legend key's 16 x 12, #}*/
-    /*{# filled with the mark's own pattern (ids are document-global in a #}*/
-    /*{# served page, so the reference resolves) under its ink outline. #}*/
+    /*{# A pattern mark's key is the legend key's own 16 x 12 box: its tile #}*/
+    /*{# names the key paint it draws (`data-dbt-key`), at the key's scale #}*/
+    /*{# (ids are document-global in a served page, so the reference #}*/
+    /*{# resolves), under the mark's ink outline. #}*/
     function patternSwatch(pattern) {
+        const tile = document.getElementById(pattern.id);
+        /*{# Stored renders without data-dbt-key draw the tile itself. #}*/
+        const paint = tile && tile.hasAttribute('data-dbt-key') ? 'url(#' + tile.getAttribute('data-dbt-key') + ')' : pattern.url;
         return '<svg data-dbt-tooltip-key width="16" height="12" viewBox="0 0 16 12" style="display:inline-block;' +
             'margin-right:6px;flex-shrink:0;"><rect x="0.5" y="0.5" width="15" height="11" fill="' +
-            pattern.url + '" stroke="' + swatchColor(pattern.ink) + '" stroke-width="1"/></svg>';
+            paint + '" stroke="' + swatchColor(pattern.ink) + '" stroke-width="1"/></svg>';
     }
 
     function seriesSwatch(color, asLine) {
@@ -2550,9 +2702,10 @@
             const labeledTarget = target && target.closest
                 ? event.target.closest('[aria-label]')
                 : null;
-            let mark = labeledTarget && isDataMark(labeledTarget)
-                ? labeledTarget
-                : null;
+            /*{# A label stands for its mark: crossing onto it changes nothing. #}*/
+            const ownLabel = target && target.closest ? target.closest('[data-dbt-category]') : null;
+            let mark = (ownLabel && ownerMarkOf(ownLabel))
+                || (labeledTarget && isDataMark(labeledTarget) ? labeledTarget : null);
 
             /*{# Vega area paths are aria-hidden because one path represents every #}*/
             /*{# datum; their labeled point siblings carry the correct values. #}*/
@@ -2565,6 +2718,14 @@
                     mark = target.closest('.mark-area, .mark-line')
                         ? markAtCursorX(panelScope(target, chart), event.clientX, event.clientY)
                         : nearestDataMark(chart, event.clientX, event.clientY);
+                }
+            }
+
+            if (!mark && target && target.closest) {
+                const chart = target.closest('.dbt-chart');
+                if (chart && inConnectedPlot(chart, event.clientX, event.clientY)) {
+                    const panel = panelAtPoint(chart, event.clientX, event.clientY);
+                    if (panel) mark = markAtCursorX(panel, event.clientX, event.clientY);
                 }
             }
 
@@ -2593,9 +2754,9 @@
                     /*{# is within radius, even from the gutter between panels. #}*/
                     const panel = panelAtPoint(chart, event.clientX, event.clientY);
                     if (panel) {
-                        mark = nearestDataMark(
-                            panel, event.clientX, event.clientY, HOVER_SNAP_RADIUS_PX, isSnappableMark
-                        );
+                        mark = markOfLabelAt(panel, event.clientX, event.clientY)
+                            || nearestDataMark(panel, event.clientX, event.clientY, HOVER_SNAP_RADIUS_PX, isSnappableMark)
+                            || barBetween(panel, event.clientX, event.clientY);
                     }
                 }
             }
@@ -2786,6 +2947,7 @@
         addPictureStep: function (step) { pictureSteps.push(step); },
         mount: function (root) {
             markIndexes = new WeakMap();
+            connectedCharts = new WeakMap();
             const scope = root || document;
             const boards = scope.matches && scope.matches('svg') ? [scope] : [];
             scope.querySelectorAll('svg').forEach(function (svg) { boards.push(svg); });

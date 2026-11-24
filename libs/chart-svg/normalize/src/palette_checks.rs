@@ -4,6 +4,7 @@
 
 use crate::scope::own_patch;
 use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored};
+use board_model::board::BoardBodyAuthored;
 use board_model::cascade;
 use board_model::chart::kpi::KpiBackground;
 use board_model::chart::ChartAuthored;
@@ -134,31 +135,30 @@ fn background_fault(node: &serde_json::Value, name_only: bool, path: &str) -> Op
 
 /// Nested boards first, as Python recurses before it checks a board's own style.
 fn nested(layout: &LayoutAuthored, out: &mut Vec<StylePatch>) {
-    let items: Vec<&LayoutItemAuthored> = match layout {
-        LayoutAuthored::Rows(items) | LayoutAuthored::Cols(items) => items.iter().collect(),
+    fn board(it: &LayoutItemAuthored) -> Option<&BoardBodyAuthored> {
+        match it {
+            LayoutItemAuthored::Board(b) => Some(&b.body),
+            _ => None,
+        }
+    }
+    let boards: Vec<&BoardBodyAuthored> = match layout {
+        LayoutAuthored::Rows(items) | LayoutAuthored::Cols(items) => {
+            items.iter().filter_map(board).collect()
+        }
         LayoutAuthored::Grid(g) => g
             .items
             .iter()
             .flatten()
             .filter_map(|c| c.item.as_ref())
+            .filter_map(board)
             .collect(),
-        LayoutAuthored::Tabs(t) => {
-            for tab in t.items.iter().flatten() {
-                out.extend(own_patch(&tab.style));
-                if let Some(inner) = &tab.layout {
-                    nested(inner, out);
-                }
-            }
-            return;
-        }
+        LayoutAuthored::Tabs(t) => t.values().map(|tab| &tab.body).collect(),
     };
-    for item in items {
-        if let LayoutItemAuthored::Board(b) = item {
-            if let Some(inner) = &b.body.layout {
-                nested(inner, out);
-            }
-            out.extend(own_patch(&b.body.style));
+    for b in boards {
+        if let Some(inner) = &b.layout {
+            nested(inner, out);
         }
+        out.extend(own_patch(&b.style));
     }
 }
 

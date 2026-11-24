@@ -382,7 +382,11 @@ def lookup(
             misses.append(Miss(query_plan, tail))
             continue
         truncation = (
-            None if reason is None else TruncationInfo(name, len(enforced.rows), reason)
+            None
+            if reason is None
+            else TruncationInfo(
+                name, len(enforced.rows), reason, tuple(query_plan.upstreams)
+            )
         )
         hits[name] = CachedRows(enforced, outcome.written_at, truncation)
     return Lookup(hits, tuple(misses), failures)

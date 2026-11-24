@@ -3,7 +3,7 @@
 //! so a file that fails to parse is a build defect the tests catch, not a runtime state.
 //!
 //! `build.rs` emits `THEME_SOURCES`; `built_in_theme(name)` parses and folds each theme once per
-//! process. `BoardBody.style` and `TabItem.style` are `Option<Box<Style>>`, since a style twin is
+//! process. `BoardBody.style` is `Option<Box<Style>>`, since a style twin is
 //! about 87 KB.
 
 use crate::board::BoardBody;

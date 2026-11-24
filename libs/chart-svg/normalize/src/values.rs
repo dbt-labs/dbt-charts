@@ -424,9 +424,77 @@ fn require_parsed_list(d: &Declared, v: &Val) -> Result<(), Diagnostic> {
     match v {
         Val::Str(s) if s.trim_start().starts_with('[') => Err(invalid(
             d,
-            format!("multiselect value must be a JSON list, got {}", v.repr()),
+            format!(
+                "{} starts with '[' but is not a JSON list. A multiselect takes a JSON list \
+                 such as [\"a\", \"b\"], or its name repeated once per member; to select this \
+                 text as one member, write {}",
+                v.repr(),
+                py_json(&Val::List(vec![v.clone()]))
+            ),
         )),
         _ => Ok(()),
+    }
+}
+
+/// `_require_single_value`: a select or radio takes one value, never a list of them.
+fn require_single_value(d: &Declared, v: &Val) -> Result<(), Diagnostic> {
+    let kind = match d.input {
+        InputType::Select => "select",
+        InputType::Radio => "radio",
+        _ => return Ok(()),
+    };
+    match v {
+        Val::List(items) if !items.is_empty() => Err(invalid(
+            d,
+            format!(
+                "a {kind} takes one value, got the list {}; pass one of its options as plain text",
+                py_json(v)
+            ),
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Python's `json.dumps(value, ensure_ascii=False)`: `", "` between items, `": "` after a key.
+fn py_json(v: &Val) -> String {
+    let text = |s: &str| serde_json::to_string(s).unwrap_or_default();
+    match v {
+        Val::Null => "null".into(),
+        Val::Bool(b) => b.to_string(),
+        Val::Int(i) => i.to_string(),
+        Val::Float(f) if f.is_nan() => "NaN".into(),
+        Val::Float(f) if f.is_infinite() => {
+            (if *f > 0.0 { "Infinity" } else { "-Infinity" }).into()
+        }
+        Val::Float(f) => py_repr(&Value::from(*f)),
+        Val::Str(s) | Val::Date(s) => text(s),
+        Val::List(items) => format!(
+            "[{}]",
+            items.iter().map(py_json).collect::<Vec<_>>().join(", ")
+        ),
+        Val::Map(map) => {
+            let pairs: Vec<String> = map
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(k, v)| format!("{}: {}", text(k), py_json(&Val::from_json(v))))
+                .collect();
+            format!("{{{}}}", pairs.join(", "))
+        }
+    }
+}
+
+/// `hints.backticked_list`: the first `MAX_LISTED_VALUES` backticked, then a count of the rest.
+fn backticked_list(values: &[String]) -> String {
+    const MAX_LISTED_VALUES: usize = 10;
+    let shown: Vec<String> = values
+        .iter()
+        .take(MAX_LISTED_VALUES)
+        .map(|v| format!("`{v}`"))
+        .collect();
+    match values.len().saturating_sub(MAX_LISTED_VALUES) {
+        0 => shown.join(", "),
+        rest => format!("{} and {rest} more", shown.join(", ")),
     }
 }
 
@@ -478,6 +546,7 @@ fn for_queries(d: &Declared, v: &Val, clock: &Clock) -> Result<Val, Diagnostic> 
             | InputType::Select
             | InputType::Radio
     );
+    require_single_value(d, v)?;
     match (&d.input, v) {
         (_, Val::Null) => Ok(Val::Null),
         (_, Val::Str(s)) if s.trim().is_empty() && scalar => Ok(Val::Null),
@@ -551,12 +620,17 @@ fn check_options(d: &Declared, given: &Val) -> Result<(), Diagnostic> {
         d.input,
         InputType::Select | InputType::Radio | InputType::Multiselect
     );
-    if !choice || given.is_absent() || d.options.is_empty() {
+    if !choice || given.is_absent() {
         return Ok(());
     }
     let multiselect = d.is(InputType::Multiselect);
     if multiselect {
         require_parsed_list(d, given)?;
+    } else {
+        require_single_value(d, given)?;
+    }
+    if d.options.is_empty() {
+        return Ok(());
     }
     let listed = if multiselect {
         members(given)
@@ -575,7 +649,7 @@ fn check_options(d: &Declared, given: &Val) -> Result<(), Diagnostic> {
             return Err(diag::err_variable_value_not_in_options(
                 d.name.as_str(),
                 value_of(&member),
-                d.options.as_slice(),
+                backticked_list(&d.options),
             ));
         }
     }

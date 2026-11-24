@@ -202,7 +202,7 @@ def _templated(variable: str, default: str) -> list[str]:
     return [
         f"{head}text: '{ref}'\n",
         f"{head}title: '{ref} Sales'\ntext: hello\n",
-        f"{head}tabs:\n  items:\n    - title: A\n      text: '{ref}'\n",
+        f"{head}tabs:\n  A:\n    text: '{ref}'\n",
         f"{head}rows:\n  - note:\n      type: callout\n      message: '{ref}'\n",
     ]
 

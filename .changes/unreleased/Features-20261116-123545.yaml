@@ -1,0 +1,5 @@
+kind: Features
+body: A tab can be hidden from the tab bar with `visible:`, set to false, a variable condition or a query probe.
+time: 2026-11-16T12:35:45.064492-08:00
+custom:
+    DbtChartsIssue: "100"

@@ -229,10 +229,8 @@ pub fn slide_union(
 /// entry list (base + every layer's own) the way Vega's legend `values` does
 /// (`apply_legend_entry_order`); `[]` draws a title-only legend.
 pub(crate) fn narrow_legend_entries<'a>(entries: Vec<LegendEntry<'a>>, legend: &LegendConfig) -> Vec<LegendEntry<'a>> {
-    let Some(values) = &legend.values else { return entries };
     let labels: Vec<&str> = entries.iter().map(|e| e.label).collect();
-    let narrowed = if values.is_empty() { Vec::new() } else { ::bind::legend::resolve_legend_values(values, &labels, None) };
-    narrowed.into_iter().map(|i| entries[i]).collect()
+    ::bind::legend::legend_order(legend.values.as_deref(), &labels).into_iter().map(|i| entries[i]).collect()
 }
 
 /// A shown legend whose `values` is `[]` keeps its title and no entries.

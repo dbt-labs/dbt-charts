@@ -98,6 +98,7 @@ from dbt_charts.core.compile.models.board.normalized import (
     Layout,
     LayoutItem,
     ProsePlan,
+    TitleShift,
     VariableValues,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -131,11 +132,11 @@ from dbt_charts.core.compile.resolve.style.markdown_style import (
 )
 from dbt_charts.core.compile.sizing import (
     DEFAULT_GRID_COLUMNS,
+    cols_item_widths,
     grid_span_width,
     item_grid_span,
     nested_content_geometry,
     parse_dimension,
-    resolve_cols_widths,
     rows_item_width,
 )
 from dbt_charts.core.constants.estimates import SPARK_BAR_TITLE_HEIGHT_PX
@@ -932,7 +933,9 @@ def get_item_content_height(
         nested_rs = nested_board.resolved_style
 
         content_width, nested_non_layout_height, child_gap = (
-            nested_board_sizing_context(nested_board, width, card_gap, variable_values)
+            nested_board_sizing_context(
+                nested_board, width, card_gap, variable_values, item.title_shift
+            )
         )
 
         nested_height = nested_non_layout_height
@@ -1190,18 +1193,7 @@ def _measure_cols_layout_height(
 ) -> float:
     """Measure shared row height for a cols layout."""
     max_height = 0.0
-    n_items = len(items)
-    total_gap = (gap + card_gap) * (n_items - 1) if n_items > 1 else 0
-    content_width = available_width - total_gap
-
-    specified_widths: list[float | None] = []
-    for item in items:
-        parsed_width = parse_dimension(item.user_width, content_width)
-        specified_widths.append(parsed_width)
-
-    assigned_widths = resolve_cols_widths(
-        specified_widths, content_width=content_width, item_count=n_items
-    )
+    assigned_widths = cols_item_widths(items, available_width, gap + card_gap)
     for i, item in enumerate(items):
         # User-specified height takes precedence (px only here;
         # percentages need available_height, resolved in _calculate_cols_dimensions)
@@ -1280,11 +1272,10 @@ def resolve_active_tab_index(
     n_items: int,
     tab_variable: str | None,
     tab_slugs: list[str] | None,
-    default_tab: int | None,
     variable_values: dict[str, Any] | None,
 ) -> int:
-    """Resolve which tab is active: a variable override wins, else the
-    authored default, else the first tab.
+    """Resolve which tab is active: a variable override wins, else the first
+    tab.
 
     Single source of truth for tab-active resolution — both the sizing pass
     (this module) and the renderer (``render/layouts.py``'s
@@ -1292,7 +1283,7 @@ def resolve_active_tab_index(
     the tab actually emitted. The variable value is runtime user input, so a
     value naming no tab raises rather than quietly showing another tab.
     """
-    active = 0 if default_tab is None else default_tab
+    active = 0
     if tab_variable and tab_slugs and variable_values:
         var_value = variable_values.get(tab_variable)
         if var_value:
@@ -1325,7 +1316,6 @@ def active_layout_items(
             len(items),
             layout.tab_variable,
             layout.tab_slugs,
-            layout.default_tab,
             variable_values,
         )
         items = [items[active]]
@@ -1424,7 +1414,6 @@ def tab_rail_cell_height(line_count: int, resolved_style: ResolvedStyle) -> floa
 
 
 def tab_content_offset(
-    tab_position: str | None,
     tab_titles: Sequence[str] | None,
     count: int,
     resolved_style: ResolvedStyle,
@@ -1434,7 +1423,7 @@ def tab_content_offset(
     ``"top"``: below the inset bar. ``"left"``: right of the rail plus a
     card-padding gutter, so the pane keeps the full height.
     """
-    if tab_position == "left":
+    if resolved_style.layout.tabs.position == "left":
         labels = tab_labels(tab_titles, count, resolved_style)
         gutter = float(resolved_style.frame.card_padding)
         return tab_rail_width(labels, resolved_style) + gutter, 0.0
@@ -1455,7 +1444,6 @@ def tab_rail_extent(
 
 
 def tabs_layout_height(
-    tab_position: str | None,
     tab_titles: Sequence[str] | None,
     count: int,
     pane_y: float,
@@ -1464,7 +1452,7 @@ def tabs_layout_height(
 ) -> float:
     """A tabs layout's height: the pane below its offset, and never shorter than a left rail."""
     height = pane_y + pane_height
-    if tab_position == "left":
+    if resolved_style.layout.tabs.position == "left":
         return max(height, tab_rail_extent(tab_titles, count, resolved_style))
     return height
 
@@ -1482,24 +1470,22 @@ def _measure_tabs_layout_height(
     """Measure required height for a tabs layout — the active tab only.
 
     A tabbed board renders one tab at a time; the reserved height must match
-    that tab's own content, not the union of every tab. Unlike rows/cols/grid
-    items, a tab item never carries an authored ``layout_height`` (``TabItem``
-    has no ``height`` field) — content-aware measurement is the only path.
+    that tab's own content, not the union of every tab. The pane is sized as a
+    one-item row of the pane box.
     """
     active_item = layout.items[
         resolve_active_tab_index(
             len(layout.items),
             layout.tab_variable,
             layout.tab_slugs,
-            layout.default_tab,
             variable_values,
         )
     ]
     pane_x, pane_y = tab_content_offset(
-        layout.tab_position, layout.tab_titles, len(layout.items), resolved_style
+        layout.tab_titles, len(layout.items), resolved_style
     )
-    content_height = _resolve_height(
-        active_item,
+    content_height = _measure_rows_layout_height(
+        [active_item],
         card_gap,
         gap,
         available_width - pane_x,
@@ -1508,7 +1494,6 @@ def _measure_tabs_layout_height(
         resolved_style=resolved_style,
     )
     return tabs_layout_height(
-        layout.tab_position,
         layout.tab_titles,
         len(layout.items),
         pane_y,
@@ -1803,11 +1788,13 @@ def nested_board_sizing_context(
     width: float,
     card_gap: float,
     variable_values: dict[str, Any] | None,
+    title_shift: TitleShift,
 ) -> tuple[float, float, float]:
     """Return (content_width, non_layout_height, child_gap).
 
     non_layout_height includes title + text + variables + gaps between them,
-    plus the gap before the layout block if layout items follow.
+    plus the gap before the layout block if layout items follow, and the drop
+    ``title_shift`` puts above the layout, as the board renders it.
     """
     nrs = nested_board.resolved_style
     content_width, child_gap = nested_content_geometry(nested_board, width)
@@ -1850,6 +1837,7 @@ def nested_board_sizing_context(
                 ),
                 float(nested_board.resolved_style.title.min_height),
             )
+            title_h += title_shift.body_dy
         else:
             title_h = 0.0
         if nested_board.visible_variables:
@@ -1879,6 +1867,9 @@ def nested_board_sizing_context(
         if nested_board.text
         else 0.0
     )
+    # Text opening an untitled board is its row's title and drops with it.
+    if nested_board.text and not nested_board.title:
+        text_h += title_shift.title_dy
 
     box = compute_board_content_box(
         title_height=title_h,
@@ -1923,7 +1914,7 @@ def _calculate_nested_board_layout(
     nested_board.layout.height = item.height
 
     content_width, non_layout_height, child_gap = nested_board_sizing_context(
-        nested_board, item.width, card_gap, variable_values
+        nested_board, item.width, card_gap, variable_values, item.title_shift
     )
 
     nrs2 = nested_board.resolved_style
@@ -2177,21 +2168,11 @@ def _calculate_cols_dimensions(
     if n == 0:
         return
 
-    # Calculate total gap space
     effective_gap = gap + card_gap
-    total_gap = effective_gap * (n - 1)
-    content_width = available_width - total_gap
+    # The gap-free span only scales width_fraction; widths come from cols_item_widths.
+    content_width = available_width - effective_gap * (n - 1)
 
-    # First pass: parse user-specified widths and calculate remaining space
-    specified_widths: list[float | None] = []
-
-    for item in items:
-        parsed_width = parse_dimension(item.user_width, content_width)
-        specified_widths.append(parsed_width)
-
-    resolved_widths = resolve_cols_widths(
-        specified_widths, content_width=content_width, item_count=n
-    )
+    resolved_widths = cols_item_widths(items, available_width, effective_gap)
 
     # Find max content height (all items in cols share this height).
     # Track specified and content maxima separately so overflow semantics
@@ -2481,19 +2462,16 @@ def _calculate_tabs_dimensions(
     """Calculate dimensions for items in a tabs layout.
 
     In a tabs layout:
-    - Each tab gets the full container size minus the tab bar (``top``) or
-      the rail and its gutter (``left``)
+    - The pane box is the container minus the tab bar (``top``) or the rail
+      and its gutter (``left``); each tab sits in it as a one-item row, so an
+      authored ``width:`` or ``height:`` sizes it as it would a row item
     - Only one tab is visible at a time
-    - Height comes from the active tab's content only, not the union
-      across all tabs, or with ``fill_height`` from all that is available
-
-    A tab item never carries an authored ``layout_height`` (``TabItem`` has
-    no ``height`` field) — content-aware measurement, capped to what's
-    available, is the only path.
+    - Height comes from the active tab only, not the union across all tabs,
+      or with ``fill_height`` and no authored height from all that is available
 
     Args:
         layout: The tabs layout (items = one per tab, plus tab_variable /
-            tab_slugs / default_tab for active-tab resolution)
+            tab_slugs for active-tab resolution)
         available_width: Available width in pixels
         available_height: Available height in pixels
         card_gap: Gap between cards (inter-item spacing)
@@ -2501,9 +2479,7 @@ def _calculate_tabs_dimensions(
         variable_values: Variable values to resolve Jinja against
     """
     items = layout.items
-    pane_x, pane_y = tab_content_offset(
-        layout.tab_position, layout.tab_titles, len(items), resolved_style
-    )
+    pane_x, pane_y = tab_content_offset(layout.tab_titles, len(items), resolved_style)
     pane_width = available_width - pane_x
     tab_available = available_height - pane_y
     active_item = items[
@@ -2511,24 +2487,27 @@ def _calculate_tabs_dimensions(
             len(items),
             layout.tab_variable,
             layout.tab_slugs,
-            layout.default_tab,
             variable_values,
         )
     ]
+    authored = _resolve_layout_height(active_item, tab_available)
     ch = _resolve_height(
         active_item,
         card_gap,
         gap,
-        pane_width,
+        rows_item_width(active_item, pane_width),
         variable_values,
         height_provider,
         resolved_style=resolved_style,
     )
-    content_height = tab_available if fill_height else min(ch, tab_available)
+    if authored is not None:
+        content_height = _rows_item_ceiling_height(active_item, authored, ch)
+    else:
+        content_height = tab_available if fill_height else min(ch, tab_available)
 
     for item in items:
-        item.width_fraction = 1.0
-        item.width = pane_width
+        item.width = rows_item_width(item, pane_width)
+        item.width_fraction = item.width / pane_width if pane_width > 0 else 1.0
         item.height = content_height
         item.x = pane_x
         item.y = pane_y

@@ -246,6 +246,23 @@ class TestCacheRefComposition:
         assert rows_inline == [{"val": 10}]
         assert rows_cache == [{"val": 10}]
 
+    def test_inlining_a_query_that_reads_a_cache_ref(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A query that inlines a cache-ref reader composes over the cached rows."""
+        cache = TrivialDuckDBCache()
+        board = _build_board(
+            {
+                "a": "SELECT 1 AS x",
+                "b": "SELECT * FROM {{ queries.a.cache }}",
+                "c": "SELECT count(*) AS n FROM {{ queries.b }}",
+            },
+            chart_query="a",
+        )
+        executor = _executor_with_cache(board, cache, local_project)
+
+        assert executor.execute_query("c") == [{"n": 1}]
+
     def test_same_query_referenced_twice_collides(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:

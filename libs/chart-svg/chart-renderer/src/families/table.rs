@@ -201,6 +201,11 @@ struct ResolvedStyle {
 }
 
 #[derive(Deserialize)]
+struct CardBorderTheme {
+    radius: f64,
+}
+
+#[derive(Deserialize)]
 struct TableTheme {
     // `TableChartStyle.background`: "None inherits
     // from theme" — omits the background rect entirely
@@ -211,6 +216,7 @@ struct TableTheme {
     // authored table ever asked to cover.
     #[serde(default)]
     background: Option<String>,
+    border: CardBorderTheme,
     font: Font,
     header: HeaderTheme,
     row: RowTheme,
@@ -459,28 +465,21 @@ struct TableColumnDefaults {
     font: Option<ColumnFont>,
 }
 
-/// `colors.sanitize_color`: a hex color, `transparent` or `none` (as
-/// `transparent`); anything else is an authored configuration error.
-fn sanitize_color(color: Option<&str>) -> Result<Option<&str>, Diagnostic> {
+/// `colors.sanitize_color`: empty is unset, a color `bind::table::sanitized_color` accepts stands, anything else
+/// is an authored configuration error.
+fn sanitize_color(color: Option<&str>) -> Result<Option<String>, Diagnostic> {
     let Some(color) = color.filter(|c| !c.is_empty()) else {
         return Ok(None);
     };
-    let hex = color.strip_prefix('#').is_some_and(|h| {
-        matches!(h.len(), 3 | 6) && h.bytes().all(|b| b.is_ascii_hexdigit())
-    });
-    if hex {
-        Ok(Some(color))
-    } else if color.eq_ignore_ascii_case("transparent") || color.eq_ignore_ascii_case("none") {
-        Ok(Some("transparent"))
-    } else {
-        Err(Diagnostic::new(
+    ::bind::table::sanitized_color(color).map(Some).ok_or_else(|| {
+        Diagnostic::new(
             &codes::ERR_CSS_COLOR_INVALID_AT_RENDER,
             [
                 ("value", json!(color)),
-                ("detail", json!("expected a hex color, transparent or none")),
+                ("detail", json!("expected a hex color, a CSS color name, transparent or none")),
             ],
-        ))
-    }
+        )
+    })
 }
 
 #[derive(Deserialize)]
@@ -1718,6 +1717,7 @@ pub(crate) mod tests {
 
     pub(crate) fn base_table_theme() -> Value {
         json!({
+            "border": {"radius": 0.0},
             "font": {"family": "Inter, sans-serif", "size": 11.0},
             "header": {
                 "height": 39.0,
@@ -11714,7 +11714,7 @@ mod background_and_font_family_tests {
 
     #[test]
     fn an_authored_table_background_paints_the_rounded_rect() {
-        let payload = payload_with(json!({"background": "#112233"}));
+        let payload = payload_with(json!({"background": "#112233", "border": {"radius": 4.0}}));
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(
             svg.contains("><rect x=\"0\" y=\"0\" width=\"200\" height=\"")
@@ -11730,7 +11730,7 @@ mod background_and_font_family_tests {
     /// rect at the inner box only (`x="0" y="0"`), reading no inset at all.
     #[test]
     fn an_authored_background_reaches_back_over_the_card_padding() {
-        let mut payload = payload_with(json!({"background": "#112233"}));
+        let mut payload = payload_with(json!({"background": "#112233", "border": {"radius": 4.0}}));
         payload.padding =
             Some(crate::Padding { left: 16.0, right: 16.0, top: 16.0, bottom: 16.0 });
         let svg = render(&payload, &test_fonts()).unwrap();
@@ -11835,6 +11835,24 @@ mod background_and_font_family_tests {
         };
         assert_eq!(weight_of_header(11.0), "500");
         assert_eq!(weight_of_header(14.0), "600");
+    }
+
+    #[test]
+    fn the_card_fill_rounds_by_the_table_border_radius() {
+        for (radius, rx) in [(0.0, ""), (6.0, "rx=\"6\"")] {
+            for empty in [false, true] {
+                let mut payload = payload_with(json!({"background": "#112233", "border": {"radius": radius}}));
+                payload.resolved["style"]["table"]["empty_state"] = json!({"font": {"size": 14.0, "color": "#626366"}});
+                let svg = if empty {
+                    payload.rows = vec![].into();
+                    crate::families::empty::render("table", &payload, &test_fonts()).unwrap()
+                } else {
+                    render(&payload, &test_fonts()).unwrap()
+                };
+                let card = svg.split("<rect").find(|rect| rect.contains("fill=\"#112233\"")).unwrap_or_else(|| panic!("a card fill in:\n{svg}"));
+                assert!(card.contains("rx=") == (radius > 0.0) && card.contains(rx) && !card.contains("rx=\"4\""), "radius {radius}, empty {empty}: {card}");
+            }
+        }
     }
 
     /// Zero rows over resolved columns: the header band and a centered

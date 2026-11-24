@@ -127,6 +127,7 @@ def resolve_pattern(
         field=field,
         scale="category" if scale == "categorical" else scale,
         motifs=palette.motifs,
+        ladder=palette.ladder,
         ramp=palette.ramp,
         steps=style.steps or palette.steps,
         color=ink,

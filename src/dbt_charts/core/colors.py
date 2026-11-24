@@ -606,14 +606,14 @@ def sanitize_color(color: str | None, fallback: None = ...) -> str | None: ...
 def sanitize_color(color: str | None, fallback: str | None = None) -> str | None:
     """Validate and sanitize a color value for safe use in SVG/HTML.
 
-    Accepts hex colors (``#fff``, ``#FFFFFF``) and the CSS keywords
-    ``transparent`` and ``none``.  Presets use ``transparent`` to
+    Accepts hex colors (``#fff``, ``#FFFFFF``), CSS color names (returned as
+    their hex) and the CSS keywords ``transparent`` and ``none``.  Presets use ``transparent`` to
     explicitly clear an inherited theme color (YAML ``null`` means
     "no override" in the merge system, so it doesn't disable an
     inherited fill).
 
     ``fallback`` is returned when ``color`` is None or empty.  A non-None
-    ``color`` that is not a valid hex or keyword raises ``InvalidColorError``
+    ``color`` that is not a valid hex, name or keyword raises ``InvalidColorError``
     immediately — authored colors that are not valid are a configuration error,
     not a case for silent defaulting.
     """
@@ -623,6 +623,8 @@ def sanitize_color(color: str | None, fallback: str | None = None) -> str | None
         return color
     if color.lower() in {"transparent", "none"}:
         return "transparent"
+    if (named_hex := css_named_color_to_hex(color)) is not None:
+        return named_hex
     raise InvalidColorError(f"Invalid color value: {color!r}")
 
 

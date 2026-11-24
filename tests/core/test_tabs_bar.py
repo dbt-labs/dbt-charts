@@ -1,11 +1,12 @@
-"""The tab bar: content-sized tabs on one continuous outline rule, no fills."""
+"""The tab bar: content-sized tabs on one continuous outline rule; the selected
+tab takes its pane's background."""
 
 import math
 import re
 
+from dbt_charts.core.colors import wcag_contrast
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.board.resolved import ResolvedLayoutItem
-from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.font_measure import get_weighted_font_measurer
 from dbt_charts.core.render.layouts import render_tabs_layout
@@ -21,26 +22,31 @@ def _bar(
     *,
     active: int = 0,
     theme: str | None = None,
-    style: ResolvedStyle | None = None,
     tab_variable: str | None = "view",
     tab_position: str = "top",
 ) -> str:
     item = ResolvedLayoutItem(
         type="chart", chart=None, board=None, x=0.0, y=0.0, width=400.0, height=200.0
     )
+    theme_style = get_theme_style(theme)
+    layout = theme_style.layout
+    tabs = layout.tabs.model_copy(update={"position": tab_position})
+    style = resolve_style(
+        theme_style.model_copy(
+            update={"layout": layout.model_copy(update={"tabs": tabs})}
+        )
+    )
     svg, _ = render_tabs_layout(
         items=(item,) * len(titles),
         results=None,
-        variables={},
+        variables={tab_variable: f"t{active}"} if tab_variable else {},
         available_width=800.0,
         available_height=300.0,
         card_gap=0.0,
         tab_titles=titles,
         tab_slugs=[f"t{i}" for i in range(len(titles))],
         tab_variable=tab_variable,
-        active_tab=active,
-        tab_position=tab_position,
-        resolved_style=style or resolve_style(get_theme_style(theme)),
+        resolved_style=style,
         render_cache={},
         painted_canvas=None,
     )
@@ -156,7 +162,7 @@ def test_theme_tabs_font_is_the_variables_family() -> None:
 
 
 def _pane_svg(tab_yaml: str) -> str:
-    return render_board_to_svg(f"tabs:\n  items:\n    - title: Engagement\n{tab_yaml}")
+    return render_board_to_svg(f"tabs:\n  Engagement:\n{tab_yaml}")
 
 
 def _label_count(svg: str, label: str) -> int:
@@ -173,26 +179,21 @@ def test_tab_title_is_drawn_once_and_pane_content_sits_under_the_bar() -> None:
     assert float(match.group(1)) < 20, match.group(1)
 
 
-def test_tab_title_is_drawn_once_for_nested_rows_and_empty_tabs() -> None:
+def test_tab_label_is_drawn_once_for_nested_rows() -> None:
     nested = _pane_svg("      rows:\n        - text: BODYMARKER\n")
     assert _label_count(nested, "Engagement") == 1
-    assert _label_count(_pane_svg(""), "Engagement") == 1
 
 
-def test_each_tab_is_its_title_leaf_with_a_box_to_mark() -> None:
+def test_each_tab_carries_its_pane_path_and_a_box_to_mark() -> None:
     from xml.etree import ElementTree
 
-    svg = render_board_to_svg(
-        "tabs:\n  items:\n    - title: One\n      text: A\n    - title: Two\n      text: B\n"
-    )
+    svg = render_board_to_svg("tabs:\n  One:\n    text: A\n  Two:\n    text: B\n")
     root = ElementTree.fromstring(svg)
     tabs = [el for el in root.iter() if el.get("role") == "tab"]
     assert len(tabs) == 2
-    for idx, tab in enumerate(tabs):
-        path = f"tabs.items.{idx}.title"
-        assert tab.get("data-authored-path") == path
-        assert tab.get("data-authored-kind") == "title"
-        assert svg.count(f'data-authored-path="{path}"') == 1
+    for label, tab in zip(("One", "Two"), tabs, strict=True):
+        assert tab.get("data-authored-path") == f"tabs.{label}"
+        assert tab.get("data-authored-kind") == "tab"
         boxes = [c.get("class") for c in tab if c.tag.endswith("rect")]
         assert "dbt-box-outer" in boxes
 
@@ -223,9 +224,8 @@ def _tablist_chain(svg: str) -> list[tuple[float, float]]:
 
 _CARD_PADDING = resolve_style(get_theme_style()).frame.card_padding
 _BAR_HEIGHT = resolve_style(get_theme_style()).layout.tabs.bar_height
-_TWO_TABS = (
-    "  items:\n    - title: One\n      text: A\n    - title: Two\n      text: B\n"
-)
+_TWO_TABS = "  One:\n    text: A\n  Two:\n    text: B\n"
+_LEFT = "style:\n  layout:\n    tabs:\n      position: left\n"
 
 
 def test_root_tabs_bar_sits_a_card_padding_below_title_and_filters() -> None:
@@ -246,9 +246,9 @@ def test_bare_tabs_board_insets_the_bar_like_card_ink() -> None:
 
 def test_tabs_nested_after_a_text_row_inset_the_bar() -> None:
     svg = render_board_to_svg(
-        "rows:\n  - text: ABOVE\n  - tabs:\n      items:\n"
-        "        - title: One\n          text: A\n"
-        "        - title: Two\n          text: B\n"
+        "rows:\n  - text: ABOVE\n  - tabs:\n"
+        "      One:\n        text: A\n"
+        "      Two:\n        text: B\n"
     )
     assert _tablist_chain(svg)[-1] == (0.0, _CARD_PADDING)
 
@@ -295,7 +295,7 @@ def test_left_rail_outline_opens_right_onto_a_full_height_rule() -> None:
 
 
 def test_left_rail_pane_sits_right_of_rail_and_gutter() -> None:
-    svg = render_board_to_svg("tabs:\n  position: left\n" + _TWO_TABS)
+    svg = render_board_to_svg(_LEFT + "tabs:\n" + _TWO_TABS)
     assert _tablist_chain(svg)[-1] == (0.0, _CARD_PADDING)
     cell = re.search(r'class="dbt-box-inner" x="0" y="0" width="([\d.]+)"', svg)
     assert cell is not None
@@ -305,8 +305,8 @@ def test_left_rail_pane_sits_right_of_rail_and_gutter() -> None:
 
 
 def test_left_rail_board_is_never_shorter_than_its_rail() -> None:
-    items = "".join(f"    - title: T{i}\n      text: x\n" for i in range(8))
-    svg = render_board_to_svg("tabs:\n  position: left\n  items:\n" + items)
+    items = "".join(f"  T{i}:\n    text: x\n" for i in range(8))
+    svg = render_board_to_svg(_LEFT + "tabs:\n" + items)
     height = re.search(
         r'<rect x="0" y="0" width="[\d.]+" height="([\d.]+)" fill="#FFFFFF" rx', svg
     )
@@ -353,12 +353,134 @@ def test_top_bar_still_truncates_a_long_label_on_one_line() -> None:
 
 
 def test_left_rail_height_counts_wrapped_cells() -> None:
-    items = "".join(
-        f"    - title: {TWO_LINE_LABEL} {i}\n      text: x\n" for i in range(6)
-    )
-    svg = render_board_to_svg("tabs:\n  position: left\n  items:\n" + items)
+    items = "".join(f'  "{TWO_LINE_LABEL} {i}":\n    text: x\n' for i in range(6))
+    svg = render_board_to_svg(_LEFT + "tabs:\n" + items)
     height = re.search(
         r'<rect x="0" y="0" width="[\d.]+" height="([\d.]+)" fill="#FFFFFF" rx', svg
     )
     assert height is not None
     assert float(height[1]) >= _CARD_PADDING + 6 * (_BAR_HEIGHT + _line_step())
+
+
+def _pane_tabs(first_style: str, *, position: str = "top") -> str:
+    """A two-tab board whose first pane takes ``first_style`` and second a color."""
+    return (
+        (
+            f"style:\n  layout:\n    tabs:\n      position: {position}\n"
+            if position != "top"
+            else ""
+        )
+        + "tabs:\n  One:\n    text: A\n"
+        + first_style
+        + "  Two:\n    text: B\n"
+        "    style:\n      background: '#0000aa'\n"
+    )
+
+
+def _tab_fill(svg: str) -> str | None:
+    """The fill of the path painted under the tab bar's rule, if one is drawn."""
+    (paths,) = re.findall(r'<g role="tablist"[^>]*>((?:<path [^>]*/>)+)', svg)
+    *fills, rule = re.findall(r"<path [^>]*/>", paths)
+    assert 'fill="none"' in rule
+    if not fills:
+        return None
+    (fill,) = fills
+    assert "stroke" not in fill
+    found = re.search(r'fill="([^"]+)"', fill)
+    assert found is not None
+    return found.group(1)
+
+
+_PANE_FILL = "    style:\n      background: '#00aa00'\n"
+
+
+def test_selected_tab_fills_with_its_pane_background() -> None:
+    assert _tab_fill(render_board_to_svg(_pane_tabs(_PANE_FILL))) == "#00aa00"
+
+
+def test_left_rail_selected_tab_fills_with_its_pane_background() -> None:
+    svg = render_board_to_svg(_pane_tabs(_PANE_FILL, position="left"))
+    assert _tab_fill(svg) == "#00aa00"
+
+
+def test_selected_tab_of_a_pane_without_background_draws_no_fill() -> None:
+    assert _tab_fill(render_board_to_svg(_pane_tabs(""))) is None
+
+
+def test_selected_tab_takes_the_open_pane_background_not_a_sibling() -> None:
+    svg = render_board_to_svg(
+        _pane_tabs(_PANE_FILL), variables={"_tab_untitled_board": "two"}
+    )
+    assert _tab_fill(svg) == "#0000aa"
+
+
+def test_tab_fill_follows_the_rule_around_the_tab_and_reaches_the_pane() -> None:
+    svg = render_board_to_svg(_pane_tabs(_PANE_FILL))
+    fill, rule = re.findall(r'<path d="([^"]+)"', svg)[:2]
+    stroke = resolve_style(get_theme_style()).layout.tabs.border.width
+    # The same walk as the rule, met at the bar's bottom edge, where the pane starts.
+    assert fill == rule.replace(f"{_BAR_HEIGHT - stroke / 2:g}", f"{_BAR_HEIGHT}")
+
+
+def _selected_label_ink(svg: str) -> str:
+    found = re.search(r'aria-selected="true".*?<text [^>]*? fill="([^"]+)"', svg)
+    assert found is not None
+    return found.group(1)
+
+
+def _account_tabs(pane_style: str, theme: str = "") -> str:
+    return (
+        theme + "tabs:\n  Overview:\n    text: On track.\n"
+        "    style:\n" + pane_style + "  Renewals:\n    text: Forty.\n"
+    )
+
+
+def test_selected_label_flips_to_read_on_its_fill_in_both_directions() -> None:
+    dark_pane = render_board_to_svg(_account_tabs("      background: '#17324d'\n"))
+    assert _selected_label_ink(dark_pane) == "#ffffff"
+    light_pane = render_board_to_svg(
+        _account_tabs("      background: '#dbeafe'\n", theme="theme: neon\n")
+    )
+    assert _selected_label_ink(light_pane) == "#000000"
+    for svg, fill in ((dark_pane, "#17324d"), (light_pane, "#dbeafe")):
+        assert wcag_contrast(_selected_label_ink(svg), fill) >= 4.5
+
+
+def test_selected_label_keeps_the_title_ink_where_it_reads() -> None:
+    title_ink = resolve_style(get_theme_style()).title.font.color
+    unfilled = render_board_to_svg(_pane_tabs(""))
+    assert _selected_label_ink(unfilled) == title_ink
+    pale = render_board_to_svg(_account_tabs("      background: '#dbeafe'\n"))
+    assert _selected_label_ink(pale) == title_ink
+
+
+def test_selected_label_takes_the_pane_title_ink_where_it_reads() -> None:
+    title = "      title:\n        font:\n          color: '{}'\n"
+    navy = render_board_to_svg(
+        _account_tabs("      background: '#dbeafe'\n" + title.format("#17324d"))
+    )
+    assert _selected_label_ink(navy) == "#17324d"
+    pale = render_board_to_svg(
+        _account_tabs("      background: '#dbeafe'\n" + title.format("#e0f0ff"))
+    )
+    assert _selected_label_ink(pale) == "#000000"
+    bare = render_board_to_svg(_account_tabs(title.format("#17324d")))
+    assert (
+        _selected_label_ink(bare) == resolve_style(get_theme_style()).title.font.color
+    )
+
+
+def test_selected_label_reads_on_a_translucent_fill_over_the_board() -> None:
+    # Navy at 90% over the white board is still dark; at 10% it is still light.
+    title_ink = resolve_style(get_theme_style()).title.font.color
+    for alpha, ink in ((0.9, "#ffffff"), (0.1, title_ink)):
+        svg = render_board_to_svg(
+            _account_tabs(f"      background: 'rgba(23, 50, 77, {alpha})'\n")
+        )
+        assert _selected_label_ink(svg) == ink
+
+
+def test_tab_fill_names_the_ink_its_label_takes_on_the_bare_bar() -> None:
+    svg = render_board_to_svg(_account_tabs("      background: '#17324d'\n"))
+    title_ink = resolve_style(get_theme_style()).title.font.color
+    assert f'fill="#17324d" data-bar-ink="{title_ink}"/>' in svg

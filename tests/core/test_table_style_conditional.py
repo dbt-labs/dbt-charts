@@ -119,9 +119,25 @@ def test_rule_glyph_and_tone_paint() -> None:
     assert "▲" in svg
 
 
-def test_tone_without_a_glyph_anywhere_is_refused() -> None:
-    with pytest.raises(ValueError, match=r"style\.columns\.delta\.conditional.*glyph"):
-        _resolve({"delta": [{"gt": 0, "tone": "positive"}]}, [{"delta": 5}])
+@pytest.mark.parametrize("ink", [{"tone": "positive"}, {"glyph_color": "#0a0"}])
+def test_ink_without_a_glyph_anywhere_is_refused_at_parse(ink: dict[str, str]) -> None:
+    chart_style = "    style:\n" + _indent(
+        yaml.safe_dump({"columns": {"region": {"conditional": [{"gt": 0, **ink}]}}}),
+        6,
+    )
+    doc = yaml.safe_load(_BOARD.format(board_style="", chart_style=chart_style))
+    with pytest.raises(ValidationError, match=r"style\.columns\.region\n.*glyph"):
+        AuthoredBoard.model_validate(doc)
+
+
+def test_a_sibling_rule_glyph_satisfies_tone() -> None:
+    TableChart(
+        id="t",
+        type="table",
+        style=_columns_style(
+            {"delta": [{"lt": 0, "glyph": "▼"}, {"gt": 0, "tone": "positive"}]}
+        ),
+    )
 
 
 def test_tone_takes_the_glyph_from_the_column() -> None:

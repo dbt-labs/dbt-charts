@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use board_model::board::{items, Board, BoardBody, Layout, LayoutItem, SingleRowBoolProbe, Visible};
+use board_model::board::{items, Board, BoardBody, Layout, LayoutItem, SingleRowBoolProbe, NestedBoard, Visible};
 use board_model::chart::Chart;
 use board_model::ids::{BoardId, ChartId, ItemId, QueryId};
 use board_model::variable_value::{Atom, VariableValue};
@@ -73,12 +73,11 @@ pub struct ChartStyles {
     pub text_queries: BTreeMap<ChartId, BTreeMap<String, QueryId>>,
 }
 
-/// A tabs layout: the variable that selects a tab, each tab's slug and the one open on load.
+/// A tabs layout: the variable that selects a tab, and each tab's slug.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TabsFacts {
     pub variable: String,
     pub slugs: Vec<String>,
-    pub default_tab: usize,
 }
 
 /// A collapsible board: the variable that holds its state and whether it starts open.
@@ -224,12 +223,14 @@ fn details_open(facts: &DetailsFacts, run: &RunResult) -> bool {
     }
 }
 
-/// `resolve_active_tab_index`: a truthy variable value names the open tab by slug, else the authored
-/// default; never past the last tab. The value is runtime input, so one naming no tab is an error.
-fn open_tab(facts: &TabsFacts, tabs: usize, run: &RunResult) -> Result<usize, Diagnostic> {
-    let active = match run.variables.get(&facts.variable) {
-        None | Some(VariableValue::Unset) => facts.default_tab,
-        Some(VariableValue::One(Atom::Text(slug))) if slug.is_empty() => facts.default_tab,
+/// Which tabs of `tabs` draw, and the open one: the tab the variable names, else the first drawn
+/// tab, and none when no tab draws. A slug naming no tab, or a hidden tab other than the first, is
+/// an error.
+fn tab_states(tabs: &IndexMap<String, NestedBoard>, facts: &TabsFacts, styles: &ChartStyles, run: &RunResult) -> Result<(Vec<bool>, Option<usize>), Diagnostic> {
+    let shown = tabs.values().map(|tab| drawn(tab.visible.as_ref(), styles, run)).collect::<Result<Vec<_>, _>>()?;
+    let selected = match run.variables.get(&facts.variable) {
+        None | Some(VariableValue::Unset) => 0,
+        Some(VariableValue::One(Atom::Text(slug))) if slug.is_empty() => 0,
         Some(VariableValue::One(Atom::Text(slug))) => facts
             .slugs
             .iter()
@@ -237,7 +238,14 @@ fn open_tab(facts: &TabsFacts, tabs: usize, run: &RunResult) -> Result<usize, Di
             .ok_or_else(|| diag::err_tab_unknown(facts.variable.as_str(), slug.as_str(), serde_json::json!(facts.slugs)))?,
         Some(_) => return Err(Diagnostic::refused(refuse!("a tab variable that is not text is not supported"))),
     };
-    Ok(active.min(tabs.saturating_sub(1)))
+    let last = shown.len().saturating_sub(1);
+    let selected = selected.min(last);
+    let kept: Vec<&String> = facts.slugs.iter().zip(&shown).filter(|(_, drawn)| **drawn).map(|(slug, _)| slug).collect();
+    if shown.get(selected) == Some(&false) && selected != 0 && !kept.is_empty() {
+        return Err(diag::err_tab_unknown(facts.variable.as_str(), facts.slugs[selected].as_str(), serde_json::json!(kept)));
+    }
+    let open = if shown.get(selected) == Some(&true) { Some(selected) } else { shown.iter().position(|drawn| *drawn) };
+    Ok((shown, open))
 }
 
 /// `eval_literal_condition` (`dbt_charts/core/compile/conditions.py`): an expression with no `{{` is
@@ -301,7 +309,9 @@ fn probe_drawn(probe: &SingleRowBoolProbe, styles: &ChartStyles, run: &RunResult
 }
 
 /// The chart placed as `key` and where it sits: by the chart's public id, `id` for its first drawn
-/// placement and `id#2` for its second, as a host's layout walk keys the charts it draws. Only the
+/// placement and `id#2` for its second, as a host's layout walk keys the charts it draws. Charts in
+/// two boards may share a public id (`row0` in two tab panes): their drawn placements count as one
+/// series, in layout order. Only the
 /// items that place that chart are read for whether they draw, so a `visible:`, tab or details
 /// state elsewhere on the board does not reach it. A board focused by `chart_focus` draws the
 /// focused chart alone, as production's `focus_on_chart` lays it out: from its placement in the
@@ -311,66 +321,68 @@ pub fn placed_as(board: &Board, styles: &ChartStyles, run: &RunResult, key: &str
         Some((public, n)) => (public, n.parse::<usize>().map_err(|_| diag::err_internal(format!("the placement key {key} has no count")))?),
         None => (key, 1),
     };
-    let chart = styles
+    let charts: Vec<ChartId> = styles
         .public_ids
         .iter()
-        .find(|(_, id)| id.as_str() == public)
+        .filter(|(_, id)| id.as_str() == public)
         .map(|(chart, _)| chart.clone())
-        .ok_or_else(|| diag::err_internal(format!("the board has no chart {public}")))?;
+        .collect();
+    if charts.is_empty() {
+        return Err(diag::err_internal(format!("the board has no chart {public}")));
+    }
     let unplaced = || diag::err_internal(format!("the board draws no chart placed as {key}"));
     if let Some(focus) = &board.chart_focus {
-        if *focus != chart || nth != 1 {
+        if !charts.contains(focus) || nth != 1 {
             return Err(unplaced());
         }
         let at = items(&board.body, &ItemId::root())
-            .find(|placement| placement.pane.is_empty() && matches!(placement.item, LayoutItem::Chart { id, .. } if *id == chart))
+            .find(|placement| placement.pane.is_empty() && matches!(placement.item, LayoutItem::Chart { id, .. } if id == focus))
             .map(|placement| placement.id)
             .ok_or_else(|| Diagnostic::refused(refuse!("a `chart_focus` on a chart the root's own layout does not place is not supported")))?;
-        return Ok((at, chart));
+        return Ok((at, focus.clone()));
     }
     let mut seen = 0;
-    let at = nth_drawn(&board.body, &ItemId::root(), styles, run, &chart, nth, &mut seen)?.ok_or_else(unplaced)?;
-    Ok((at, chart))
+    nth_drawn(&board.body, &ItemId::root(), styles, run, &charts, nth, &mut seen)?.ok_or_else(unplaced)
 }
 
-/// Whether `body` or a board nested in it places `chart`, in any tab.
-fn places(body: &BoardBody, at: &ItemId, chart: &ChartId) -> bool {
+/// Whether `body` or a board nested in it places one of `charts`, in any tab.
+fn places(body: &BoardBody, at: &ItemId, charts: &[ChartId]) -> bool {
     items(body, at).any(|placement| match placement.item {
-        LayoutItem::Chart { id, .. } => id == chart,
-        LayoutItem::Board(nested) => places(&nested.body, &placement.id, chart),
+        LayoutItem::Chart { id, .. } => charts.contains(id),
+        LayoutItem::Board(nested) => places(&nested.body, &placement.id, charts),
     })
 }
 
-/// The `nth` drawn placement of `chart` under `body`, counting on from `seen`: `hide`'s reading of
-/// details, tabs and `visible:`, made only where `chart` is placed.
-fn nth_drawn(body: &BoardBody, at: &ItemId, styles: &ChartStyles, run: &RunResult, chart: &ChartId, nth: usize, seen: &mut usize) -> Result<Option<ItemId>, Diagnostic> {
-    if !places(body, at, chart) {
+/// The `nth` drawn placement of one of `charts` under `body`, and the chart it places, counting on
+/// from `seen`: `hide`'s reading of details, tabs and `visible:`, made only where they are placed.
+fn nth_drawn(body: &BoardBody, at: &ItemId, styles: &ChartStyles, run: &RunResult, charts: &[ChartId], nth: usize, seen: &mut usize) -> Result<Option<(ItemId, ChartId)>, Diagnostic> {
+    if !places(body, at, charts) {
         return Ok(None);
     }
     if body.details.is_some() && !details_open(fact(&styles.details, at, "details")?, run) {
         return Ok(None);
     }
     let open_tab = match &body.layout {
-        Layout::Tabs(tabs) => Some(open_tab(fact(&styles.tabs, at, "tabs")?, tabs.items.len(), run)?),
+        Layout::Tabs(tabs) => Some(tab_states(tabs, fact(&styles.tabs, at, "tabs")?, styles, run)?.1),
         _ => None,
     };
     for placement in items(body, at) {
         if let (Some(open), [tab]) = (open_tab, placement.pane.as_slice()) {
-            if *tab != open {
+            if open != Some(*tab) {
                 continue;
             }
         }
         match placement.item {
-            LayoutItem::Chart { id, visible } if id == chart && drawn(visible.as_ref(), styles, run)? => {
+            LayoutItem::Chart { id, visible } if charts.contains(id) && drawn(visible.as_ref(), styles, run)? => {
                 *seen += 1;
                 if *seen == nth {
-                    return Ok(Some(placement.id));
+                    return Ok(Some((placement.id, id.clone())));
                 }
             }
             LayoutItem::Chart { .. } => {}
             LayoutItem::Board(nested) => {
-                if places(&nested.body, &placement.id, chart) && drawn(nested.visible.as_ref(), styles, run)? {
-                    if let Some(found) = nth_drawn(&nested.body, &placement.id, styles, run, chart, nth, seen)? {
+                if places(&nested.body, &placement.id, charts) && drawn(nested.visible.as_ref(), styles, run)? {
+                    if let Some(found) = nth_drawn(&nested.body, &placement.id, styles, run, charts, nth, seen)? {
                         return Ok(Some(found));
                     }
                 }
@@ -392,15 +404,22 @@ fn hide(body: &BoardBody, at: &ItemId, styles: &ChartStyles, run: &RunResult, st
     }
     let open_tab = match &body.layout {
         Layout::Tabs(tabs) => {
-            let open = open_tab(fact(&styles.tabs, at, "tabs")?, tabs.items.len(), run)?;
-            state.active_tab.insert(body.id.clone(), open);
+            let (shown, open) = tab_states(tabs, fact(&styles.tabs, at, "tabs")?, styles, run)?;
+            // A hidden tab and each item of its pane, so no walk draws, sizes or hugs them.
+            for (index, _) in shown.iter().enumerate().filter(|(_, drawn)| !**drawn) {
+                state.hidden.insert(at.key("tabs").index(index));
+                state.hidden.extend(items(body, at).filter(|p| p.pane == [index]).map(|p| p.id));
+            }
+            if let Some(open) = open {
+                state.active_tab.insert(body.id.clone(), open);
+            }
             Some(open)
         }
         _ => None,
     };
     for placement in items(body, at) {
         if let (Some(open), [tab]) = (open_tab, placement.pane.as_slice()) {
-            if *tab != open {
+            if open != Some(*tab) {
                 continue;
             }
         }

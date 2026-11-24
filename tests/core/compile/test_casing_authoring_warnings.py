@@ -210,3 +210,27 @@ def test_a_field_labels_entry_warns_once() -> None:
         "    field_labels:\n      label: Avg Order Value\n", "WARN-LABEL-TITLE-CASE"
     )
     assert [w.path for w in warnings] == ["charts.c.field_labels.label"]
+
+
+def test_an_inline_chart_in_a_tab_pane_warns_at_its_key() -> None:
+    result = compile(
+        """
+queries:
+  q:
+    type: values
+    rows:
+      - {x: 1, y: 2}
+tabs:
+  Q1.5 Overview:
+    rows:
+      - query: q
+        type: bar
+        x: x
+        y: y
+        x_label: Revenue By Region
+"""
+    )
+
+    assert result.success, result.errors
+    (warning,) = [w for w in result.warnings if w.code == "WARN-LABEL-TITLE-CASE"]
+    assert warning.path == "tabs.Q1.5 Overview.rows.0.x_label"

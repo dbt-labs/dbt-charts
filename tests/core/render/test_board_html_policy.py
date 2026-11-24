@@ -201,21 +201,19 @@ _BOARD_TAB_TEXT = f"""\
 title: Test
 html_policy: "trusted-raw"
 tabs:
-  items:
-    - title: One
-      text: |
-        {_HTML_TEXT}
+  One:
+    text: |
+      {_HTML_TEXT}
 """
 
 _BOARD_TAB_ROWS_TEXT = f"""\
 title: Test
 html_policy: "trusted-raw"
 tabs:
-  items:
-    - title: One
-      rows:
-        - text: |
-            {_HTML_TEXT}
+  One:
+    rows:
+      - text: |
+          {_HTML_TEXT}
 """
 
 

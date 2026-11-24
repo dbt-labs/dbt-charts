@@ -118,5 +118,6 @@ fn hover_json(style: &StylePatch) -> Result<String, Diagnostic> {
         ("recedeContrast", num(leaf(h.recede_contrast, "style.charts.hover_emphasis.recede_contrast")?)),
         ("dropLineColor", text(leaf(h.drop_line_color.as_ref(), "style.charts.hover_emphasis.drop_line_color")?.as_str())),
         ("dropLineWidth", num(leaf(h.drop_line_width, "style.charts.hover_emphasis.drop_line_width")?)),
+        ("dropLineDash", format!("[{}]", leaf(h.drop_line_dash.as_ref(), "style.charts.hover_emphasis.drop_line_dash")?.iter().map(|d| num(*d)).collect::<Vec<_>>().join(","))),
     ]))
 }

@@ -1,0 +1,5 @@
+kind: Fixes
+body: '`dct serve` runs the background tab prefetch again with FastAPI 0.142 and later, instead of logging an AttributeError on every board.'
+time: 2026-11-23T19:37:31.06576227Z
+custom:
+    DbtChartsIssue: "133"

@@ -488,8 +488,14 @@ def _resolve_point_map(
         basemap_geo_format = bg_fmt
 
     # Bake basemap fill/stroke from the authored basemap (source already folded into basemap_geo_url).
-    basemap_fill: str | None = basemap.fill if basemap is not None else None
-    basemap_stroke: str | None = basemap.stroke if basemap is not None else None
+    # Only the two color slots resolve as colors: `source` is a registry key
+    # that may itself be dotted.
+    basemap_fill: str | None = _with_color_tokens(
+        basemap.fill if basemap is not None else None, chart_style_context
+    )
+    basemap_stroke: str | None = _with_color_tokens(
+        basemap.stroke if basemap is not None else None, chart_style_context
+    )
     # Fall back to the theme's neutral geoshape fill when a background layer is
     # present but no explicit fill was authored; without this VL defaults to its
     # own fill (#4c78a8) which is never the intent for a geographic basemap.

@@ -13,6 +13,7 @@
 use crate::compile::{public_id, CompileError, Structure};
 use crate::merge_warnings::leaves;
 use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored};
+use board_model::board::BoardBodyAuthored;
 use board_model::chart::query::ChartQuery;
 use board_model::chart::ChartAuthored;
 use board_model::ids::{ItemId, Step};
@@ -182,20 +183,42 @@ impl Walk<'_> {
             }
             LayoutAuthored::Tabs(t) => {
                 at.push(Step::Key("tabs"));
-                at.push(Step::Key("items"));
-                for (i, tab) in t.items.iter().flatten().enumerate() {
+                for (i, tab) in t.values().enumerate() {
                     at.push(Step::Index(i));
-                    let pane = ItemId::at(at).as_str().to_string();
-                    if let Some(found) = self.boards.get(&pane) {
-                        self.out.extend(found.iter().cloned());
-                    }
-                    if let Some(inner) = &tab.layout {
-                        self.layout(inner, at, Some(&pane))?;
-                    }
+                    self.board(&tab.body, at)?;
                     at.pop();
                 }
-                at.truncate(at.len() - 2);
+                at.pop();
             }
+        }
+        Ok(())
+    }
+
+    fn board<'k>(
+        &mut self,
+        body: &'k BoardBodyAuthored,
+        at: &mut Vec<Step<'k>>,
+    ) -> Result<(), CompileError> {
+        let position = ItemId::at(at);
+        let key = position.as_str();
+        if let Some(found) = self.boards.get(key) {
+            self.out.extend(found.iter().cloned());
+        }
+        let prefix = format!("{}.", dotted(&position));
+        let resolved = scope_of(self.root, self.nested, Some(key))?;
+        let labels = body
+            .variables
+            .iter()
+            .filter_map(|(name, var)| match &var.label {
+                Tri::Value(label) if !self.structure.imported_variables.contains(name) => {
+                    Some((name.as_str(), label.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        self.variables(labels, &prefix, resolved)?;
+        if let Some(inner) = &body.layout {
+            self.layout(inner, at, Some(key))?;
         }
         Ok(())
     }
@@ -208,30 +231,7 @@ impl Walk<'_> {
     ) -> Result<(), CompileError> {
         let position = ItemId::at(at);
         match item {
-            LayoutItemAuthored::Board(nested) => {
-                let key = position.as_str();
-                if let Some(found) = self.boards.get(key) {
-                    self.out.extend(found.iter().cloned());
-                }
-                let prefix = format!("{}.", dotted(&position));
-                let resolved = scope_of(self.root, self.nested, Some(key))?;
-                let labels = nested
-                    .body
-                    .variables
-                    .iter()
-                    .filter_map(|(name, var)| match &var.label {
-                        Tri::Value(label) if !self.structure.imported_variables.contains(name) => {
-                            Some((name.as_str(), label.as_str()))
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                self.variables(labels, &prefix, resolved)?;
-                if let Some(inner) = &nested.body.layout {
-                    self.layout(inner, at, Some(key))?;
-                }
-                Ok(())
-            }
+            LayoutItemAuthored::Board(nested) => self.board(&nested.body, at),
             LayoutItemAuthored::Chart(_) | LayoutItemAuthored::InlineChart(_) => {
                 let missing = |what: &str| {
                     CompileError::Invalid(vec![diag::err_internal(format!("{what} at {position}"))])

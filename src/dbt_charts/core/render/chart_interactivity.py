@@ -59,7 +59,7 @@ def _build_tooltip_style_dict(
 
 def _build_hover_emphasis_dict(
     resolved_style: ResolvedStyle,
-) -> dict[str, bool | float | str]:
+) -> dict[str, bool | float | str | list[float]]:
     """Build the JSON dict consumed by the JS hover-emphasis runtime.
 
     Every value is theme-cascaded: a theme decides whether hover emphasis
@@ -79,6 +79,7 @@ def _build_hover_emphasis_dict(
         "recedeContrast": hover_emphasis.recede_contrast,
         "dropLineColor": hover_emphasis.drop_line_color,
         "dropLineWidth": hover_emphasis.drop_line_width,
+        "dropLineDash": hover_emphasis.drop_line_dash,
     }
 
 

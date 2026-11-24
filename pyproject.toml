@@ -10,7 +10,7 @@ backend-path = ["."]
 # Keep this scoped to exactly what dbt-charts/tests and mod.just use.
 [dependency-groups]
 dev = [
-    "pytest>=7.0.0",
+    "pytest>=7.0.0,<9.2",  # 9.2 drops xdist's @group node-id suffix, silently breaking --dist=loadgroup (pytest-dev/pytest-xdist#1407); lift with the xdist release that fixes it
     "pytest-xdist>=3.5.0",  # Parallel test execution; `test` recipe runs -n auto
     "pytest-timeout>=2.2.0",  # Kill hung tests
     "pytest-postgresql>=9.0.0",  # tests only: throwaway Postgres cluster
@@ -300,6 +300,7 @@ markers = [
 # the standalone export, where dbt-charts is its own root. The root
 # pyproject.toml carries the same openai ceiling for the
 # monorepo's shared lock.
+prerelease = "disallow"
 constraint-dependencies = [
     # openai>=3 swapped its HTTP transport from httpx to the separate httpx2
     # fork, so its exception constructors (APITimeoutError, RateLimitError, …)

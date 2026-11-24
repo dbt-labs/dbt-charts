@@ -38,6 +38,7 @@ def test_pattern_palette_files_validate() -> None:
         ("pattern-regular-8", "categorical"),
         ("pattern-dots", "sequential"),
         ("pattern-mixed-12", "categorical"),
+        ("pattern-one-ink", "categorical"),
     ):
         data = yaml.safe_load((_PALETTES_DIR / "pattern" / f"{name}.yml").read_text())
         parsed = Palette.model_validate(data)
@@ -94,6 +95,18 @@ def test_pattern_palette_has_no_color_stops() -> None:
         {"name": "p", "kind": "sequential", "ramp": "dots"},  # steps required
         {"name": "p", "kind": "sequential", "ramp": "dots", "steps": 2},
         {"name": "p", "kind": "sequential", "ramp": "dots", "steps": 10},
+        {"name": "p", "kind": "categorical", "motifs": ["dither"], "ladder": "one-ink"},
+        {"name": "p", "kind": "categorical", "ladder": "one-ink", "ramp": "dots"},
+        {"name": "p", "kind": "categorical", "ladder": "one-ink", "steps": 6},
+        {"name": "p", "kind": "categorical", "ladder": "nope"},
+        {
+            "name": "p",
+            "kind": "sequential",
+            "ramp": "dots",
+            "steps": 6,
+            "ladder": "one-ink",
+        },
+        {"name": "p", "ladder": "one-ink"},  # a ladder is a pattern palette
     ],
 )
 def test_pattern_palette_shape_is_validated(bad: dict[str, object]) -> None:
@@ -107,3 +120,17 @@ def test_theme_base_binds_pattern_roles() -> None:
     assert roles["pattern_category"] == "pattern-mixed-8"
     assert roles["pattern_sequential"] == "pattern-dots"
     assert roles["pattern_diverging"] == "pattern-hatch-dots"
+
+
+def test_the_one_ink_palette_names_the_ladder_and_no_motifs() -> None:
+    data = yaml.safe_load(
+        (_PALETTES_DIR / "pattern" / "pattern-one-ink.yml").read_text()
+    )
+    parsed = Palette.model_validate(data)
+    assert (parsed.ladder, parsed.motifs, parsed.ramp, parsed.steps) == (
+        "one-ink",
+        None,
+        None,
+        None,
+    )
+    assert build_palette_index(_PALETTES_DIR)["pattern-one-ink"]["family"] == "pattern"

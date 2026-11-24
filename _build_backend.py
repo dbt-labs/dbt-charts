@@ -378,18 +378,14 @@ def _store_engine(cache: Path, key: str) -> None:
         shutil.rmtree(stale)
 
 
-def _engine_cache() -> Path:
-    return Path(
-        os.environ.get("DCT_ENGINE_CACHE", Path.home() / ".cache/dbt-charts/engine")
-    )
-
-
 def _editable_from_cache(
     wheel_directory: Path, config_settings: dict[str, str] | None
 ) -> str:
     """Reuse an `_engine` built from identical source by any checkout, else
     build it and store it under its key."""
-    cache = _engine_cache()
+    cache = Path(
+        os.environ.get("DCT_ENGINE_CACHE", Path.home() / ".cache/dbt-charts/engine")
+    )
     key = _engine_key(config_settings)
     entry = cache / key
     if hit := sorted(entry.glob("_engine.*")):
@@ -412,10 +408,6 @@ def build_editable(
         name = _editable_from_prebuilt(
             Path(prebuilt), Path(wheel_directory), config_settings
         )
-        # Another checkout of the same engine source, such as the visual gate's
-        # origin/main tree, then installs it instead of compiling.
-        if (REPO_ROOT / ".git").exists():
-            _store_engine(_engine_cache(), _engine_key(config_settings))
     elif (REPO_ROOT / ".git").exists():
         name = _editable_from_cache(Path(wheel_directory), config_settings)
     else:  # an unpacked sdist: no git to key the cache with

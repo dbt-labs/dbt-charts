@@ -7,6 +7,7 @@
 
 use crate::index::{FactsError, LayoutFacts};
 use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored};
+use board_model::board::BoardBodyAuthored;
 use board_model::board::Board;
 use board_model::ids::{BoardId, ItemId};
 use model_core::Leaf;
@@ -55,11 +56,9 @@ fn layout(l: &mut LayoutAuthored, facts: &LayoutFacts, pos: &ItemId) -> Result<(
             Ok(())
         }
         LayoutAuthored::Tabs(t) => {
-            let base = pos.key("tabs").key("items");
-            for (i, tab) in t.items.iter_mut().flatten().enumerate() {
-                if let Some(l) = &mut tab.layout {
-                    layout(l, facts, &base.index(i))?;
-                }
+            let base = pos.key("tabs");
+            for (i, tab) in t.values_mut().enumerate() {
+                board(&mut tab.body, facts, &base.index(i))?;
             }
             Ok(())
         }
@@ -71,11 +70,15 @@ fn item(
     facts: &LayoutFacts,
     pos: &ItemId,
 ) -> Result<(), FactsError> {
-    let LayoutItemAuthored::Board(nested) = item else {
-        return Ok(());
-    };
-    nested.body.id = Some(id_at(facts, pos)?);
-    match &mut nested.body.layout {
+    match item {
+        LayoutItemAuthored::Board(nested) => board(&mut nested.body, facts, pos),
+        _ => Ok(()),
+    }
+}
+
+fn board(body: &mut BoardBodyAuthored, facts: &LayoutFacts, pos: &ItemId) -> Result<(), FactsError> {
+    body.id = Some(id_at(facts, pos)?);
+    match &mut body.layout {
         Some(l) => layout(l, facts, pos),
         None => Ok(()),
     }

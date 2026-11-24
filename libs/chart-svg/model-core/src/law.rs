@@ -169,6 +169,21 @@ fn holds(when: &[Condition], view: &dyn Keyed) -> Result<bool, Unanswerable> {
                 is_call(&v, names) != *negate
             }
             Condition::IsList(key) => matches!(value(view, key)?, Some(Json::Array(_))),
+            Condition::ItemsSet {
+                key,
+                item_keys,
+                negate,
+            } => {
+                let found = match value(view, key)? {
+                    Some(Json::Array(items)) => items.iter().any(|item| {
+                        item_keys
+                            .iter()
+                            .any(|k| item.get(k).is_some_and(|v| !v.is_null()))
+                    }),
+                    _ => false,
+                };
+                found != *negate
+            }
         };
         if !met {
             return Ok(false);
@@ -556,6 +571,38 @@ mod tests {
             satisfied(&c, &doc(r#"{"x": "a", "y": 1, "enclose": 1}"#)),
             Ok(true)
         );
+    }
+
+    #[test]
+    fn items_set_reads_a_key_on_any_item_of_a_list() {
+        const WHEN: &[Condition] = &[
+            Condition::ItemsSet {
+                key: "rules",
+                item_keys: &["tone", "ink"],
+                negate: false,
+            },
+            Condition::ItemsSet {
+                key: "rules",
+                item_keys: &["glyph"],
+                negate: true,
+            },
+        ];
+        let c = with_when(rule(ConstraintKind::Requires, &["glyph"]), WHEN);
+        assert_eq!(
+            satisfied(&c, &doc(r#"{"rules": [{"tone": "x"}]}"#)),
+            Ok(false)
+        );
+        assert_eq!(satisfied(&c, &doc(r#"{"rules": [{"ink": 1}]}"#)), Ok(false));
+        assert_eq!(
+            satisfied(&c, &doc(r#"{"rules": [{"glyph": "v"}, {"tone": "x"}]}"#)),
+            Ok(true)
+        );
+        assert_eq!(
+            satisfied(&c, &doc(r#"{"rules": [{"tone": null}]}"#)),
+            Ok(true)
+        );
+        assert_eq!(satisfied(&c, &doc(r#"{"glyph": "v"}"#)), Ok(true));
+        assert_eq!(satisfied(&c, &doc("{}")), Ok(true));
     }
 
     #[test]

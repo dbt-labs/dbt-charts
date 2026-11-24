@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 import yaml
 
+from dbt_charts.core.compile.authoring.paths import split_path
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import JsonValue
 from dbt_charts.core.utils import YAML_LOADER
 
@@ -32,11 +33,13 @@ ScalarLeaf = str | int | float | bool | list[str] | list[int | float]
 
 _BLANK_RE = re.compile(r"^\s*$")
 _COMMENT_RE = re.compile(r"^\s*#")
-_KEY_RE = re.compile(r"^( *)([A-Za-z0-9_.\-]+):(?:[ \t]+(\S.*?))?[ \t]*$")
+# A mapping key: double- or single-quoted, or plain up to the first `: `.
+_KEY = r"""("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|(?!-\s)[^\s"'#\[\]{}&*!|>%@`,?][^\n]*?)"""
+_KEY_RE = re.compile(rf"^( *){_KEY}:(?:[ \t]+(\S.*?))?[ \t]*$")
 # A block-style sequence item, and the same line when it also carries the item's
 # first key (`- title: Monthly Revenue`). The key then sits at `indent + 2`.
 _ITEM_RE = re.compile(r"^( *)- (.*)$")
-_ITEM_KEY_RE = re.compile(r"^( *)- ([A-Za-z0-9_.\-]+):(?:[ \t]+(\S.*?))?[ \t]*$")
+_ITEM_KEY_RE = re.compile(rf"^( *)- {_KEY}:(?:[ \t]+(\S.*?))?[ \t]*$")
 # A block-scalar header as `_KEY_RE` captures it: `|`/`>` with optional
 # indentation and chomping indicators, optionally trailed by a comment. The
 # body under one is a scalar spelled over lines, not a nested mapping.
@@ -71,6 +74,13 @@ class _KeyMatch:
     # (`- title: X`). The key is at `indent`, but the line starts two
     # columns earlier and the dash must survive any rewrite of it.
     is_item_head: bool = False
+
+
+def _key_text(token: str) -> str:
+    """The key a `_KEY` token spells, quotes undone."""
+    if token[0] in "\"'":
+        return str(yaml.load(token, Loader=YAML_LOADER))
+    return token
 
 
 def _is_skippable(line: str) -> bool:
@@ -334,7 +344,7 @@ def _find_key(
                 f"({line!r}) -- only block-style mappings are supported."
             )
 
-        found_key = key_match.group(2)
+        found_key = _key_text(key_match.group(2))
         inline_value = key_match.group(3)
         if found_key == key:
             if inline_value is not None:
@@ -463,9 +473,9 @@ def _prune_emptied_parents(
 
 
 def _apply_update(lines: list[str], path: str, value: ScalarLeaf | None) -> list[str]:
-    segments = path.split(".")
-    if not path or any(not segment for segment in segments):
+    if not path:
         raise ValueError(f"Invalid dot-path: {path!r}")
+    segments = split_path(path)
 
     parents: list[tuple[str, _KeyMatch]] = []
     start, end, indent = 0, len(lines), 0
@@ -761,7 +771,7 @@ def _verify_written_values(result: str, updates: dict[str, ScalarLeaf | None]) -
     for path, value in updates.items():
         node = front_matter
         missing = False
-        for segment in path.split("."):
+        for segment in split_path(path):
             # Mirrors the setter's own traversal: a numeric segment indexes a
             # list, and a digit-spelled mapping key parses back as an int. A
             # check that only walked string keys would report every successful
@@ -834,6 +844,15 @@ def set_board_block(
     lines = set_board_values(yaml_text, {path: _BLOCK_SENTINEL}).split("\n")
     at = next(i for i, line in enumerate(lines) if _BLOCK_SENTINEL in line)
     indent = len(lines[at]) - len(lines[at].lstrip())
+    key = lines[at].strip().split(":", 1)[0]
+    lines[at : at + 1] = [f"{' ' * indent}{key}:", *block_lines(value, indent)]
+    return "\n".join(lines)
+
+
+def block_lines(
+    value: dict[str, JsonValue] | list[JsonValue], key_indent: int
+) -> list[str]:
+    """`value` as the block YAML lines under a key at `key_indent`."""
     block = yaml.dump(
         value,
         Dumper=_IndentedDumper,
@@ -843,13 +862,8 @@ def set_board_block(
         width=10**9,
     )
     block = _SINGLE_QUOTED_VALUE.sub(r'\1"\2"', block)
-    pad = " " * (indent + _NEW_BLOCK_INDENT)
-    key = lines[at].strip().split(":", 1)[0]
-    lines[at : at + 1] = [
-        f"{' ' * indent}{key}:",
-        *(f"{pad}{line}" for line in block.rstrip("\n").split("\n")),
-    ]
-    return "\n".join(lines)
+    pad = " " * (key_indent + _NEW_BLOCK_INDENT)
+    return [f"{pad}{line}" for line in block.rstrip("\n").split("\n")]
 
 
 def rename_key_at_path(yaml_text: str, path: str, new_key: str) -> str:
@@ -884,9 +898,9 @@ def rename_key_at_path(yaml_text: str, path: str, new_key: str) -> str:
             "CRLF line endings are not supported: edited lines are emitted "
             "LF-only, which would silently mix line endings."
         )
-    segments = path.split(".")
-    if not path or any(not segment for segment in segments):
+    if not path:
         raise ValueError(f"Invalid dot-path: {path!r}")
+    segments = split_path(path)
 
     lines = yaml_text.split("\n")
     start, end, indent = 0, len(lines), 0

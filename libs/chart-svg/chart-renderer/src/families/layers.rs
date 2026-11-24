@@ -1861,7 +1861,7 @@ pub(crate) fn layer_value_labels(
             &style.font.weight,
             style.font_style.as_deref(),
             &color,
-            ::layout::contract::aria_attrs(m.aria.as_deref(), ::layout::contract::ItemRole::TextMark)?,
+            ::layout::contract::aria_attrs(m.aria.as_deref(), ::layout::contract::ItemRole::TextMark)?.extend(crate::contract::owner_attrs(m.aria.as_deref())),
             &m.caption.text,
         );
         labels.push(crate::href::linked(anchor, label));
@@ -3281,6 +3281,26 @@ mod tests {
         let union = union_x_domain(&base, &[(names.as_slice(), "n")], false);
         assert_eq!(union.domain, ["North", "South", "Central"]);
         assert_eq!(union.paint_order.map(|order| order.len()), Some(1));
+    }
+
+    /// A layer's value label names the category and series its description names, so hover
+    /// lights it with its mark.
+    #[test]
+    fn a_layer_value_label_names_the_mark_it_belongs_to() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../src/dbt_charts/core/render/fonts");
+        let fonts = FontBook::load_dir(dir).expect("shipped fonts load");
+        let ml: MarkLabels = serde_json::from_value(serde_json::json!({
+            "visible": true, "field": null, "format": null, "dx": null, "dy": null, "position": null,
+            "font": {"family": "Inter Variable", "color": "#313233", "size": 11.0, "weight": "400"},
+        }))
+        .unwrap();
+        let board = crate::test_board_style(serde_json::json!({}));
+        let style = LayerLabelStyle::new(&ml, false, &[], board.as_ref()).unwrap();
+        let caption = LayerCaption { text: "9".into(), spot: crate::common::CaptionSpot::top(), color: "#313233".into() };
+        let mark = LayerLabelMark { x: 10.0, y: 20.0, caption, aria: Some("\u{2061}Jan; \u{2062}Sales; Total: 9".into()), href: None };
+        let nodes = layer_value_labels(&style, &[mark], Default::default(), &fonts, "#ffffff", &[]).unwrap();
+        let svg = print::print(&nodes);
+        assert!(svg.contains("data-dbt-category=\"Jan\" data-dbt-series=\"Sales\""), "{svg}");
     }
 
     fn point_mark(filled: bool) -> OverlayPointMark {

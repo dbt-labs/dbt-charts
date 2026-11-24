@@ -53,9 +53,9 @@ use crate::slot::{total_style, Slots};
 use layout::board::assemble::leaf;
 use crate::EngineFacts;
 
-/// An item's authored path as production writes it: `@tabs.items[1]` is `tabs.items.1`.
-fn authored_path(at: &ItemId) -> String {
-    at.as_str().trim_start_matches('@').replace('[', ".").replace(']', "")
+/// An item's authored path as production writes it: `@rows[1]` is `rows.1`, a tab its label.
+fn authored_path(root: &BoardBody, at: &ItemId) -> Result<String, Diagnostic> {
+    board_model::board::layout::authored_path(root, at).map(|segments| diagnostic::dotted(&segments)).map_err(diag::err_internal)
 }
 
 /// `svg_utils.px`: Python's `round`, half to even.
@@ -682,7 +682,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         };
         // Where the chart was authored: the `charts:` of the nested board that declares it, else the root's.
         let chart_path = match &slot.authored_in {
-            Some(board) => format!("{}.charts.{id}", authored_path(board)),
+            Some(board) => format!("{}.charts.{id}", authored_path(self.body(&ItemId::root())?, board)?),
             None => format!("charts.{id}"),
         };
         let attrs = Attrs::new()
@@ -778,9 +778,9 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         let style = self.slots.style_of(&parent.at)?;
         let facts = self.slots.styles.details.get(&placed.item).ok_or_else(|| diag::err_internal(format!("no details facts for the board at {}", placed.item)))?;
         let open = self.bound.drawn().details_open(&body.id) == Some(true);
-        let summary = chrome::plain(&details.summary, "a details summary")?;
+        let summary = chrome::plain(details.summary.as_str(), "a details summary")?;
         let label = match (&details.expanded_title, open) {
-            (Some(title), true) => chrome::plain(title, "a details summary")?,
+            (Some(title), true) => chrome::plain(title.as_str(), "a details summary")?,
             _ => summary,
         };
         let href = chrome::toggle_url(&self.variables()?, &facts.variable, if open { "false" } else { "true" });
@@ -819,16 +819,27 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         let body = self.body(&board.at)?;
         let Layout::Tabs(tabs) = &body.layout else { return Err(diag::err_internal(format!("board {} has no tabs", board.at))) };
         let style = total_style(body)?;
-        let titles = tabs.items.iter().map(|tab| chrome::plain(&tab.title, "a tab title")).collect::<Result<Vec<_>, _>>()?;
-        let strip = chrome::tab_strip(style, tabs.position, &titles, self.book)?;
+        // A hidden tab is not in the strip; with every tab hidden there is no strip and no pane.
+        let kept: Vec<usize> = (0..tabs.len()).filter(|&i| !self.bound.drawn().is_hidden(&board.at.key("tabs").index(i))).collect();
+        let Some(open) = self.bound.drawn().active_tab(&body.id) else {
+            return if kept.is_empty() { Ok((Vec::new(), 0.0)) } else { Err(diag::err_internal(format!("no open tab for the board {}", body.id))) };
+        };
+        let labels: Vec<&String> = tabs.keys().collect();
+        let titles = kept.iter().map(|&i| chrome::plain(labels[i], "a tab label")).collect::<Result<Vec<_>, _>>()?;
+        let strip = chrome::tab_strip(style, &titles, self.book)?;
         let facts = self.slots.styles.tabs.get(&board.at).ok_or_else(|| diag::err_internal(format!("no tabs facts for the board at {}", board.at)))?;
-        let active = self.bound.drawn().active_tab(&body.id).ok_or_else(|| diag::err_internal(format!("no open tab for the board {}", body.id)))?;
+        let active = kept.iter().position(|&i| i == open).ok_or_else(|| diag::err_internal(format!("the open tab of the board {} is hidden", body.id)))?;
         let variables = self.variables()?;
-        let hrefs: Vec<String> = facts.slugs.iter().map(|slug| chrome::toggle_url(&variables, &facts.variable, slug)).collect();
-        let authored: Vec<String> = (0..tabs.items.len()).map(|i| format!("{}.title", authored_path(&board.at.key("tabs").key("items").index(i)))).collect();
+        let hrefs: Vec<String> = kept.iter().map(|&i| chrome::toggle_url(&variables, &facts.variable, &facts.slugs[i])).collect();
+        let root = self.body(&ItemId::root())?;
+        let authored = kept.iter().map(|&i| authored_path(root, &board.at.key("tabs").index(i))).collect::<Result<Vec<_>, _>>()?;
         let [LaidItem::Board(pane)] = board.items.as_slice() else { return Err(diag::err_internal("a tabs layout draws its open tab alone".to_string())) };
-        let (content, height) = self.nested(pane, self.facts.pane_style(body, active)?)?;
-        let mut nodes = vec![chrome::draw_tab_strip(style, &strip, active, &hrefs, &authored, pane.width)?];
+        let pane_style = self.facts.pane_style(body, open)?;
+        let (content, height) = self.nested(pane, pane_style)?;
+        let pane_fill = leaf(pane_style.background.as_ref(), "style.background")?.as_str();
+        let fill_canvas = self.slots.canvas_of(&board.at.key("tabs").index(open))?;
+        let pane_ink = leaf(pane_style.title.font.color.as_ref(), "style.title.font.color")?.as_str();
+        let mut nodes = vec![chrome::draw_tab_strip(style, &strip, (pane_fill, pane_ink, fill_canvas.as_deref()), active, &hrefs, &authored, pane.width)?];
         nodes.extend(translated(content, 0.0, px(pane_top)));
         Ok((nodes, pane_top + height))
     }
@@ -857,7 +868,7 @@ impl<'a, F: EngineFacts> Composer<'a, F> {
         let header = if let Some(body) = body {
             let kind = prose::TitleKind { level: *self.slots.levels.get(&placed.item).ok_or_else(|| diag::err_internal("a nested board carries its heading level"))?, root: false };
             let opens = layout::board::assemble::opens_with_text(body, &placed.item, self.slots.drawn);
-            let frame = HeaderFrame::nested(&geometry, !placed.layout.items.is_empty(), opens, kind, placed.shift, Some(authored_path(&placed.item)));
+            let frame = HeaderFrame::nested(&geometry, !placed.layout.items.is_empty(), opens, kind, placed.shift, Some(authored_path(self.body(&ItemId::root())?, &placed.item)?));
             let content_width = placed.width - geometry.chrome().0;
             Some(Header::of(body, total_style(body)?, &frame, self.book, &Controls { list: Vec::new(), reset_enabled: false }, content_width, self.prose.get(&placed.item), &mut self.scope.borrow_mut())?)
         } else {

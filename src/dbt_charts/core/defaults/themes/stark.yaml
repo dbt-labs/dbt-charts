@@ -141,13 +141,9 @@ style:
         radius: 0.0
       active_marker: triangle
 
-    # Deliberately the SAME color as this theme's own gridline: stark's
-    # gridline already sits one rung below the ceiling the single-series ink
-    # owns, so there is no color headroom left -- the drop line carries the
-    # distinction on weight alone (double the gridline width).
+    # The drop lines take stark's annotation rule color.
     hover_emphasis:
-      drop_line_color: chrome[10]
-      drop_line_width: 3.5
+      drop_line_color: muted
 
 
     support_table:

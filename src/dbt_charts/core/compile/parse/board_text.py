@@ -55,6 +55,19 @@ def title_from_slug(slug: str) -> str:
     return apply_case(slug_to_text(PurePosixPath(slug).name), "title")
 
 
+def board_title(
+    slug: str,
+    *authored: object,  # type-state: object_annotation — YAML scalars
+) -> str:
+    """The first authored title, else *slug*'s file name. A template (`{{ }}`, `{% %}`)
+    is passed over: a listing never runs the board, so it would show the template's
+    source rather than a name."""
+    return _first_text(
+        *(v for v in authored if not (isinstance(v, str) and ("{{" in v or "{%" in v))),
+        title_from_slug(slug),
+    )
+
+
 def parse_yaml_board_text(slug: str, content: str) -> BoardText:
     """Title and notes of a YAML board; the title falls back to *slug*'s file name."""
     board: RawYaml = {}
@@ -67,7 +80,7 @@ def parse_yaml_board_text(slug: str, content: str) -> BoardText:
         if isinstance(loaded, dict):
             board = loaded
     return BoardText(
-        title=_first_text(board.get("title"), title_from_slug(slug)),
+        title=board_title(slug, board.get("title")),
         notes=_first_text(board.get("notes")),
         tags=_tags(board),
         board=board,
@@ -97,10 +110,10 @@ def parse_markdown_board_text(slug: str, content: str) -> BoardText:
             for line in content.splitlines()
             if line.strip().startswith("# ")
         ),
-        title_from_slug(slug),
+        None,
     )
     return BoardText(
-        title=_first_text(metadata.get("title"), parsed.get("title"), heading),
+        title=board_title(slug, metadata.get("title"), parsed.get("title"), heading),
         notes=_first_text(metadata.get("notes"), parsed.get("notes")),
         tags=_tags(parsed),
         board=parsed,

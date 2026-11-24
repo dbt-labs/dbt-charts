@@ -29,6 +29,9 @@ from ..._run import Run
 
 LocalProject = Callable[..., FilesystemProject]
 
+# An untitled board's tab variable.
+_TAB = "_tab_untitled_board"
+
 _TWO_TAB_BOARD = """
 cache:
   prefetch: true
@@ -55,12 +58,10 @@ charts:
     x: month
     y: revenue
 tabs:
-  id: view
-  items:
-    - title: Shown
-      rows: [shown_chart]
-    - title: Hidden
-      rows: [hidden_chart]
+  Shown:
+    rows: [shown_chart]
+  Hidden:
+    rows: [hidden_chart]
 """
 
 _NESTED_TABS_BOARD = """
@@ -98,18 +99,14 @@ charts:
     x: x
     y: y
 tabs:
-  id: outer
-  items:
-    - title: A
-      rows: [a_chart]
-    - title: B
-      tabs:
-        id: inner
-        items:
-          - title: B1
-            rows: [b1_chart]
-          - title: B2
-            rows: [b2_chart]
+  A:
+    rows: [a_chart]
+  B:
+    tabs:
+      B1:
+        rows: [b1_chart]
+      B2:
+        rows: [b2_chart]
 """
 
 
@@ -177,8 +174,8 @@ def test_selected_tab_is_the_one_executed(
         local_project,
         monkeypatch,
         format="svg",
-        planned_variables={"view": "hidden"},
-        variables={"view": "hidden"},
+        planned_variables={_TAB: "hidden"},
+        variables={_TAB: "hidden"},
     )
 
     assert rendered.board_error is None
@@ -206,7 +203,7 @@ def test_unknown_tab_is_a_board_error_before_any_query(
         local_project,
         monkeypatch,
         format="svg",
-        variables={"view": "nope"},
+        variables={_TAB: "nope"},
     )
 
     assert rendered.board_error is not None
@@ -349,12 +346,10 @@ charts:
     query: wide
     type: table
 tabs:
-  id: view
-  items:
-    - title: Shown
-      rows: [shown_chart]
-    - title: Table
-      rows: [wide_table]
+  Shown:
+    rows: [shown_chart]
+  Table:
+    rows: [wide_table]
 """
 
 
@@ -374,8 +369,8 @@ def test_board_width_does_not_depend_on_the_open_tab(
             local_project,
             monkeypatch,
             format="svg",
-            planned_variables={"view": tab},
-            variables={"view": tab},
+            planned_variables={_TAB: tab},
+            variables={_TAB: tab},
         )
         assert isinstance(rendered.output, str)
         assert ("wide" in seen) == (tab == "table")
@@ -388,9 +383,9 @@ _HIDDEN_PROBE_BOARD = _TWO_TAB_BOARD.replace(
     "  hidden:\n",
     "  flags:\n    columns: [show_it]\n    values:\n      - [true]\n  hidden:\n",
 ).replace(
-    "      rows: [hidden_chart]",
-    "      rows:\n        - visible:\n            query: flags\n            column: show_it\n"
-    "          text: Shown only when flagged\n        - hidden_chart",
+    "    rows: [hidden_chart]",
+    "    rows:\n      - visible:\n          query: flags\n          column: show_it\n"
+    "        text: Shown only when flagged\n      - hidden_chart",
 )
 
 
@@ -422,21 +417,20 @@ charts:
     x: x
     y: y
 tabs:
-  items:
-    - title: One
-      rows: [shown_chart]
-    - title: Two
-      rows:
-        - queries:
-            nested:
-              columns: [a]
-              values:
-                - [1]
-          charts:
-            nested_chart:
-              query: nested
-              type: table
-          rows: [nested_chart]
+  One:
+    rows: [shown_chart]
+  Two:
+    rows:
+      - queries:
+          nested:
+            columns: [a]
+            values:
+              - [1]
+        charts:
+          nested_chart:
+            query: nested
+            type: table
+        rows: [nested_chart]
 """
     rendered, _seen, _board, _executor = _spied_render(
         board_yaml, local_project, monkeypatch, format="svg"
@@ -444,3 +438,59 @@ tabs:
 
     assert rendered.board_error is None
     assert rendered.prefetch_query_names == frozenset()
+
+
+_PROBED_TABS_BOARD = """
+queries:
+  flags:
+    columns: [show]
+    values:
+      - [false]
+tabs:
+  Open:
+    text: open body
+  Admin:
+    visible:
+      query: flags
+      column: show
+    text: admin body
+  Closed:
+    tabs:
+      Inner:
+        text: inner body
+      Probed:
+        visible:
+          query: flags
+          column: show
+        text: probed body
+"""
+
+
+def test_a_tab_probe_runs_its_query_on_an_active_tab_plan(
+    local_project: LocalProject, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rendered, seen, _board, _executor = _spied_render(
+        _PROBED_TABS_BOARD, local_project, monkeypatch, format="svg"
+    )
+
+    assert rendered.board_error is None
+    assert "flags" in seen
+    assert isinstance(rendered.output, str)
+    assert "Admin" not in rendered.output
+
+
+def test_a_probe_on_a_tab_inside_a_closed_pane_is_not_read(
+    local_project: LocalProject, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    board = _PROBED_TABS_BOARD.replace(
+        "  Admin:\n    visible:\n      query: flags\n      column: show\n"
+        "    text: admin body\n",
+        "",
+    )
+
+    rendered, seen, _board, _executor = _spied_render(
+        board, local_project, monkeypatch, format="svg"
+    )
+
+    assert rendered.board_error is None
+    assert seen == []

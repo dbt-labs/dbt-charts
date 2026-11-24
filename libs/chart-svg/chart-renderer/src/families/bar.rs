@@ -435,6 +435,11 @@ impl BarPatch {
         static_ink.filter(|_| self.fill.is_none())
     }
 
+    /// A rule that replaces the fill takes the plain-color label rule.
+    pub(crate) fn label_on(&self, mark: &crate::pattern::MarkPaint) -> crate::pattern::LabelOn {
+        if self.fill.is_some() { crate::pattern::LabelOn::Color } else { mark.label_on.clone() }
+    }
+
     pub(crate) fn opacity(&self, static_opacity: Option<f64>) -> Option<f64> {
         self.opacity.or(static_opacity)
     }
@@ -450,10 +455,6 @@ impl BarPatch {
     /// The patched fill where `static_fill` is the series color a label inherits.
     pub(crate) fn label_fill(&self, static_fill: Option<String>) -> Option<String> {
         static_fill.map(|fill| self.fill.clone().unwrap_or(fill))
-    }
-
-    pub(crate) fn paints_label(&self) -> bool {
-        self.label_color.is_some() || self.label_weight.is_some()
     }
 }
 
@@ -797,7 +798,7 @@ impl BarResolved {
         };
         if spec.scale == crate::pattern::Scale::Category {
             let slot = cat_domain.iter().position(|c| c == cat).ok_or_else(|| format!("pattern on {:?}: {cat:?} not in the category domain", spec.field))?;
-            return self.patterns.category(slot, &self.style.single_series_fill).map(crate::pattern::Paint::named_by_axis);
+            return self.patterns.category(slot, slot, cat_domain.len(), &self.style.single_series_fill).map(crate::pattern::Paint::named_by_axis);
         }
         let number = |row: &serde_json::Map<String, Value>| {
             row.get(&spec.field).and_then(Value::as_f64).ok_or_else(|| format!("pattern on {:?}: every row needs a number in it", spec.field))
@@ -15092,8 +15093,8 @@ mod tests {
     /// Front-end contract: a labeled bar's value labels are ONE text mark set
     /// stamped `data-dbt-value-label` (`converters/chart.py::
     /// _stamp_value_label_layers`), each label carrying its datum's aria-label
-    /// byte-identical to its bar's -- `chart_interactivity.js`'s
-    /// `recedableMarks` joins a label to its bar on that string alone. The
+    /// byte-identical to its bar's, and the `data-dbt-category` /
+    /// `data-dbt-series` stamps `chart_interactivity.js` lights it by. The
     /// group's layer ordinal counts the layers before it: the bars, then the
     /// zero rule when one is painted.
     #[test]

@@ -252,13 +252,12 @@ charts:
     x: month
     y: revenue
 tabs:
-  items:
-    - title: Bar Chart
-      rows:
-        - chart1
-    - title: Line Chart
-      rows:
-        - chart2
+  Bar Chart:
+    rows:
+      - chart1
+  Line Chart:
+    rows:
+      - chart2
 """
         result = compile(yaml_content)
         assert result.success

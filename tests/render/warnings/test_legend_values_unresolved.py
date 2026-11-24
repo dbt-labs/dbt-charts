@@ -983,3 +983,33 @@ def test_fires_on_an_ordinal_date_like_color_when_an_entry_matches_nothing() -> 
     warnings = detector.detect(_ctx(chart, rows))
     assert len(warnings) == 1
     assert "NOT_A_COHORT" in warnings[0].message
+
+
+def test_fires_on_point_map_when_an_entry_matches_no_series() -> None:
+    from dbt_charts.core.compile.models.chart.normalized.point_map import (
+        PointMapChart,
+    )
+    from dbt_charts.core.compile.models.style.authored import PointMapChartStylePatch
+
+    def point_map(values: list[str]) -> PointMapChart:
+        return PointMapChart(
+            id="m1",
+            type="point_map",
+            query_name="q",
+            latitude="lat",
+            longitude="lng",
+            color="band",
+            projection="mercator",
+            style=PointMapChartStylePatch.model_validate(
+                {"key": {"legend": {"values": values}}}
+            ),
+        )
+
+    rows = [
+        {"lat": 19.6, "lng": -155.5, "band": "a-high"},
+        {"lat": 19.7, "lng": -155.4, "band": "b-mid"},
+    ]
+    warnings = detector.detect(_ctx(point_map(["b-mid", "bogus"]), rows))
+    assert len(warnings) == 1
+    assert "bogus" in warnings[0].message
+    assert detector.detect(_ctx(point_map(["b-mid", "A High"]), rows)) == []

@@ -893,7 +893,7 @@ ERR_VARIABLE_VALUE_INVALID = REGISTRY.register(
         domain="execute",
         title="Variable value does not match the variable's input type",
         message_template="Variable {variable!r}: {problem}",
-        doc="Fired when a value given for a variable (`--var`, a URL parameter, an API or MCP `variables` binding) cannot be read as the variable's declared input: a multiselect that is not a JSON list, a date that is not YYYY-MM-DD, a number that is not numeric, a daterange that is not `[start, end]` or a preset. The message names the variable and the value. Pass a value of the declared type; `[]` or an empty value selects everything for a multiselect.",
+        doc='Fired when a value given for a variable (`--var`, a URL parameter, an API or MCP `variables` binding) cannot be read as the variable\'s declared input: a multiselect that is not a JSON list, a list for a select or radio (which takes one value), a date that is not YYYY-MM-DD, a number that is not numeric, a daterange that is not `[start, end]` or a preset. The message names the variable and the value. Pass a value of the declared type. A multiselect takes a JSON list (`["a", "b"]`) or its name repeated once per member; `[]` or an empty value selects everything.',
         summary="Fired when a variable value cannot be read as its declared input type.",
         docs_topic="variables",
     )

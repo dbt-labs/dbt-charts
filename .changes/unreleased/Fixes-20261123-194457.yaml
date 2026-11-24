@@ -1,0 +1,5 @@
+kind: Fixes
+body: '`dct validate` now rejects a table `conditional` rule that sets `tone` or `glyph_color` with no `glyph` in any rule or on the column, instead of the board failing at render.'
+time: 2026-11-23T19:44:57.184846186Z
+custom:
+    DbtChartsIssue: "112"

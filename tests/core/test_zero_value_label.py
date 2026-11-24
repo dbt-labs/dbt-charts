@@ -120,10 +120,8 @@ def _is_zero_extent(d: str) -> bool:
 def test_zero_label_carries_the_hover_emphasis_value_label_marker() -> None:
     """The "0" text this feature draws IS the zero row's own printed value
     (the same slot ValueLabelFeature's formatted labels occupy on every
-    other row) -- chart_interactivity.js's recedableMarks() twin search
-    must see it via the same ``data-dbt-value-label`` marker, or hovering
-    would recede the invisible zero-height bar while its own "0" stayed lit,
-    the opposite of every other row's behavior.
+    other row) -- it must sit in the same ``data-dbt-value-label`` group as
+    every other row's printed value.
     """
     svg = _render_svg(_bar_board(orientation="vertical", width=600), _ROWS_ZERO_NULL)
     assert svg.count('data-dbt-value-label="true"') == 1

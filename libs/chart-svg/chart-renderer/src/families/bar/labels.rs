@@ -7,6 +7,7 @@ use crate::families::cartesian::{BandScale};
 use d3rs::scale::Continuous;
 use crate::families::span::RangedBars;
 use crate::annotation::DataMark;
+use crate::pattern::LabelOn;
 use crate::placement::{EPS, LABEL_PAD, Obstacle};
 use crate::vega_fit;
 
@@ -91,6 +92,10 @@ pub(super) struct LabelPoint {
     /// A conditional rule's font color and weight for this label.
     pub(super) font_color: Option<String>,
     pub(super) font_weight: Option<String>,
+    /// What the label takes where it sits over its bar's fill.
+    pub(super) on: LabelOn,
+    /// The rectangle of the bar this label names, plot-relative.
+    pub(super) rect: Option<vega_fit::Bounds>,
 }
 
 /// A ranged bar's label under `top` (`_build_bar_span_text_layer`). A row that
@@ -277,6 +282,10 @@ pub(super) struct LabelDecor {
     /// A conditional rule's `marks.text.font` for this bar's label.
     pub(super) color: Option<String>,
     pub(super) weight: Option<String>,
+    /// What a label over this bar's fill takes.
+    pub(super) on: LabelOn,
+    /// The bar's drawn rectangle, plot-relative: the mark a ground stays inside.
+    pub(super) rect: Option<vega_fit::Bounds>,
     /// The label keeps the aria it would have without a decor: this decor only carries paint.
     pub(super) paint_only: bool,
 }
@@ -780,14 +789,16 @@ pub(super) const INVISIBLE_BAR_PX: f64 = 1.5;
 /// A plot narrower than this drops a sliver's label. A heuristic parameter.
 pub(super) const MIN_PLOT_SHARE: f64 = 0.25;
 
-/// The room a label needs inside its bar along the measure axis: its measured
-/// width plus padding on a horizontal bar, one line on a vertical one.
+/// The box a label of measured `width` needs inside its bar, as `(width, height)`: its text plus
+/// padding on each side, one line tall. A label's ground is this box.
+pub(super) fn label_box(width: f64, font_size: f64) -> (f64, f64) {
+    (width + 2.0 * LABEL_FIT_PADDING, LABEL_FIT_LINE_HEIGHT_MULTIPLIER * font_size)
+}
+
+/// The room a label needs inside its bar along the measure axis: its [`label_box`] on that axis.
 pub(super) fn label_need(horizontal: bool, width: f64, font_size: f64) -> f64 {
-    if horizontal {
-        width + 2.0 * LABEL_FIT_PADDING
-    } else {
-        LABEL_FIT_LINE_HEIGHT_MULTIPLIER * font_size
-    }
+    let (box_w, box_h) = label_box(width, font_size);
+    if horizontal { box_w } else { box_h }
 }
 
 /// A plain bar's painted length along the measure axis, in pixels: the zero
@@ -1011,6 +1022,8 @@ impl LabelLayer {
                 ink,
                 font_color: decor.and_then(|d| d.color.clone()),
                 font_weight: decor.and_then(|d| d.weight.clone()),
+                on: decor.map(|d| d.on.clone()).unwrap_or_default(),
+                rect: decor.and_then(|d| d.rect),
             });
         }
         Ok(points)
@@ -1317,7 +1330,7 @@ pub(super) fn mark_labels(
         .flat_map(DataMark::boxes)
         .collect();
     for point in points {
-        let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, ends, inner_segment, span, ref text, ref href, recede, ink, ref font_color, ref font_weight } = *point;
+        let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, ends, inner_segment, span, ref text, ref href, recede, ink, ref font_color, ref font_weight, ref on, rect } = *point;
         let anchor = link_open.anchor(href.as_deref()).map(|anchor| crate::href::Anchor { recede, ..anchor });
         let mut spot = label_spot(ml, &style.position, style.horizontal_offset, center, extent, span, side);
         let mut over_bar = style.inside_bar && !matches!(side, Some(LabelSide::Out(_) | LabelSide::Bare));
@@ -1332,19 +1345,52 @@ pub(super) fn mark_labels(
                 (spot, ink, over_bar) = (stacked_spot, Some(stacked_ink), false);
             }
         }
+        let inside = over_bar && !blank;
+        let held = match (on, ink, rect) {
+            (LabelOn::DarkPattern { .. } | LabelOn::LightPattern, Some(ink), Some(rect)) if inside => {
+                let (cx, cy) = ((ink.x1 + ink.x2) / 2.0, (ink.y1 + ink.y2) / 2.0);
+                (rect.x1 <= cx && cx <= rect.x2 && rect.y1 <= cy && cy <= rect.y2).then_some((ink, rect))
+            }
+            _ => None,
+        };
+        let on = if inside && (held.is_some() || !matches!(on, LabelOn::DarkPattern { .. } | LabelOn::LightPattern)) { on } else { &LabelOn::Color };
         let color = match font_color.as_deref().or(style.font.color.as_deref()) {
             Some(color) => color.to_string(),
-            None if over_bar && !blank => {
-                let at = ink.map_or((spot.x, spot.y), |b| ((b.x1 + b.x2) / 2.0, (b.y1 + b.y2) / 2.0));
-                knockout_ink(canvas, &neutral_outside, under, at)?
-            }
+            None if inside => match on {
+                LabelOn::DarkPattern { ground } => {
+                    let on_ground = |color: &str| dbt_charts_color::wcag_contrast(color, ground);
+                    if on_ground(&neutral_outside)? > on_ground(canvas)? { neutral_outside.clone() } else { canvas.to_string() }
+                }
+                LabelOn::LightPattern => neutral_outside.clone(),
+                LabelOn::Ink | LabelOn::Canvas | LabelOn::Color => {
+                    let at = ink.map_or((spot.x, spot.y), |b| ((b.x1 + b.x2) / 2.0, (b.y1 + b.y2) / 2.0));
+                    knockout_ink(canvas, &neutral_outside, under, at)?
+                }
+            },
             None if over_bar => canvas.to_string(),
             None => match series_fill {
                 Some(fill) => dbt_charts_color::label_ink(fill, canvas)?,
                 None => neutral_outside.clone(),
             },
         };
+        if let Some((ink, rect)) = held {
+            let ground = match on {
+                LabelOn::DarkPattern { ground } => ground.as_str(),
+                _ => canvas,
+            };
+            let center = ((ink.x1 + ink.x2) / 2.0, (ink.y1 + ink.y2) / 2.0);
+            let (w, h) = label_box(ink.x2 - ink.x1, style.font.size);
+            let half = crate::pattern::STACK_EDGE_W / 2.0;
+            let (x1, x2) = ((center.0 - w / 2.0).max(rect.x1 + half), (center.0 + w / 2.0).min(rect.x2 - half));
+            let (y1, y2) = ((center.1 - h / 2.0).max(rect.y1 + half), (center.1 + h / 2.0).min(rect.y2 - half));
+            let attrs = Attrs::new().set("fill", ground).set("pointer-events", "none");
+            let ground_node = Node::rect(Role::Chrome, (plot_left + x1, plot_top + y1, x2 - x1, y2 - y1), attrs);
+            labels.push(crate::href::linked(anchor.clone(), ground_node));
+        }
         let at = (plot_left + spot.x, plot_top + spot.y + measure::baseline_shift(spot.baseline, style.font.size));
+        // A stack's total belongs to its column, not to the segment whose description it borrows.
+        let owner = crate::contract::owner_attrs(aria.as_deref());
+        let owner = if stamp_value_label { owner } else { owner.without(&[::layout::contract::SERIES_KEY]) };
         let attrs = Attrs::new()
             .set("text-anchor", spot.anchor)
             .vega("font-family", style.font.family.as_str())
@@ -1352,7 +1398,8 @@ pub(super) fn mark_labels(
             .set("font-weight", font_weight.as_deref().unwrap_or(style.font.weight.as_str()))
             .set_if(style.font_style.is_some(), "font-style", style.font_style.clone().unwrap_or_default())
             .set("fill", color.as_str())
-            .extend(::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?);
+            .extend(::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?)
+            .extend(owner);
         let label = if blank { Node::empty_text(Role::Label, at, attrs) } else { Node::text(Role::Label, at, attrs, text.as_str()) };
         let label = match ink {
             Some(ink) => label.with_text_bounds(scene::Bounds { x1: plot_left + ink.x1, y1: plot_top + ink.y1, x2: plot_left + ink.x2, y2: plot_top + ink.y2 }),

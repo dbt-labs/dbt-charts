@@ -587,6 +587,31 @@ class TestDistinctOverAggregate:
         sql = "SELECT SUM(DISTINCT amount) FROM (SELECT amount FROM orders) s"
         assert _reaggregation_messages(sql) == []
 
+    def test_aggregate_only_in_an_if_condition_stays_quiet(self) -> None:
+        sql = (
+            _MONTHLY + "SELECT COUNT(DISTINCT IF(peak >= 28, month, NULL)) FROM monthly"
+        )
+        assert _reaggregation_messages(sql) == []
+
+    def test_aggregate_only_in_a_case_condition_stays_quiet(self) -> None:
+        sql = (
+            _MONTHLY
+            + "SELECT COUNT(DISTINCT CASE WHEN peak >= 28 THEN month END) FROM monthly"
+        )
+        assert _reaggregation_messages(sql) == []
+
+    def test_aggregate_in_an_if_value_branch_fires(self) -> None:
+        sql = _MONTHLY + "SELECT COUNT(DISTINCT IF(n > 1, peak, NULL)) FROM monthly"
+        assert len(_reaggregation_messages(sql)) == 1
+
+    def test_aggregate_in_a_case_value_branch_fires(self) -> None:
+        sql = (
+            _MONTHLY
+            + "SELECT COUNT(DISTINCT CASE WHEN n > 1 THEN month ELSE peak END) "
+            + "FROM monthly"
+        )
+        assert len(_reaggregation_messages(sql)) == 1
+
 
 class TestNonComposablePairs:
     """The message names the outer function and the aggregate it sits on."""

@@ -9,7 +9,7 @@
 use display_text::language::tr;
 use crate::families::axis_caption::AxisCaption;
 use crate::common::FormatSlot;
-use ::layout::contract::{aria_attrs, mark_group, ItemRole};
+use ::layout::contract::{aria_attrs, mark_group, ItemRole, CATEGORY_KEY, SERIES_KEY};
 use scene::{Attrs, Node, Role};
 use print::print;
 use std::fmt::Write as _;
@@ -189,7 +189,11 @@ pub fn item_group(
     match reads {
         Reads::Bare => Ok(item(Attrs::new())),
         Reads::Hidden => Ok(hidden_mark_group(kind, name, vec![item(Attrs::new())])),
-        Reads::Label(label) => mark_group(kind, name, vec![item(aria_attrs(Some(label), role)?)]),
+        Reads::Label(label) => {
+            let attrs = aria_attrs(Some(label), role)?;
+            let attrs = if role == ItemRole::TextMark { attrs.extend(owner_attrs(Some(label))) } else { attrs };
+            mark_group(kind, name, vec![item(attrs)])
+        }
     }
 }
 
@@ -221,6 +225,19 @@ pub fn cell_label_attrs(label: &str) -> Result<Attrs, String> {
 /// pair (never the truncated display text).
 pub fn series_label_attrs(color_field: &str, series: &str) -> Result<Attrs, String> {
     aria_attrs(Some(&format!("{color_field}: {series}")), ItemRole::TextMark)
+}
+
+/// The mark a datum's label belongs to: the header and series its own description names, as the
+/// `data-dbt-category` and `data-dbt-series` the hover runtime lights and fades the label by. A
+/// description with neither (a native facet label) stamps nothing.
+pub fn owner_attrs(aria: Option<&str>) -> Attrs {
+    let Some(label) = aria else { return Attrs::new() };
+    let part = |markers: &[char]| {
+        label.split(';').map(str::trim).find_map(|row| markers.iter().find_map(|marker| row.strip_prefix(*marker)))
+    };
+    let category = part(&[ROLE_HEADER, ROLE_HEADER_SWATCHED]).map(|text| (CATEGORY_KEY, text));
+    let series = part(&[ROLE_SERIES]).map(|text| (SERIES_KEY, text.strip_prefix(SWATCH).and_then(|rest| rest.split_once(SWATCH)).map_or(text, |(_, name)| name)));
+    category.into_iter().chain(series).fold(Attrs::new(), |attrs, (key, value)| attrs.set(key, value))
 }
 
 /// One cartesian datum's structured-tooltip content -- shared by bar,
@@ -680,6 +697,17 @@ mod tests {
         assert_eq!(bare, line(Attrs::new()));
     }
 
+
+    #[test]
+    fn a_labels_owner_is_the_header_and_series_its_description_names() {
+        let owner = |label: Option<&str>| print::attributes(&owner_attrs(label));
+        assert_eq!(owner(Some("\u{2061}Jan; \u{2062}EMEA; Revenue: 90")), " data-dbt-category=\"Jan\" data-dbt-series=\"EMEA\"");
+        // A ring slice's header is its color value: the category, with no series.
+        assert_eq!(owner(Some("\u{2064}Sent; %: 42%")), " data-dbt-category=\"Sent\"");
+        assert_eq!(owner(Some("\u{2061}Jan; \u{2062}\u{200B}#336699\u{200B}EMEA; Revenue: 90")), " data-dbt-category=\"Jan\" data-dbt-series=\"EMEA\"");
+        assert_eq!(owner(Some("status: Sent")), "");
+        assert_eq!(owner(None), "");
+    }
 
     #[test]
     fn the_view_root_takes_the_marks_class_after_xmlns() {

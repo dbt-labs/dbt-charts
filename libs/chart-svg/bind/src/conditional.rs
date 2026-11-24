@@ -153,8 +153,7 @@ fn key(bound: &Bound) -> Result<f64, Diagnostic> {
 /// color as written, `transparent` or `none` as `transparent`. Production errors on any other text too.
 fn rule_color(color: &str) -> Result<String, Diagnostic> {
     crate::table::sanitized_color(color)
-        .map(str::to_string)
-        .ok_or_else(|| Diagnostic::refused(refuse!("a KPI conditional rule color that is not a hex color, transparent or none is not supported")))
+        .ok_or_else(|| Diagnostic::refused(refuse!("a KPI conditional rule color that is not a hex color, a CSS color name, transparent or none is not supported")))
 }
 
 /// The board's color for `tone`.

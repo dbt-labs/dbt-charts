@@ -1228,8 +1228,9 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
     sizing probe measures; it is not the slot's render, and a wrapper's explicit
     height can differ from the estimate the provider rendered at. This pass
     renders at item.height and caches it under the render pass's lookup key
-    (chart_id, width, item.height, title_shift), so the render pass makes no
-    fresh engine call.
+    (chart_id, width, item.height, NO_TITLE_SHIFT), so the render pass makes no
+    fresh engine call. It renders unshifted, as the natural-height lookups read
+    it; cols alignment re-renders a shifted chart under its own shift.
     """
     if render_ctx.results is None:
         return
@@ -1248,7 +1249,7 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
             continue
 
         chart_id = item.chart.id
-        slot_key = (chart_id, item.width, item.height, item.title_shift)
+        slot_key = (chart_id, item.width, item.height, NO_TITLE_SHIFT)
         if (
             render_ctx.natural_heights.get((chart_id, item.width)) is None
             or slot_key in render_ctx.render_cache
@@ -1282,7 +1283,7 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
                 height=item.height,
                 resolved_style=render_ctx.resolved_style,
                 padding=additive_padding(card_pad, chart_padding),
-                title_shift=item.title_shift,
+                title_shift=NO_TITLE_SHIFT,
                 item=item,
             )
         except (ExecutionError, ChartDataError) as exc:
@@ -1493,6 +1494,18 @@ def _assign_title_shifts_in_tree(
             target.title_shift = shift
 
 
+def _shifts_a_board(layout: Layout, variable_values: VariableValues) -> bool:
+    """Whether the title band moved any nested board's title or text down."""
+    return any(
+        item.board is not None
+        and (
+            not item.title_shift.is_zero
+            or _shifts_a_board(item.board.layout, variable_values)
+        )
+        for item in active_layout_items(layout, variable_values)
+    )
+
+
 def _align_all_cols_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> None:
     """Walk the layout tree depth-first and align cols/grid heights where needed."""
     if render_ctx.render_cache and layout.items:
@@ -1659,49 +1672,54 @@ def calculate_data_aware_layout(
         style_contexts=_style_contexts_by_resolved_style_id(board),
     )
 
-    # Calculate layout height using compile sizing algorithms + data-aware provider
-    container_height = calculate_layout_height(
-        board.layout,
-        card_gap,
-        gap,
-        min_height,
-        available_width=content_width,
-        variable_values=variable_values,
-        height_provider=height_provider,
-        resolved_style=board.resolved_style,
-    )
-
-    if board.title:
-        title_measure_width = max(content_width - 2 * card_padding, 0.0)
-        board_title_height = get_title_height(
-            board.title,
-            title_measure_width,
-            variable_values,
-            level=board.level,
-            root=True,
+    def size_layout() -> None:
+        container_height = calculate_layout_height(
+            board.layout,
+            card_gap,
+            gap,
+            min_height,
+            available_width=content_width,
+            variable_values=variable_values,
+            height_provider=height_provider,
             resolved_style=board.resolved_style,
-            base_dir=board.base_dir,
         )
-        container_height += board_title_height + gap + card_gap
 
-    board.layout.width = container_width
-    board.layout.height = container_height
-    board.layout.content_width = content_width
-    board.layout.content_height = container_height
+        if board.title:
+            title_measure_width = max(content_width - 2 * card_padding, 0.0)
+            board_title_height = get_title_height(
+                board.title,
+                title_measure_width,
+                variable_values,
+                level=board.level,
+                root=True,
+                resolved_style=board.resolved_style,
+                base_dir=board.base_dir,
+            )
+            container_height += board_title_height + gap + card_gap
 
-    # Assign dimensions using compile sizing + data-aware provider
-    calculate_layout_items(
-        board.layout,
-        content_width,
-        container_height,
-        card_gap,
-        gap,
-        variable_values,
-        height_provider,
-        resolved_style=board.resolved_style,
-    )
+        board.layout.width = container_width
+        board.layout.height = container_height
+        board.layout.content_width = content_width
+        board.layout.content_height = container_height
 
-    _record_pie_modes_in_tree(board.layout, render_ctx, results)
+        calculate_layout_items(
+            board.layout,
+            content_width,
+            container_height,
+            card_gap,
+            gap,
+            variable_values,
+            height_provider,
+            resolved_style=board.resolved_style,
+        )
+        _record_pie_modes_in_tree(board.layout, render_ctx, results)
+        _assign_title_shifts_in_tree(board.layout, render_ctx, results, variable_values)
+
+    size_layout()
+    # A nested board's title shift drops its layout, which the first pass sized
+    # without it: size again so the drop comes out of the board's own cell.
+    if _shifts_a_board(board.layout, variable_values):
+        size_layout()
 
     # Slot-height fix: render each measured chart at its assigned slot height
     # (the sizing provider ran before item.height was set, and measures rather
@@ -1717,8 +1735,6 @@ def calculate_data_aware_layout(
         authored_slot_heights if authored_slot_heights is not ... else {},
         variable_values,
     )
-
-    _assign_title_shifts_in_tree(board.layout, render_ctx, results, variable_values)
 
     # Cols alignment: walk tree, re-render shorter Vega items at aligned height
     if render_ctx.render_cache:

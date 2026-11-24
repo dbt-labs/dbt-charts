@@ -208,7 +208,7 @@ def test_content_only_tab_listing_is_checked_at_compile(
 ) -> None:
     index = (
         "variables:\n  p:\n    input: text\n    default: '*'\n"
-        'tabs:\n  items:\n    - title: T\n      text: "{{ glob_boards(p) }}"\n'
+        'tabs:\n  T:\n    text: "{{ glob_boards(p) }}"\n'
     )
     result = _compile(_project(in_memory_project, index))
     assert [e.code for e in result.errors] == ["ERR-TEXT-LISTING-NONLITERAL"]

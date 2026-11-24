@@ -803,19 +803,18 @@ queries:
       - [US]
       - [CA]
 tabs:
-  items:
-    - title: A
-      text: "tab a"
-    - title: B
-      rows:
-        - title: Section
-          variables:
-            country:
-              input: select
-              options:
-                query: opts
-          rows:
-            - text: "tab b"
+  A:
+    text: "tab a"
+  B:
+    rows:
+      - title: Section
+        variables:
+          country:
+            input: select
+            options:
+              query: opts
+        rows:
+          - text: "tab b"
 """
 
 

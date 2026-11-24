@@ -46,6 +46,7 @@ use crate::index::BoardIndex;
 use crate::public_id::inline_id;
 use crate::sources::{check_sources, SourceRegistry, SourceUse};
 use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored};
+use board_model::board::BoardBodyAuthored;
 use board_model::board::Board;
 use board_model::cache::CacheLayer;
 use board_model::chart::{Chart, ChartAuthored, ChartQuery, LayerQuery};
@@ -520,10 +521,8 @@ fn authored_queries(patch: &Patch) -> Vec<(String, QueryAuthored)> {
                 .filter_map(|cell| cell.item.as_mut())
                 .for_each(|it| item(it, out)),
             LayoutAuthored::Tabs(t) => {
-                for tab in t.items.iter_mut().flatten() {
-                    if let Some(inner) = &mut tab.layout {
-                        items(inner, out);
-                    }
+                for tab in t.values_mut() {
+                    body!(&mut tab.body, out);
                 }
             }
         }
@@ -1145,29 +1144,29 @@ fn hoist_query(
 /// The chart names the root and every nested board declare.
 fn declared_names(patch: &Patch) -> BTreeSet<String> {
     fn walk(l: &LayoutAuthored, out: &mut BTreeSet<String>) {
-        let items: Vec<&LayoutItemAuthored> = match l {
-            LayoutAuthored::Rows(items) | LayoutAuthored::Cols(items) => items.iter().collect(),
+        fn board(it: &LayoutItemAuthored) -> Option<&BoardBodyAuthored> {
+            match it {
+                LayoutItemAuthored::Board(b) => Some(&b.body),
+                _ => None,
+            }
+        }
+        let boards: Vec<&BoardBodyAuthored> = match l {
+            LayoutAuthored::Rows(items) | LayoutAuthored::Cols(items) => {
+                items.iter().filter_map(board).collect()
+            }
             LayoutAuthored::Grid(g) => g
                 .items
                 .iter()
                 .flatten()
                 .filter_map(|c| c.item.as_ref())
+                .filter_map(board)
                 .collect(),
-            LayoutAuthored::Tabs(t) => {
-                t.items
-                    .iter()
-                    .flatten()
-                    .filter_map(|t| t.layout.as_ref())
-                    .for_each(|l| walk(l, out));
-                return;
-            }
+            LayoutAuthored::Tabs(t) => t.values().map(|t| &t.body).collect(),
         };
-        for it in items {
-            if let LayoutItemAuthored::Board(b) = it {
-                out.extend(b.body.charts.keys().cloned());
-                if let Some(l) = &b.body.layout {
-                    walk(l, out);
-                }
+        for b in boards {
+            out.extend(b.charts.keys().cloned());
+            if let Some(l) = &b.layout {
+                walk(l, out);
             }
         }
     }
@@ -1224,18 +1223,12 @@ fn layout<'a>(
         }
         LayoutAuthored::Tabs(t) => {
             at.push(Step::Key("tabs"));
-            at.push(Step::Key("items"));
-            for (i, tab) in t.items.iter_mut().flatten().enumerate() {
-                if let Some(l) = &mut tab.layout {
-                    at.push(Step::Index(i));
-                    let outer = std::mem::replace(&mut found.used, found.names.clone());
-                    let walked = layout(l, at, found);
-                    found.used = outer;
-                    walked?;
-                    at.pop();
-                }
+            for (i, tab) in t.values_mut().enumerate() {
+                at.push(Step::Index(i));
+                nested_board(&mut tab.body, at, found)?;
+                at.pop();
             }
-            at.truncate(at.len() - 2);
+            at.pop();
             Ok(())
         }
     }
@@ -1322,103 +1315,111 @@ fn item<'a>(
                     .push((id.as_str().to_string(), String::new(), chart.into()));
             }
         }
-        LayoutItemAuthored::Board(nested) => {
-            if !has_content!(nested.body) {
-                return Err(HoistError::FieldInvalid(Box::new(
-                    diag::err_validation_field(
-                        at.iter().map(step_loc).collect::<Vec<_>>().join("."),
-                        NO_CONTENT,
-                    ),
-                )));
-            }
-            authored_names(nested.body.charts.keys())?;
-            if nested.body.layout.is_none() {
-                nested.body.layout = Some(default_rows(nested.body.charts.keys())?);
-            }
-            let inner = scope(&nested.body.source, found.scope.as_ref())?;
-            found.scopes.boards.extend(inner.clone());
-            let outer = std::mem::replace(&mut found.scope, inner);
-            let board = ItemId::at(at);
-            let folded = found.scope_of_board.under(
-                &nested.body.cache,
-                &nested.body.incremental,
-                &at.iter().map(step_loc).collect::<Vec<_>>(),
-            )?;
-            found.boards.insert(board.clone(), folded.clone());
-            let outer_board = std::mem::replace(&mut found.board, board);
-            let outer_board_scope = std::mem::replace(&mut found.scope_of_board, folded);
-            let outer_used = std::mem::replace(&mut found.used, found.names.clone());
-            for (name, chart) in nested.body.charts.iter_mut() {
-                if let Some(chart) = chart {
-                    let steps = [Step::Key("charts"), Step::Key(name), Step::Key("query")];
-                    if let Some((key, query)) = hoist_query(chart, &steps, found.file)? {
-                        found.pending.push(Pending {
-                            chart: name.clone(),
-                            board: found.board.clone(),
-                            key,
-                            query,
-                        });
-                    }
-                }
-            }
-            found.below.extend(nested.body.charts.keys().cloned());
-            for name in nested.body.charts.keys() {
-                found
-                    .scopes
-                    .board_of
-                    .insert(name.clone(), found.board.clone());
-                found
-                    .scopes
-                    .declared_in
-                    .insert(name.clone(), found.scope.clone());
-            }
-            let board_at: String = at.iter().map(step_loc).collect::<Vec<_>>().join(".");
-            found
-                .charts
-                .extend(std::mem::take(&mut nested.body.charts).into_iter().map(
-                    |(name, chart)| {
-                        let at = format!("{board_at}.charts.{name}");
-                        (name, at, chart)
-                    },
-                ));
-            for (name, mut query) in std::mem::take(&mut nested.body.queries) {
-                stamp(&mut query, found.scope.as_ref());
-                found.own_query(&name);
-                found.declared_in.insert(
-                    name.clone(),
-                    board_model::ids::ItemId::at(at).as_str().to_string(),
-                );
-                found.declared.push((name, query));
-            }
-            found.variable_boards.extend(
-                nested
-                    .body
-                    .variables
-                    .keys()
-                    .map(|name| (name.clone(), found.board.clone())),
-            );
-            for (name, v) in nested.body.variables.iter_mut() {
-                promote_column!(name, v, found)?;
-            }
-            let mut vars = nested.body.variables.iter_mut().map(|(n, v)| {
-                let (options_slot, query_slot) = authored_query_slots(v);
-                (n, options_slot, query_slot)
-            });
-            hoist_variable_queries(&mut vars, at, found)?;
-            if let Some(l) = &mut nested.body.layout {
-                layout(l, at, found)?;
-            }
-            found.scope = outer;
-            found.board = outer_board;
-            found.scope_of_board = outer_board_scope;
-            found.used = outer_used;
-        }
+        LayoutItemAuthored::Board(nested) => nested_board(&mut nested.body, at, found)?,
         LayoutItemAuthored::Chart(id) => found.scopes.placed.push((
             id.as_str().to_string(),
             found.scope.clone(),
             at.iter().map(step_loc).collect::<Vec<_>>().join("."),
         )),
     }
+    Ok(())
+}
+
+/// A board nested in a layout, or a tab's pane: its charts, queries and variables join the
+/// root's, scoped to its position.
+fn nested_board<'a>(
+    body: &'a mut BoardBodyAuthored,
+    at: &mut Vec<Step<'a>>,
+    found: &mut Found<'_>,
+) -> Result<(), HoistError> {
+    if !has_content!(body) {
+        return Err(HoistError::FieldInvalid(Box::new(
+            diag::err_validation_field(
+                at.iter().map(step_loc).collect::<Vec<_>>().join("."),
+                NO_CONTENT,
+            ),
+        )));
+    }
+    authored_names(body.charts.keys())?;
+    if body.layout.is_none() {
+        body.layout = Some(default_rows(body.charts.keys())?);
+    }
+    let inner = scope(&body.source, found.scope.as_ref())?;
+    found.scopes.boards.extend(inner.clone());
+    let outer = std::mem::replace(&mut found.scope, inner);
+    let board = ItemId::at(at);
+    let folded = found.scope_of_board.under(
+        &body.cache,
+        &body.incremental,
+        &at.iter().map(step_loc).collect::<Vec<_>>(),
+    )?;
+    found.boards.insert(board.clone(), folded.clone());
+    let outer_board = std::mem::replace(&mut found.board, board);
+    let outer_board_scope = std::mem::replace(&mut found.scope_of_board, folded);
+    let outer_used = std::mem::replace(&mut found.used, found.names.clone());
+    for (name, chart) in body.charts.iter_mut() {
+        if let Some(chart) = chart {
+            let steps = [Step::Key("charts"), Step::Key(name), Step::Key("query")];
+            if let Some((key, query)) = hoist_query(chart, &steps, found.file)? {
+                found.pending.push(Pending {
+                    chart: name.clone(),
+                    board: found.board.clone(),
+                    key,
+                    query,
+                });
+            }
+        }
+    }
+    found.below.extend(body.charts.keys().cloned());
+    for name in body.charts.keys() {
+        found
+            .scopes
+            .board_of
+            .insert(name.clone(), found.board.clone());
+        found
+            .scopes
+            .declared_in
+            .insert(name.clone(), found.scope.clone());
+    }
+    let board_at: String = at.iter().map(step_loc).collect::<Vec<_>>().join(".");
+    found
+        .charts
+        .extend(std::mem::take(&mut body.charts).into_iter().map(
+            |(name, chart)| {
+                let at = format!("{board_at}.charts.{name}");
+                (name, at, chart)
+            },
+        ));
+    for (name, mut query) in std::mem::take(&mut body.queries) {
+        stamp(&mut query, found.scope.as_ref());
+        found.own_query(&name);
+        found.declared_in.insert(
+            name.clone(),
+            board_model::ids::ItemId::at(at).as_str().to_string(),
+        );
+        found.declared.push((name, query));
+    }
+    found.variable_boards.extend(
+        body
+            .variables
+            .keys()
+            .map(|name| (name.clone(), found.board.clone())),
+    );
+    for (name, v) in body.variables.iter_mut() {
+        promote_column!(name, v, found)?;
+    }
+    let mut vars = body.variables.iter_mut().map(|(n, v)| {
+        let (options_slot, query_slot) = authored_query_slots(v);
+        (n, options_slot, query_slot)
+    });
+    hoist_variable_queries(&mut vars, at, found)?;
+    if let Some(l) = &mut body.layout {
+        layout(l, at, found)?;
+    }
+    found.scope = outer;
+    found.board = outer_board;
+    found.scope_of_board = outer_board_scope;
+    found.used = outer_used;
     Ok(())
 }
 

@@ -284,6 +284,13 @@ pub enum Condition {
         negate: bool,
     },
     IsList(&'static str),
+    /// Some item of the list at `key` sets one of `item_keys` (negated: none does). An absent
+    /// list has no items.
+    ItemsSet {
+        key: &'static str,
+        item_keys: &'static [&'static str],
+        negate: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

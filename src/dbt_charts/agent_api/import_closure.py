@@ -1,7 +1,7 @@
 """Walk a board's transitive import closure.
 
 Returns every file the board pulls in (directly or transitively) via layout
-imports (``rows``/``cols``/``grid.items``/``tabs.items`` strings ending in
+imports (``rows``/``cols``/``grid.items`` strings ending in
 ``.yml``/``.yaml``) and cross-file refs (bare strings and ``{ref: ...}``
 dicts in ``queries``/``charts``/``variables``), plus ``extends:`` file refs,
 the ``templates/<name>.svg.j2`` file each ``type: custom`` chart names, and

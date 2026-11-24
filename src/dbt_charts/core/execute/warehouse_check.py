@@ -93,9 +93,9 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError, UnparseableSqlError
 from dbt_charts.core.dialects.identifier import result_column_name
-from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE
 from dbt_charts.core.execute.plan_reader import (
     board_clock as plan_clock,
+    cache_refs,
     resolve_planned_source,
 )
 from dbt_charts.core.execute.planned import compose_query, translate_query
@@ -192,7 +192,7 @@ def warehouse_check(
     # run stage materializes at render time and no warehouse has ever heard of.
     # Sending this SQL anywhere would report a failure about a table the author
     # never wrote.
-    if CACHE_REF_JINJA_RE.search(entry["sql"]):
+    if cache_refs(plan, query_name):
         return WarehouseCheck(
             status="unchecked",
             adapter_type="none",

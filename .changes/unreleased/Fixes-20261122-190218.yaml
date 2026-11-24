@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`style.outliers.reveal: none` is retired; boards that set it migrate to `chart`.'
+time: 2026-11-22T19:02:18.77833-08:00

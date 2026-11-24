@@ -57,6 +57,7 @@ def test_runtime_dict_carries_the_switch_and_the_strength() -> None:
         "recedeContrast": resolved.chart_defaults.hover_emphasis.recede_contrast,
         "dropLineColor": resolved.chart_defaults.hover_emphasis.drop_line_color,
         "dropLineWidth": resolved.chart_defaults.hover_emphasis.drop_line_width,
+        "dropLineDash": resolved.chart_defaults.hover_emphasis.drop_line_dash,
     }
 
 
@@ -83,6 +84,7 @@ def test_runtime_dict_carries_each_themes_own_drop_line_color_and_width(
     assert (
         blob["dropLineWidth"] == resolved.chart_defaults.hover_emphasis.drop_line_width
     )
+    assert blob["dropLineDash"] == resolved.chart_defaults.hover_emphasis.drop_line_dash
 
 
 def test_an_authored_switch_reaches_the_rendered_runtime() -> None:

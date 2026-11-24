@@ -1,0 +1,3 @@
+kind: Fixes
+body: The selected tab in a tabs layout now takes its pane's background color.
+time: 2026-11-21T13:30:42.357114-08:00

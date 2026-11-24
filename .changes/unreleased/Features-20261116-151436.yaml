@@ -1,0 +1,3 @@
+kind: Features
+body: '`tabs` maps each tab''s label to a full nested board: its `title:` heads the pane and `width:` and `height:` size it. The first tab opens on load; `id`, `default` and `icon` are gone, and `position` moved to `style.layout.tabs.position`.'
+time: 2026-11-16T15:14:36.081074-08:00

@@ -147,12 +147,7 @@ from dbt_charts.core.text.currencies import CurrencyCode
 
 
 def compiled_meta() -> dict[str, str]:
-    """Compilation metadata stamp every compiled ``Board`` carries.
-
-    Every `Board` in the tree gets this stamp: `normalize_board` below for
-    boards it builds, and the leaf-tab branches in `layout._resolve_tab_items`
-    that construct a `Board` directly without going through `normalize_board`.
-    """
+    """Compilation metadata stamp every compiled ``Board`` carries."""
     return {
         "compiled_at": datetime.now(UTC).isoformat(),
         "version": "0.1.0",

@@ -34,6 +34,7 @@ import html
 from collections.abc import Callable
 
 from dbt_charts import _engine
+from dbt_charts.core.colors import is_light_canvas, wcag_contrast
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
     LayoutItem,
@@ -41,10 +42,15 @@ from dbt_charts.core.compile.models.board.normalized import (
 )
 from dbt_charts.core.compile.models.board.resolved import ResolvedLayoutItem
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
+from dbt_charts.core.constants.contrast import TEXT_MIN_RATIO
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.render.board_variables import variable_link
 from dbt_charts.core.render.chart.rendering import render_layout_item
+from dbt_charts.core.render.contrast_warning import (
+    composite_over_canvas,
+    ink_hex_over,
+)
 from dbt_charts.core.render.controls import ships_page_runtime
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.sizing import (
@@ -380,6 +386,15 @@ def _fit_label(
     return label[:keep].rstrip() + "…"
 
 
+def _ink_on_fill(ink: str, fill_canvas: str) -> str:
+    """``ink`` when it reads on the opaque ``fill_canvas``, else black or white,
+    whichever contrasts more."""
+    ink_hex = ink_hex_over(ink, fill_canvas)
+    if ink_hex is None or wcag_contrast(ink_hex, fill_canvas) >= TEXT_MIN_RATIO:
+        return ink
+    return "#000000" if is_light_canvas(fill_canvas) else "#ffffff"
+
+
 def render_tabs_layout(
     items: tuple[ResolvedLayoutItem, ...],
     results: ChartDataProvider,
@@ -390,8 +405,6 @@ def render_tabs_layout(
     tab_titles: list[str] | None = None,
     tab_slugs: list[str] | None = None,
     tab_variable: str | None = None,
-    active_tab: int = 0,
-    tab_position: str = "top",
     background: str | None = None,
     *,
     resolved_style: ResolvedStyle,
@@ -401,7 +414,8 @@ def render_tabs_layout(
 ) -> tuple[str, float]:
     """Render tabbed container (active tab only).
 
-    In a tabs layout, each tab gets the full container size minus the tab bar.
+    Each tab sits in the container minus the tab bar, at the size the sizing
+    pass gave it.
     Only the active tab is rendered in SVG output. The tab bar is rendered as
     clickable SVG <a href> links that update URL params for server re-rendering.
 
@@ -415,9 +429,6 @@ def render_tabs_layout(
         tab_titles: Display titles for tabs
         tab_slugs: URL-safe slugs for tabs (used in URL params)
         tab_variable: Variable name for tab selection (URL param name)
-        active_tab: Index of active tab (0-based)
-        tab_position: Position of tabs: "top" (a bar above the pane) or
-            "left" (a vertical rail beside it)
         background: Optional background color
 
     Returns:
@@ -427,19 +438,17 @@ def render_tabs_layout(
         return "", 0.0
 
     active_tab = resolve_active_tab_index(
-        len(items), tab_variable, tab_slugs, active_tab, variables
+        len(items), tab_variable, tab_slugs, variables
     )
 
     tabs_config = resolved_style.layout.tabs
     tab_bar_height = tabs_config.bar_height
-    left_rail = tab_position == "left"
+    left_rail = tabs_config.position == "left"
 
     # The bar (or rail) is inset like card ink; the pane starts below the bar
     # or right of the rail and its gutter.
     bar_inset = float(resolved_style.frame.card_padding)
-    content_x, content_y = tab_content_offset(
-        tab_position, tab_titles, len(items), resolved_style
-    )
+    content_x, content_y = tab_content_offset(tab_titles, len(items), resolved_style)
 
     # Render only active tab
     active_item = items[active_tab]
@@ -448,8 +457,12 @@ def render_tabs_layout(
         results,
         variables,
         card_gap=card_gap,
-        available_width=available_width - content_x,
-        available_height=available_height - content_y,
+        available_width=active_item.width
+        if active_item.width > 0
+        else available_width - content_x,
+        available_height=active_item.height
+        if active_item.height > 0
+        else available_height - content_y,
         resolved_style=resolved_style,
         render_cache=render_cache,
         source_path=active_item.source_path,
@@ -466,6 +479,18 @@ def render_tabs_layout(
     label_room = tabs_config.max_width - 2 * tabs_config.padding_x
     # A rail stacks equal-width cells; a top bar lines content-width cells up.
     rail_width = tab_rail_width(labels, resolved_style) if left_rail else 0.0
+    # A pane with a background carries it into its tab. An unstyled pane
+    # resolves to "transparent" and paints nothing.
+    pane_fill = active_item.board.style.background if active_item.board else ""
+    if pane_fill == "transparent":
+        pane_fill = ""
+    bar_ink = resolved_style.title.font.color
+    active_ink = bar_ink
+    pane_ink = active_item.board.style.title.font.color if active_item.board else None
+    if pane_fill and pane_ink is not None:
+        fill_canvas = composite_over_canvas(pane_fill, painted_canvas)
+        if fill_canvas is not None:
+            active_ink = _ink_on_fill(pane_ink, fill_canvas)
     tab_bar_parts: list[str] = []
     tab_x = 0.0
     tab_y = 0.0
@@ -491,11 +516,7 @@ def render_tabs_layout(
                 else (tab_x, tab_x + tab_width)
             )
         weight = tabs_config.active_weight if is_active else tabs_config.inactive_weight
-        ink = (
-            resolved_style.title.font.color
-            if is_active
-            else resolved_style.variables.font.color
-        )
+        ink = active_ink if is_active else resolved_style.variables.font.color
         tooltip = f"<title>{html.escape(label)}</title>" if cut else ""
         # The boxes fill the whole cell, so it is hit-testable and has an outline to mark.
         boxes = selection_boxes(tab_width, cell_height, _NO_PADDING)
@@ -526,10 +547,9 @@ def render_tabs_layout(
             f'role="tab" aria-selected="{"true" if is_active else "false"}" '
             f'transform="translate({escape_attr(tab_x)}, {escape_attr(tab_y if left_rail else 0)})"'
         )
-        # A tab label is its pane's title, so it carries that key's own path.
         source_path = items[idx].source_path
         if source_path:
-            attrs += authored_attrs(f"{source_path}.title", "title")
+            attrs += authored_attrs(source_path, "tab")
         if tab_variable and not is_active:
             href = variable_link(variables, tab_variable, slug)
             tab_bar_parts.append(
@@ -543,7 +563,6 @@ def render_tabs_layout(
             tab_x += tab_width
 
     actual_height = tabs_layout_height(
-        tab_position,
         tab_titles,
         len(items),
         content_y,
@@ -552,42 +571,60 @@ def render_tabs_layout(
     )
     border = tabs_config.border
     stroke = border.width
+    # `outline(joint)` walks the bar to the active tab, around it, and on to the
+    # bar's end, meeting the bar at `joint`.
     if left_rail:
         # The active tab is a folder open to the right, joined to a full-height
         # rule along the rail's right edge.
-        rule_x = rail_width - stroke / 2
+        rule_joint = rail_width - stroke / 2
+        pane_joint = rail_width
         outer_x = stroke / 2
         top = active_span[0] + stroke / 2
         bottom = active_span[1] - stroke / 2
-        radius = min(border.radius, (bottom - top) / 2, rule_x - outer_x)
+        radius = min(border.radius, (bottom - top) / 2, rule_joint - outer_x)
         line_end = max(actual_height - bar_inset, tab_y)
-        d = (
-            f"M {escape_attr(rule_x)} 0 V {escape_attr(top)} H {escape_attr(outer_x + radius)} "
-            f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 0 {escape_attr(outer_x)} {escape_attr(top + radius)} "
-            f"V {escape_attr(bottom - radius)} "
-            f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 0 {escape_attr(outer_x + radius)} {escape_attr(bottom)} "
-            f"H {escape_attr(rule_x)} V {escape_attr(line_end)}"
-        )
+
+        def outline(joint: float) -> str:
+            return (
+                f"M {escape_attr(joint)} 0 V {escape_attr(top)} H {escape_attr(outer_x + radius)} "
+                f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 0 {escape_attr(outer_x)} {escape_attr(top + radius)} "
+                f"V {escape_attr(bottom - radius)} "
+                f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 0 {escape_attr(outer_x + radius)} {escape_attr(bottom)} "
+                f"H {escape_attr(joint)} V {escape_attr(line_end)}"
+            )
     else:
-        baseline_y = tab_bar_height - stroke / 2
+        rule_joint = tab_bar_height - stroke / 2
+        pane_joint = tab_bar_height
         top_y = stroke / 2
         left = active_span[0] + stroke / 2
         right = active_span[1] - stroke / 2
-        radius = min(border.radius, (right - left) / 2, baseline_y - top_y)
+        radius = min(border.radius, (right - left) / 2, rule_joint - top_y)
         line_end = max(available_width, tab_x)
-        d = (
-            f"M 0 {escape_attr(baseline_y)} H {escape_attr(left)} V {escape_attr(top_y + radius)} "
-            f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 1 {escape_attr(left + radius)} {escape_attr(top_y)} "
-            f"H {escape_attr(right - radius)} "
-            f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 1 {escape_attr(right)} {escape_attr(top_y + radius)} "
-            f"V {escape_attr(baseline_y)} H {escape_attr(line_end)}"
-        )
+
+        def outline(joint: float) -> str:
+            return (
+                f"M 0 {escape_attr(joint)} H {escape_attr(left)} V {escape_attr(top_y + radius)} "
+                f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 1 {escape_attr(left + radius)} {escape_attr(top_y)} "
+                f"H {escape_attr(right - radius)} "
+                f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 1 {escape_attr(right)} {escape_attr(top_y + radius)} "
+                f"V {escape_attr(joint)} H {escape_attr(line_end)}"
+            )
+
     rule = (
-        f'<path d="{escape_attr(d)}" '
+        f'<path d="{escape_attr(outline(rule_joint))}" '
         f'fill="none" stroke="{escape_attr(border.color)}" stroke-width="{escape_attr(stroke)}" '
         f'stroke-linejoin="round"{border_dash_attrs(border, None)}/>'
     )
-    tab_bar_parts.insert(0, rule)
+    # The fill is the same outline, met at the bar's pane-side edge, so its only
+    # area is the tab and a top bar's tab touches its pane. It names the ink the
+    # label takes on the bare bar, which the page shows while a clicked tab loads.
+    tab_fill = ""
+    if pane_fill:
+        tab_fill = (
+            f'<path d="{escape_attr(outline(pane_joint))}" '
+            f'fill="{escape_attr(pane_fill)}" data-bar-ink="{escape_attr(bar_ink)}"/>'
+        )
+    tab_bar_parts.insert(0, tab_fill + rule)
     orientation = ' aria-orientation="vertical"' if left_rail else ""
     tab_bar_svg = translate_group(
         0, px(bar_inset), f'<g role="tablist"{orientation}>{"".join(tab_bar_parts)}</g>'

@@ -419,13 +419,12 @@ class TestImportedBoardContent:
     ) -> None:
         parent = """\
 tabs:
-  items:
-    - title: One
-      rows:
-        - ./child.yml
-    - title: Two
-      rows:
-        - ./child.yml
+  One:
+    rows:
+      - ./child.yml
+  Two:
+    rows:
+      - ./child.yml
 """
         result = self._compile(
             tmp_path,
@@ -436,8 +435,8 @@ tabs:
         (error,) = result.errors
         assert error.code == "ERR-BOARD-FILE-PLACED-TWICE"
         assert "'charts/child.yml'" in error.message
-        assert "charts/parent.yml at tabs.items.0.rows.0" in error.message
-        assert "charts/parent.yml at tabs.items.1.rows.0" in error.message
+        assert "charts/parent.yml at tabs.One.rows.0" in error.message
+        assert "charts/parent.yml at tabs.Two.rows.0" in error.message
 
     def test_a_file_of_queries_placed_twice_is_its_own_error(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

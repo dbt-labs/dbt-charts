@@ -95,8 +95,8 @@ class BarOutliersStyle(BaseModel):
     variant: Literal["torn", "torn_with_cap"] = Field(
         description="How a torn bar is drawn: past the top of the card, or cut with a floating cap."
     )
-    reveal: Literal["bar", "chart", "none"] = Field(
-        description="What hover redraws at true length: the hovered bar, every torn bar, or nothing."
+    reveal: Literal["bar", "chart"] = Field(
+        description="What hover redraws at true length: the hovered bar or every torn bar."
     )
     cap: BarOutliersCapStyle = Field(
         description="Cap size, read only by the torn_with_cap variant."

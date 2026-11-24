@@ -1,0 +1,11 @@
+# Pattern palette — pattern-one-ink
+#
+# The one-ink ladder: fills chosen by the chart's number of series, solid ink at
+# the base of a stack and open canvas at the top, with even steps between.
+
+name: pattern-one-ink
+description: |
+  One-ink fills from solid to open in even steps, built for the
+  number of series in the chart.
+kind: categorical
+ladder: one-ink

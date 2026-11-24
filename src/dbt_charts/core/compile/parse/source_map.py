@@ -20,6 +20,7 @@ from typing import NamedTuple
 
 import yaml
 
+from dbt_charts.core.compile.authoring.paths import join_path, split_path
 from dbt_charts.core.compile.models.chart.authored import SUPPORTED_AUTHORED_CHART_TYPES
 from dbt_charts.core.diagnostics.diagnostic import (
     ColumnSpan,
@@ -109,14 +110,14 @@ def _walk_node(
             if not isinstance(key_node, yaml.ScalarNode):
                 continue
             child_path = [*path_parts, str(key_node.value)]
-            out[".".join(child_path)] = _node_range(
+            out[join_path(child_path)] = _node_range(
                 file, lines, key_node.start_mark, value_node.end_mark
             )
             _walk_node(value_node, child_path, file, lines, out)
     elif isinstance(node, yaml.SequenceNode):
         for idx, item_node in enumerate(node.value):
             child_path = [*path_parts, str(idx)]
-            out[".".join(child_path)] = _node_range(
+            out[join_path(child_path)] = _node_range(
                 file, lines, item_node.start_mark, item_node.end_mark
             )
             _walk_node(item_node, child_path, file, lines, out)
@@ -163,7 +164,7 @@ def _walk_literal_blocks(
                 if content_line_idx < len(lines):
                     first = lines[content_line_idx]
                     indent = len(first) - len(first.lstrip())
-                    out[".".join(child_path)] = LiteralBlock(
+                    out[join_path(child_path)] = LiteralBlock(
                         indent=indent,
                         lines=tuple(_block_body(lines, content_line_idx, indent)),
                     )
@@ -185,14 +186,14 @@ def _walk_containers(node: yaml.Node, path_parts: list[str], out: set[str]) -> N
     """
     if isinstance(node, yaml.MappingNode):
         if path_parts:
-            out.add(".".join(path_parts))
+            out.add(join_path(path_parts))
         for key_node, value_node in node.value:
             if not isinstance(key_node, yaml.ScalarNode):
                 continue
             _walk_containers(value_node, [*path_parts, str(key_node.value)], out)
     elif isinstance(node, yaml.SequenceNode):
         if path_parts:
-            out.add(".".join(path_parts))
+            out.add(join_path(path_parts))
         for idx, item_node in enumerate(node.value):
             _walk_containers(item_node, [*path_parts, str(idx)], out)
 
@@ -267,14 +268,14 @@ def diagnostic_path_to_source_map_key(path: str) -> str:
     Numeric list indices are NOT stripped — unlike the old regex-based line
     finder, the source map resolves sequence positions natively.
     """
-    parts = path.split(".")
+    parts = split_path(path)
     if (
         len(parts) > 2
         and parts[0] == "charts"
         and parts[2] in SUPPORTED_AUTHORED_CHART_TYPES
     ):
         del parts[2]
-    return ".".join(parts)
+    return join_path(parts)
 
 
 # Shared, never-mutated default for stamp_diagnostics' literal_blocks param —
@@ -541,7 +542,7 @@ def _ancestors(key: str) -> list[str]:
     resolves, and when none does, ``range`` stays ``None`` rather than being
     fabricated.
     """
-    parts = key.split(".")
+    parts = split_path(key)
     if len(parts) == 1:
         return [key]
-    return [".".join(parts[: i + 1]) for i in reversed(range(1, len(parts)))]
+    return [join_path(parts[: i + 1]) for i in reversed(range(1, len(parts)))]

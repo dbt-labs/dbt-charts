@@ -154,7 +154,7 @@ def test_tabs_items_style_charts_kpi_tones_migrates_to_tab_style_tones(
 
     migrated = _migrate(raw, catalog)
 
-    tab = migrated["tabs"]["items"][0]
+    tab = migrated["tabs"]["Tab A"]
     assert tab["style"]["tones"] == {"positive": "#00ff00"}
     assert "tones" not in tab["style"].get("charts", {}).get("kpi", {})
     AuthoredBoard.model_validate(migrated)

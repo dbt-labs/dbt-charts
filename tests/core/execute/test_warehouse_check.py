@@ -1302,6 +1302,24 @@ class TestWarehouseCheckCacheRef:
         assert registry.resolver.calls == 0
         backend_of(registry).execute.assert_not_called()
 
+    def test_a_cache_ref_inside_an_inlined_query_is_unchecked(self):
+        registry = scripted_env(ScriptedBackend())
+        plan = _plan_of_board(
+            {
+                "source": "s",
+                "queries": {
+                    "a": "SELECT 1 AS n",
+                    "b": "SELECT * FROM {{ queries.a.cache }}",
+                    "c": "SELECT count(*) AS n FROM {{ queries.b }}",
+                },
+                "charts": {"c": {"query": "c", "type": "table"}},
+            }
+        )
+        result = _check(plan, registry, query_name="c")
+        assert result.status == "unchecked"
+        assert result.mechanism == "cache-ref"
+        backend_of(registry).execute.assert_not_called()
+
 
 class TestWarehouseCheckConnectionFailures:
     """A DuckDB warehouse that was never opened has not ruled on anybody's SQL.

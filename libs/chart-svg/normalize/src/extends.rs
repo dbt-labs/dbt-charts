@@ -372,7 +372,7 @@ impl<'a> Cx<'a> {
             }));
         let mut node = migrated.node;
         anchor_images(&mut node, parent(path)).map_err(FoldError::Diagnostic)?;
-        crate::shape::refuse(&node, true).map_err(|d| invalid(vec![d]))?;
+        crate::shape::refuse(&node).map_err(|d| invalid(vec![d]))?;
         crate::names::refuse(&node, true).map_err(|d| invalid(vec![d]))?;
         let parsed = parse_patch::<Board>(&node, None);
         if !parsed.errors.is_empty() {

@@ -1,7 +1,7 @@
 //! `compile`: a board file to a [`Structure`] (the passes before style) and, once the style seam
 //! exists, a [`CompiledBoard`] (spec § 11, phase 5, slice 5A).
 //!
-//! The passes: read, migrate, `shape::refuse` (each file's own `tabs:` and `grid:` as authored,
+//! The passes: read, migrate, `shape::refuse` (each file's own `grid:` as authored,
 //! before the fold), parse (`FromNode`), the meta and `extends:` fold, and the `LayoutFacts` over
 //! the merged root. `Structure` is the model-derive `Patch<Board>` (ids filled by `fill_ids` from
 //! `LayoutFacts::board_ids`, which Python's `board.id` checks) plus the themes, notices, facts
@@ -476,8 +476,8 @@ fn fold<'a>(
         files: &files,
         today,
     }
-    .resolve_refs(&mut node, path, &mut imports)?;
-    crate::shape::refuse(&node, true).map_err(|d| CompileError::Invalid(vec![d]))?;
+    .resolve_refs(&mut node, path, &mut imports, "")?;
+    crate::shape::refuse(&node).map_err(|d| CompileError::Invalid(vec![d]))?;
     crate::names::refuse(&node, true).map_err(|d| CompileError::Invalid(vec![d]))?;
     let broken = crate::constraints::refuse(&node);
     let retired = crate::retired::RetiredKeys::of(&node);
@@ -551,6 +551,7 @@ fn fold<'a>(
         crate::board_files::inline(
             layout,
             &ItemId::root(),
+            "",
             &mut vec![path.clone()],
             &external,
             &mut imports,

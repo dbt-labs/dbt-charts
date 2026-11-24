@@ -8,6 +8,7 @@
 pub mod library;
 
 use dbt_charts_color::{parse_css_color, rgb01_to_hex};
+use crate::constants::pattern::{PATTERN_FULL_TILE_MIN_PX, PATTERN_THREE_QUARTER_TILE_MIN_PX};
 use library::{Library, Mark, Tile};
 use scene::{Attrs, Node, PathData, Role, Shape};
 use serde::Deserialize;
@@ -25,9 +26,10 @@ const PATTERN_INK_MIN_CONTRAST: f64 = 3.0;
 /// Width of the outline every patterned mark carries, in the ink color.
 pub const OUTLINE_W: f64 = 1.0;
 /// Width of the one line two touching patterned shapes share, centered on their edge, whatever
-/// the ground: a pie wedge's and a stacked segment's or band's.
-pub const PIE_EDGE_W: f64 = 2.0;
+/// the ground: a stacked or touching segment's or band's.
 pub const STACK_EDGE_W: f64 = 1.5;
+/// Width of a patterned wedge's ink line, drawn inside its own edge beside the canvas gap.
+pub const INNER_RULE_W: f64 = 1.5;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +57,10 @@ pub struct PatternSpec {
     /// Category only: the motif of each slot, wrapping like the color palette.
     #[serde(default)]
     pub motifs: Vec<String>,
+    /// Category only, in place of `motifs`: the name of a ladder, whose fills are chosen by the
+    /// chart's series count, solid at the first slot and open at the last.
+    #[serde(default)]
+    pub ladder: Option<String>,
     /// Sequential and diverging only: the ramp's name.
     #[serde(default)]
     pub ramp: Option<String>,
@@ -76,27 +82,58 @@ pub enum Paint {
     Pattern(PatternPaint),
 }
 
+/// What a value label drawn over a mark takes, by what fills the mark.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum LabelOn {
+    /// A plain color: the text is whichever of the canvas and the ink contrasts more with it.
+    #[default]
+    Color,
+    /// Solid ink: whichever of the canvas and the text ink contrasts more with it.
+    Ink,
+    /// Open fill: whichever of the canvas and the text ink contrasts more with it.
+    Canvas,
+    /// A tile cut out of ink: the more contrasting of the canvas and the text ink, on a rectangle of the tile's ink.
+    DarkPattern { ground: String },
+    /// A tile of ink on the canvas: text-colored text on a canvas-colored rectangle.
+    LightPattern,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PatternPaint {
-    /// The tile's id.
-    tile: String,
-    /// The tile's spacing in px, the unit repeats are counted in.
-    spacing: f64,
-    /// The tint a mark too small for the tile draws, matched to the tile's rendered L*.
+    /// The tile; none for a ladder's solid and open fills, which are flat colors.
+    tile: Option<TileRef>,
+    /// The id of the pattern a legend key paints with: the full-size tile at key scale, or a flat
+    /// fill, under an ink outline.
+    key: String,
+    /// The color a mark too small for the tile draws: a tint matched to the tile's rendered L*,
+    /// or on a ladder the flat ink or canvas of the step.
     flat: String,
+    /// A ladder's fill: its tile is cut from each bar's own center line and base.
+    ladder: bool,
+    /// A flat fill (a ladder's solid or open): nothing to repeat, so a small mark is no fallback.
+    flat_fill: bool,
     /// The outline color: the pattern color, or on an `inverse` ground the ink that is the ground.
     ink: String,
-    /// The color of the line shared with neighbors: `ink`, or the canvas on an `inverse` ground,
-    /// where an ink line would vanish into the mark.
-    edge: String,
-    /// The id of the pattern a legend key paints with: the tile at key scale under an ink outline.
-    key: String,
+    /// Ink-heavy: solid ink, or a tile cut out of an ink bed. A stacked area breaks the line between
+    /// two such bands with the canvas.
+    ink_heavy: bool,
     /// Whether the axis names what the pattern marks, so a flat tint still reads.
     named_by_axis: bool,
     /// The series slot or ramp step this paint belongs to, the identity a fallback collision
     /// is counted between.
     series: usize,
+    /// What a value label over this fill takes.
+    label: LabelOn,
     fallbacks: Rc<Fallbacks>,
+}
+
+/// A pattern tile a paint fills with.
+#[derive(Clone, Debug, PartialEq)]
+struct TileRef {
+    /// The tile's id.
+    id: String,
+    /// The tile's spacing in px, the unit repeats are counted in.
+    spacing: f64,
 }
 
 /// The marks of one chart that drew a flat tint in place of their tile.
@@ -128,17 +165,30 @@ pub struct MarkPaint {
     pub stroke_w: f64,
     /// A pattern's outline color.
     pub ink: Option<String>,
-    /// The color of the line a pattern shares with its neighbors (see [`PatternPaint`]).
-    pub edge: String,
+    /// The fill is ink-heavy (see [`PatternPaint`]).
+    pub ink_heavy: bool,
+    /// The fill is a ladder tile, to be cut from the mark's own center line and base.
+    pub anchored: bool,
+    /// What a value label over the mark takes; a mark drawn in a flat tint in place of its tile
+    /// keeps the plain-color rule.
+    pub label_on: LabelOn,
 }
 
 impl MarkPaint {
+    /// The point `(x, y)`, in whole pixels, a ladder tile is cut from: a bar's center line and
+    /// its base, so equal bars cut the pattern the same way. Any other fill keeps the chart's
+    /// one sheet of tile, which is the origin.
+    pub fn anchor(&self, x: f64, y: f64) -> (f64, f64) {
+        if self.anchored { (x.round(), y.round()) } else { (0.0, 0.0) }
+    }
+
     /// The line a mark shares with its neighbors, as (color, width): a patterned mark strokes its
-    /// `edge` `shared_w` wide, centered on the shape's edge; any other mark draws its own stroke.
+    /// ink `shared_w` wide, centered on the shape's edge, solid or inverse included; any other mark
+    /// draws its own stroke.
     pub fn seam(&self, shared_w: f64) -> (&str, f64) {
         match &self.ink {
             None => (&self.stroke, self.stroke_w),
-            Some(_) => (&self.edge, shared_w),
+            Some(_) => (&self.stroke, shared_w),
         }
     }
 }
@@ -169,6 +219,14 @@ impl Paint {
         }
     }
 
+    /// What a value label over this fill takes.
+    pub fn label_on(&self) -> LabelOn {
+        match self {
+            Paint::Color(_) => LabelOn::Color,
+            Paint::Pattern(pattern) => pattern.label.clone(),
+        }
+    }
+
     /// The plain color, owned.
     pub fn into_color(self) -> String {
         match self {
@@ -182,12 +240,14 @@ impl Paint {
     /// repeats across the short side draws its flat tint in place of the tile.
     pub fn for_mark(&self, short_side: f64, stroke: &str, stroke_w: f64) -> MarkPaint {
         match self {
-            Paint::Color(color) => MarkPaint { fill: color.clone(), stroke: stroke.to_string(), stroke_w, ink: None, edge: stroke.to_string() },
+            Paint::Color(color) => MarkPaint { fill: color.clone(), stroke: stroke.to_string(), stroke_w, ink: None, ink_heavy: false, anchored: false, label_on: LabelOn::Color },
             Paint::Pattern(pattern) => {
-                let fill = if short_side / pattern.spacing >= MIN_REPEATS {
-                    format!("url(#{})", pattern.tile)
-                } else if short_side <= 0.0 {
-                    // A zero-size mark draws nothing, so it cannot be mistaken for another series.
+                let tiled = pattern.tile.as_ref().filter(|tile| short_side / tile.spacing >= MIN_REPEATS);
+                let fill = if let Some(tile) = tiled {
+                    format!("url(#{})", tile.id)
+                } else if short_side <= 0.0 || pattern.flat_fill {
+                    // A zero-size mark draws nothing, so it cannot be mistaken for another series;
+                    // a flat fill has no tile to fall back from.
                     pattern.flat.clone()
                 } else {
                     pattern.fallbacks.marks.set(pattern.fallbacks.marks.get() + 1);
@@ -196,7 +256,8 @@ impl Paint {
                     }
                     pattern.flat.clone()
                 };
-                MarkPaint { fill, stroke: pattern.ink.clone(), stroke_w: OUTLINE_W, ink: Some(pattern.ink.clone()), edge: pattern.edge.clone() }
+                let label_on = if tiled.is_some() || pattern.flat_fill { self.label_on() } else { LabelOn::Color };
+                MarkPaint { fill, stroke: pattern.ink.clone(), stroke_w: OUTLINE_W, ink: Some(pattern.ink.clone()), ink_heavy: pattern.ink_heavy, anchored: tiled.is_some() && pattern.ladder, label_on }
             }
         }
     }
@@ -206,7 +267,41 @@ impl Paint {
     pub fn swatch(&self, stroke: &str, stroke_w: f64) -> MarkPaint {
         match self {
             Paint::Color(_) => self.for_mark(f64::INFINITY, stroke, stroke_w),
-            Paint::Pattern(pattern) => MarkPaint { fill: format!("url(#{})", pattern.key), stroke: pattern.ink.clone(), stroke_w: OUTLINE_W, ink: Some(pattern.ink.clone()), edge: pattern.edge.clone() },
+            Paint::Pattern(pattern) => {
+                MarkPaint { fill: format!("url(#{})", pattern.key), stroke: pattern.ink.clone(), stroke_w: OUTLINE_W, ink: Some(pattern.ink.clone()), ink_heavy: pattern.ink_heavy, anchored: false, label_on: LabelOn::Color }
+            }
+        }
+    }
+}
+
+/// Which of a ladder step's three tiles a chart draws: one size for the whole chart.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TileSize {
+    #[default]
+    Full,
+    ThreeQuarter,
+    Half,
+}
+
+impl TileSize {
+    /// The size for bars `thickness` px thick: the full tile from [`PATTERN_FULL_TILE_MIN_PX`],
+    /// three quarters from [`PATTERN_THREE_QUARTER_TILE_MIN_PX`], half below.
+    fn for_thickness(thickness: f64) -> Self {
+        if thickness >= PATTERN_FULL_TILE_MIN_PX {
+            Self::Full
+        } else if thickness >= PATTERN_THREE_QUARTER_TILE_MIN_PX {
+            Self::ThreeQuarter
+        } else {
+            Self::Half
+        }
+    }
+
+    /// The suffix of a tile's id, so the three sizes of one step are three tiles.
+    fn suffix(self) -> &'static str {
+        match self {
+            Self::Full => "",
+            Self::ThreeQuarter => "-s75",
+            Self::Half => "-s50",
         }
     }
 }
@@ -219,6 +314,8 @@ pub struct PatternPlan {
     chart_key: String,
     ground: String,
     spec: Option<PatternSpec>,
+    /// The tile size a ladder draws, fixed by [`PatternPlan::fit_tiles`] before the first paint.
+    size: Cell<TileSize>,
     used: RefCell<Vec<(String, Node)>>,
     fallbacks: Rc<Fallbacks>,
 }
@@ -244,12 +341,20 @@ impl PatternPlan {
         };
         if let Some(spec) = &spec {
             match spec.scale {
-                Scale::Category => {
-                    if spec.motifs.is_empty() {
-                        return Err(format!("pattern on {:?}: a category scale needs at least one motif", spec.field));
+                Scale::Category => match &spec.ladder {
+                    Some(name) => {
+                        if !spec.motifs.is_empty() || spec.inverse {
+                            return Err(format!("pattern on {:?}: a ladder takes no motifs and no inverse", spec.field));
+                        }
+                        lib.ladders.get(name).ok_or_else(|| format!("pattern: unknown ladder {name:?}"))?;
                     }
-                    spec.motifs.iter().try_for_each(|motif| known(motif))?;
-                }
+                    None => {
+                        if spec.motifs.is_empty() {
+                            return Err(format!("pattern on {:?}: a category scale needs at least one motif or a ladder", spec.field));
+                        }
+                        spec.motifs.iter().try_for_each(|motif| known(motif))?;
+                    }
+                },
                 Scale::Sequential | Scale::Diverging => {
                     let name = spec.ramp.as_deref().ok_or_else(|| format!("pattern on {:?}: a {:?} scale needs a ramp", spec.field, spec.scale))?;
                     let steps = spec.steps.ok_or_else(|| format!("pattern on {:?}: a {:?} scale needs `steps`", spec.field, spec.scale))?;
@@ -265,6 +370,7 @@ impl PatternPlan {
             chart_key: crate::contract::safe_svg_id(chart_id),
             ground: ground.to_string(),
             spec,
+            size: Cell::default(),
             used: RefCell::new(Vec::new()),
             fallbacks: Rc::default(),
         })
@@ -292,6 +398,18 @@ impl PatternPlan {
         Self::new(chart_id, spec, ground)
     }
 
+    /// Whether this chart's fills are a ladder's, chosen by series count.
+    pub fn is_ladder(&self) -> bool {
+        self.spec.as_ref().is_some_and(|spec| spec.ladder.is_some())
+    }
+
+    /// The one ink a ladder's every fill is drawn in, which its series' labels take in place of
+    /// the series color the chart never shows. `None` off a ladder, or a ladder that inks each
+    /// series in its own hue.
+    pub fn ladder_ink(&self) -> Option<&str> {
+        self.spec.as_ref().filter(|spec| spec.ladder.is_some()).and_then(|spec| spec.color.as_deref())
+    }
+
     /// Whether this chart draws any pattern.
     pub fn is_active(&self) -> bool {
         self.spec.is_some()
@@ -302,15 +420,26 @@ impl PatternPlan {
         self.spec.as_ref()
     }
 
-    /// The paint of category slot `slot` whose hue is `hue`: the spec's motif for the slot, in
-    /// the spec's color (the hue when it names none) on the spec's ground; a chart with no
-    /// `pattern` channel keeps the plain hue.
-    pub fn category(&self, slot: usize, hue: &str) -> Result<Paint, String> {
+    /// Fixes the tile size a ladder draws for the whole chart from its bars' thickness in px. Call
+    /// it before the chart's first paint; a chart that never calls it draws full tiles.
+    pub fn fit_tiles(&self, thickness: f64) {
+        self.size.set(TileSize::for_thickness(thickness));
+    }
+
+    /// The paint of category slot `slot` whose hue is `hue`: the spec's motif for the slot
+    /// (wrapping), or on a ladder the fill of step `rung` of `count` series, in the spec's color
+    /// (the hue when it names none) on the spec's ground; a chart with no `pattern` channel keeps
+    /// the plain hue. `slot` is the palette position; `rung` the value's place among the chart's
+    /// `count` series, which the two share only when no pin or link moves the slot.
+    pub fn category(&self, slot: usize, rung: usize, count: usize, hue: &str) -> Result<Paint, String> {
         match &self.spec {
             Some(spec) if spec.scale == Scale::Category => {
-                let motif = &spec.motifs[slot % spec.motifs.len()];
                 let (ink, ground, outline) = self.inks(spec, Some(slot), hue)?;
-                Ok(self.motif_paint(motif, &ink, &ground, &outline, spec.inverse)?.in_series(slot))
+                let paint = match &spec.ladder {
+                    Some(name) => self.ladder_paint(name, rung, count, &ink, &ground, &outline)?,
+                    None => self.motif_paint(&spec.motifs[slot % spec.motifs.len()], &ink, &ground, &outline, spec.inverse)?,
+                };
+                Ok(paint.in_series(slot))
             }
             Some(spec) => Err(format!("pattern on {:?}: a {:?} scale paints ramp steps, not category slots", spec.field, spec.scale)),
             None => Ok(Paint::Color(hue.to_string())),
@@ -383,6 +512,76 @@ impl PatternPlan {
         Ok((spec, &self.lib.ramps[name][&steps.to_string()]))
     }
 
+    /// The fill of slot `slot` of `count` series on ladder `name`: solid at slot 0, open at the
+    /// last slot, the ladder's steps between, darkest first. Past the ladder's longest count a
+    /// slot wraps on it, as every categorical palette wraps; a slot beyond a shorter chart's
+    /// own count is an error.
+    fn ladder_paint(&self, name: &str, slot: usize, count: usize, ink: &str, ground: &str, outline: &str) -> Result<Paint, String> {
+        let ladders = &self.lib.ladders[name];
+        let longest = ladders.len() + 2;
+        if count == 0 || (count <= longest && slot >= count) {
+            return Err(format!("pattern ladder {name:?}: slot {slot} of {count} series"));
+        }
+        let (count, slot) = (count.min(longest), slot % longest);
+        let flat = |color: &str| -> Result<Paint, String> {
+            Ok(Paint::Pattern(PatternPaint {
+                tile: None,
+                key: self.define_flat_key(name, color, outline)?,
+                flat: color.to_string(),
+                ladder: true,
+                flat_fill: true,
+                ink: outline.to_string(),
+                ink_heavy: color == ink,
+                named_by_axis: false,
+                series: 0,
+                label: if color == ink { LabelOn::Ink } else { LabelOn::Canvas },
+                fallbacks: self.fallbacks.clone(),
+            }))
+        };
+        if slot == 0 {
+            return flat(ink);
+        }
+        if slot == count - 1 {
+            return flat(ground);
+        }
+        let rung = &ladders[&count.to_string()][slot - 1];
+        let full = &rung.step;
+        let (marks, bed) = if full.inverse { (ground, ink) } else { (ink, ground) };
+        let key = format!("{name}{count}-{}", slot - 1);
+        let size = self.size.get();
+        let shown = match size {
+            TileSize::Full => Some(&full.tile),
+            TileSize::ThreeQuarter => rung.three_quarter.as_ref(),
+            TileSize::Half => rung.half.as_ref(),
+        };
+        let full_id = self.tile_id(&key, marks, bed)?;
+        let key_id = self.define_key(&key, &full_id, &full.tile, marks, bed, outline)?;
+        self.define_tile(&full_id, &key_id, &full.tile, marks, bed);
+        // A size the floor ruled out has no tile: its marks draw the step's flat tint.
+        let tile = shown
+            .map(|shown| {
+                let id = self.tile_id(&format!("{key}{}", size.suffix()), marks, bed)?;
+                self.define_tile(&id, &key_id, shown, marks, bed);
+                Ok::<_, String>(TileRef { id, spacing: shown.spacing })
+            })
+            .transpose()?;
+        // The tint's ink share is the step's measured L* on a black-on-white ground, as a ramp step's.
+        let share = 1.0 - ((full.l_star + 16.0) / 116.0).powi(3);
+        Ok(Paint::Pattern(PatternPaint {
+            tile,
+            key: key_id,
+            flat: lin_mix(ground, ink, share)?,
+            ladder: true,
+            flat_fill: false,
+            ink: outline.to_string(),
+            ink_heavy: full.inverse,
+            named_by_axis: false,
+            series: 0,
+            label: if full.inverse { LabelOn::DarkPattern { ground: ink.to_string() } } else { LabelOn::LightPattern },
+            fallbacks: self.fallbacks.clone(),
+        }))
+    }
+
     fn motif_paint(&self, motif: &str, ink: &str, ground: &str, outline: &str, inverse: bool) -> Result<Paint, String> {
         let tile = &self.lib.motifs[motif];
         self.build(motif, tile, self.nominal_share(tile.coverage, inverse), ink, ground, outline, inverse)
@@ -400,15 +599,34 @@ impl PatternPlan {
     fn build(&self, key: &str, tile: &Tile, ink_share: f64, ink: &str, ground: &str, outline: &str, inverse: bool) -> Result<Paint, String> {
         let (marks_color, bed) = if inverse { (ground, ink) } else { (ink, ground) };
         let flat = lin_mix(ground, ink, ink_share)?;
-        let edge = if inverse { self.ground.clone() } else { outline.to_string() };
-        let id = format!("dbt-pat-{}-{key}-{}-{}", self.chart_key, hex(marks_color)?, hex(bed)?);
-        let key = format!("{}{}-{key}-{}-{}-{}", library::KEY_PREFIX, self.chart_key, hex(marks_color)?, hex(bed)?, hex(outline)?);
-        self.define_key(&key, &id, tile, outline);
+        let id = self.tile_id(key, marks_color, bed)?;
+        let key_id = self.define_key(key, &id, tile, marks_color, bed, outline)?;
+        self.define_tile(&id, &key_id, tile, marks_color, bed);
+        Ok(Paint::Pattern(PatternPaint { tile: Some(TileRef { id, spacing: tile.spacing }), key: key_id, flat, ladder: false, flat_fill: false, ink: outline.to_string(), ink_heavy: inverse, named_by_axis: false, series: 0, label: if inverse { LabelOn::DarkPattern { ground: ink.to_string() } } else { LabelOn::LightPattern }, fallbacks: self.fallbacks.clone() }))
+    }
+
+    /// Registers the legend key of a flat fill the first time it is handed out: a key box in
+    /// `color` under the ink outline, and returns its id.
+    fn define_flat_key(&self, name: &str, color: &str, outline: &str) -> Result<String, String> {
+        let key_id = format!("{}{}-{name}-flat-{}-{}", library::KEY_PREFIX, self.chart_key, hex(color)?, hex(outline)?);
         let mut used = self.used.borrow_mut();
-        if !used.iter().any(|(seen, _)| *seen == id) {
-            used.push((id.clone(), tile_node(&id, tile, marks_color, bed)));
+        if !used.iter().any(|(seen, _)| *seen == key_id) {
+            used.push((key_id.clone(), library::flat_key_node(&key_id, color, outline)));
         }
-        Ok(Paint::Pattern(PatternPaint { tile: id, spacing: tile.spacing, flat, ink: outline.to_string(), edge, key, named_by_axis: false, series: 0, fallbacks: self.fallbacks.clone() }))
+        Ok(key_id)
+    }
+
+    fn tile_id(&self, key: &str, marks_color: &str, bed: &str) -> Result<String, String> {
+        Ok(format!("dbt-pat-{}-{key}-{}-{}", self.chart_key, hex(marks_color)?, hex(bed)?))
+    }
+
+    /// Registers `tile` as the `<pattern>` `id` for the chart's `<defs>` the first time it is
+    /// handed out; `key_id` is the legend key that draws it.
+    fn define_tile(&self, id: &str, key_id: &str, tile: &Tile, marks_color: &str, bed: &str) {
+        let mut used = self.used.borrow_mut();
+        if !used.iter().any(|(seen, _)| seen == id) {
+            used.push((id.to_string(), tile_node(id, key_id, tile, marks_color, bed)));
+        }
     }
 
     /// Forgets the fallbacks counted so far. A chart laid out more than once (facet probes, a
@@ -449,21 +667,25 @@ impl Default for PatternPlan {
             chart_key: String::new(),
             ground: String::new(),
             spec: None,
+            size: Cell::default(),
             used: RefCell::new(Vec::new()),
             fallbacks: Rc::default(),
         }
     }
 }
 
-/// The shared line of a patterned path mark `d` drawn fill-only: a `color` stroke `width` wide,
-/// centered on the edge. `extra` carries the stroke's join, cap, and opacity.
-pub fn edge_node(d: PathData, color: &str, width: f64, extra: &Attrs) -> Node {
-    let attrs = Attrs::new().set("fill", "none").set("stroke", color).num("stroke-width", width);
-    Node::path(Role::Chrome, d, attrs.extend(extra.clone()).set("pointer-events", "none"))
+/// A patterned mark's ink line drawn just inside a canvas gap of `gap` (knocked out of the mark's
+/// own edge by the caller): a stroke `gap + 2 * INNER_RULE_W` wide, clipped to the mark's `shape`,
+/// so `INNER_RULE_W` of it shows beyond the gap.
+pub fn inner_rule_nodes(clip_id: &str, shape: PathData, ink: &str, gap: f64) -> Vec<Node> {
+    let clip = Node::new(Role::Chrome, Attrs::new().set("id", clip_id), Shape::ClipPath(vec![Node::path(Role::Chrome, shape.clone(), Attrs::new())]));
+    let rule = Attrs::new().set("fill", "none").set("stroke", ink).num("stroke-width", gap + 2.0 * INNER_RULE_W).set("clip-path", format!("url(#{clip_id})")).set("pointer-events", "none");
+    vec![clip, Node::path(Role::Chrome, shape, rule)]
 }
 
-/// `tile` as a `<pattern>`: a ground rect, then its marks in `marks_color`.
-pub fn tile_node(id: &str, tile: &Tile, marks_color: &str, ground: &str) -> Node {
+/// `tile` as a `<pattern>`: a ground rect, then its marks in `marks_color`. `key` is the id of
+/// the legend key that draws it (`data-dbt-key`), the paint a tooltip row's swatch reuses.
+pub fn tile_node(id: &str, key: &str, tile: &Tile, marks_color: &str, ground: &str) -> Node {
     let (w, h) = (tile.width, tile.height);
     let mut children = vec![Node::rect(Role::Chrome, (0.0, 0.0, w, h), Attrs::new().set("fill", ground))];
     for mark in &tile.marks {
@@ -481,7 +703,7 @@ pub fn tile_node(id: &str, tile: &Tile, marks_color: &str, ground: &str) -> Node
             )),
         }
     }
-    let attrs = Attrs::new().set("id", id).set("patternUnits", "userSpaceOnUse");
+    let attrs = Attrs::new().set("id", id).set("patternUnits", "userSpaceOnUse").set("data-dbt-key", key);
     Node::new(Role::Chrome, attrs, Shape::Pattern { w, h, transform: None, children })
 }
 
@@ -532,13 +754,15 @@ fn lin_mix(a: &str, b: &str, t: f64) -> Result<String, String> {
 }
 
 impl PatternPlan {
-    /// Registers a legend key's patterns the first time `key_id` is handed out.
-    fn define_key(&self, key_id: &str, tile_id: &str, tile: &Tile, ink: &str) {
+    /// Registers the legend key of `tile` (already defined as `tile_id`) the first time it is
+    /// handed out, and returns the key's id.
+    fn define_key(&self, key: &str, tile_id: &str, tile: &Tile, marks_color: &str, bed: &str, outline: &str) -> Result<String, String> {
+        let key_id = format!("{}{}-{key}-{}-{}-{}", library::KEY_PREFIX, self.chart_key, hex(marks_color)?, hex(bed)?, hex(outline)?);
         let mut used = self.used.borrow_mut();
-        if used.iter().any(|(seen, _)| seen == key_id) {
-            return;
+        if !used.iter().any(|(seen, _)| *seen == key_id) {
+            used.push((key_id.clone(), library::key_node(&key_id, tile_id, tile, outline)));
         }
-        used.push((key_id.to_string(), library::key_node(key_id, tile_id, tile, ink)));
+        Ok(key_id)
     }
 }
 
@@ -567,6 +791,7 @@ mod tests {
                 "blob": {"width": 96, "height": 96, "spacing": 5.6, "key_window": [0, 0], "coverage": 0.35,
                     "marks": [{"path": "M0 0L4 0L4 4Z", "fill": true, "fill_rule": "evenodd"}]}
             },
+            "ladders": {},
             "ramps": {
                 "seq": {"6": [
                     {"width": 60, "height": 60, "spacing": 42.4, "key_window": [0, 0], "coverage": 0.2, "inverse": false, "marks": [], "L_star": 50.0},
@@ -600,6 +825,7 @@ mod tests {
             field: "series".into(),
             scale: Scale::Category,
             motifs: motifs.iter().map(|m| m.to_string()).collect(),
+            ladder: None,
             ramp: None,
             steps: None,
             color: None,
@@ -614,7 +840,7 @@ mod tests {
 
     fn ramp(scale: Scale, name: &str) -> PatternSpec {
         let steps = if scale == Scale::Sequential { 6 } else { 7 };
-        PatternSpec { field: "v".into(), scale, motifs: vec![], ramp: Some(name.into()), steps: Some(steps), color: None, ground: background(), inverse: false }
+        PatternSpec { field: "v".into(), scale, motifs: vec![], ladder: None, ramp: Some(name.into()), steps: Some(steps), color: None, ground: background(), inverse: false }
     }
 
     fn plan(spec: Option<PatternSpec>) -> PatternPlan {
@@ -625,11 +851,197 @@ mod tests {
         print::print(std::slice::from_ref(node))
     }
 
+    const INK: &str = "#222222";
+    const CANVAS: &str = "#f5f1e8";
+
+    fn ladder_spec() -> PatternSpec {
+        PatternSpec { ladder: Some("one-ink".into()), color: Some(INK.into()), ..category(&[], background(), false) }
+    }
+
+    fn ladder_plan() -> PatternPlan {
+        PatternPlan::new("c", Some(ladder_spec()), CANVAS).unwrap()
+    }
+
+    /// The fill slot `slot` of `count` series gives a mark `short_side` px across.
+    fn ladder_fill(plan: &PatternPlan, slot: usize, count: usize, short_side: f64) -> MarkPaint {
+        plan.category(slot, slot, count, INK).unwrap().for_mark(short_side, "none", 0.0)
+    }
+
+    #[test]
+    fn a_ladder_is_solid_at_the_base_and_open_at_the_top() {
+        let plan = ladder_plan();
+        assert_eq!(ladder_fill(&plan, 0, 1, 100.0).fill, INK, "one series is solid");
+        assert_eq!(ladder_fill(&plan, 0, 2, 100.0).fill, INK);
+        let open = ladder_fill(&plan, 1, 2, 100.0);
+        assert_eq!((open.fill.as_str(), open.stroke.as_str(), open.stroke_w), (CANVAS, INK, OUTLINE_W), "open is canvas under the standard outline");
+        for count in [3, 7] {
+            assert_eq!(ladder_fill(&plan, 0, count, 100.0).fill, INK, "{count}: solid at slot 0");
+            assert_eq!(ladder_fill(&plan, count - 1, count, 100.0).fill, CANVAS, "{count}: open at the last slot");
+            let dots = ladder_fill(&plan, count - 2, count, 100.0).fill;
+            assert!(dots.contains(&format!("one-ink{count}-{}-", count - 3)), "{count}: the loose dots are the ladder's last step: {dots}");
+        }
+    }
+
+    #[test]
+    fn a_solid_or_open_legend_key_is_a_box_of_its_color_under_the_ink_outline() {
+        let plan = ladder_plan();
+        for (slot, color) in [(0, INK), (2, CANVAS)] {
+            let swatch = plan.category(slot, slot, 3, INK).unwrap().swatch("none", 0.0);
+            assert!(swatch.fill.starts_with("url(#dbt-key-c-"), "{}", swatch.fill);
+            let defs = printed(&plan.finish(true).unwrap().unwrap());
+            let id = swatch.fill.trim_start_matches("url(#").trim_end_matches(')');
+            let key = defs.split("<pattern ").find(|p| p.contains(&format!("id=\"{id}\""))).expect("the key is defined");
+            assert!(key.contains(&format!("fill=\"{color}\"")) && key.contains(&format!("stroke=\"{INK}\"")), "{key}");
+        }
+    }
+
+    #[test]
+    fn a_ladder_wraps_past_twelve_series_without_a_diagnostic() {
+        let plan = ladder_plan();
+        for slot in 0..13 {
+            ladder_fill(&plan, slot, 13, 100.0);
+        }
+        assert_eq!(ladder_fill(&plan, 12, 13, 100.0).fill, ladder_fill(&plan, 0, 13, 100.0).fill);
+        assert_eq!(ladder_fill(&plan, 13, 14, 100.0).fill, ladder_fill(&plan, 1, 14, 100.0).fill);
+        plan.finish(true).unwrap();
+    }
+
+    #[test]
+    fn a_slot_past_a_short_charts_series_count_is_refused() {
+        let err = ladder_plan().category(5, 5, 3, INK).unwrap_err();
+        assert!(err.contains("slot 5 of 3"), "{err}");
+    }
+
+    /// Whether rung `rung` of the `count`-series ladder ships a tile of `size` (`three_quarter` or `half`).
+    fn ships(count: usize, rung: usize, size: &str) -> bool {
+        let data: serde_json::Value = serde_json::from_str(include_str!("../../data/pattern_motifs.json")).unwrap();
+        data["ladders"]["one-ink"][count.to_string()][rung].get(size).is_some()
+    }
+
+    #[test]
+    fn bar_thickness_picks_one_tile_size_for_every_mark_of_the_chart() {
+        for (thickness, suffix, size) in [(24.0, "", ""), (20.0, "", ""), (14.0, "-s75", "three_quarter"), (12.0, "-s75", "three_quarter"), (8.0, "-s50", "half")] {
+            let plan = ladder_plan();
+            plan.fit_tiles(thickness);
+            for slot in 1..6 {
+                let fill = ladder_fill(&plan, slot, 7, 100.0).fill;
+                if size.is_empty() || ships(7, slot - 1, size) {
+                    let step = format!("one-ink7-{}{suffix}-", slot - 1);
+                    assert!(fill.contains(&step), "{thickness} px, slot {slot}: {fill}");
+                } else {
+                    assert!(fill.starts_with('#'), "{thickness} px, slot {slot}: the floor ruled the {size} tile out, so the tint: {fill}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_legend_key_shows_the_full_tile_whatever_size_the_bars_draw() {
+        let plan = ladder_plan();
+        plan.fit_tiles(8.0);
+        let rung = (0..5).find(|&rung| ships(7, rung, "half")).expect("a step with a half tile");
+        let swatch = plan.category(rung + 1, rung + 1, 7, INK).unwrap().swatch("none", 0.0);
+        assert!(swatch.fill.starts_with(&format!("url(#dbt-key-c-one-ink7-{rung}-")), "{}", swatch.fill);
+        let defs = printed(&plan.finish(true).unwrap().unwrap());
+        assert!(defs.contains(&format!("id=\"dbt-pat-c-one-ink7-{rung}-")), "the key's full tile is defined");
+        assert!(defs.contains(&format!("one-ink7-{rung}-s50-")), "and the bars' half tile");
+        assert!(!defs.contains("patternTransform"), "a tile is never transformed: {defs}");
+    }
+
+    #[test]
+    fn every_ladder_fill_edges_in_the_ink_the_solid_included() {
+        let plan = ladder_plan();
+        for slot in 0..7 {
+            let mark = ladder_fill(&plan, slot, 7, 100.0);
+            assert_eq!(mark.seam(STACK_EDGE_W), (INK, STACK_EDGE_W), "slot {slot}");
+        }
+    }
+
+    #[test]
+    fn a_solid_or_cut_out_ladder_fill_is_ink_heavy_and_the_rest_are_not() {
+        let plan = ladder_plan();
+        // Slot 0 is solid; slots 1 to 3 are tiles cut out of ink; the rest are light.
+        for slot in 0..7 {
+            assert_eq!(ladder_fill(&plan, slot, 7, 100.0).ink_heavy, slot < 4, "slot {slot}");
+        }
+        let inverse = self::plan(Some(category(&["hatch-45"], background(), true)));
+        assert!(inverse.category(0, 0, 3, "#4c78a8").unwrap().for_mark(100.0, "none", 0.0).ink_heavy);
+        let plain = self::plan(Some(category(&["hatch-45"], background(), false)));
+        assert!(!plain.category(0, 0, 3, "#4c78a8").unwrap().for_mark(100.0, "none", 0.0).ink_heavy);
+    }
+
+    #[test]
+    fn an_inverse_tile_of_any_palette_edges_in_the_ink() {
+        let plan = plan(Some(category(&["hatch-45"], background(), true)));
+        let mark = plan.category(0, 0, 3, "#4c78a8").unwrap().for_mark(100.0, "none", 0.0);
+        assert_eq!(mark.seam(STACK_EDGE_W), ("#4c78a8", STACK_EDGE_W));
+    }
+
+    #[test]
+    fn a_ladder_mark_under_the_repeat_threshold_draws_its_steps_flat_tint() {
+        let data: serde_json::Value = serde_json::from_str(include_str!("../../data/pattern_motifs.json")).unwrap();
+        let steps = data["ladders"]["one-ink"]["7"].as_array().unwrap();
+        let plan = ladder_plan();
+        for (rung, step) in steps.iter().enumerate() {
+            let mark = ladder_fill(&plan, rung + 1, 7, 1.0);
+            let tint = lightness(&mark.fill).unwrap_or_else(|e| panic!("slot {}: {} is no flat color: {e}", rung + 1, mark.fill));
+            let l_star = step["L_star"].as_f64().unwrap();
+            assert!((tint - l_star).abs() <= 8.0, "slot {}: tint L* {tint:.1} vs step {l_star}", rung + 1);
+            assert_eq!(mark.stroke, INK, "the outline stays");
+        }
+    }
+
+    #[test]
+    fn two_ladder_series_falling_back_to_the_same_tint_raise_the_error() {
+        let plan = ladder_plan();
+        // Slots 1 and 13 of fourteen series are one step of the twelve-series ladder.
+        ladder_fill(&plan, 1, 14, 1.0);
+        ladder_fill(&plan, 13, 14, 1.0);
+        let err = plan.finish(true).unwrap_err();
+        assert_eq!(err.code, "ERR-PATTERN-FALLBACK-FLAT");
+    }
+
+    #[test]
+    fn a_step_with_no_small_tile_draws_its_tint_where_the_chart_needs_one() {
+        let data: serde_json::Value = serde_json::from_str(include_str!("../../data/pattern_motifs.json")).unwrap();
+        let (count, rung) = ["3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]
+            .iter()
+            .find_map(|count| {
+                let steps = data["ladders"]["one-ink"][count].as_array().unwrap();
+                steps.iter().position(|step| step.get("half").is_none()).map(|rung| (count.parse::<usize>().unwrap(), rung))
+            })
+            .expect("a step whose half tile would break the stroke floor");
+        let plan = ladder_plan();
+        plan.fit_tiles(8.0);
+        let mark = ladder_fill(&plan, rung + 1, count, 100.0);
+        assert!(mark.fill.starts_with('#'), "{count} series, step {rung}: no half tile, so the tint: {}", mark.fill);
+        assert!(!mark.anchored);
+    }
+
+    #[test]
+    fn a_ladder_tile_is_cut_from_each_bars_own_anchor_and_other_palettes_are_not() {
+        assert!(ladder_fill(&ladder_plan(), 3, 7, 100.0).anchored);
+        for slot in [0, 6] {
+            assert!(!ladder_fill(&ladder_plan(), slot, 7, 100.0).anchored, "a flat fill has nothing to cut");
+        }
+        let plain = plan(Some(category(&["hatch-45"], background(), false)));
+        assert!(!plain.category(0, 0, 3, "#4c78a8").unwrap().for_mark(100.0, "none", 0.0).anchored);
+    }
+
+    #[test]
+    fn a_ladder_takes_no_motifs_no_inverse_and_must_exist() {
+        let build = |spec| PatternPlan::new("c", Some(spec), CANVAS).err();
+        assert!(build(PatternSpec { motifs: vec!["hatch-45".into()], ..ladder_spec() }).is_some());
+        assert!(build(PatternSpec { inverse: true, ..ladder_spec() }).is_some());
+        let err = build(PatternSpec { ladder: Some("nope".into()), ..ladder_spec() }).unwrap();
+        assert!(err.contains("unknown ladder"), "{err}");
+    }
+
     #[test]
     fn a_ramp_steps_flat_tint_has_the_lightness_of_its_pattern() {
         let data: serde_json::Value = serde_json::from_str(include_str!("../../data/pattern_motifs.json")).unwrap();
         for (name, count) in [("hatch-crosshatch", 6), ("hatch-crosshatch", 9), ("dots", 6), ("dots", 9), ("hatch-dots", 9)] {
-            let spec = PatternSpec { field: "v".into(), scale: Scale::Sequential, motifs: vec![], ramp: Some(name.into()), steps: Some(count), color: None, ground: background(), inverse: false };
+            let spec = PatternSpec { field: "v".into(), scale: Scale::Sequential, motifs: vec![], ladder: None, ramp: Some(name.into()), steps: Some(count), color: None, ground: background(), inverse: false };
             let plan = PatternPlan::new("c", Some(spec), "#ffffff").unwrap();
             let mut previous = f64::INFINITY;
             for (i, step) in data["ramps"][name][count.to_string()].as_array().unwrap().iter().enumerate() {
@@ -647,18 +1059,19 @@ mod tests {
     #[test]
     fn a_tile_draws_its_ground_then_each_kind_of_mark() {
         let lib = library();
-        let hatch = tile_node("p", &lib.motifs["hatch-45"], "#f00", "#fff");
+        let hatch = tile_node("p", "k", &lib.motifs["hatch-45"], "#f00", "#fff");
         assert!(matches!(hatch.shape, Shape::Pattern { w: 8.0, h: 8.0, transform: None, .. }));
+        assert_eq!(hatch.attrs.get("data-dbt-key"), Some("k"), "the tile names the key that draws it");
         let [ground, stroke] = hatch.children() else { panic!("a ground and one stroke") };
         assert_eq!((ground.bounds(), ground.attrs.get("fill")), (Some(scene::Bounds { x1: 0.0, y1: 0.0, x2: 8.0, y2: 8.0 }), Some("#fff")));
         assert_eq!(stroke.shape, Shape::Path(PathData::new().move_to(2.0, -2.0).line_to(-2.0, 2.0)));
         assert_eq!((stroke.attrs.get("stroke"), stroke.attrs.get_num("stroke-width")), (Some("#f00"), Some(1.98)));
 
-        let dots = tile_node("p", &lib.motifs["dots"], "#f00", "#fff");
+        let dots = tile_node("p", "k", &lib.motifs["dots"], "#f00", "#fff");
         let circles: Vec<_> = dots.children()[1..].iter().map(|c| c.shape.clone()).collect();
         assert_eq!(circles, [Shape::Circle { cx: 0.0, cy: 0.0, r: 1.335 }, Shape::Circle { cx: 2.0, cy: 4.0, r: 1.335 }]);
 
-        let blob = tile_node("p", &lib.motifs["blob"], "#f00", "#fff");
+        let blob = tile_node("p", "k", &lib.motifs["blob"], "#f00", "#fff");
         assert_eq!(blob.children()[1].shape, Shape::Path(PathData::new().move_to(0.0, 0.0).line_to(4.0, 0.0).line_to(4.0, 4.0).close()));
         assert_eq!(blob.children()[1].attrs.get("fill-rule"), Some("evenodd"));
     }
@@ -666,7 +1079,7 @@ mod tests {
     #[test]
     fn the_hue_variant_inks_the_series_color_on_the_canvas() {
         let plan = plan(Some(category(&["hatch-45", "dots"], background(), false)));
-        let paint = plan.category(0, "#4c78a8").unwrap();
+        let paint = plan.category(0, 0, 3, "#4c78a8").unwrap();
         let mark = paint.for_mark(100.0, "none", 0.0);
         assert_eq!(mark.fill, format!("url(#dbt-pat-{}-hatch-45-4c78a8-ffffff)", crate::contract::safe_svg_id("c 1")));
         assert_eq!((mark.stroke.as_str(), mark.stroke_w), ("#4c78a8", 1.0));
@@ -678,7 +1091,7 @@ mod tests {
     #[test]
     fn the_tint_ground_is_a_dark_shade_on_a_light_tint() {
         let plan = plan(Some(category(&["hatch-45"], Ground::Named("tint".into()), false)));
-        plan.category(0, "#4c78a8").unwrap();
+        plan.category(0, 0, 3, "#4c78a8").unwrap();
         let defs = printed(&plan.finish(true).unwrap().unwrap());
         assert!(defs.contains("fill=\"#dbe4ee\"") && defs.contains("stroke=\"#2a425c\""), "{defs}");
     }
@@ -686,11 +1099,11 @@ mod tests {
     #[test]
     fn inverse_swaps_ink_and_ground_but_outlines_in_the_ink() {
         let plan = plan(Some(category(&["hatch-45"], background(), true)));
-        let mark = plan.category(0, "#4c78a8").unwrap().for_mark(100.0, "none", 0.0);
+        let mark = plan.category(0, 0, 3, "#4c78a8").unwrap().for_mark(100.0, "none", 0.0);
         assert_eq!(mark.stroke, "#4c78a8");
         let defs = printed(&plan.finish(true).unwrap().unwrap());
         assert!(defs.contains("height=\"8\" fill=\"#4c78a8\"/>") && defs.contains("stroke=\"#ffffff\""), "{defs}");
-        let flat = plan.category(0, "#4c78a8").unwrap();
+        let flat = plan.category(0, 0, 3, "#4c78a8").unwrap();
         assert_eq!(flat.color(), "#b1bdd1", "an inverse tint runs from the ink toward the ground");
     }
 
@@ -698,9 +1111,9 @@ mod tests {
     fn slots_wrap_and_identical_tiles_are_defined_once() {
         let plan = plan(Some(category(&["hatch-45", "dots"], background(), false)));
         for slot in [0, 2, 0] {
-            plan.category(slot, "#4c78a8").unwrap();
+            plan.category(slot, slot, 3, "#4c78a8").unwrap();
         }
-        plan.category(1, "#4c78a8").unwrap();
+        plan.category(1, 1, 3, "#4c78a8").unwrap();
         let defs = printed(&plan.finish(true).unwrap().unwrap());
         assert_eq!(defs.matches(" id=\"dbt-pat-").count(), 2, "{defs}");
         assert_eq!(defs.matches("<pattern width=\"16\" height=\"12\"").count(), 2, "one key per tile: {defs}");
@@ -709,7 +1122,7 @@ mod tests {
     #[test]
     fn a_dither_antialiases_and_draws_its_key_at_full_scale() {
         let plan = plan(Some(category(&["dither"], background(), false)));
-        let paint = plan.category(0, "#4c78a8").unwrap();
+        let paint = plan.category(0, 0, 3, "#4c78a8").unwrap();
         let defs = printed(&plan.finish(true).unwrap().unwrap());
         assert!(defs.contains("fill-rule=\"nonzero\""), "{defs}");
         assert!(!defs.contains("crispEdges"), "crispEdges snaps each pixel to a whole device pixel, so a scaled board draws the tile nearly solid: {defs}");
@@ -719,8 +1132,8 @@ mod tests {
     #[test]
     fn a_swatch_is_the_slots_key_whose_pattern_crops_the_tile_under_an_ink_outline() {
         let plan = plan(Some(category(&["hatch-45", "dither"], background(), false)));
-        let tiled = plan.category(0, "#4c78a8").unwrap().swatch("none", 0.0);
-        let dither = plan.category(1, "#4c78a8").unwrap().swatch("none", 0.0);
+        let tiled = plan.category(0, 0, 3, "#4c78a8").unwrap().swatch("none", 0.0);
+        let dither = plan.category(1, 1, 3, "#4c78a8").unwrap().swatch("none", 0.0);
         let key = format!("dbt-key-{}-hatch-45-4c78a8-ffffff-4c78a8", crate::contract::safe_svg_id("c 1"));
         assert_eq!((tiled.fill.as_str(), tiled.stroke.as_str()), (format!("url(#{key})").as_str(), "#4c78a8"));
         assert!(dither.fill.starts_with("url(#dbt-key-"), "every slot's key follows the same size and outline");
@@ -732,7 +1145,7 @@ mod tests {
     #[test]
     fn a_mark_under_one_and_a_quarter_repeats_draws_the_tint_with_the_outline() {
         let plan = plan(Some(category(&["hatch-45"], background(), false)));
-        let paint = plan.category(0, "#4c78a8").unwrap();
+        let paint = plan.category(0, 0, 3, "#4c78a8").unwrap();
         let spacing = 5.657;
         assert!(paint.for_mark(spacing * 1.25, "none", 0.0).fill.starts_with("url(#"));
         let small = paint.for_mark(spacing * 1.25 - 0.01, "#000", 2.0);
@@ -741,9 +1154,18 @@ mod tests {
     }
 
     #[test]
+    fn a_label_follows_the_tile_and_a_flat_tint_keeps_the_plain_color_rule() {
+        let plan = plan(Some(category(&["hatch-45"], background(), false)));
+        let paint = plan.category(0, 0, 3, "#4c78a8").unwrap();
+        let spacing = 5.657;
+        assert_eq!(paint.for_mark(spacing * 1.25, "none", 0.0).label_on, LabelOn::LightPattern);
+        assert_eq!(paint.for_mark(spacing * 1.25 - 0.01, "none", 0.0).label_on, LabelOn::Color);
+    }
+
+    #[test]
     fn a_plain_color_keeps_the_stroke_it_was_given() {
         let mark = Paint::Color("#abc".into()).for_mark(1.0, "#fff", 1.5);
-        assert_eq!(mark, MarkPaint { fill: "#abc".into(), stroke: "#fff".into(), stroke_w: 1.5, ink: None, edge: "#fff".into() });
+        assert_eq!(mark, MarkPaint { fill: "#abc".into(), stroke: "#fff".into(), stroke_w: 1.5, ink: None, ink_heavy: false, anchored: false, label_on: LabelOn::Color });
     }
 
     #[test]
@@ -751,7 +1173,7 @@ mod tests {
         let mut spec = category(&["hatch-45"], background(), false);
         spec.color = Some("#2b4c7e".into());
         let plan = plan(Some(spec));
-        let mark = plan.category(0, "#e45756").unwrap().for_mark(100.0, "none", 0.0);
+        let mark = plan.category(0, 0, 3, "#e45756").unwrap().for_mark(100.0, "none", 0.0);
         assert_eq!(mark.stroke, "#2b4c7e");
         assert!(printed(&plan.finish(true).unwrap().unwrap()).contains("stroke=\"#2b4c7e\""));
     }
@@ -760,15 +1182,15 @@ mod tests {
     fn a_color_ground_lies_under_every_series_and_a_palette_ground_under_its_slot() {
         let spec = category(&["hatch-45"], Ground::Named("#fff3d6".into()), false);
         let flat = plan(Some(spec));
-        flat.category(0, "#4c78a8").unwrap();
-        flat.category(1, "#e45756").unwrap();
+        flat.category(0, 0, 3, "#4c78a8").unwrap();
+        flat.category(1, 1, 3, "#e45756").unwrap();
         let defs = printed(&flat.finish(true).unwrap().unwrap());
         assert_eq!(defs.matches("height=\"8\" fill=\"#fff3d6\"/>").count(), 2, "{defs}");
 
         let slots = Ground::Slots(vec!["#dbe4ee".into(), "#f0dede".into()]);
         let by_slot = plan(Some(category(&["hatch-45"], slots, false)));
-        by_slot.category(0, "#4c78a8").unwrap();
-        by_slot.category(1, "#4c78a8").unwrap();
+        by_slot.category(0, 0, 3, "#4c78a8").unwrap();
+        by_slot.category(1, 1, 3, "#4c78a8").unwrap();
         let defs = printed(&by_slot.finish(true).unwrap().unwrap());
         assert!(defs.contains("fill=\"#dbe4ee\"") && defs.contains("fill=\"#f0dede\""), "{defs}");
     }
@@ -781,12 +1203,12 @@ mod tests {
         let plan = plan(Some(spec));
         // The tile id ends in its marks' color and its bed: `...-<marks>-<bed>`.
         let motif = |slot: usize| {
-            let Paint::Pattern(pattern) = plan.category(slot, "#000000").unwrap() else { unreachable!() };
-            format!("#{}", pattern.tile.rsplit('-').nth(1).unwrap())
+            let Paint::Pattern(pattern) = plan.category(slot, slot, 3, "#000000").unwrap() else { unreachable!() };
+            format!("#{}", pattern.tile.unwrap().id.rsplit('-').nth(1).unwrap())
         };
         for slot in 0..3 {
-            let paint = plan.category(slot, "#000000").unwrap().for_mark(100.0, "none", 0.0);
-            assert_eq!((paint.stroke.as_str(), paint.edge.as_str()), ("#2b4c7e", "#2b4c7e"), "slot {slot}: the line stays the pattern color");
+            let paint = plan.category(slot, slot, 3, "#000000").unwrap().for_mark(100.0, "none", 0.0);
+            assert_eq!(paint.seam(STACK_EDGE_W), ("#2b4c7e", STACK_EDGE_W), "slot {slot}: the line stays the pattern color");
         }
         assert_eq!(motif(1), "#2b4c7e", "a light ground keeps the pattern color");
         for slot in [0, 2] {
@@ -802,14 +1224,14 @@ mod tests {
         let mut spec = category(&["hatch-45"], background(), false);
         spec.color = Some("#ffffff".into());
         let plan = PatternPlan::with_library(library(), "c 1", Some(spec), "#ffffff").unwrap();
-        assert_eq!(plan.category(0, "#000000").unwrap().for_mark(100.0, "none", 0.0).stroke, "#ffffff");
+        assert_eq!(plan.category(0, 0, 3, "#000000").unwrap().for_mark(100.0, "none", 0.0).stroke, "#ffffff");
     }
 
     #[test]
     fn a_ground_palette_shorter_than_the_series_is_an_error() {
         let slots = Ground::Slots(vec!["#dbe4ee".into()]);
         let plan = plan(Some(category(&["hatch-45"], slots, false)));
-        let err = plan.category(1, "#4c78a8").unwrap_err();
+        let err = plan.category(1, 1, 3, "#4c78a8").unwrap_err();
         assert!(err.contains("fewer than the series count"), "{err}");
     }
 
@@ -831,7 +1253,7 @@ mod tests {
         let missing = PatternPlan::from_resolved(&serde_json::json!({"id": "c", "pattern": block, "background": "#fafafa"})).err().unwrap();
         assert!(missing.contains("`canvas`"), "{missing}");
         let plan = PatternPlan::from_resolved(&serde_json::json!({"id": "c", "pattern": block, "background": "transparent", "canvas": "#f4efe6"})).unwrap();
-        plan.category(0, "#4c78a8").unwrap();
+        plan.category(0, 0, 3, "#4c78a8").unwrap();
         assert!(printed(&plan.finish(true).unwrap().unwrap()).contains("height=\"8\" fill=\"#f4efe6\"/>"));
     }
 
@@ -839,7 +1261,7 @@ mod tests {
     fn no_pattern_means_the_plain_hue() {
         let plan = plan(None);
         assert!(!plan.is_active());
-        assert_eq!(plan.category(3, "#abc").unwrap(), Paint::Color("#abc".into()));
+        assert_eq!(plan.category(3, 3, 3, "#abc").unwrap(), Paint::Color("#abc".into()));
         assert!(plan.finish(true).unwrap().is_none());
     }
 

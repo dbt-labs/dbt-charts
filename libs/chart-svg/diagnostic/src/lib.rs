@@ -114,8 +114,28 @@ pub struct ModelPath(pub Vec<String>);
 
 impl fmt::Display for ModelPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0.join("."))
+        f.write_str(&dotted(&self.0))
     }
+}
+
+/// An authored path from its segments, as Python's `join_path` writes it: a segment is bare
+/// (`rows.0`) unless it is empty or holds `.`, `[`, `]`, `"`, `\`, a space or a control
+/// character; then it is a JSON string in brackets (`tabs["Q1.5 / Q2"]`).
+pub fn dotted<S: AsRef<str>>(segments: &[S]) -> String {
+    let mut out = String::new();
+    for segment in segments.iter().map(AsRef::as_ref) {
+        if !segment.is_empty() && !segment.chars().any(|c| matches!(c, '.' | '[' | ']' | '"' | '\\') || c <= ' ') {
+            if !out.is_empty() {
+                out.push('.');
+            }
+            out.push_str(segment);
+        } else {
+            out.push('[');
+            out.push_str(&Value::String(segment.to_owned()).to_string());
+            out.push(']');
+        }
+    }
+    out
 }
 
 /// The level comes from the code; `range` and `path` say where, and `related`

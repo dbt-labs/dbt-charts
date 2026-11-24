@@ -182,7 +182,9 @@ fn rule_keys(c: &Constraint) -> Vec<&'static str> {
     for w in c.when {
         keys.push(match w {
             Condition::IsSet(key) | Condition::IsList(key) => key,
-            Condition::ValueIn { key, .. } | Condition::IsCall { key, .. } => key,
+            Condition::ValueIn { key, .. }
+            | Condition::IsCall { key, .. }
+            | Condition::ItemsSet { key, .. } => key,
         });
     }
     keys

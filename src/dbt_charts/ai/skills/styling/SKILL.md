@@ -210,7 +210,7 @@ A color request ("make Created orange") pins `category.<hue>` under `style.chart
 - `value` ({font: {}, format, compact: {spec, threshold}, affix: {font: {}}, glyph: {up, down, neutral, font: {}, arrow: {}}}): KPI headline value slot
 - `label` ({font: {}, overflow}): KPI card label slot
 - `support` ({font: {}, format, tone, glyph: {up, down, neutral, font: {}}}): KPI support row slot
-- `background` (text|{column, scale: {palette, domain, min, max, nice, null_color, hinge, arm_mode}}): Card background color, or a {column, scale} gradient by value
+- `background` (text|{column, scale: {palette, domain, min, max, nice, null_color, hinge, arm_mode}}): Card fill, or a {column, scale} gradient; defaults to charts.background
 - `conditional` (map of list of mapping): Rules that restyle the card by value, keyed by column name
 Also exist: `preferred_width`, `padding`, `font`, `min_card_width`, `default_height`, `border`, `content_padding`.
 

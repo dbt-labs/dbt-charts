@@ -541,6 +541,12 @@ pub(crate) fn first_appearance(rows: &[Map<String, Value>], field: &str) -> Vec<
     rows.iter().map(|row| row_str(row, field)).filter(|v| seen.insert(v.clone())).collect()
 }
 
+/// The sort an axis's bands take: none on a date axis, which keeps its calendar order so the
+/// ladder's labels stay under the cells they name; a category axis takes the authored sort.
+pub(crate) fn axis_sort(sort: Option<&ChartSort>, grain: Option<TimeUnit>) -> Option<&ChartSort> {
+    if grain.is_some() { None } else { sort }
+}
+
 /// A narrowed panel's domain for `field`: the bands its own rows hold, in
 /// first-appearance order, or ranked by the authored sort over those rows
 /// (Vega sorts each panel's scale natively; only a shared domain is pinned).
@@ -1170,12 +1176,10 @@ fn render_facet(
 
     // ── Which scales FacetFeature frees per panel ─────────────────────────
     let x_first = first_appearance(&rows, &r.x);
-    // `chart.sort` reaches both dimensions identically (`_write_dimension_sort`).
-    let sorted = |field: &str, base: Vec<String>| {
-        dimension_sort_domain(&rows, field, base, r.sort.as_ref(), SortAggregate::Min, "heatmap")
-    };
-    let x_domain = sorted(&r.x, x_first)?;
-    let y_shared = sorted(&r.y, first_appearance(&rows, &r.y))?;
+    let x_sort = axis_sort(r.sort.as_ref(), x_grain);
+    let x_domain = dimension_sort_domain(&rows, &r.x, x_first, x_sort, SortAggregate::Min, "heatmap")?;
+    let y_shared =
+        dimension_sort_domain(&rows, &r.y, first_appearance(&rows, &r.y), r.sort.as_ref(), SortAggregate::Min, "heatmap")?;
     if x_domain.is_empty() || y_shared.is_empty() {
         return Err("heatmap: multiples with no x or y values".into());
     }
@@ -1327,7 +1331,7 @@ fn render_facet(
         .iter()
         .map(|rows| {
             let domain = if x_narrowed {
-                narrowed_domain(rows, &r.x, r.sort.as_ref())?
+                narrowed_domain(rows, &r.x, x_sort)?
             } else {
                 x_domain.clone()
             };

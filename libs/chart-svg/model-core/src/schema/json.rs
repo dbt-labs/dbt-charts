@@ -268,6 +268,23 @@ fn condition(c: &Condition) -> J {
     match c {
         Condition::IsSet(k) => is_set(k, false, false),
         Condition::IsList(k) => at(k, json!({"type": "array"}), true),
+        Condition::ItemsSet {
+            key,
+            item_keys,
+            negate,
+        } => {
+            let sets: Vec<J> = item_keys.iter().map(|k| is_set(k, false, false)).collect();
+            let found = at(
+                key,
+                json!({"type": "array", "contains": {"anyOf": sets}}),
+                true,
+            );
+            if *negate {
+                json!({"not": found})
+            } else {
+                found
+            }
+        }
         Condition::ValueIn {
             key,
             values,

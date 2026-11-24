@@ -17,6 +17,7 @@ from dbt_charts.agent_api.examples import (
     list_examples,
     search_examples,
 )
+from dbt_charts.agent_api.validate import validate
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import raise_on_dashboard_failure
 
@@ -185,6 +186,17 @@ def test_specimen_renders_standalone(
     finally:
         session.close()
     assert output
+
+
+@pytest.mark.parametrize("specimen", SPECIMENS, ids=lambda p: str(p.name))
+def test_specimen_validates_without_warnings(
+    specimen: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """Agents copy a specimen key for key, so a key that restates a default
+    is a habit the specimen teaches."""
+    result = validate(specimen, project=local_project(specimen.parent))
+    assert result.success, result.errors
+    assert [w.message for w in result.warnings] == []
 
 
 class TestSpecimenValidation:

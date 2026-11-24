@@ -164,7 +164,9 @@ impl Schema {
                     .copied()
                     .chain(c.when.iter().map(|w| match w {
                         Condition::IsSet(k) | Condition::IsList(k) => *k,
-                        Condition::ValueIn { key, .. } | Condition::IsCall { key, .. } => key,
+                        Condition::ValueIn { key, .. }
+                        | Condition::IsCall { key, .. }
+                        | Condition::ItemsSet { key, .. } => key,
                     }));
                 for k in keys {
                     if !self.key_exists(m, k) {

@@ -974,8 +974,6 @@ def _render_layout(
             list(layout.tab_titles),
             list(layout.tab_slugs),
             layout.tab_variable,
-            layout.default_tab or 0,
-            layout.tab_position or "top",
             background,
             resolved_style=resolved_style,
             render_cache=render_cache,

@@ -204,22 +204,21 @@ rows:
 
       - title: "TABS: Organized views"
         tabs:
-          items:
-            - title: "Tab A"
-              text: "Content for **Tab A** - click the tabs above!"
-              style:
-                background: lavender
-                padding: "12px"
-            - title: "Tab B"
-              text: "Content for **Tab B** - tabs hide content until needed"
-              style:
-                background: thistle
-                padding: "12px"
-            - title: "Tab C"
-              text: "Content for **Tab C** - great for reducing clutter"
-              style:
-                background: plum
-                padding: "12px"
+          "Tab A":
+            text: "Content for **Tab A** - click the tabs above!"
+            style:
+              background: lavender
+              padding: "12px"
+          "Tab B":
+            text: "Content for **Tab B** - tabs hide content until needed"
+            style:
+              background: thistle
+              padding: "12px"
+          "Tab C":
+            text: "Content for **Tab C** - great for reducing clutter"
+            style:
+              background: plum
+              padding: "12px"
 
   - text: |
       As you can see, you can nest simple boards to create complex layouts. You can even import entire files and use them as board items.

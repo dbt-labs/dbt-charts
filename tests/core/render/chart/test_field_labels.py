@@ -106,6 +106,37 @@ def test_endpoint_rail_names_base_and_layer_by_field_label() -> None:
     assert ">revenue<" not in svg
 
 
+_TICKETS = [
+    {"month": "2026-01-01", "on_hold": 3, "closed": 10, "in_progress": 5},
+    {"month": "2026-02-01", "on_hold": 4, "closed": 12, "in_progress": 6},
+    {"month": "2026-03-01", "on_hold": 2, "closed": 14, "in_progress": 7},
+]
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_bar_endpoint_rail_names_wide_measures_as_the_legend_does(
+    orientation: str,
+) -> None:
+    svg = _render(
+        {
+            "type": "bar",
+            "x": "month",
+            "y": ["in_progress", "on_hold", "closed"],
+            "field_labels": {"in_progress": "In progress (custom)"},
+            "style": {
+                "orientation": orientation,
+                "stack": "zero",
+                "key": {"type": "direct"},
+            },
+        },
+        _TICKETS,
+    ).output
+    painted = re.findall(r">([^<>]+)<", svg)
+    assert any(text.endswith("In progress (custom)") for text in painted), painted
+    assert any(text.endswith("On hold") for text in painted), painted
+    assert not [t for t in painted if re.search(r"in_progress|on_hold|closed", t)]
+
+
 @pytest.mark.parametrize(
     ("chart", "labels", "values"),
     [

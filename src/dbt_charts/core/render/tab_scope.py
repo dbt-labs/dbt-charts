@@ -16,6 +16,8 @@ from dbt_charts.core.compile.models.board.normalized import (
     LayoutItem,
     VariableValues,
 )
+from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
+from dbt_charts.core.render.conditions import evaluate_visible
 from dbt_charts.core.render.sizing import resolve_active_tab_index
 
 
@@ -39,7 +41,6 @@ def _scope_layout(layout: Layout, variables: VariableValues) -> Layout:
             len(layout.items),
             layout.tab_variable,
             layout.tab_slugs,
-            layout.default_tab,
             variables,
         )
         if narrowed
@@ -75,3 +76,92 @@ def _emptied(tab: LayoutItem) -> LayoutItem:
         }
     )
     return tab.model_copy(update={"board": board})
+
+
+def drop_hidden_tabs(
+    board: Board,
+    variables: VariableValues,
+    results: ChartDataProvider,
+    *,
+    every_tab: bool,
+) -> tuple[Board, VariableValues]:
+    """``board`` without the tabs whose ``visible:`` is falsy, and ``variables``
+    with each selection of a hidden default moved to the first drawn tab.
+
+    A ``{query, column}`` probe reads ``results``. Only a drawn tab bar reads
+    one: under a closed tab nothing is dropped, unless ``every_tab`` (a format
+    that prints every tab) draws them all. A probe whose query was not
+    collected raises.
+    """
+    selected = dict(variables)
+    layout = _drop_hidden(board.layout, variables, selected, results, every_tab)
+    if layout is board.layout:
+        return board, variables
+    return board.model_copy(update={"layout": layout}), selected
+
+
+def _drop_hidden(
+    layout: Layout,
+    variables: VariableValues,
+    selected: VariableValues,
+    results: ChartDataProvider,
+    every_tab: bool,
+) -> Layout:
+    if layout.type != "tabs":
+        items = [
+            _dropped(item, variables, selected, results, every_tab)
+            for item in layout.items
+        ]
+        if all(new is old for new, old in zip(items, layout.items, strict=True)):
+            return layout
+        return layout.model_copy(update={"items": items})
+    titles, slugs, variable = layout.tab_titles, layout.tab_slugs, layout.tab_variable
+    if titles is None or slugs is None or variable is None:
+        raise AssertionError("a tabs layout carries titles, slugs and a variable")
+    kept = [
+        index
+        for index, item in enumerate(layout.items)
+        if evaluate_visible(item.visible, variables, results)
+    ]
+    value = variables.get(variable)
+    # The first tab's own slug is the default, which falls back to the first
+    # drawn tab; any other hidden slug stays selected and is refused as no tab.
+    if kept and value and str(value) == slugs[0] and 0 not in kept:
+        selected[variable] = slugs[kept[0]]
+    chosen = selected.get(variable)
+    opened = slugs.index(str(chosen)) if chosen and str(chosen) in slugs else 0
+    if opened not in kept and kept:
+        opened = kept[0]
+    items = [
+        _dropped(layout.items[index], variables, selected, results, every_tab)
+        if every_tab or index == opened
+        else layout.items[index]
+        for index in kept
+    ]
+    if len(kept) == len(layout.items) and all(
+        new is old for new, old in zip(items, layout.items, strict=True)
+    ):
+        return layout
+    return layout.model_copy(
+        update={
+            "items": items,
+            "tab_titles": [titles[index] for index in kept],
+            "tab_slugs": [slugs[index] for index in kept],
+        }
+    )
+
+
+def _dropped(
+    item: LayoutItem,
+    variables: VariableValues,
+    selected: VariableValues,
+    results: ChartDataProvider,
+    every_tab: bool,
+) -> LayoutItem:
+    if item.board is None:
+        return item
+    layout = _drop_hidden(item.board.layout, variables, selected, results, every_tab)
+    if layout is item.board.layout:
+        return item
+    board = item.board.model_copy(update={"layout": layout})
+    return item.model_copy(update={"board": board})

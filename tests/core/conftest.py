@@ -123,6 +123,7 @@ def _bake_axes(chart_type: str, x_type: str, y_type: str):
         x_type,
         y_type,
         AxisOverrides(),
+        True,
     )
     return tuple(
         build_resolved_axis(

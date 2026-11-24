@@ -68,7 +68,7 @@ def _tab(**fields: Any) -> dict[str, Any]:
     [
         pytest.param(
             {"tabs": {"items": [_tab(style={"muted": "#777777"}, rows=["c1"])]}},
-            ("tabs", "items", 0),
+            ("tabs", "A"),
             id="tab",
         ),
         pytest.param(
@@ -83,7 +83,7 @@ def _tab(**fields: Any) -> dict[str, Any]:
                     ]
                 }
             },
-            ("tabs", "items", 0, "tabs", "items", 0),
+            ("tabs", "A", "tabs", "A"),
             id="nested-tab",
         ),
         pytest.param(
@@ -92,7 +92,7 @@ def _tab(**fields: Any) -> dict[str, Any]:
                     {"tabs": {"items": [_tab(style={"muted": "#777777"}, rows=["c1"])]}}
                 ]
             },
-            ("rows", 0, "tabs", "items", 0),
+            ("rows", 0, "tabs", "A"),
             id="tab-in-nested-board",
         ),
         pytest.param(
@@ -103,7 +103,7 @@ def _tab(**fields: Any) -> dict[str, Any]:
                     ]
                 }
             },
-            ("tabs", "items", 0, "rows", 0),
+            ("tabs", "A", "rows", 0),
             id="nested-board-in-tab",
         ),
     ],

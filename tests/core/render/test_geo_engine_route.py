@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import io
+from pathlib import Path
+
 import pytest
 import vl_convert
 
+from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile import compile
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_CHART_PAINTED_NO_MARKS,
     ERR_GEO_SOURCE_UNAVAILABLE,
@@ -12,10 +17,12 @@ from dbt_charts.core.diagnostics.codes_render import (
     WARN_POINT_MAP_NEGATIVE_SIZE_VALUES,
     WARN_POINT_MAP_OUT_OF_PROJECTION,
 )
-from dbt_charts.core.render import layout_sizing
+from dbt_charts.core.execute.env import build_exec_env
+from dbt_charts.core.render import layout_sizing, render
 from dbt_charts.core.render.geo.loader import geometry_fetcher_scope
 from dbt_charts.core.render.render_result import RenderResult
 
+from ..._run import Run
 from .._svg_render import render_board_svg_result
 
 _POPULATION = """
@@ -221,3 +228,72 @@ def test_a_titled_map_beside_a_subtitled_chart_shares_its_row_title_band(
     result = render_board_svg_result(board)
 
     assert not result.chart_errors
+
+
+_BIG_ISLAND = """
+  q:
+    type: values
+    rows:
+      - {lat: 19.7, lng: -155.1}
+      - {lat: 19.6, lng: -155.9}
+      - {lat: 19.9, lng: -155.6}
+  bars:
+    type: values
+    rows:
+      - {k: a, n: 1}
+      - {k: b, n: 2}
+"""
+
+_ZOOMED = (
+    "    projection:\n      type: mercator\n"
+    "      center: [-155.5, 19.6]\n      scale: 18000\n"
+)
+
+
+# resvg drops a clipped layer whose geometry spans more than about 10,000 px once a
+# `cols:` row nests it a viewport deeper, so these zooms leave far-off states and a
+# far-off point well past that span.
+@pytest.mark.parametrize(
+    ("queries", "chart", "min_inked_share"),
+    [
+        # The island fills much of the plot; three points alone ink a few dozen pixels.
+        pytest.param(
+            _BIG_ISLAND,
+            "type: point_map\n    latitude: lat\n    longitude: lng\n"
+            f"{_ZOOMED}    basemap:\n      source: us-states\n",
+            0.1,
+            id="placed-basemap",
+        ),
+        pytest.param(
+            _BIG_ISLAND.replace(
+                "{lat: 19.9, lng: -155.6}",
+                "{lat: 19.9, lng: -155.6}\n      - {lat: 44.0, lng: -70.0}",
+            ),
+            f"type: point_map\n    latitude: lat\n    longitude: lng\n{_ZOOMED}",
+            0.0,
+            id="off-view-point",
+        ),
+    ],
+)
+def test_a_point_map_beside_a_chart_in_a_cols_row_paints_in_the_png(
+    queries: str, chart: str, min_inked_share: float
+) -> None:
+    Image = pytest.importorskip("PIL.Image")
+    board = (
+        f"title: T\nqueries:{queries}"
+        f"charts:\n  m:\n    query: q\n    {chart}"
+        "  b:\n    query: bars\n    type: bar\n    x: k\n    y: n\n"
+        "rows:\n  - cols: [b, m]\n"
+    )
+    compiled = compile(board)
+    assert compiled.success
+    executor = Run(compiled.board, env=build_exec_env(FilesystemProject(Path.cwd())))
+    result = render(compiled.board, executor.ctx, executor.ledger, format="png")
+    assert isinstance(result.output, bytes)
+
+    image = Image.open(io.BytesIO(result.output)).convert("RGB")
+    width, height = image.size
+    map_half = image.crop((width // 2, height // 5, width, height * 4 // 5))
+    pixels = list(map_half.getdata())
+    inked = sum(pixel != (255, 255, 255) for pixel in pixels)
+    assert inked > min_inked_share * len(pixels)

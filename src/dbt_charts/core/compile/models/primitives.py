@@ -69,6 +69,7 @@ from dbt_charts.core.compile.models.markers import (
 )
 from dbt_charts.core.compile.models.palette import (
     PaletteFamily,
+    PatternLadder,
     PatternMotif,
     PatternRamp,
 )
@@ -1865,6 +1866,11 @@ class ResolvedPattern(BaseModel):
         exclude_if=lambda v: v is None,
         default=None,
         description="Motif per category slot (wraps like the color palette); None on a ramp scale.",
+    )
+    ladder: PatternLadder | None = Field(
+        exclude_if=lambda v: v is None,
+        default=None,
+        description="Ladder name: fills chosen by the chart's series count, solid first and open last, in place of `motifs`; None otherwise.",
     )
     ramp: PatternRamp | None = Field(
         exclude_if=lambda v: v is None,

@@ -654,7 +654,9 @@ def _render_board_file(
         else ""
     )
 
-    def page(chrome: str, error_chrome: str) -> HTMLResponse:
+    def page(
+        chrome: str, error_chrome: str, background: BackgroundTasks
+    ) -> HTMLResponse:
         result = render_dashboard(
             board=board,
             variables=variables,
@@ -678,9 +680,8 @@ def _render_board_file(
             data = result.data
             html = data.decode("utf-8") if isinstance(data, bytes) else str(data)
             # Runs after the response is sent.
-            prefetch = BackgroundTasks()
             if result.prefetch_query_names and result_cache is not None:
-                prefetch.add_task(
+                background.add_task(
                     prefetch_dashboard,
                     board,
                     variables,
@@ -691,7 +692,7 @@ def _render_board_file(
                     compile_result=compile_result,
                     clock=clock,
                 )
-            return HTMLResponse(content=html, background=prefetch)
+            return HTMLResponse(content=html, background=background)
 
         # Structured board errors and validation/chart errors all share the same
         # served error page.
@@ -713,8 +714,11 @@ def _render_board_file(
                 include_nav,
                 board_theme,
             ),
+            BackgroundTasks(),
         )
 
+    # The streamed page's response is built before page() runs, so page() adds
+    # its after-response work to this one collection.
     background = BackgroundTasks()
 
     def streamed() -> Iterator[str]:
@@ -722,7 +726,7 @@ def _render_board_file(
         # The 200 is already on the wire, so a failure from here on can only be
         # reported in the page: the error page takes the loading state's place.
         try:
-            response = page("", "")
+            response = page("", "", background)
         except DbtChartsError as exc:
             logger.exception("Error rendering %s", file_path.relpath)
             response = _render_structured_errors_html(
@@ -734,8 +738,6 @@ def _render_board_file(
             response = _render_structured_errors_html(
                 _synthetic_error(str(exc)), request_path=board_name.name
             )
-        if response.background is not None:
-            background.tasks.append(response.background)
         yield _serve_template("loaded.html.j2").render()
         yield bytes(response.body).decode("utf-8")
 

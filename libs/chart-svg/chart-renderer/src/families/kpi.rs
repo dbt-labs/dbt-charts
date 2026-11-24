@@ -9,8 +9,9 @@ use serde_json::{json, Value};
 
 use super::table::bind::{
     compute_scale_domain, font_weight_as_css, interpolate_scale_color, resolve_conditional_styles,
-    resolve_hinge, resolve_palette_stops, sanitized_color,
+    resolve_hinge, resolve_palette_stops,
 };
+use ::bind::table::sanitized_color;
 use crate::conditional::{match_predicate, Predicate};
 use super::table::{WhenRule, VALID_FONT_WEIGHTS};
 use super::color_scale::nice_domain;
@@ -687,7 +688,6 @@ fn resolve_colors(
     row: &serde_json::Map<String, Value>,
     slots: &Slots,
     kpi: &KpiChartStyle,
-    board_background: Option<&str>,
     secondary: &str,
     tone_color: Option<String>,
     patch: &CardPatch,
@@ -704,22 +704,15 @@ fn resolve_colors(
     let channel_bg = if row.is_empty() { None } else { evaluate_background(&r.resolved_channels, row, col_format)? };
     // A matched rule's color outranks the derived tone.
     let channel_color = explicit_color(patch.value_color.as_deref())?.or(tone_color);
-    // Card background: a matched rule > the gradient channel > the explicit
-    // chart-local color, which counts only when it differs from the board
-    // background: board propagation (the same color) is transparent to the KPI
-    // card.
+    // Card background: a matched rule > the gradient channel > the resolved `style.background`, which
+    // already carries `charts.background`; a clear card paints no rect.
     let static_background = match &kpi.background {
-        Some(CardBackground::Color(bg)) => Some(bg.as_str()),
-        _ => None,
-    };
-    let explicit_background = match (static_background, board_background) {
-        (Some(bg), Some(board)) if bg != board => Some(bg),
-        (Some(bg), None) => Some(bg),
+        Some(CardBackground::Color(bg)) if !bg.eq_ignore_ascii_case("transparent") => Some(bg.as_str()),
         _ => None,
     };
     let card_fill = match explicit_color(patch.background.as_deref())?.or(channel_bg) {
         Some(bg) => Some(bg),
-        None => explicit_color(explicit_background)?,
+        None => explicit_color(static_background)?,
     };
     let card_ink = kpi
         .font
@@ -1104,7 +1097,6 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         row,
         &slots,
         kpi,
-        payload.background.as_deref(),
         secondary,
         value_styled.tone_color,
         &patch,
@@ -3102,6 +3094,29 @@ mod render_tests {
         set(&mut p, "/style/kpi/background", json!("#d9a45b"));
         let svg = svg_of(&p);
         assert!(svg.contains("fill=\"#d9a45b\"/>") && !svg.contains("stroke="), "{svg}");
+    }
+
+    #[test]
+    fn a_background_equal_to_the_payload_card_fill_still_paints() {
+        let mut p = kpi_payload("stacked", 300.0);
+        p.background = Some("#d9a45b".to_string());
+        set(&mut p, "/style/kpi/background", json!("#d9a45b"));
+        let svg = svg_of(&p);
+        assert!(svg.contains("fill=\"#d9a45b\"/>"), "{svg}");
+        set(&mut p, "/style/kpi/background", json!("transparent"));
+        let svg = svg_of(&p);
+        assert!(!svg.contains("fill=\"transparent\"/>"), "a clear card paints no rect: {svg}");
+    }
+
+    #[test]
+    fn a_css_color_name_background_paints_its_hex_and_an_unknown_word_is_refused() {
+        let mut p = kpi_payload("stacked", 300.0);
+        set(&mut p, "/style/kpi/background", json!("white"));
+        let svg = svg_of(&p);
+        assert!(svg.contains("fill=\"#ffffff\"/>"), "{svg}");
+        set(&mut p, "/style/kpi/background", json!("whit"));
+        let err = err_of(&p);
+        assert!(err.contains("invalid color value"), "{err}");
     }
 
     #[test]

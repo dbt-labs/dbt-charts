@@ -234,7 +234,11 @@ pub fn item_widths(board: &Node, available: f64, card_gap: f64) -> Vec<Option<Pl
                 .map(|item| span_width(track, item.place.map_or(1, |place| place.col_span), gap))
                 .collect()
         }
-        Kind::Tabs { pane_offset, .. } => vec![available - pane_offset; drawn.len()],
+        // A pane is a one-item row of the pane box.
+        Kind::Tabs { pane_offset, .. } => drawn
+            .iter()
+            .map(|item| rows_item_width(item, available - pane_offset))
+            .collect(),
     };
     let mut placed = drawn.iter().zip(widths).map(|(item, width)| {
         let nested = match &item.content {

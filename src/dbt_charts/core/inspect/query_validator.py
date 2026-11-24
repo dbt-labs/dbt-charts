@@ -26,6 +26,7 @@ Pure functions — no DB queries, no side effects.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from typing import Literal, overload
 
@@ -487,6 +488,29 @@ def _inherit_aggregate_lineage(
             outputs[out_name] = inherited
 
 
+def _value_columns(node: exp.Expr) -> Iterator[exp.Column]:
+    """Columns whose values reach ``node``'s result.
+
+    A column only in an ``IF``/``CASE`` condition picks which value is
+    aggregated but is never aggregated itself, so it is skipped.
+    """
+    if isinstance(node, exp.Column):
+        yield node
+        return
+    if isinstance(node, exp.If):
+        branches = [node.args.get("true"), node.args.get("false")]
+    elif isinstance(node, exp.Case):
+        branches = [
+            *(branch.args.get("true") for branch in node.args["ifs"]),
+            node.args.get("default"),
+        ]
+    else:
+        branches = list(node.iter_expressions())
+    for branch in branches:
+        if branch is not None:
+            yield from _value_columns(branch)
+
+
 def _detect_reaggregation(select: exp.Select) -> list[QueryDiagnostic]:
     """Detect re-aggregation: a grouping-dependent aggregate over an aggregate.
 
@@ -520,7 +544,7 @@ def _detect_reaggregation(select: exp.Select) -> list[QueryDiagnostic]:
         is_distinct = isinstance(agg.this, exp.Distinct)
         # An ordered-set aggregate keeps its column in the WITHIN GROUP wrapper.
         call = agg.parent if isinstance(agg.parent, exp.WithinGroup) else agg
-        for col in call.find_all(exp.Column):
+        for col in _value_columns(call):
             col_name = col.name.lower()
             # Try to resolve which source this column comes from
             table_ref = col.table.lower()

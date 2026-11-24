@@ -47,17 +47,6 @@ ERR_RESERVED_VARIABLE_NAME = REGISTRY.register(
     )
 )
 
-ERR_TAB_DEFAULT_UNKNOWN = REGISTRY.register(
-    ErrorCode(
-        code="ERR-TAB-DEFAULT-UNKNOWN",
-        domain="compile",
-        title="tabs.default names no tab",
-        message_template="`tabs.default: {default}` slugs to {slug!r}, which is not a tab on this board (tabs: {slugs}).",
-        doc="Fired when the `default:` of a `tabs:` layout matches no tab title. It is compared by slug: the title lowercased with spaces replaced by underscores.",
-        docs_topic="layout",
-    )
-)
-
 ERR_DUPLICATE_QUERY_NAME = REGISTRY.register(
     ErrorCode(
         code="ERR-DUPLICATE-QUERY-NAME",
@@ -760,6 +749,18 @@ ERR_TORN_OUTLIER_UNSUPPORTED = REGISTRY.register(
         doc="Fired when `style.outliers.variant` is `torn_with_cap` for a chart the cap cannot draw truthfully: a normalized, ranged (`y_start`), small-multiples or histogram chart; one with a bar layer on the shared `axis_y` scale; one with an authored `axis_y` domain above zero or `zero: false`; or one with an annotation or layer value past the break. A torn bar's cap is positioned by its end value above a zero-based break, so these shapes have no honest cap.",
         summary="Fired when torn outlier caps are chosen on a chart shape that cannot draw them.",
         docs_topic="charts",
+    )
+)
+
+ERR_COLS_WIDTH_BELOW_GAP = REGISTRY.register(
+    ErrorCode(
+        code="ERR-COLS-WIDTH-BELOW-GAP",
+        domain="compile",
+        title="A cols width is too narrow to span its gap",
+        message_template="A cols item's width: {width} is {resolved}px in a {row_width}px row with a {gap}px gap. A percentage is a share of the row with its gap counted in, so it must be wider than one gap; raise it, or give the item a px width.",
+        doc="Fired when a percentage `width:` on a `cols:` item resolves to zero or less. A percentage is a share of the row's gutter grid, `p * (row + gap) - gap`, so a share no wider than one gap leaves the card no width at all.",
+        summary="Fired when a cols item's percentage width is too small to span the gap.",
+        docs_topic="layout",
     )
 )
 
@@ -2124,10 +2125,10 @@ ERR_TAB_TITLE_EMPTY_SLUG = REGISTRY.register(
     ErrorCode(
         code="ERR-TAB-TITLE-EMPTY-SLUG",
         domain="compile",
-        title="Tab title has no letter or digit",
-        message_template="Tab title '{title}' produces an empty slug. Tab titles must contain at least one alphanumeric character. Give this tab a title with a letter or digit.",
-        fix_template="Give the tab a title with at least one letter or digit.",
-        doc="Fired when a tab's title slugs to nothing, so the tab could not be selected by name.",
+        title="Tab label has no letter or digit",
+        message_template="Tab label '{title}' produces an empty slug. Tab labels must contain at least one alphanumeric character. Give this tab a label with a letter or digit.",
+        fix_template="Give the tab a label with at least one letter or digit.",
+        doc="Fired when a tab's label slugs to nothing, so the tab could not be selected by name.",
         docs_topic="layout",
     )
 )
@@ -2136,10 +2137,10 @@ ERR_TAB_TITLE_DUPLICATE_SLUG = REGISTRY.register(
     ErrorCode(
         code="ERR-TAB-TITLE-DUPLICATE-SLUG",
         domain="compile",
-        title="Two tab titles share a slug",
-        message_template="Duplicate tab slug '{slug}'. Tab titles must produce unique slugs (after lowercasing and replacing spaces with _). Retitle one of the tabs that slugs to '{slug}'.",
-        fix_template="Retitle one of the tabs so the slugs differ.",
-        doc="Fired when two tabs of one layout have titles that slug to the same name.",
+        title="Two tab labels share a slug",
+        message_template="Duplicate tab slug '{slug}'. Tab labels must produce unique slugs (after lowercasing and replacing spaces with _). Relabel one of the tabs that slugs to '{slug}'.",
+        fix_template="Relabel one of the tabs so the slugs differ.",
+        doc="Fired when two tabs of one layout have labels that slug to the same name.",
         docs_topic="layout",
     )
 )

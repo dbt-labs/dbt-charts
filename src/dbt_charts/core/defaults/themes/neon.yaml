@@ -245,12 +245,6 @@ style:
         color: *faint
         # Borderless like the other shadowed themes (see clarity.yaml).
         width: 0.0
-    # Inverts the "away from background" rule the other themes follow: neon's
-    # canvas is chrome[12] (near-black), so a step AWAY from it is
-    # lighter, not darker.
-    hover_emphasis:
-      drop_line_color: chrome[7]
-      drop_line_width: 2.0
     pie:
       total:
         value:

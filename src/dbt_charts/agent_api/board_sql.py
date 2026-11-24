@@ -30,8 +30,12 @@ from dbt_charts.core.execute.cache_backend import QueryResultCache
 from dbt_charts.core.execute.cache_composition import CompositionError
 from dbt_charts.core.execute.env import ExecEnv
 from dbt_charts.core.execute.lookup import Ledger, data_age
-from dbt_charts.core.execute.plan import CACHE_REF_JINJA_RE, make_context, utc_now
-from dbt_charts.core.execute.plan_reader import embedded_queries, with_adhoc_query
+from dbt_charts.core.execute.plan import make_context, utc_now
+from dbt_charts.core.execute.plan_reader import (
+    cache_refs,
+    embedded_queries,
+    with_adhoc_query,
+)
 from dbt_charts.core.execute.planned import Planned
 from dbt_charts.core.execute.query_plan import PlannedQuery
 from dbt_charts.core.execute.query_result import resolve_effective_row_limit
@@ -128,9 +132,9 @@ def execute_board_sql(
         return _failed([d.message for d in diagnostics], diagnostics[0].code)
     except (ExecutionError, DbtChartsError) as exc:
         return _failed([str(exc)], error_code_of(exc))
-    cache_refs = list(dict.fromkeys(CACHE_REF_JINJA_RE.findall(sql)))
-    if cache_refs and result_cache is None:
-        failure = DbtChartsError.from_code(ERR_CACHE_NOT_ATTACHED, query=cache_refs[0])
+    refs_read = cache_refs(plan, ADHOC_QUERY)
+    if refs_read and result_cache is None:
+        failure = DbtChartsError.from_code(ERR_CACHE_NOT_ATTACHED, query=refs_read[0])
         return _failed([str(failure)], ERR_CACHE_NOT_ATTACHED.code)
 
     # One more row than the caller's limit: enough to tell a truncated result.
@@ -155,7 +159,7 @@ def execute_board_sql(
 
     now = datetime.now(UTC)
     refs: list[CacheRef] = []
-    for name in cache_refs:
+    for name in refs_read:
         age = data_age(ledger, name)
         assert age is not None  # executing the composing query ran each upstream
         as_of, hit = age

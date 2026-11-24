@@ -36,7 +36,7 @@ use super::facet::color_1to1_with_cat;
 use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, LayerCaptions, category_clearance, mark_labels, plain_sites, value_label_layers};
 use super::layout::{Drawn, clipped_if, warn_band_too_narrow};
 use super::legend::{LayeredBarLegend, LegendState, bar_link_keys, build_legend_state, numeric_legends_of};
-use super::marks::{RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, capped_thickness, collapsed_bars, direction_layers, grouped_overlap_fraction, horizontal_bar_layer_marks, hover_band_for, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, touching_width, unity_rule};
+use super::marks::{RangedLayerAria, Rounded, anchored, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, capped_thickness, collapsed_bars, direction_layers, grouped_overlap_fraction, horizontal_bar_layer_marks, hover_band_for, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, touching_width, unity_rule};
 use super::torn_outlier::{Caps, Seg, Torn};
 use super::tooltip::{bar_datum_aria, stack_group_total, tooltip_order_domain};
 use super::vertical::refuse_numeric_x_on_bands;
@@ -955,6 +955,7 @@ pub(super) fn render_horizontal_panel(
                                         &r.style.series_label.dark_companion_palette,
                                         &r.style.series_label.pin_companions,
                                         category_scale,
+                                        r.patterns.ladder_ink(),
                                     )
                                 } else {
                                     let companions = board_style
@@ -1685,6 +1686,7 @@ pub(super) fn render_horizontal_panel(
                     &sl.dark_companion_palette,
                     &sl.pin_companions,
                     category_scale,
+                    r.patterns.ladder_ink(),
                 )?;
                 let rail_label_attrs = match color_field.filter(|_| tooltip_labels) {
                     Some(field) => crate::contract::series_label_attrs(field, series)?,
@@ -1692,7 +1694,7 @@ pub(super) fn render_horizontal_panel(
                 };
                 let label_attrs = Attrs::new().set("text-anchor", "middle").vega("font-family", sl.font_family.as_str()).num("font-size", sl.font_size).set("font-weight", sl.font_weight.as_str()).set("font-style", sl.font_style.as_str()).set(::layout::contract::SERIES_KEY, series.as_str()).set("fill", rcolor.as_str()).extend(rail_label_attrs);
                 let label_attrs = crate::legend_view::direct_label(r.legend_view.as_ref(), label_attrs, series);
-                rail_labels.push(Node::text(Role::Label, (seg_mid, rail_y), label_attrs, series.as_str()));
+                rail_labels.push(Node::text(Role::Label, (seg_mid, rail_y), label_attrs, series_text(series).as_str()));
             }
             if tooltip_labels {
                 head.push(::layout::contract::mark_group("text", "concat_0_marks", rail_labels)?);
@@ -1804,6 +1806,7 @@ pub(super) fn render_horizontal_panel(
     if is_stacked {
         let bw = band.bandwidth();
         let mark_h = capped_thickness((bw * mark_band_width).min(bw), r.style.mark.max_size);
+        r.patterns.fit_tiles(mark_h);
         let bar_pad = (bw - mark_h) / 2.0;
 
         for cat in &cat_domain {
@@ -1838,7 +1841,6 @@ pub(super) fn render_horizontal_panel(
                     band.push(cat, series, aria.as_deref(), hrefs.get(&key).map(String::as_str), bar_y, mark_h, Some(raw_val));
                 }
                 let patch = r.patch_of(rows, &datum_of, &key)?;
-                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: false });
                 let x1 = linear.scale(span.start);
                 let x2 = linear.scale(span.end);
                 let (seg_start, seg_end) = if x1 <= x2 { (x1, x2) } else { (x2, x1) };
@@ -1848,6 +1850,7 @@ pub(super) fn render_horizontal_panel(
                     ghost_points.push((aria.clone(), x2, bar_y + mark_h / 2.0, paint.color().to_string(), hrefs.get(&key).cloned()));
                 }
                 let mark = paint.for_mark(seg_w.min(mark_h), stroke_color, stroke_w);
+                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), on: patch.label_on(&mark), rect: Some(crate::vega_fit::Bounds::new(seg_start, bar_y, seg_start + seg_w, bar_y + mark_h)), paint_only: false });
                 // Corner radius flips with sign (Vega's mixed-sign layer
                 // split — see `bar_passes`'s doc comment and the vertical
                 // arm's mirrored `Rounded::Negative`): a positive segment rounds
@@ -1858,8 +1861,9 @@ pub(super) fn render_horizontal_panel(
                     crate::common::series_color(base_series(series), &palette_domain, &r.series_palette, category_scale, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color)
                 })?;
                 let segment_r = if outer { corner_r } else { 0.0 };
-                let nodes = bar_passes(base_mark(&datum_of, &key), true, seg_start, bar_y, seg_w, mark_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w), segment_r,
-                    far_end(raw_val), false, None, aria.as_deref(), anchor_of(&key))?;
+                let (ax, ay) = mark.anchor(linear.scale(0.0), bar_y + mark_h / 2.0);
+                let nodes = anchored((ax, ay), bar_passes(base_mark(&datum_of, &key), true, seg_start - ax, bar_y - ay, seg_w, mark_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w), segment_r,
+                    far_end(raw_val), false, None, aria.as_deref(), anchor_of(&key))?);
                 plot.extend(match &torn {
                     Some(t) => t.segment(&mut torn_caps, Seg { span: (span.start, span.end), along: (bar_y, bar_y + mark_h), paint: (patch.fill(&mark.fill), patch.stroke(edge), patch.stroke_w(edge_w), patch.opacity(r.style.mark.opacity)), role: base_mark(&datum_of, &key), aria: aria.as_deref() }, &linear, nodes),
                     None => nodes,
@@ -1892,6 +1896,7 @@ pub(super) fn render_horizontal_panel(
         } else {
             (mark_h, sub_step)
         };
+        r.patterns.fit_tiles(mark_h);
 
         // Bars span the zero rule to their value, whichever side of it that
         // is; a mixed-sign measure paints its `>= 0` sub-layer and then its
@@ -1929,7 +1934,6 @@ pub(super) fn render_horizontal_panel(
                 _ => plain()?,
             };
             let patch = r.patch_of(rows, &datum_of, &key)?;
-            label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: patch.label_fill(Some(fill.clone())), color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: false });
             if let Some(band) = hover_band.as_mut() {
                 band.push(cat, series, aria.as_deref(), hrefs.get(&key).map(String::as_str), bar_y, mark_h, Some(val));
             }
@@ -1937,11 +1941,13 @@ pub(super) fn render_horizontal_panel(
                 ghost_points.push((aria.clone(), linear.scale(val).clamp(0.0, plot_w), bar_y + mark_h / 2.0, fill.clone(), hrefs.get(&key).cloned()));
             }
             let mark = paint.for_mark(bar_w.min(mark_h), stroke_color, stroke_w);
+            label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: patch.label_fill(Some(fill.clone())), color: patch.label_color.clone(), weight: patch.label_weight.clone(), on: patch.label_on(&mark), rect: Some(crate::vega_fit::Bounds::new(bar_x, bar_y, bar_x + bar_w, bar_y + mark_h)), paint_only: false });
             let (edge, edge_w) = mark.seam(crate::pattern::STACK_EDGE_W);
             ribbons.record(&key, (bar_x, bar_y, bar_w, mark_h), aria.as_deref(), Some(series_text(base_series(series)).trim().to_string()), || {
                 crate::common::series_color(base_series(series), &color_domain, &r.series_palette, category_scale, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color)
             })?;
-            let nodes = bar_passes(base_mark(&datum_of, &key), true, bar_x, bar_y, bar_w, mark_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w), corner_r, ends, true, None, aria.as_deref(), anchor_of(&key))?;
+            let (ax, ay) = mark.anchor(linear.scale(0.0), bar_y + mark_h / 2.0);
+            let nodes = anchored((ax, ay), bar_passes(base_mark(&datum_of, &key), true, bar_x - ax, bar_y - ay, bar_w, mark_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w), corner_r, ends, true, None, aria.as_deref(), anchor_of(&key))?);
             plot.extend(match &torn {
                 Some(t) => {
                     let span = spans.get(&key).map_or((0.0, val), |span| (span.start, span.end));
@@ -1953,6 +1959,7 @@ pub(super) fn render_horizontal_panel(
     } else {
         let bw = band.bandwidth();
         let mark_h = capped_thickness((bw * mark_band_width).min(bw), r.style.mark.max_size);
+        r.patterns.fit_tiles(mark_h);
         let bar_pad = (bw - mark_h) / 2.0;
         // Zero-anchored measure axis: bars split by sign at the zero rule's
         // own x, not a hardcoded local origin — a negative floor moves the
@@ -2020,9 +2027,6 @@ pub(super) fn render_horizontal_panel(
                 _ => plain()?,
             };
             let patch = r.patch_of(rows, &datum_of, &key)?;
-            if ranged.is_some() || patch.paints_label() {
-                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: ranged.is_none() });
-            }
             if let Some(band) = hover_band.as_mut() {
                 band.push(cat, "", aria.as_deref(), hrefs.get(&key).map(String::as_str), bar_y, mark_h, Some(val));
             }
@@ -2031,8 +2035,10 @@ pub(super) fn render_horizontal_panel(
             }
             ribbons.record(&key, (bar_x, bar_y, bar_w, mark_h), aria.as_deref(), None, || Ok(r.style.single_series_fill.clone()))?;
             let mark = r.single_series_paint(rows, &cat_domain, cat)?.for_mark(bar_w.min(mark_h), stroke_color, stroke_w);
-            let nodes = bar_passes(base_mark(&datum_of, &key), true, bar_x, bar_y, bar_w, mark_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(&mark.stroke), patch.stroke_w(mark.stroke_w), corner_r,
-                ends, true, None, aria.as_deref(), anchor_of(&key))?;
+            label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), on: patch.label_on(&mark), rect: Some(crate::vega_fit::Bounds::new(bar_x, bar_y, bar_x + bar_w, bar_y + mark_h)), paint_only: ranged.is_none() });
+            let (ax, ay) = mark.anchor(linear.scale(0.0), bar_y + mark_h / 2.0);
+            let nodes = anchored((ax, ay), bar_passes(base_mark(&datum_of, &key), true, bar_x - ax, bar_y - ay, bar_w, mark_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(&mark.stroke), patch.stroke_w(mark.stroke_w), corner_r,
+                ends, true, None, aria.as_deref(), anchor_of(&key))?);
             plot.extend(match &torn {
                 Some(t) => {
                     let span = spans.get(&key).map_or((0.0, val), |span| (span.start, span.end));

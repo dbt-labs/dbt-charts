@@ -108,11 +108,6 @@ style:
         # card, so the outline is redundant. Kept only on stark, which turns the
         # shadow off and relies on a hard outline for its utilitarian look.
         width: 0.0
-    # One scaffold rung past this theme's own measure gridline, at twice
-    # that gridline's width -- reads as structure, not as another series.
-    hover_emphasis:
-      drop_line_color: chrome[6]
-      drop_line_width: 3.0
     kpi:
       # KPI value font is a serif on clarity-voiced themes — narrative type
       # for the headline number, its affix, and its glyph, while the label

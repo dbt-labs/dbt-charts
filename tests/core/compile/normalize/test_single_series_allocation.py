@@ -335,9 +335,8 @@ charts:
   a: {{type: bar, x: month, y: revenue, {_QUERY_FRAGMENT}}}
   b: {{type: bar, x: month, y: revenue, {_QUERY_FRAGMENT}}}
 tabs:
-  items:
-    - title: Tab1
-      rows: [a, b]
+  Tab1:
+    rows: [a, b]
 """
     )
     # Collect the chart instances the layout tree actually holds.

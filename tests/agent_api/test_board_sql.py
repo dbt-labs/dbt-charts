@@ -35,6 +35,8 @@ queries:
   uncached:
     cache: false
     sql: select 1 as n
+  rev_rows:
+    sql: select region, amt from {{ queries.rev.cache }}
 charts:
   c:
     query: rev
@@ -270,6 +272,20 @@ def test_sql_without_refs_runs_on_the_boards_default_source(
     assert result.data == [{"answer": 42}]
     assert result.ran_on == "warehouse"
     assert result.cache_refs == []
+
+
+def test_a_cache_ref_inside_an_inlined_query_is_reported(
+    project: FilesystemProject,
+    registry: ExecEnv,
+    cache: TrivialDuckDBCache,
+) -> None:
+    result = _run(
+        "SELECT count(*) AS n FROM {{ queries.rev_rows }}", project, registry, cache
+    )
+
+    assert result.success, result.errors
+    assert result.data == [{"n": 1}]
+    assert [ref.query for ref in result.cache_refs] == ["rev"]
 
 
 def test_a_cache_ref_with_no_result_cache_is_an_error(

@@ -20,7 +20,6 @@ charts:
   by_team:
     type: table
     query: open_items
-    title: Open items by team
     style:
       columns:
         owners:

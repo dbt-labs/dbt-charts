@@ -21,7 +21,6 @@
 
 use crate::board::layout::{
     GridItemAuthored, GridLayoutAuthored, LayoutAuthored, LayoutItemAuthored, NestedBoardAuthored,
-    TabItemAuthored, TabLayoutAuthored,
 };
 use crate::board::layout::{Layout, LayoutItem};
 use crate::board::{
@@ -87,11 +86,16 @@ fn nested_board(
     })
 }
 
-fn tab(title: &str, charts: &[&str]) -> TabItemAuthored {
-    TabItemAuthored {
-        title: Some(text(title)),
-        layout: Some(LayoutAuthored::Rows(items(charts))),
-        ..TabItemAuthored::default()
+fn tab(board_id: &str, charts: &[&str]) -> NestedBoardAuthored {
+    NestedBoardAuthored {
+        body: BoardBodyAuthored {
+            id: Some(id(board_id)),
+            html_policy: Some(HtmlPolicy::Escaped),
+            card_gap: Some(false),
+            layout: Some(LayoutAuthored::Rows(items(charts))),
+            ..BoardBodyAuthored::default()
+        },
+        ..NestedBoardAuthored::default()
     }
 }
 
@@ -115,11 +119,7 @@ fn grid_layout(columns: u32, cells: &[(&str, i64, i64, u32, u32)]) -> LayoutAuth
 }
 
 fn tabs_layout(tabs: &[(&str, &[&str])]) -> LayoutAuthored {
-    LayoutAuthored::Tabs(TabLayoutAuthored {
-        position: Some(crate::board::TabPosition::Top),
-        items: Some(tabs.iter().map(|(t, c)| tab(t, c)).collect()),
-        ..TabLayoutAuthored::default()
-    })
+    LayoutAuthored::Tabs(tabs.iter().enumerate().map(|(i, (t, c))| (t.to_string(), tab(&format!("tab{i}"), c))).collect())
 }
 
 /// A titled board with one text block and no charts: the layout is empty rows.
@@ -200,8 +200,7 @@ fn set_visible(layout: &mut Layout, name: &str, visible: &Visible) {
         Layout::Rows(items) | Layout::Cols(items) => items.iter_mut().for_each(place),
         Layout::Grid(g) => g.items.iter_mut().for_each(|cell| place(&mut cell.item)),
         Layout::Tabs(t) => t
-            .items
-            .iter_mut()
-            .for_each(|tab| set_visible(&mut tab.layout, name, visible)),
+            .values_mut()
+            .for_each(|tab| set_visible(&mut tab.body.layout, name, visible)),
     }
 }

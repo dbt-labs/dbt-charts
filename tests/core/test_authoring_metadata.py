@@ -504,17 +504,16 @@ queries:
     rows:
       - {month: Jan, revenue: 100}
 tabs:
-  items:
-    - title: Overview
-      rows:
-        - query: q
-          type: bar
-          x: month
-          y: revenue
+  Overview:
+    rows:
+      - query: q
+        type: bar
+        x: month
+        y: revenue
 """
     )
 
-    assert 'data-authored-path="tabs.items.0.rows.0"' in svg
+    assert 'data-authored-path="tabs.Overview.rows.0"' in svg
     assert 'data-authored-path="rows.0"' not in svg
 
 

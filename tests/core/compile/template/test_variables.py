@@ -15,12 +15,14 @@ from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.template.daterange import BoardClock
 from dbt_charts.core.compile.template.jinja import resolve_jinja_template
 from dbt_charts.core.compile.template.variables import (
+    check_variable_overrides,
     coerce_variable_values,
     daterange_preset_ids,
     normalize_render_values,
     resolve_daterange_presets,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.diagnostics.hints import MAX_LISTED_VALUES
 
 _TODAY = date(2026, 10, 20)
 _CLOCK = BoardClock(_TODAY, fiscal_start_month=1, week_start=1, time_zone="UTC")
@@ -362,3 +364,50 @@ class TestMalformedMultiselect:
         reg = _registry(channel="multiselect")
         assert coerce_variable_values({"channel": ""}, reg)["channel"] == []
         assert coerce_variable_values({"channel": []}, reg)["channel"] == []
+
+    def test_error_shows_the_json_list_to_write(self) -> None:
+        reg = _registry(labels="multiselect")
+        with pytest.raises(ExecutionError) as caught:
+            coerce_variable_values({"labels": "[a] - [b]"}, reg)
+        message = str(caught.value)
+        assert '["[a] - [b]"]' in message
+        assert "once per member" in message
+
+
+def _choice(input_type: str, options: list[str]) -> Variable:
+    return Variable.model_validate(
+        {"input": input_type, "options": {"static": options}}
+    )
+
+
+class TestSingleChoiceGivenAList:
+    """A list for a select is a wrong shape, not a member outside the options."""
+
+    @pytest.mark.parametrize("input_type", ["select", "radio"])
+    def test_override_check_names_the_single_value_rule(self, input_type: str) -> None:
+        reg = {"label": _choice(input_type, ["[a] - [b]", "[c]"])}
+        with pytest.raises(ExecutionError) as caught:
+            check_variable_overrides(reg, {"label": '["[a] - [b]"]'})
+        assert caught.value.code is not None
+        assert caught.value.code.code == "ERR-VARIABLE-VALUE-INVALID"
+        assert f"{input_type} takes one value" in str(caught.value)
+        assert '["[a] - [b]"]' in str(caught.value)
+
+    def test_coercion_refuses_a_list_for_a_query_driven_select(self) -> None:
+        reg = {
+            "y": Variable.model_validate({"input": "select", "options": {"query": "q"}})
+        }
+        with pytest.raises(ExecutionError, match="select takes one value"):
+            coerce_variable_values({"y": ["2023", "2024"]}, reg)
+
+
+def test_not_in_options_lists_only_the_first_options() -> None:
+    options = [f"opt{i:04d}" for i in range(1500)]
+    with pytest.raises(ExecutionError) as caught:
+        check_variable_overrides({"pick": _choice("select", options)}, {"pick": "nope"})
+    message = str(caught.value)
+    assert caught.value.code is not None
+    assert caught.value.code.code == "ERR-VARIABLE-VALUE-NOT-IN-OPTIONS"
+    assert "`opt0000`" in message
+    assert "opt1499" not in message
+    assert f"and {1500 - MAX_LISTED_VALUES} more" in message

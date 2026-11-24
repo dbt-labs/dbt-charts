@@ -21,3 +21,18 @@ def test_an_authored_title_is_kept_as_typed() -> None:
 def test_a_markdown_heading_is_kept_as_typed() -> None:
     text = parse_board_text("x", "# the text-to-SQL notes\n", is_markdown=True)
     assert text.title == "the text-to-SQL notes"
+
+
+@pytest.mark.parametrize(
+    ("content", "is_markdown"),
+    [
+        ("title: '{{ queries.info.one.region }} overview'\n", False),
+        ("title: '{% if x %}A{% endif %}'\n", False),
+        ("---\ntitle: '{{ region }} overview'\n---\nSome prose.\n", True),
+    ],
+)
+def test_a_templated_title_is_named_from_its_file(
+    content: str, is_markdown: bool
+) -> None:
+    text = parse_board_text("regional_overview", content, is_markdown=is_markdown)
+    assert text.title == "Regional Overview"

@@ -42,6 +42,7 @@ from dbt_charts.core.text.time_zones import TimeZoneName
 _EMBED = re.compile(r"\{\{\s*queries\.(\w+)\s*\}\}")
 # Every `{{ queries.X }}` and `{{ queries.X.cache }}`: what a query embeds.
 _REF = re.compile(r"\{\{\s*queries\.([A-Za-z_]\w*)")
+_CACHE_REF = re.compile(r"\{\{\s*queries\.(\w+)\s*\.\s*cache\s*\}\}")
 
 # The tags of a variable value the engine spells; a host built-in is echoed raw.
 _TAGGED = frozenset(
@@ -204,6 +205,13 @@ def expanded_sql(plan: QueryPlan, name: str) -> str:
     text that executes, which source choice, composition and the cache key read. A
     ``{{ queries.X.cache }}`` reference stays for the cache composer."""
     return expand_query_refs(local_name(name), reachable(plan, name))
+
+
+def cache_refs(plan: QueryPlan, name: str) -> list[str]:
+    """The queries whose cached rows the SQL query *name* composes over, in order:
+    every ``{{ queries.X.cache }}`` in its expanded SQL, so a reference inside an
+    inlined ``{{ queries.Y }}`` counts as the outer query's own."""
+    return list(dict.fromkeys(_CACHE_REF.findall(expanded_sql(plan, name))))
 
 
 def env_sources(env: ExecEnv) -> ProjectSourcesConfig:

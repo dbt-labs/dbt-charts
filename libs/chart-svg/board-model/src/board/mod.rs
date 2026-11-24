@@ -36,8 +36,7 @@ use crate::style::style::Style;
 use crate::variable::Variable;
 use indexmap::IndexMap;
 pub use layout::{
-    items, GridItem, GridLayout, Layout, LayoutItem, NestedBoard, Placement, TabItem, TabLayout,
-    TabPosition,
+    items, GridItem, GridLayout, Layout, LayoutItem, NestedBoard, Placement,
 };
 use model_derive::Model;
 pub use value::{Extends, Length, SingleRowBoolProbe, Visible, Width};

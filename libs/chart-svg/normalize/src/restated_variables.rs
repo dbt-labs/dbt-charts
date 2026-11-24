@@ -10,6 +10,7 @@
 //! `1` and `1.0` are not told apart here.
 
 use board_model::board::layout::{LayoutAuthored, LayoutItemAuthored};
+use board_model::board::BoardBodyAuthored;
 use board_model::variable::{
     DefaultValue, InputSignals, InputType, Member, OptionsQuery, StaticOptions,
 };
@@ -153,18 +154,20 @@ fn nested<'k>(
     out: &mut Vec<Diagnostic>,
 ) {
     use board_model::ids::{ItemId, Step};
-    let item = |item: &'k LayoutItemAuthored, at: &mut Vec<Step<'k>>, out: &mut Vec<Diagnostic>| {
-        let LayoutItemAuthored::Board(board) = item else {
-            return;
-        };
+    let board = |body: &'k BoardBodyAuthored, at: &mut Vec<Step<'k>>, out: &mut Vec<Diagnostic>| {
         let prefix = dotted(&ItemId::at(at));
-        for (name, var) in &board.body.variables {
+        for (name, var) in &body.variables {
             if !imported.contains(name) {
                 judge!(var, &format!("{prefix}.variables.{name}"), out);
             }
         }
-        if let Some(inner) = &board.body.layout {
+        if let Some(inner) = &body.layout {
             nested(inner, at, imported, out);
+        }
+    };
+    let item = |item: &'k LayoutItemAuthored, at: &mut Vec<Step<'k>>, out: &mut Vec<Diagnostic>| {
+        if let LayoutItemAuthored::Board(b) = item {
+            board(&b.body, at, out);
         }
     };
     match layout {
@@ -196,15 +199,12 @@ fn nested<'k>(
         }
         LayoutAuthored::Tabs(t) => {
             at.push(Step::Key("tabs"));
-            at.push(Step::Key("items"));
-            for (i, tab) in t.items.iter().flatten().enumerate() {
+            for (i, tab) in t.values().enumerate() {
                 at.push(Step::Index(i));
-                if let Some(inner) = &tab.layout {
-                    nested(inner, at, imported, out);
-                }
+                board(&tab.body, at, out);
                 at.pop();
             }
-            at.truncate(at.len() - 2);
+            at.pop();
         }
     }
 }

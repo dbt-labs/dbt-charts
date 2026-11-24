@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -85,6 +84,7 @@ from dbt_charts.core.execute.duckdb_cache import keyed, keyed_other, relevant_to
 from dbt_charts.core.execute.metricflow import bundle_files, bundle_fingerprint
 from dbt_charts.core.execute.plan_reader import (
     board_clock,
+    cache_refs,
     expanded_sql,
     holds_text,
     plan_variables,
@@ -118,13 +118,6 @@ SourceThunk = Callable[[], ResolvedSourceConfig | None]
 FileSourceConfig = CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig
 KeyedSourceConfig = FileSourceConfig | DuckDBSourceConfig | SQLiteSourceConfig
 KEYED_SOURCE_TYPES = (*FILE_SOURCE_TYPES, "duckdb", "sqlite")
-
-# Matches {{ queries.NAME.cache }} in authored SQL. The \s* around the dot
-# tolerates whitespace variants like {{ queries.A . cache }} for consistency
-# with the dep-graph regex.
-CACHE_REF_JINJA_RE: re.Pattern[str] = re.compile(
-    r"\{\{\s*queries\.(\w+)\s*\.\s*cache\s*\}\}"
-)
 
 
 @dataclass
@@ -398,11 +391,7 @@ def plan(
             entry = get_query(ctx, name)
             source = cache(partial(resolve_source, ctx, name))
             key = cache_key(ctx, name, source)
-            refs = (
-                dict.fromkeys(CACHE_REF_JINJA_RE.findall(entry["sql"]))
-                if entry["type"] == "sql"
-                else ()
-            )
+            refs = cache_refs(ctx.plan, name) if entry["type"] == "sql" else ()
             options = untyped_choice_options(ctx.plan, ctx.board, name)
             option_runs = {
                 run.name: run for run in plan(ctx, options.values(), use_cache)
@@ -568,7 +557,7 @@ def cache_key(
         return keyed_other(f"{entry['type']}:{_spec_text(entry)}", {})
     sql = expanded_sql(ctx.plan, query_name)
     upstream_keys = []
-    for ref_name in dict.fromkeys(CACHE_REF_JINJA_RE.findall(sql)):
+    for ref_name in cache_refs(ctx.plan, query_name):
         cache_ref_upstream(ctx, query_name, ref_name)
         upstream_keys.append(
             cache_key(ctx, ref_name, partial(resolve_source, ctx, ref_name))
@@ -853,7 +842,7 @@ def _render_with_range_filters(
     ctx: ExecContext, query_name: str
 ) -> tuple[str, str | None, list[DateRangeFilter]] | None:
     entry = get_query(ctx, query_name)
-    if entry["type"] != "sql" or CACHE_REF_JINJA_RE.search(entry["sql"]):
+    if entry["type"] != "sql" or cache_refs(ctx.plan, query_name):
         return None
     sql = expanded_sql(ctx.plan, query_name)
     if "filter_date_range" not in sql:

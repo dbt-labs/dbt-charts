@@ -640,7 +640,7 @@ class TestTotalFormatResolution:
         rows = [{"cat": name, "v": v} for name, v in zip("AB", data, strict=True)]
         svg = render_pie_svg(chart, rows, width=600, patches=tuple(patches))
         labels = re.findall(
-            r'aria-roledescription="text mark"><tspan[^>]*>[^<]*</tspan>'
+            r'aria-roledescription="text mark"[^>]*><tspan[^>]*>[^<]*</tspan>'
             r"<tspan[^>]*>([^<]*)</tspan>",
             svg,
         )

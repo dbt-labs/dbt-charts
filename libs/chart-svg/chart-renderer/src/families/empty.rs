@@ -202,7 +202,7 @@ impl Head {
             .wide_measures
             .iter()
             .map(|measure| {
-                let ink = crate::common::series_ink(measure, &domain, series_palette, &sl.dark_companion_palette, &[], None)?;
+                let ink = crate::common::series_ink(measure, &domain, series_palette, &sl.dark_companion_palette, &[], None, None)?;
                 Ok((::bind::wide::wide_series_display(measure, &labels), ink))
             })
             .collect::<Result<Vec<_>, String>>()?;

@@ -12,7 +12,31 @@ Both dicts are sparse — only truncated queries appear.
 from __future__ import annotations
 
 from dbt_charts.core.diagnostics import WARN_QUERY_RESULT_TRUNCATED, Diagnostic
+from dbt_charts.core.execute.cache_backend import TruncationInfo
 from dbt_charts.core.render.warnings.base import WarningContext
+
+# A result built from {{ queries.X.cache }} upstreams keeps a row count that says
+# nothing about the cut (a count(*) keeps one row), and a warm hit cannot tell
+# whether the cut was its own or an upstream's, so this names what it reads.
+_COMPOSED_MESSAGE_TEMPLATE = (
+    "{subject}: query {query_name!r} is built from {upstreams}, and its data "
+    "was cut by the {reason} limit, so the values shown are incomplete."
+)
+
+
+def _message(subject: str, truncation: TruncationInfo) -> str:
+    if truncation.upstreams:
+        return _COMPOSED_MESSAGE_TEMPLATE.format(
+            subject=subject,
+            query_name=truncation.query_name,
+            upstreams=", ".join(repr(name) for name in truncation.upstreams),
+            reason=truncation.reason,
+        )
+    return WARN_QUERY_RESULT_TRUNCATED.message_template.format(
+        subject=subject,
+        reason=truncation.reason,
+        kept_row_count=truncation.kept_row_count,
+    )
 
 
 def detect(ctx: WarningContext) -> list[Diagnostic]:
@@ -26,11 +50,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                 chart=chart_id,
                 path=f"charts.{chart_id}.query",
                 field=None,
-                message=WARN_QUERY_RESULT_TRUNCATED.message_template.format(
-                    subject=f"Chart {chart_id!r}",
-                    reason=truncation.reason,
-                    kept_row_count=truncation.kept_row_count,
-                ),
+                message=_message(f"Chart {chart_id!r}", truncation),
                 fix=WARN_QUERY_RESULT_TRUNCATED.fix_template,
             )
         )
@@ -45,11 +65,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                 chart=None,
                 path=f"queries.{query_name}",
                 field=None,
-                message=WARN_QUERY_RESULT_TRUNCATED.message_template.format(
-                    subject=f"Query {query_name!r}",
-                    reason=truncation.reason,
-                    kept_row_count=truncation.kept_row_count,
-                ),
+                message=_message(f"Query {query_name!r}", truncation),
                 fix=WARN_QUERY_RESULT_TRUNCATED.fix_template,
             )
         )

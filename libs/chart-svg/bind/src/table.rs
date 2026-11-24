@@ -417,15 +417,15 @@ fn column_box<'a>(config: Option<&'a TableColumnConfig>, defaults: &'a TableColu
 }
 
 /// `sanitize_color` (`core/colors.py`) for a color that is present: a 3- or 6-digit hex color stands as written,
-/// `transparent` and `none` in any case are `transparent`, anything else is not a color.
-pub fn sanitized_color(color: &str) -> Option<&str> {
+/// a CSS color name is its hex, `transparent` and `none` in any case are `transparent`, anything else is not a color.
+pub fn sanitized_color(color: &str) -> Option<String> {
     let hex = color.strip_prefix('#').is_some_and(|digits| matches!(digits.len(), 3 | 6) && digits.bytes().all(|b| b.is_ascii_hexdigit()));
     if hex {
-        Some(color)
+        Some(color.to_string())
     } else if color.eq_ignore_ascii_case("transparent") || color.eq_ignore_ascii_case("none") {
-        Some("transparent")
+        Some("transparent".to_string())
     } else {
-        None
+        ::color::css_named_color_to_hex(color).map(str::to_string)
     }
 }
 
@@ -438,8 +438,8 @@ fn cell_color(color: &ColorOrColumn, what: &str) -> Result<Option<String>, Diagn
         return Ok(None);
     }
     match sanitized_color(spec) {
-        Some(color) => Ok(Some(color.to_string())),
-        None => Err(Diagnostic::refused(refuse!("a table column with a {what} that is not a hex color, transparent or none is not supported"))),
+        Some(color) => Ok(Some(color)),
+        None => Err(Diagnostic::refused(refuse!("a table column with a {what} that is not a hex color, a CSS color name, transparent or none is not supported"))),
     }
 }
 
@@ -866,6 +866,15 @@ mod tests {
 
     fn swatch(text: &str) -> Result<String, Diagnostic> {
         swatch_cell(Some(&json!(text)))
+    }
+
+    #[test]
+    fn a_css_color_name_sanitizes_to_its_hex_in_any_case() {
+        assert_eq!(sanitized_color("white").as_deref(), Some("#ffffff"));
+        assert_eq!(sanitized_color("WHITE").as_deref(), Some("#ffffff"));
+        assert_eq!(sanitized_color("#abc").as_deref(), Some("#abc"));
+        assert_eq!(sanitized_color("None").as_deref(), Some("transparent"));
+        assert_eq!(sanitized_color("whit"), None);
     }
 
     fn row(value: Value) -> serde_json::Map<String, Value> {

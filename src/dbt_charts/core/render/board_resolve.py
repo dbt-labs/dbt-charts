@@ -180,8 +180,6 @@ def _build_static_resolved_layout(
         tab_titles=tuple(layout.tab_titles) if layout.tab_titles else (),
         tab_slugs=tuple(layout.tab_slugs) if layout.tab_slugs else (),
         tab_variable=layout.tab_variable,
-        default_tab=layout.default_tab if layout.default_tab is not None else 0,
-        tab_position=layout.tab_position,
     )
 
 
@@ -532,8 +530,6 @@ def _build_resolved_layout(
         tab_titles=tuple(layout.tab_titles) if layout.tab_titles else (),
         tab_slugs=tuple(layout.tab_slugs) if layout.tab_slugs else (),
         tab_variable=layout.tab_variable,
-        default_tab=layout.default_tab if layout.default_tab is not None else 0,
-        tab_position=layout.tab_position,
     )
 
 

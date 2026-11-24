@@ -7,6 +7,7 @@ its point's side with no connector; this detector words it on the annotation.
 
 from __future__ import annotations
 
+from dbt_charts.core.compile.authoring.paths import join_path
 from dbt_charts.core.diagnostics import WARN_ANNOTATION_NOTE_MOVED, Diagnostic
 from dbt_charts.core.render.warnings.base import WarningContext, engine_warnings
 
@@ -17,7 +18,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         Diagnostic.from_code(
             WARN_ANNOTATION_NOTE_MOVED,
             chart=chart_id,
-            path=f"charts.{chart_id}.annotations[{params['index']}]",
+            path=join_path(["charts", chart_id, "annotations", params["index"]]),
             message=WARN_ANNOTATION_NOTE_MOVED.message_template.format(**params),
             fix=WARN_ANNOTATION_NOTE_MOVED.fix_template,
         )

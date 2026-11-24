@@ -33,6 +33,7 @@ use serde_json::{json, Value};
 
 use crate::color_scale;
 use crate::column_refs;
+use crate::table::sanitized_color;
 use crate::conditional::{self, card_patch, good_overrides, CardPatch, Signed};
 use crate::formats::locale::active_number_locale;
 use crate::formats::{column_format, is_time_format, resolve_format, tier_fields, Alias, AuthoredFormat, Formats, Kind, Notation, Tiers, TEXT_NAMES};
@@ -567,9 +568,11 @@ fn gradient_fill(kpi: &KpiChartStyle, column: Option<&str>, row: &serde_json::Ma
         }
     };
     let fill = match color {
-        Some(color) if !color::is_sanitizable_color(&color) => return Err(Diagnostic::refused(refuse!("a KPI `style.background` that is not a hex color, transparent or none is not supported"))),
-        Some(color) if color.starts_with('#') => Some(color),
-        Some(_) => Some("transparent".to_string()),
+        Some(color) => match sanitized_color(&color) {
+            Some(color) if color.starts_with('#') => Some(color),
+            Some(_) => Some("transparent".to_string()),
+            None => return Err(Diagnostic::refused(refuse!("a KPI `style.background` that is not a hex color, a CSS color name, transparent or none is not supported"))),
+        },
         None => None,
     };
     Ok(Painted { fill, hinge_mismatch })
@@ -625,20 +628,24 @@ fn scale_stops(palette: &ScalePalette) -> Result<Vec<String>, Diagnostic> {
     }
 }
 
-/// `explicit_background` (chart-renderer `kpi.rs`): the chart's own background color, which counts
-/// only when it differs from the board's, since the board's own propagates to the card unchanged.
-/// A color is sanitized as production does: hex stands, `transparent` and `none` are `transparent`,
+/// The chart's own background color, else the card fill `charts.background`; either counts only when it
+/// differs from the board's, since the board's own is already painted behind the card.
+/// A color is sanitized as production does: hex stands, a CSS name is its hex, `transparent` and `none` are `transparent`,
 /// and any other is refused where production errors.
 fn card_fill(kpi: &KpiChartStyle, board: &Style) -> Result<Option<String>, Diagnostic> {
-    let Some(KpiBackground::Color(color)) = &kpi.background else { return Ok(None) };
-    let color = color.as_str();
+    let color = match &kpi.background {
+        Some(KpiBackground::Color(color)) => color.as_str(),
+        Some(_) => return Ok(None),
+        None if board.charts.background.eq_ignore_ascii_case("transparent") => return Ok(None),
+        None => board.charts.background.as_str(),
+    };
     if color == board.background.as_str() {
         return Ok(None);
     }
-    if !color::is_sanitizable_color(color) {
-        return Err(Diagnostic::refused(refuse!("a KPI `style.background` that is not a hex color, transparent or none is not supported")));
-    }
-    Ok(Some(if color.starts_with('#') { color.to_string() } else { "transparent".to_string() }))
+    let Some(color) = sanitized_color(color) else {
+        return Err(Diagnostic::refused(refuse!("a KPI `style.background` that is not a hex color, a CSS color name, transparent or none is not supported")));
+    };
+    Ok(Some(if color.starts_with('#') { color } else { "transparent".to_string() }))
 }
 
 /// The headline as the card draws it: a number prints through the format, and any other cell prints

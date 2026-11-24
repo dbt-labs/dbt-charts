@@ -38,12 +38,10 @@ charts:
     x: k
     y: v
 tabs:
-  id: view
-  items:
-    - title: Shown
-      rows: [shown_chart]
-    - title: Hidden
-      rows: [hidden_chart]
+  Shown:
+    rows: [shown_chart]
+  Hidden:
+    rows: [hidden_chart]
 """
 
 
@@ -74,6 +72,17 @@ def test_board_load_prefetches_the_hidden_tab(
     app = create_server(FilesystemProject(_project(tmp_path, _BOARD_YAML)))
     with TestClient(app) as client:
         response = client.get("/x")
+
+    assert response.status_code == 200
+    assert prefetched == [{"hidden": None}]
+
+
+def test_streamed_board_load_prefetches_the_hidden_tab(
+    tmp_path: Path, prefetched: list[dict[str, Exception | None]]
+) -> None:
+    app = create_server(FilesystemProject(_project(tmp_path, _BOARD_YAML)))
+    with TestClient(app) as client:
+        response = client.get("/x", headers={"Sec-Fetch-Dest": "document"})
 
     assert response.status_code == 200
     assert prefetched == [{"hidden": None}]

@@ -100,7 +100,11 @@
     function showTabSwitch(tab) {
         var list = tab.closest('[role="tablist"]');
         var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
-        var rule = list.querySelector('path');
+        var rule = list.querySelector(':scope > path[stroke]');
+        /*{# The open pane's background, drawn up into its tab. The pane is #}*/
+        /*{# blanked below, and the clicked tab's own is not known yet. #}*/
+        var fill = list.querySelector(':scope > path:not([stroke])');
+        if (fill) fill.setAttribute('visibility', 'hidden');
         if (!list.__dbtDrawnTabs) {
             var drawnRule = rule.getAttribute('d');
             var drawn = tabs.map(function(each) {
@@ -111,6 +115,7 @@
             });
             list.__dbtDrawnTabs = function() {
                 rule.setAttribute('d', drawnRule);
+                if (fill) fill.removeAttribute('visibility');
                 tabs.forEach(function(each, i) {
                     each.setAttribute('aria-selected', drawn[i][0]);
                     TAB_INK.forEach(function(attr, j) {
@@ -131,7 +136,10 @@
         TAB_INK.forEach(function(attr) {
             var activeText = active.querySelector('text');
             var tabText = tab.querySelector('text');
-            var ink = activeText.getAttribute(attr);
+            /*{# On a fill the active label wears the ink that reads on it; the #}*/
+            /*{# clicked tab is bare, and takes the bar's. #}*/
+            var ink = (attr === 'fill' && fill && fill.getAttribute('data-bar-ink'))
+                || activeText.getAttribute(attr);
             activeText.setAttribute(attr, tabText.getAttribute(attr));
             tabText.setAttribute(attr, ink);
         });

@@ -157,7 +157,7 @@ class TestRetiredTokensRespellInMemory:
 
     def test_a_chart_directly_under_a_tab_item_is_respelled(self) -> None:
         """The contrast case to the one above: an *inline* chart living
-        directly under `tabs.items.*.cols.*` (not inside a nested
+        directly under `tabs.*.cols.*` (not inside a nested
         sub-board's own `charts:` map) is an ordinary position
         `_relative_field_paths` reaches without crossing the self-nesting
         `seen` guard at all -- `AuthoredChart` is not self-referential the
@@ -186,7 +186,7 @@ class TestRetiredTokensRespellInMemory:
         result = prepare_board_mapping(dict(mapping))
 
         assert (
-            result["tabs"]["items"][0]["cols"][0]["style"]["marks"]["bar"]["color"]
+            result["tabs"]["tab one"]["cols"][0]["style"]["marks"]["bar"]["color"]
             == "category[2].dark"
         )
 

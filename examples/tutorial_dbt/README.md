@@ -12,7 +12,7 @@ This example demonstrates how to use dbt charts with a dbt project, showcasing t
 2. **Generate the dbt manifest:**
    ```bash
    cd examples/tutorial_dbt
-   dbt parse
+   dbt parse --no-send-anonymous-usage-stats
    ```
    `ref()` calls in the charts resolve against `target/manifest.json`, which
    `dbt parse` writes. `target/` is gitignored dbt build output, so a fresh

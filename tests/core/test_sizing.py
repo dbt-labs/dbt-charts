@@ -30,6 +30,7 @@ from dbt_charts.core.compile.config import (
     get_default_theme_name,
     get_theme_style,
 )
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.chart.normalized import KpiChart, TableChart
 from dbt_charts.core.compile.resolve.style.board import (
@@ -38,6 +39,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style_and_context,
 )
 from dbt_charts.core.compile.sizing import WidthMeasurer, layout_intrinsic_width
+from dbt_charts.core.diagnostics.codes_compile import ERR_COLS_WIDTH_BELOW_GAP
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.render.sizing import get_chart_content_height
 
@@ -301,6 +303,87 @@ cols:
         )
         assert round(total_fraction, 6) == 1.0
 
+    @pytest.mark.parametrize(
+        "gap_style",
+        ["style:\n  gap: 16\n", "card_gap: true\n"],
+        ids=["style_gap", "card_gap"],
+    )
+    def test_percent_width_is_independent_of_column_count(self, gap_style: str):
+        """A ``25%`` col is the same width whether its row holds three or four."""
+        yaml_content = f"""
+title: Row alignment
+{gap_style}queries:
+  one:
+    type: values
+    columns: [rate]
+    values:
+      - [0.999]
+charts:
+  tile:
+    query: one
+    type: kpi
+    value: rate
+    label: Tile
+rows:
+  - cols:
+      - width: 25%
+        rows: [tile]
+      - width: 25%
+        rows: [tile]
+      - width: 25%
+        rows: [tile]
+      - width: 25%
+        rows: [tile]
+  - cols:
+      - width: 25%
+        rows: [tile]
+      - width: 25%
+        rows: [tile]
+      - width: 25%
+        rows: [tile]
+"""
+        result = compile(yaml_content)
+        assert result.success, result.errors
+
+        board = apply_static_layout(result.board)
+
+        four, three = (row.board.layout.items for row in board.layout.items)
+        assert [(i.x, i.width) for i in three] == [(i.x, i.width) for i in four[:3]]
+        last = four[-1]
+        assert last.x + last.width == pytest.approx(
+            board.layout.items[0].board.layout.width
+        )
+
+    def test_percent_width_narrower_than_the_gap_is_an_error(self):
+        """A percentage that cannot span its own gap names the item, not a 0px card."""
+        yaml_content = """
+title: Too narrow
+style:
+  gap: 16
+queries:
+  one:
+    type: values
+    columns: [rate]
+    values:
+      - [0.999]
+charts:
+  tile:
+    query: one
+    type: kpi
+    value: rate
+cols:
+  - width: 1%
+    rows: [tile]
+  - rows: [tile]
+"""
+        result = compile(yaml_content)
+        assert result.success, result.errors
+
+        with pytest.raises(CompilationError) as excinfo:
+            apply_static_layout(result.board)
+        assert excinfo.value.code is ERR_COLS_WIDTH_BELOW_GAP
+        assert "1%" in str(excinfo.value)
+
 
 class TestGridLayout:
     """Tests for grid layout sizing."""
@@ -369,13 +452,12 @@ charts:
     x: month
     y: revenue
 tabs:
-  items:
-    - title: "Tab 1"
-      rows:
-        - c1
-    - title: "Tab 2"
-      rows:
-        - c2
+  "Tab 1":
+    rows:
+      - c1
+  "Tab 2":
+    rows:
+      - c2
 """
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
@@ -415,16 +497,13 @@ charts:
   c8: {query: q, type: table}
   c9: {query: q, type: table}
 tabs:
-  id: t
-  default: One
-  items:
-    - title: One
-      rows: [{cols: [c1]}]
-    - title: Nine
-      rows:
-        - {cols: [c2, c3, c4]}
-        - {cols: [c5, c6, c7]}
-        - {cols: [c8, c9, c1]}
+  One:
+    rows: [{cols: [c1]}]
+  Nine:
+    rows:
+      - {cols: [c2, c3, c4]}
+      - {cols: [c5, c6, c7]}
+      - {cols: [c8, c9, c1]}
 """
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"

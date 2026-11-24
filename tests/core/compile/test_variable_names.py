@@ -60,11 +60,10 @@ id: sales-overview
 queries:
   q: {type: values, rows: [{n: 1}]}
 tabs:
-  items:
-    - title: A
-      rows: [c1]
-    - title: B
-      rows: [c1]
+  A:
+    rows: [c1]
+  B:
+    rows: [c1]
 charts:
   c1: {query: q, type: kpi, value: n}
 """
@@ -80,12 +79,10 @@ title: T
 queries:
   q: {type: values, rows: [{n: 1}]}
 tabs:
-  id: region-tabs
-  items:
-    - title: A
-      rows: [c1]
-    - title: B
-      rows: [c1]
+  A:
+    rows: [c1]
+  B:
+    rows: [c1]
 charts:
   c1: {query: q, type: kpi, value: n}
 """

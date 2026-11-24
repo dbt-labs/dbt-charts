@@ -22,14 +22,6 @@
   template: "Variable name '{name}' is reserved. It conflicts with a dbt charts helper or dbt Jinja builtin. Choose a different name."
   doc: 'Fired when a board declares a variable named like a helper the template context provides: filter, filter_date_range, queries, glob_boards or glob_folders.'
   docs_topic: variables
-- code: ERR-TAB-DEFAULT-UNKNOWN
-  level: error
-  title: tabs.default names no tab
-  template: '`tabs.default: {default}` slugs to {slug!r}, which is not a tab on this board
-    (tabs: {slugs}).'
-  doc: 'Fired when the `default:` of a `tabs:` layout matches no tab title. It is compared
-    by slug: the title lowercased with spaces replaced by underscores.'
-  docs_topic: layout
 - code: ERR-DUPLICATE-QUERY-NAME
   level: error
   title: Two queries share one name
@@ -680,6 +672,17 @@
     its end value above a zero-based break, so these shapes have no honest cap.'
   summary: Fired when torn outlier caps are chosen on a chart shape that cannot draw them.
   docs_topic: charts
+- code: ERR-COLS-WIDTH-BELOW-GAP
+  level: error
+  title: A cols width is too narrow to span its gap
+  template: 'A cols item''s width: {width} is {resolved}px in a {row_width}px row with a
+    {gap}px gap. A percentage is a share of the row with its gap counted in, so it must be
+    wider than one gap; raise it, or give the item a px width.'
+  doc: 'Fired when a percentage `width:` on a `cols:` item resolves to zero or less. A
+    percentage is a share of the row''s gutter grid, `p * (row + gap) - gap`, so a share no
+    wider than one gap leaves the card no width at all.'
+  summary: Fired when a cols item's percentage width is too small to span the gap.
+  docs_topic: layout
 - code: ERR-FUNNEL-BAND-WIDTH-TOO-THIN
   level: error
   title: Funnel bars are not thicker than their ribbons
@@ -2014,17 +2017,17 @@
   summary: Fired when a file a board extends is not valid YAML or holds keys a board does not accept.
 - code: ERR-TAB-TITLE-EMPTY-SLUG
   level: error
-  title: Tab title has no letter or digit
-  template: Tab title '{title}' produces an empty slug. Tab titles must contain at least one alphanumeric character. Give this tab a title with a letter or digit.
-  fix: Give the tab a title with at least one letter or digit.
-  doc: Fired when a tab's title slugs to nothing, so the tab could not be selected by name.
+  title: Tab label has no letter or digit
+  template: Tab label '{title}' produces an empty slug. Tab labels must contain at least one alphanumeric character. Give this tab a label with a letter or digit.
+  fix: Give the tab a label with at least one letter or digit.
+  doc: Fired when a tab's label slugs to nothing, so the tab could not be selected by name.
   docs_topic: layout
 - code: ERR-TAB-TITLE-DUPLICATE-SLUG
   level: error
-  title: Two tab titles share a slug
-  template: Duplicate tab slug '{slug}'. Tab titles must produce unique slugs (after lowercasing and replacing spaces with _). Retitle one of the tabs that slugs to '{slug}'.
-  fix: Retitle one of the tabs so the slugs differ.
-  doc: Fired when two tabs of one layout have titles that slug to the same name.
+  title: Two tab labels share a slug
+  template: Duplicate tab slug '{slug}'. Tab labels must produce unique slugs (after lowercasing and replacing spaces with _). Relabel one of the tabs that slugs to '{slug}'.
+  fix: Relabel one of the tabs so the slugs differ.
+  doc: Fired when two tabs of one layout have labels that slug to the same name.
   docs_topic: layout
 - code: ERR-VALUES-ROW-SHAPE
   level: error

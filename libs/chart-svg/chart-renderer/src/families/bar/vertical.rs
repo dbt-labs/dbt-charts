@@ -38,7 +38,7 @@ use super::facet::color_1to1_with_cat;
 use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, label_hang, mark_labels, plain_sites, LayerCaptions, step_band_of, value_label_layers};
 use super::layout::{Drawn, XScale, clipped_if, warn_vertical_density};
 use super::legend::{LayeredBarLegend, authored_legend_order, bar_link_keys, grouped_legend_domain, numeric_legends_of, stacked_legend_entries};
-use super::marks::{BandColumns, ColumnSplit, Columns, RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, collapsed_bars, direction_layers, grouped_overlap_fraction, hover_band_for, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, strip_columns, unity_rule};
+use super::marks::{BandColumns, ColumnSplit, Columns, RangedLayerAria, Rounded, anchored, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, collapsed_bars, direction_layers, grouped_overlap_fraction, hover_band_for, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, strip_columns, unity_rule};
 use super::time_x::TimeX;
 use super::off_chart::{OffChart, warn_if_undrawable};
 use super::torn_outlier::{Caps, Seg, Torn};
@@ -709,6 +709,7 @@ pub(crate) fn render_vertical_panel(
                 &r.style.series_label.dark_companion_palette,
                 &r.style.series_label.pin_companions,
                 category_scale,
+                r.patterns.ladder_ink(),
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1233,7 +1234,7 @@ pub(crate) fn render_vertical_panel(
     let rail_field = if r.series_from_measures { "y" } else { "color" };
     let rail_font = (sl.font_family.as_str(), sl.font_size, sl.font_weight.as_str());
     let (rail_pane_w, rail_plans) = if show_rail_v {
-        let entries = color_domain.iter().map(|series| Ok((series.clone(), rail_value(series)?, series.clone()))).collect::<Result<Vec<_>, String>>()?;
+        let entries = color_domain.iter().map(|series| Ok((series.clone(), rail_value(series)?, series_text(series)))).collect::<Result<Vec<_>, String>>()?;
         let plans = crate::families::cartesian::plan_rail_labels(&entries, w, rail_font, fonts)?;
         let width_of = |texts: &[String]| {
             crate::families::cartesian::rail_pane_width(texts, &sl.font_family, sl.font_size, &sl.font_weight, fonts, w)
@@ -4035,6 +4036,10 @@ pub(crate) fn render_vertical_panel(
 
     // Columns (bars growing upward from baseline)
     let cols = columns_for(&band, plot_w);
+    r.patterns.fit_tiles(match &cols {
+        Columns::Banded(columns) => columns.width,
+        Columns::Timed(by_cat) => by_cat.values().map(|columns| columns.width).fold(f64::INFINITY, f64::min),
+    });
     let continuous_time = time.as_ref().is_some_and(|t| !t.is_discrete());
     let double_stroke = time.as_ref().map_or(true, TimeX::double_stroke);
     // `url(#id)` resolves document-wide, so a panel's clip ids carry the panel.
@@ -4109,7 +4114,6 @@ pub(crate) fn render_vertical_panel(
                 }
                 let SegmentSpan { start: cum_before, end: cum_after, .. } = spans[&key];
                 let patch = r.patch_of(rows, &datum_of, &key)?;
-                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: false });
                 if ghosts_on {
                     let fill = crate::common::series_color(base_series(series), palette_domain, &r.series_palette, category_scale, &crate::pattern::PatternPlan::default())?.into_color();
                     ghost_points.push((aria.clone(), col_x + columns.width / 2.0, linear.scale(cum_after), fill, hrefs.get(&key).cloned()));
@@ -4123,6 +4127,7 @@ pub(crate) fn render_vertical_panel(
                 let seg_h = bottom_y - top_y;
                 let paint = crate::common::series_color(base_series(series), palette_domain, &r.series_palette, category_scale, &r.patterns)?;
                 let mark = paint.for_mark(columns.width.min(seg_h), stroke_color, halo_w(stroke_w, columns.width));
+                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), on: patch.label_on(&mark), rect: Some(crate::vega_fit::Bounds::new(col_x, top_y, col_x + columns.width, top_y + seg_h)), paint_only: false });
                 // Corner radius flips with sign (Vega's mixed-sign layer
                 // split — see `bar_passes`'s doc comment): a positive
                 // segment rounds its top (far) end, a negative one its
@@ -4134,9 +4139,10 @@ pub(crate) fn render_vertical_panel(
                 ribbons.record(&key, (col_x, top_y, columns.width, seg_h), aria.as_deref(), Some(series_text(base_series(series)).trim().to_string()), || {
                     crate::common::series_color(base_series(series), palette_domain, &r.series_palette, category_scale, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color)
                 })?;
-                let nodes = bar_passes(base_mark(&datum_of, &key), false, col_x, top_y, columns.width, seg_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w),
+                let (ax, ay) = mark.anchor(col_x + columns.width / 2.0, linear.scale(0.0));
+                let nodes = anchored((ax, ay), bar_passes(base_mark(&datum_of, &key), false, col_x - ax, top_y - ay, columns.width, seg_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w),
                     segment_r,
-                    Rounded::by_sign(raw_val), false, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?;
+                    Rounded::by_sign(raw_val), false, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?);
                 plot.extend(match &torn {
                     Some(t) => t.segment(&mut torn_caps, Seg { span: (cum_before, cum_after), along: (col_x, col_x + columns.width), paint: (patch.fill(&mark.fill), patch.stroke(edge), patch.stroke_w(edge_w), patch.opacity(r.style.mark.opacity)), role: base_mark(&datum_of, &key), aria: aria.as_deref() }, &linear, nodes),
                     None => nodes,
@@ -4204,7 +4210,6 @@ pub(crate) fn render_vertical_panel(
                 _ => plain()?,
             };
             let patch = r.patch_of(rows, &datum_of, &key)?;
-            label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: patch.label_fill(Some(fill.clone())), color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: false });
             if let Some(band) = hover_band.as_mut() {
                 band.push(cat, series, aria.as_deref(), hrefs.get(&key).map(String::as_str), col_x, columns.width, Some(val));
             }
@@ -4212,13 +4217,15 @@ pub(crate) fn render_vertical_panel(
                 ghost_points.push((aria.clone(), col_x + columns.width / 2.0, bar_top, fill.clone(), hrefs.get(&key).cloned()));
             }
             let mark = paint.for_mark(columns.width.min(bar_h), stroke_color, halo_w(stroke_w, columns.width));
+            label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: patch.label_fill(Some(fill.clone())), color: patch.label_color.clone(), weight: patch.label_weight.clone(), on: patch.label_on(&mark), rect: Some(crate::vega_fit::Bounds::new(col_x, bar_top, col_x + columns.width, bar_top + bar_h)), paint_only: false });
             let (edge, edge_w) = mark.seam(crate::pattern::STACK_EDGE_W);
             ribbons.record(&key, (col_x, bar_top, columns.width, bar_h), aria.as_deref(), Some(series_text(base_series(series)).trim().to_string()), || {
                 crate::common::series_color(base_series(series), &color_domain, &r.series_palette, category_scale, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color)
             })?;
-            let nodes = bar_passes(base_mark(&datum_of, &key), false, col_x, bar_top, columns.width, bar_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w),
+            let (ax, ay) = mark.anchor(col_x + columns.width / 2.0, linear.scale(0.0));
+            let nodes = anchored((ax, ay), bar_passes(base_mark(&datum_of, &key), false, col_x - ax, bar_top - ay, columns.width, bar_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(edge), patch.stroke_w(edge_w),
                 corner_r,
-                ends, double_stroke, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?;
+                ends, double_stroke, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?);
             let nodes = match off_chart.as_mut() {
                 Some(off) => off.tear(val, (col_x, col_x + columns.width), (bar_top + bar_h, linear.scale(val), linear.scale(linear_domain_max)), patch.ink(mark.ink.as_deref()).unwrap_or(patch.fill(&mark.fill)), nodes),
                 None => nodes,
@@ -4281,9 +4288,6 @@ pub(crate) fn render_vertical_panel(
                 _ => plain()?,
             };
             let patch = r.patch_of(rows, &datum_of, &key)?;
-            if ranged.is_some() || patch.paints_label() {
-                label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), paint_only: ranged.is_none() });
-            }
             if let Some(band) = hover_band.as_mut() {
                 band.push(cat, "", aria.as_deref(), hrefs.get(&key).map(String::as_str), col_x, columns.width, Some(val));
             }
@@ -4292,8 +4296,10 @@ pub(crate) fn render_vertical_panel(
             }
             ribbons.record(&key, (col_x, bar_top, columns.width, bar_h), aria.as_deref(), None, || Ok(r.style.single_series_fill.clone()))?;
             let mark = r.single_series_paint(rows, &cat_domain, cat)?.for_mark(columns.width.min(bar_h), stroke_color, halo_w(stroke_w, columns.width));
-            let nodes = bar_passes(base_mark(&datum_of, &key), false, col_x, bar_top, columns.width, bar_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(&mark.stroke), patch.stroke_w(mark.stroke_w), corner_r,
-                ends, double_stroke, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?;
+            label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None, color: patch.label_color.clone(), weight: patch.label_weight.clone(), on: patch.label_on(&mark), rect: Some(crate::vega_fit::Bounds::new(col_x, bar_top, col_x + columns.width, bar_top + bar_h)), paint_only: ranged.is_none() });
+            let (ax, ay) = mark.anchor(col_x + columns.width / 2.0, linear.scale(0.0));
+            let nodes = anchored((ax, ay), bar_passes(base_mark(&datum_of, &key), false, col_x - ax, bar_top - ay, columns.width, bar_h, patch.fill(&mark.fill), patch.ink(mark.ink.as_deref()), patch.opacity(r.style.mark.opacity), patch.stroke(&mark.stroke), patch.stroke_w(mark.stroke_w), corner_r,
+                ends, double_stroke, next_clip().as_deref(), aria.as_deref(), anchor_of(&key))?);
             let nodes = match off_chart.as_mut() {
                 Some(off) => off.tear(val, (col_x, col_x + columns.width), (bar_top + bar_h, linear.scale(val), linear.scale(linear_domain_max)), patch.ink(mark.ink.as_deref()).unwrap_or(patch.fill(&mark.fill)), nodes),
                 None => nodes,
@@ -5334,7 +5340,7 @@ under,
             px_per_unit,
             placed_bounds,
         )?;
-        crate::families::cartesian::warn_rail_plan(&r.id, rail_field, &color_domain, str::to_string, &painted_plans, &forcing);
+        crate::families::cartesian::warn_rail_plan(&r.id, rail_field, &color_domain, series_text, &painted_plans, &forcing);
         let rail_x = plot_left + rail_x_rel.expect("the rail arm places its labels");
         let mut rail_labels: Vec<Node> = Vec::new();
         let mut extents: Vec<(f64, f64)> = Vec::new();
@@ -5349,6 +5355,7 @@ under,
                 &sl.dark_companion_palette,
                 &sl.pin_companions,
                 category_scale,
+                r.patterns.ladder_ink(),
             )?;
             let rail_label_attrs = match color_field.filter(|_| tooltip_labels) {
                 Some(field) => crate::contract::series_label_attrs(field, series)?,

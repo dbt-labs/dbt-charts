@@ -170,6 +170,7 @@ def test_unresponsive_endpoint_is_bounded_and_prints_nothing(
         "DCT_NO_WORKSPACE_GUARD": "1",
     }
     env.pop("DO_NOT_TRACK", None)
+    env.pop("DBT_SEND_ANONYMOUS_USAGE_STATS", None)
     started = time.monotonic()
     result = subprocess.run(
         [sys.executable, "-c", "from dbt_charts.cli.main import app; app()", "skills"],

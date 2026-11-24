@@ -253,6 +253,7 @@ def _walk_jinja(
     counter: list[int],
     all_branches: bool = True,
     marker: str = "",
+    value_names: frozenset[str] = frozenset(),
 ) -> None:
     """Walk a jinja2 AST, appending SQL fragments to *out*.
 
@@ -266,13 +267,16 @@ def _walk_jinja(
     statement. Pass False for the primary branch alone — see
     ``_branch_join_is_the_artifact``.
 
+    A bare ``{{ name }}`` in ``value_names`` is marked for ``build_skeleton``
+    to settle once the text around it is known.
+
     A non-empty ``marker`` tags the join of an ``{% if %}`` that opens mid
     statement with a ``/*marker*/`` comment: there the branches can only
     continue that statement, never start one of their own.
     """
     if isinstance(node, jinja2.nodes.Template):
         for child in node.body:
-            _walk_jinja(child, out, counter, all_branches, marker)
+            _walk_jinja(child, out, counter, all_branches, marker, value_names)
 
     elif isinstance(node, jinja2.nodes.TemplateData):
         out.append(node.data)
@@ -284,6 +288,9 @@ def _walk_jinja(
         for child in node.nodes:
             if isinstance(child, jinja2.nodes.TemplateData):
                 out.append(child.data)
+            elif isinstance(child, jinja2.nodes.Name) and child.name in value_names:
+                out.append(f"\x00{counter[0]}\x00")
+                counter[0] += 1
             else:
                 out.append(f"{SKELETON_PLACEHOLDER_PREFIX}{counter[0]}__")
                 counter[0] += 1
@@ -298,28 +305,28 @@ def _walk_jinja(
             else " ; "
         )
         for child in node.body:
-            _walk_jinja(child, out, counter, all_branches, marker)
+            _walk_jinja(child, out, counter, all_branches, marker, value_names)
         if not all_branches:
             return
         for elif_node in node.elif_:
             out.append(separator)
             for child in elif_node.body:
-                _walk_jinja(child, out, counter, all_branches, marker)
+                _walk_jinja(child, out, counter, all_branches, marker, value_names)
         if node.else_:
             out.append(separator)
             for child in node.else_:
-                _walk_jinja(child, out, counter, all_branches, marker)
+                _walk_jinja(child, out, counter, all_branches, marker, value_names)
 
     elif isinstance(node, jinja2.nodes.For):
         # Walk body once and the `else_` clause if present — jinja2 runs the
         # else clause when the iterable is empty. Same branch-coverage posture
         # as If: SQL hiding in the else branch must reach the skeleton.
         for child in node.body:
-            _walk_jinja(child, out, counter, all_branches, marker)
+            _walk_jinja(child, out, counter, all_branches, marker, value_names)
         if node.else_ and all_branches:
             out.append(" ; ")
             for child in node.else_:
-                _walk_jinja(child, out, counter, all_branches, marker)
+                _walk_jinja(child, out, counter, all_branches, marker, value_names)
 
     elif isinstance(node, jinja2.nodes.Assign):
         # {% set x = ... %} — emits nothing.
@@ -334,13 +341,22 @@ def _walk_jinja(
 
 
 def build_skeleton(
-    template_str: str, all_branches: bool = True, marker: str = ""
+    template_str: str,
+    all_branches: bool = True,
+    marker: str = "",
+    variables_bind: bool = False,
 ) -> str:
     """Return a SQL skeleton by walking the jinja2 AST.
 
     TemplateData becomes literal SQL; `{{ expr }}` becomes a placeholder
     identifier; `{% if %}` recurses all branches. Unknown jinja nodes raise
     UnparseableSqlError so no SQL can hide inside them.
+
+    ``variables_bind`` is for a board query's body, where every board variable
+    renders as a bound parameter: a bare ``{{ name }}`` the template does not
+    assign itself is then a value, and becomes ``NULL`` where it stands as a
+    token of its own. Spliced into a name (``events_{{ env }}``,
+    ``schema.{{ tbl }}``) or quoted as an identifier, it stays a placeholder.
     """
     if "{{" not in template_str and "{%" not in template_str:
         return template_str
@@ -351,10 +367,29 @@ def build_skeleton(
     except jinja2.TemplateSyntaxError as exc:
         raise UnparseableSqlError(exc) from exc
 
+    value_names: frozenset[str] = frozenset()
+    if variables_bind:
+        names = list(ast.find_all(jinja2.nodes.Name))
+        assigned = {n.name for n in names if n.ctx != "load"}
+        value_names = frozenset(n.name for n in names if n.name not in assigned)
     out: list[str] = []
     counter = [0]
-    _walk_jinja(ast, out, counter, all_branches, marker)
-    return "".join(out)
+    _walk_jinja(ast, out, counter, all_branches, marker, value_names)
+    return _BOUND_VALUE_MARK_RE.sub(_settle_bound_value, "".join(out))
+
+
+_BOUND_VALUE_MARK_RE = re.compile(r"\x00(\d+)\x00")
+# Text that joins a neighbor into one name: a word, a dotted part, a quoted
+# identifier, another expression.
+_NAME_JOINERS = frozenset('$."`[]\x00')
+
+
+def _settle_bound_value(match: re.Match[str]) -> str:
+    text, start, end = match.string, match.start(), match.end()
+    neighbors = [text[start - 1] if start else "", text[end] if end < len(text) else ""]
+    if any(c.isalnum() or c == "_" or c in _NAME_JOINERS for c in neighbors):
+        return f"{SKELETON_PLACEHOLDER_PREFIX}{match.group(1)}__"
+    return "NULL"
 
 
 def _sqlglot_error_position(

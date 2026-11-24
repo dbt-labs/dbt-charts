@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import NamedTuple
 
 from dbt_charts.core.compile.conditions import DrawnPredicate, drawn_items, is_drawn
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
     Layout,
@@ -47,6 +48,7 @@ from dbt_charts.core.compile.resolve.style.markdown_style import (
     title_min_content_width,
 )
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
+from dbt_charts.core.diagnostics.codes_compile import ERR_COLS_WIDTH_BELOW_GAP
 from dbt_charts.core.font_measure import get_font_measurer, get_weighted_font_measurer
 from dbt_charts.core.text.case import apply_case
 from dbt_charts.core.text.format_d3 import portable_strftime
@@ -417,6 +419,42 @@ def resolve_cols_widths(
     ]
 
 
+def cols_item_width(
+    user_width: str | None, row_width: float, gap: float
+) -> float | None:
+    """An authored cols width in pixels, or None for an auto item.
+
+    A percentage is a share of the row's gutter grid, ``p * (row + gap) - gap``:
+    ``grid_span_width`` for a span of ``p`` of the columns. So ``25%`` is the
+    same width whatever the row's column count, ``50%`` spans two ``25%``
+    cards and the gap between them, and percentages summing to 100% fill the
+    row exactly. A share no wider than one gap leaves no card, and raises.
+    """
+    if user_width is not None and str(user_width).strip().endswith("%"):
+        share = parse_dimension(user_width, row_width + gap)
+        if share is None:
+            return None
+        if share <= gap:
+            raise CompilationError.from_code(
+                ERR_COLS_WIDTH_BELOW_GAP,
+                width=user_width,
+                resolved=round(share - gap, 2),
+                row_width=round(row_width, 2),
+                gap=round(gap, 2),
+            )
+        return share - gap
+    return parse_dimension(user_width, row_width)
+
+
+def cols_item_widths(
+    items: list[LayoutItem], row_width: float, gap: float
+) -> list[float]:
+    """Each cols item's width in a row ``row_width`` wide with ``gap`` between items."""
+    n = len(items)
+    specified = [cols_item_width(item.user_width, row_width, gap) for item in items]
+    return resolve_cols_widths(specified, row_width - gap * (n - 1), n)
+
+
 def _fold_layout(
     layout: Layout, items: list[LayoutItem], values: list[float | None], gap: float
 ) -> float | None:
@@ -487,12 +525,12 @@ def layout_intrinsic_width(
 
     def item_width(item: LayoutItem) -> IntrinsicWidth:
         if item.user_width is not None and not (
-            layout.type == "rows" and str(item.user_width).strip().endswith("%")
+            layout.type in ("rows", "tabs")
+            and str(item.user_width).strip().endswith("%")
         ):
-            # A percentage width on a rows item means a fraction of the row
-            # (rows_item_width resolves it at assignment); feeding it into
-            # the hug too would compound the two into a quarter-width slot.
-            # Tabs items cannot carry a width (TabItem has no such field).
+            # A percentage width on a rows item or tab means a fraction of the
+            # row or pane (rows_item_width resolves it at assignment); feeding
+            # it into the hug too would compound the two into a quarter-width slot.
             explicit = parse_dimension(item.user_width, max_content_width)
             if explicit is not None:
                 return IntrinsicWidth(None, explicit)
@@ -613,19 +651,16 @@ def _layout_item_widths(
 ) -> list[float]:
     """Slot width per drawn item, mirroring the sizing pass's width assignment.
 
-    rows give an item its authored width (capped at the row) or the full
-    available width; tabs give every item the full available width; cols
+    rows and tabs give an item its authored width (capped at the row or
+    pane) or the full available width; cols
     partition it via resolve_cols_widths; grid uses equal tracks so an item's
     width depends only on its col_span, not its position.
     """
     effective_gap = gap + card_gap
-    if layout.type == "rows":
+    if layout.type in ("rows", "tabs"):
         return [rows_item_width(item, available_width) for item in items]
     if layout.type == "cols":
-        n = len(items)
-        content_width = available_width - effective_gap * (n - 1)
-        specified = [parse_dimension(item.user_width, content_width) for item in items]
-        return resolve_cols_widths(specified, content_width, n)
+        return cols_item_widths(items, available_width, effective_gap)
     if layout.type == "grid":
         columns = layout.columns if layout.columns is not None else DEFAULT_GRID_COLUMNS
         col_width = (available_width - effective_gap * (columns - 1)) / columns
@@ -633,7 +668,7 @@ def _layout_item_widths(
             grid_span_width(col_width, item_grid_span(item)[0], effective_gap)
             for item in items
         ]
-    return [available_width] * len(items)
+    raise AssertionError(f"unknown layout type {layout.type!r}")
 
 
 def prose_slot_widths(

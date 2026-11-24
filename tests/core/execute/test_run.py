@@ -33,9 +33,16 @@ from ..._run import Run as BoardRun
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _miss(name: str, sql: str = "SELECT 1") -> Miss:
-    entry = sql_entry(sql, source="db")
-    return Miss(planned_query(name, entry, ("s", name, "v")))
+def _miss(name: str, upstreams: tuple[Miss, ...] = ()) -> Miss:
+    entry = sql_entry("SELECT 1", source="db")
+    return Miss(
+        planned_query(
+            name,
+            entry,
+            ("s", name, "v"),
+            upstreams=tuple(upstream.planned for upstream in upstreams),
+        )
+    )
 
 
 def _rows(miss: Miss) -> Outcome:
@@ -114,7 +121,7 @@ def test_cache_ref_upstream_settles_before_its_consumer_starts() -> None:
         events.append(f"settle:{miss.name}")
 
     run(
-        [_miss("down", "SELECT * FROM {{ queries.up.cache }}"), _miss("up")],
+        [_miss("down", (_miss("up"),)), _miss("up")],
         execute,
         settle,
         max_workers=4,
@@ -125,7 +132,7 @@ def test_cache_ref_upstream_settles_before_its_consumer_starts() -> None:
 
 def test_upstream_outside_the_misses_does_not_gate() -> None:
     outcomes: Mapping[str, Outcome] = run(
-        [_miss("down", "SELECT * FROM {{ queries.cached.cache }}")],
+        [_miss("down", (_miss("cached"),))],
         _rows,
         lambda m, o: None,
         max_workers=2,

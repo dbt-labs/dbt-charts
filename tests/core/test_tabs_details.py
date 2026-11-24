@@ -78,11 +78,10 @@ class TestTabNormalization:
         yaml_content = """
 title: Test
 tabs:
-  items:
-    - title: Overview
-      text: "Overview content"
-    - title: Details
-      text: "Details content"
+  Overview:
+    text: "Overview content"
+  Details:
+    text: "Details content"
 """
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
@@ -95,39 +94,15 @@ tabs:
         assert var.input == "select"
         assert var.default == "overview"
 
-    def test_tabs_with_custom_id(self):
-        """Tabs with id should use that as the variable name."""
-        yaml_content = """
-title: Test
-tabs:
-  id: view
-  default: details
-  items:
-    - title: Overview
-      text: "Overview content"
-    - title: Details
-      text: "Details content"
-"""
-        result = compile(yaml_content)
-        assert result.success, f"Compile failed: {result.errors}"
-
-        board = result.board
-        # Should use "view" as variable name
-        assert "view" in board.variable_registry
-        var = board.variable_registry["view"]
-        assert var.visible is False
-        assert var.default == "details"
-
     def test_tabs_slugs_on_layout(self):
         """Layout should have tab_slugs for URL values."""
         yaml_content = """
 title: Test
 tabs:
-  items:
-    - title: Overview
-      text: "Overview content"
-    - title: Raw Data
-      text: "Raw content"
+  Overview:
+    text: "Overview content"
+  Raw Data:
+    text: "Raw content"
 """
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
@@ -137,57 +112,20 @@ tabs:
         assert layout.tab_variable == "_tab_test"
         assert layout.tab_titles == ["Overview", "Raw Data"]
 
-    def test_tabs_default_first_tab(self):
-        """Default tab should be first tab if not specified."""
-        yaml_content = """
-title: Test
-tabs:
-  items:
-    - title: First
-      text: "First content"
-    - title: Second
-      text: "Second content"
-"""
-        result = compile(yaml_content)
-        assert result.success
-
-        layout = result.board.layout
-        assert layout.default_tab == 0
-
-    def test_tabs_default_by_name(self):
-        """Default tab can be specified by title."""
-        yaml_content = """
-title: Test
-tabs:
-  default: Second
-  items:
-    - title: First
-      text: "First content"
-    - title: Second
-      text: "Second content"
-"""
-        result = compile(yaml_content)
-        assert result.success
-
-        layout = result.board.layout
-        assert layout.default_tab == 1
-
     def test_tabs_variable_options(self):
         """Tab variable should have slugified titles as options."""
         yaml_content = """
 title: Test
 tabs:
-  id: section
-  items:
-    - title: Summary View
-      text: "Summary"
-    - title: Detail View
-      text: "Detail"
+  Summary View:
+    text: "Summary"
+  Detail View:
+    text: "Detail"
 """
         result = compile(yaml_content)
         assert result.success
 
-        var = result.board.variable_registry["section"]
+        var = result.board.variable_registry["_tab_test"]
         assert var.options.static == ["summary_view", "detail_view"]
 
 
@@ -440,7 +378,6 @@ class TestTabRendering:
             tab_titles=["Overview", "Details"],
             tab_slugs=["overview", "details"],
             tab_variable="view",
-            active_tab=0,
             resolved_style=_rs(),
             render_cache={},
             painted_canvas=None,
@@ -494,7 +431,6 @@ class TestTabRendering:
             tab_titles=["Overview", "Details"],
             tab_slugs=["overview", "details"],
             tab_variable="view",
-            active_tab=0,
             resolved_style=_rs(),
             render_cache={},
             painted_canvas=None,
@@ -546,7 +482,6 @@ class TestTabRendering:
             tab_titles=["Overview", "Details"],
             tab_slugs=["overview", "details"],
             tab_variable="view",
-            active_tab=0,
             resolved_style=rs,
             render_cache={},
             painted_canvas=None,
@@ -569,11 +504,10 @@ class TestTabInteractiveScript:
         yaml_content = """
 title: Tab Test
 tabs:
-  items:
-    - title: "Alpha"
-      text: "Content A"
-    - title: "Beta"
-      text: "Content B"
+  "Alpha":
+    text: "Content A"
+  "Beta":
+    text: "Content B"
 """
         from unittest.mock import Mock
 
@@ -669,14 +603,13 @@ grid:
         assert item.notes == "Grid cell for executive summary table"
 
     def test_layout_item_notes_from_tab_item(self):
-        """tabs.items[].notes should be copied to LayoutItem and tab board."""
+        """tabs[].notes should be copied to LayoutItem and tab board."""
         yaml_content = """
 title: Test
 tabs:
-  items:
-    - title: Overview
-      notes: "High-level KPI overview"
-      text: "Hello"
+  Overview:
+    notes: "High-level KPI overview"
+    text: "Hello"
 """
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
@@ -804,11 +737,10 @@ class TestTabSlugCollisions:
         yaml_content = """
 title: Test
 tabs:
-  items:
-    - title: "My Tab"
-      text: "Content 1"
-    - title: "my tab"
-      text: "Content 2"
+  "My Tab":
+    text: "Content 1"
+  "my tab":
+    text: "Content 2"
 """
         result = compile(yaml_content)
         assert not result.success
@@ -820,11 +752,10 @@ tabs:
         yaml_content = """
 title: Test
 tabs:
-  items:
-    - title: ""
-      text: "Content"
-    - title: "Valid"
-      text: "Content"
+  "":
+    text: "Content"
+  "Valid":
+    text: "Content"
 """
         result = compile(yaml_content)
         assert not result.success
@@ -835,40 +766,30 @@ tabs:
 _TWO_TAB_BOARD = """
 title: Test
 tabs:
-  id: tab
-  items:
-    - title: First
-      text: "First content"
-    - title: Second Tab
-      text: "Second content"
+  First:
+    text: "First content"
+  Second Tab:
+    text: "Second content"
 """
 
 
 class TestUnknownTabValue:
     """An unknown tab slug is an error, never a silent fall back to tab one."""
 
-    def test_unknown_default_fails_compile(self):
-        yaml_content = _TWO_TAB_BOARD.replace(
-            "  id: tab\n", "  id: tab\n  default: Nope\n"
-        )
-        result = compile(yaml_content)
-        assert not result.success
-        message = " ".join(str(e) for e in result.errors)
-        assert "'nope'" in message
-        assert "first, second_tab" in message
-
     def test_unknown_tab_variable_raises_at_render(self, local_project):
         from dbt_charts.core.diagnostics.codes_render import ERR_TAB_UNKNOWN
         from dbt_charts.core.render.renderer import render
 
         board, executor = _compile_and_build_executor(_TWO_TAB_BOARD, local_project)
-        result = render(board, executor.ctx, executor.ledger, variables={"tab": "nope"})
+        result = render(
+            board, executor.ctx, executor.ledger, variables={"_tab_test": "nope"}
+        )
 
         assert result.output is None
         assert result.board_error is not None
         assert result.board_error.code == ERR_TAB_UNKNOWN.code
         assert result.board_error.fields == {
-            "variable": "tab",
+            "variable": "_tab_test",
             "value": "nope",
             "slugs": ["first", "second_tab"],
         }
@@ -878,7 +799,7 @@ class TestUnknownTabValue:
 
         board, executor = _compile_and_build_executor(_TWO_TAB_BOARD, local_project)
         svg = render(
-            board, executor.ctx, executor.ledger, variables={"tab": "second_tab"}
+            board, executor.ctx, executor.ledger, variables={"_tab_test": "second_tab"}
         ).output
         assert "Second content" in svg
         assert "First content" not in svg
@@ -959,9 +880,8 @@ class TestAutoGeneratedVariablePrefix:
         yaml_content = """
 title: Test
 tabs:
-  items:
-    - title: Overview
-      text: "Content"
+  Overview:
+    text: "Content"
 """
         result = compile(yaml_content)
         assert result.success
@@ -969,22 +889,6 @@ tabs:
         # _tab_{board_id}, not bare "tab"
         assert "_tab_test" in result.board.variable_registry
         assert "tab" not in result.board.variable_registry
-
-    def test_custom_id_no_prefix(self):
-        """User-provided tab id should NOT get _ prefix."""
-        yaml_content = """
-title: Test
-tabs:
-  id: view
-  items:
-    - title: Overview
-      text: "Content"
-"""
-        result = compile(yaml_content)
-        assert result.success
-
-        assert "view" in result.board.variable_registry
-        assert "_view" not in result.board.variable_registry
 
     def test_auto_details_variable_has_prefix(self):
         """Auto-generated details variable should have _ prefix."""
@@ -1013,18 +917,16 @@ title: Test
 rows:
   - title: "Section 1"
     tabs:
-      items:
-        - title: Overview
-          text: "Section 1 overview"
-        - title: Details
-          text: "Section 1 details"
+      Overview:
+        text: "Section 1 overview"
+      Details:
+        text: "Section 1 details"
   - title: "Section 2"
     tabs:
-      items:
-        - title: Tab A
-          text: "Section 2 tab A"
-        - title: Tab B
-          text: "Section 2 tab B"
+      Tab A:
+        text: "Section 2 tab A"
+      Tab B:
+        text: "Section 2 tab B"
 """
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
@@ -1039,16 +941,14 @@ rows:
         yaml_content = """
 title: Test
 tabs:
-  items:
-    - title: Outer A
-      tabs:
-        items:
-          - title: Inner 1
-            text: "Nested tab content"
-          - title: Inner 2
-            text: "Nested tab content"
-    - title: Outer B
-      text: "Simple content"
+  Outer A:
+    tabs:
+      Inner 1:
+        text: "Nested tab content"
+      Inner 2:
+        text: "Nested tab content"
+  Outer B:
+    text: "Simple content"
 """
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
@@ -1060,20 +960,18 @@ title: Outer Dashboard
 rows:
   - title: "Main Tabs"
     tabs:
-      items:
-        - title: Overview
-          text: "Overview content"
-        - title: Metrics
-          text: "Metrics content"
+      Overview:
+        text: "Overview content"
+      Metrics:
+        text: "Metrics content"
   - title: "Nested Dashboard"
     rows:
       - title: "Inner Tabs"
         tabs:
-          items:
-            - title: Chart View
-              text: "Chart content"
-            - title: Table View
-              text: "Table content"
+          Chart View:
+            text: "Chart content"
+          Table View:
+            text: "Table content"
 """
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
@@ -1263,16 +1161,13 @@ charts:
   c8: {query: q, type: table}
   c9: {query: q, type: table}
 tabs:
-  id: t
-  default: One
-  items:
-    - title: One
-      rows: [{cols: [c1]}]
-    - title: Nine
-      rows:
-        - {cols: [c2, c3, c4]}
-        - {cols: [c5, c6, c7]}
-        - {cols: [c8, c9, c1]}
+  One:
+    rows: [{cols: [c1]}]
+  Nine:
+    rows:
+      - {cols: [c2, c3, c4]}
+      - {cols: [c5, c6, c7]}
+      - {cols: [c8, c9, c1]}
 """
 
     def _build_executor(self, yaml_content: str, local_project):
@@ -1302,7 +1197,9 @@ tabs:
         board, executor = self._build_executor(self._MANY_CHARTS_YAML, local_project)
 
         one_height = self._render_height(board, executor)
-        nine_height = self._render_height(board, executor, variables={"t": "nine"})
+        nine_height = self._render_height(
+            board, executor, variables={"_tab_test": "nine"}
+        )
 
         assert one_height < nine_height, (
             f"one-chart tab ({one_height}px) should be shorter than the "
@@ -1323,9 +1220,8 @@ queries:
 charts:
   c1: {query: q, type: table}
 tabs:
-  items:
-    - title: Only
-      rows: [{cols: [c1]}]
+  Only:
+    rows: [{cols: [c1]}]
 """
         board, executor = self._build_executor(yaml_content, local_project)
 
@@ -1352,26 +1248,29 @@ charts:
   c8: {query: q, type: table}
   c9: {query: q, type: table}
 tabs:
-  id: t
-  default: Small
-  items:
-    - title: Empty
-      text: "nothing here"
-    - title: Small
-      rows: [{cols: [c1]}]
-    - title: Medium
-      rows: [{cols: [c1, c2]}]
-    - title: Large
-      rows:
-        - {cols: [c1, c2, c3]}
-        - {cols: [c4, c5, c6]}
-        - {cols: [c7, c8, c9]}
+  Empty:
+    text: "nothing here"
+  Small:
+    rows: [{cols: [c1]}]
+  Medium:
+    rows: [{cols: [c1, c2]}]
+  Large:
+    rows:
+      - {cols: [c1, c2, c3]}
+      - {cols: [c4, c5, c6]}
+      - {cols: [c7, c8, c9]}
 """
         board, executor = self._build_executor(yaml_content, local_project)
 
-        empty_height = self._render_height(board, executor, variables={"t": "empty"})
-        small_height = self._render_height(board, executor)  # compiled default
-        large_height = self._render_height(board, executor, variables={"t": "large"})
+        empty_height = self._render_height(
+            board, executor, variables={"_tab_test": "empty"}
+        )
+        small_height = self._render_height(
+            board, executor, variables={"_tab_test": "small"}
+        )
+        large_height = self._render_height(
+            board, executor, variables={"_tab_test": "large"}
+        )
 
         assert empty_height < small_height < large_height, (
             f"empty={empty_height}px, small={small_height}px, "
@@ -1418,13 +1317,10 @@ charts:
     y: revenue
 {inactive_charts}
 tabs:
-  id: t
-  default: Active
-  items:
-    - title: Active
-      rows: [{{cols: [active_chart]}}]
-    - title: ManyCharts
-      rows: [{{cols: [{inactive_refs}]}}]
+  Active:
+    rows: [{{cols: [active_chart]}}]
+  ManyCharts:
+    rows: [{{cols: [{inactive_refs}]}}]
 """
         return _compile_and_build_executor(yaml_content, local_project)
 
@@ -1516,13 +1412,10 @@ charts:
     color: category
     width: 300
 tabs:
-  id: t
-  default: Active
-  items:
-    - title: Active
-      rows: [{cols: [active_chart]}]
-    - title: Hidden
-      rows: [{cols: [shares]}]
+  Active:
+    rows: [{cols: [active_chart]}]
+  Hidden:
+    rows: [{cols: [shares]}]
 """
         board, executor = self._build(yaml_content, local_project)
         resolved, _ = build_resolved_board(board, executor, {})
@@ -1579,13 +1472,10 @@ charts:
     y: value
     title: "A very long axis title that will not fit at a narrow width whatsoever"
 tabs:
-  id: t
-  default: Active
-  items:
-    - title: Active
-      rows: [{{cols: [active_chart]}}]
-    - title: Hidden
-      rows: [{{cols: [wide_chart, active_chart]}}]
+  Active:
+    rows: [{{cols: [active_chart]}}]
+  Hidden:
+    rows: [{{cols: [wide_chart, active_chart]}}]
 """
         board, executor = self._build(yaml_content, local_project)
         result = render(board, executor.ctx, executor.ledger, format="json")
@@ -1630,13 +1520,10 @@ charts:
     x: month
     y: revenue
 tabs:
-  id: t
-  default: Active
-  items:
-    - title: Active
-      rows: [{cols: [active_chart]}]
-    - title: Hidden
-      rows: [{cols: [bad]}]
+  Active:
+    rows: [{cols: [active_chart]}]
+  Hidden:
+    rows: [{cols: [bad]}]
 """
         board, executor = self._build(yaml_content, local_project)
         resolve_errors: dict[str, ChartResolveFailure] = {}
@@ -1692,13 +1579,10 @@ charts:
     x: month
     y: revenue
 tabs:
-  id: t
-  default: Active
-  items:
-    - title: Inactive
-      rows: [{cols: [shared]}]
-    - title: Active
-      rows: [{cols: [shared, spacer]}]
+  Inactive:
+    rows: [{cols: [shared]}]
+  Active:
+    rows: [{cols: [shared, spacer]}]
 """
         board, executor = self._build(yaml_content, local_project)
         resolved, _ = build_resolved_board(board, executor, {"region": "West"})
@@ -1810,13 +1694,10 @@ charts:
     y: revenue
     title: "A very long chart title that would truncate if this chart were ever actually laid out and measured at any real width"
 tabs:
-  id: t
-  default: Active
-  items:
-    - title: Active
-      rows: [{cols: [active_chart]}]
-    - title: Hidden
-      rows: [{cols: [hidden_chart]}]
+  Active:
+    rows: [{cols: [active_chart]}]
+  Hidden:
+    rows: [{cols: [hidden_chart]}]
 """
         board, executor = self._build(yaml_content, local_project)
         result = render(board, executor.ctx, executor.ledger, format="json")
@@ -1877,13 +1758,10 @@ charts:
     style:
       orientation: vertical
 tabs:
-  id: t
-  default: Active
-  items:
-    - title: Active
-      rows: [{{cols: [active_chart, shared]}}]
-    - title: Hidden
-      rows: [shared]
+  Active:
+    rows: [{{cols: [active_chart, shared]}}]
+  Hidden:
+    rows: [shared]
 """
         board, executor = self._build(yaml_content, local_project)
         result = render(board, executor.ctx, executor.ledger, format="json")
@@ -1947,13 +1825,10 @@ charts:
     x: cat
     y: value
 tabs:
-  id: t
-  default: Active
-  items:
-    - title: Inactive
-      rows: [{{cols: [shared_pie]}}]
-    - title: Active
-      rows: [{{cols: [shared_pie, spacer]}}]
+  Inactive:
+    rows: [{{cols: [shared_pie]}}]
+  Active:
+    rows: [{{cols: [shared_pie, spacer]}}]
 """
         board, executor = self._build(yaml_content, local_project)
         result = render(board, executor.ctx, executor.ledger, format="json")

@@ -8,8 +8,8 @@ chart's domain build can't suppress every other chart's warning.
 An unresolved entry is always dropped, never a hard failure, so this
 detector is the only signal an author gets. It must cover every family
 that can drop an entry: a plain `color:` chart, a wide `y: [...]`
-chart, a layered chart's shared color scale, and a geoshape
-choropleth.
+chart, a layered chart's shared color scale, a point_map, and a
+geoshape choropleth.
 """
 
 from __future__ import annotations
@@ -22,6 +22,9 @@ from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.geoshape import ResolvedGeoshapeChart
 from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
+from dbt_charts.core.compile.models.chart.resolved.point_map import (
+    ResolvedPointMapChart,
+)
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     wide_legend_aliases,
@@ -45,6 +48,7 @@ _CHANNEL_COLOR_FAMILIES = (
     *_CARTESIAN_WIDE_FAMILIES,
     ResolvedScatterChart,
     ResolvedHeatmapChart,
+    ResolvedPointMapChart,
 )
 _CheckedChart = (
     ResolvedBarChart
@@ -52,6 +56,7 @@ _CheckedChart = (
     | ResolvedLineChart
     | ResolvedScatterChart
     | ResolvedHeatmapChart
+    | ResolvedPointMapChart
     | ResolvedGeoshapeChart
 )
 
@@ -180,7 +185,10 @@ def _color_field_and_domain(
                 seen.append(v)
         return value_field, seen, None
 
-    if measures := wide_measure_fields(chart):
+    # A point_map has no wide fold: its legend is its `color:` column alone.
+    if not isinstance(chart, ResolvedPointMapChart) and (
+        measures := wide_measure_fields(chart)
+    ):
         # A wide chart can't also author layers:, so no layer loop is
         # needed here. It can cross its measures with a color: dimension;
         # the domain is the humanized measure list (or the dimension

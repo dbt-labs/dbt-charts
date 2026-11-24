@@ -207,29 +207,16 @@ class TestSemanticBoardLevel:
 
 
 class TestSemanticBoardLevelTabs:
-    """Tab bodies inherit semantic level from their parent.
+    """A tab's pane levels like any nested board: its own `title` adds one."""
 
-    Regression for the bug where content-only and empty tab branches in
-    `_resolve_tab_items` constructed `Board(...)` directly without threading
-    `parent_level`, so their level defaulted to 0 and titles rendered at H1.
-    """
-
-    def test_content_only_tabs_inherit_parent_level(self):
-        """Titled root → titled tabs container → titled content-only tab.
-
-        The titled tabs board is the parent of each tab body, and each tab title
-        adds one more titled ancestor — so a content-only tab under a titled
-        root is level=2 (root=1, tab=2).
-        """
+    def test_pane_title_adds_a_level(self):
         board = normalize_board(
             AuthoredBoard.model_validate(
                 {
                     "title": "Root",
                     "tabs": {
-                        "items": [
-                            {"title": "Tab A", "text": "alpha"},
-                            {"title": "Tab B", "text": "beta"},
-                        ],
+                        "A": {"title": "Tab A", "text": "alpha"},
+                        "B": {"text": "beta"},
                     },
                 }
             )
@@ -238,61 +225,10 @@ class TestSemanticBoardLevelTabs:
         tab_a = board.layout.items[0].board
         tab_b = board.layout.items[1].board
         assert tab_a is not None and tab_b is not None
-        # Regression: previously these defaulted to level=0 and rendered at H1.
-        assert tab_a.level == 2, (
-            f"content-only tab A level should be 2, got {tab_a.level}"
-        )
-        assert tab_b.level == 2, (
-            f"content-only tab B level should be 2, got {tab_b.level}"
-        )
-
-    def test_empty_tabs_inherit_parent_level(self):
-        """Titled root → titled empty tab → level=2."""
-        board = normalize_board(
-            AuthoredBoard.model_validate(
-                {
-                    "title": "Root",
-                    "tabs": {"items": [{"title": "Empty Tab"}]},
-                }
-            )
-        )
-        assert board.level == 1
-        empty_tab = board.layout.items[0].board
-        assert empty_tab is not None
-        assert empty_tab.level == 2
-
-    def test_content_only_tab_with_explicit_rows_null_is_not_misrouted(self):
-        """`rows: null` beside `text:` must not flip a content-only tab to nested.
-
-        `_resolve_tab_items` dumps the tab with `exclude_unset=True` (needed to
-        preserve an authored `style.formats: null`), which can leave `rows`
-        present in the dict with an explicit `None` value. The nested-board
-        detection has to check the value, not just key presence, or an author
-        who explicitly nulls a layout key on a content-only tab gets an
-        (empty) nested board instead of their text.
-        """
-        board = normalize_board(
-            AuthoredBoard.model_validate(
-                {
-                    "title": "Root",
-                    "tabs": {
-                        "items": [{"title": "Tab A", "text": "alpha", "rows": None}],
-                    },
-                }
-            )
-        )
-        tab_a = board.layout.items[0].board
-        assert tab_a is not None
-        assert tab_a.text == "alpha"
         assert tab_a.level == 2
+        assert tab_b.level == 1
 
-    def test_deeply_nested_content_tabs(self):
-        """Titled root → titled section → titled content-only tab → level=3.
-
-        Exercises the case the reviewer flagged in the quick-guide demo: a
-        layout board sitting between root and the tabs, so the tab body is
-        three titled ancestors deep.
-        """
+    def test_deeply_nested_pane(self):
         board = normalize_board(
             AuthoredBoard.model_validate(
                 {
@@ -301,47 +237,34 @@ class TestSemanticBoardLevelTabs:
                         {
                             "title": "Layout Types",
                             "tabs": {
-                                "items": [
-                                    {"title": "Tab A", "text": "alpha"},
-                                ],
+                                "A": {"title": "Tab A", "text": "alpha"},
                             },
                         }
                     ],
                 }
             )
         )
-        assert board.level == 1
         section = board.layout.items[0].board
         assert section is not None
         assert section.level == 2
         tab_a = section.layout.items[0].board
         assert tab_a is not None
-        assert tab_a.level == 3, f"deep tab A level should be 3, got {tab_a.level}"
+        assert tab_a.level == 3
 
 
-class TestTabItemOwnStyle:
-    """Content-only and empty tab items resolve their own `style:` block.
-
-    Regression for the bug where those branches in `_resolve_tab_items`
-    constructed `Board(...)` with the parent's resolved_style/chart_style_context
-    verbatim, never reading `tab_item.style`. The nested-board branch already
-    gets this for free via `normalize_board` → `compile_board_resolved_style`.
-    """
+class TestTabPaneOwnStyle:
+    """A tab's `style:` resolves on its pane."""
 
     def test_content_only_tab_resolves_own_style(self):
-        """A content-only tab authoring style.font.color gets its own value."""
         board = normalize_board(
             AuthoredBoard.model_validate(
                 {
                     "title": "Root",
                     "tabs": {
-                        "items": [
-                            {
-                                "title": "Tab A",
-                                "text": "alpha",
-                                "style": {"font": {"color": "#ff00ff"}},
-                            },
-                        ],
+                        "Tab A": {
+                            "text": "alpha",
+                            "style": {"font": {"color": "#ff00ff"}},
+                        },
                     },
                 }
             )
@@ -350,28 +273,6 @@ class TestTabItemOwnStyle:
         tab_a = board.layout.items[0].board
         assert tab_a is not None
         assert tab_a.resolved_style.font.color == "#ff00ff"
-
-    def test_empty_tab_resolves_own_style(self):
-        """An empty tab authoring style.font.color gets its own value."""
-        board = normalize_board(
-            AuthoredBoard.model_validate(
-                {
-                    "title": "Root",
-                    "tabs": {
-                        "items": [
-                            {
-                                "title": "Empty Tab",
-                                "style": {"font": {"color": "#ff00ff"}},
-                            },
-                        ],
-                    },
-                }
-            )
-        )
-        assert board.resolved_style.font.color != "#ff00ff"
-        empty_tab = board.layout.items[0].board
-        assert empty_tab is not None
-        assert empty_tab.resolved_style.font.color == "#ff00ff"
 
 
 class TestAuthorLevelOverride:

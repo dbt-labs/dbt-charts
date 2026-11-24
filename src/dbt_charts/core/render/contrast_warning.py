@@ -108,7 +108,7 @@ def collect_contrast_warnings() -> Generator[list[ContrastRecord]]:
         _sinks.reset(token)
 
 
-def _ink_hex_over(ink: str, background_hex: str) -> str | None:
+def ink_hex_over(ink: str, background_hex: str) -> str | None:
     """``ink``'s effective opaque hex once painted over the fully-opaque
     ``background_hex`` — composited via ``composite_over`` when ``ink``
     carries its own alpha, passed straight through when it is already
@@ -189,7 +189,7 @@ def check_text_contrast(
     if background is None:
         return
     bg_hex = background
-    ink_hex = _ink_hex_over(ink, bg_hex)
+    ink_hex = ink_hex_over(ink, bg_hex)
     if ink_hex is None:
         return
     ratio = wcag_contrast(ink_hex, bg_hex)

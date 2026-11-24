@@ -28,13 +28,14 @@ def planned_query(
     cache_key: CacheKey = ("", "", ""),
     use_store: bool = True,
     tailable: bool = True,
+    upstreams: tuple[QueryRun, ...] = (),
 ) -> QueryRun:
     """A ``QueryRun`` built by hand, for tests of the stages after planning."""
     return QueryRun(
         name,
         entry or sql_entry("SELECT 1"),
         lambda: None,
-        {},
+        {upstream.name: upstream for upstream in upstreams},
         cache_key,
         use_store,
         tailable,

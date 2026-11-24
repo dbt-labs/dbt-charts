@@ -33,8 +33,8 @@ pub fn fold_legend_token(token: &str) -> String {
 /// alias it spells exactly, else the one entry it folds to
 /// (`fold_legend_token`); a token matching nothing, or more than one entry at
 /// its tier, is dropped, never guessed. When no token resolves the whole
-/// domain keeps its own order. `authored` is never empty here (an explicit
-/// `values: []` draws a title-only legend, which callers handle before this).
+/// domain keeps its own order. `authored` is never empty here: `legend_order`
+/// answers an explicit `values: []` (a title-only legend) before this.
 ///
 /// `aliases`, when given, is one extra spelling per `domain` entry (a wide
 /// fold's raw measure name for its humanized label, `wide_legend_aliases`);
@@ -78,6 +78,17 @@ pub fn resolve_legend_values(
     }
 }
 
+/// The entries a legend over `domain` lists, as indices in display order: the
+/// domain's own order with no `legend.values`, none for `values: []` (a
+/// title-only legend), else the authored list through `resolve_legend_values`.
+pub fn legend_order(authored: Option<&[String]>, domain: &[&str]) -> Vec<usize> {
+    match authored {
+        None => (0..domain.len()).collect(),
+        Some([]) => Vec::new(),
+        Some(authored) => resolve_legend_values(authored, domain, None),
+    }
+}
+
 /// Vega's default `symbolLimit` (`VEGA_LEGEND_SYMBOL_LIMIT`): the entries a legend lists before it folds the rest.
 pub const SYMBOL_LIMIT: usize = 30;
 
@@ -91,6 +102,16 @@ pub fn fold_symbol_limit(count: usize, limit: usize) -> Option<(usize, String)> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No `legend.values` keeps the domain's order, `[]` lists nothing, and a
+    /// list resolves through `resolve_legend_values`.
+    #[test]
+    fn a_legend_order_is_the_domain_nothing_or_the_resolved_values() {
+        let domain = ["a", "b", "c"];
+        assert_eq!(legend_order(None, &domain), [0, 1, 2]);
+        assert_eq!(legend_order(Some(&[]), &domain), Vec::<usize>::new());
+        assert_eq!(legend_order(Some(&["c".to_string(), "A".to_string()]), &domain), [2, 0]);
+    }
 
     /// `resolve_legend_entries`' two tiers: the exact spelling, else the one
     /// folded match; an unmatched or ambiguous token drops; nothing resolving

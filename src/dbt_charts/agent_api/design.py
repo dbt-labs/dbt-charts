@@ -22,10 +22,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from dbt_charts.core.compile.authoring.paths import join_path, split_path
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.merge import scope_patch
 from dbt_charts.core.compile.migrations import prepare_board_mapping
-from dbt_charts.core.compile.models.board.authored import AuthoredBoard, TabItem
+from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.chart.authored import (
     CHART_SUPPORT_TABLE_SUPPORTED_TYPES,
     ChartSupportTableSource,
@@ -150,10 +151,7 @@ _NOT_DESIGN = frozenset(
         # compiler overwrites it from the `charts:` map key. On a *nested*
         # board it is never read at all: the explicit `board_id=` callers are
         # the nested-layout paths, and the root short-circuits before consulting
-        # it. `TabLayout.id` (a URL param) is genuinely authorable and
-        # unaffected — the tabs container is never a design target, only the
-        # items under it are, which `test_a_layout_container_is_not_a_target`
-        # pins.
+        # it.
         "id",
         # Two `list[str]` fields the `list` widget made reachable — `aliases` on
         # the board, `warnings_ignore` on every chart. The board's third such
@@ -958,7 +956,9 @@ def _variable_bound_is_safe(var: Variable, field: str) -> bool:
 
 
 def _absolute(writes_at: str, key: str) -> str:
-    return f"{writes_at}.{key}" if writes_at else key
+    if not writes_at or key.startswith("["):
+        return writes_at + key
+    return f"{writes_at}.{key}"
 
 
 def _dotted(instance: Any, path: str) -> Any:
@@ -1275,12 +1275,15 @@ def _describe(
     )
 
 
-def _is_target(schema: AuthorableSchema, node: Any, path: str) -> bool:
+def _is_target(
+    schema: AuthorableSchema, node: Any, path: str, *, tab_pane: bool = False
+) -> bool:
     """Whether this node is something a user can click and style.
 
     Every authored model is a target except a layout container that carries no
     content of its own — an empty row or col is scaffolding, and offering its
-    board-level properties would bury the chart the user actually clicked.
+    board-level properties would bury the chart the user actually clicked. A
+    tab pane always is: its tab is the handle the user clicked.
     """
     # The definition is in another file, so the only control here is `ref`, and
     # every edit to it repoints rather than styles. The click resolves up, the
@@ -1290,7 +1293,7 @@ def _is_target(schema: AuthorableSchema, node: Any, path: str) -> bool:
     name = type(node).__name__
     if name not in schema.models:
         return False
-    if name != "AuthoredBoard" or path == "":
+    if name != "AuthoredBoard" or path == "" or tab_pane:
         # The root board is always a target — it owns the frame, and a
         # charts-only board (no title, no text) is valid, so gating it on
         # content would drop the whole board-level surface.
@@ -1309,7 +1312,7 @@ def _unwrap(node: Any, writes_at: str) -> tuple[Any, str]:
     """
     if isinstance(node, dict) and len(node) == 1:
         ((name, only),) = node.items()
-        return only, _absolute(writes_at, name)
+        return only, _absolute(writes_at, join_path([name]))
     return node, writes_at
 
 
@@ -1327,18 +1330,19 @@ def _hop(node: Any, segments: list[str]) -> tuple[Any, int, str] | None:
         if index >= len(items):
             return None
         return items[index], 2, f"{head}.{index}"
-    if head in ("grid", "tabs") and len(rest) >= 2 and rest[0] == "items":
+    if head == "tabs" and rest:
+        tabs = getattr(node, head, None) or {}
+        if rest[0] not in tabs:
+            return None
+        return tabs[rest[0]], 2, join_path(("tabs", rest[0]))
+    if head == "grid" and len(rest) >= 2 and rest[0] == "items":
         if not rest[1].isdigit():
             return None
         items = getattr(getattr(node, head, None), "items", None) or []
         index = int(rest[1])
         if index >= len(items):
             return None
-        item = items[index]
-        suffix = f"{head}.items.{index}"
-        if head == "tabs":
-            return item, 3, suffix
-        return item.item, 3, f"{suffix}.item"
+        return items[index].item, 3, f"grid.items.{index}.item"
     if head in ("charts", "variables") and rest:
         named = getattr(node, head, None) or {}
         if rest[0] not in named:
@@ -1367,18 +1371,20 @@ def _resolve(
     style_patch = _scope_style_patch(board, None)
     queries = _scope_queries(board, {})
     found = (board, "", "", _scope_aliases(style_patch), queries)
-    segments = path.split(".") if path else []
+    segments = split_path(path) if path else []
     while segments:
         hop = _hop(node, segments)
         if hop is None:
             break
         child, taken, suffix = hop
-        walked = _absolute(walked, ".".join(segments[:taken]))
+        walked = _absolute(walked, join_path(segments[:taken]))
         node, writes_at = _unwrap(child, _absolute(writes_at, suffix))
         style_patch = _scope_style_patch(node, style_patch)
         queries = _scope_queries(node, queries)
         segments = segments[taken:]
-        if _is_target(schema, node, walked):
+        if _is_target(
+            schema, node, walked, tab_pane=suffix.startswith(("tabs.", "tabs["))
+        ):
             found = (node, walked, writes_at, _scope_aliases(style_patch), queries)
     return found
 
@@ -1572,7 +1578,7 @@ def _scope_queries(node: Any, inherited: Mapping[str, Any]) -> Mapping[str, Any]
 def _scope_style_patch(node: Any, inherited: StylePatch | None) -> StylePatch | None:
     """The style patch in force inside `node`, given its parent's.
 
-    A tab or nested board that authors its own `style:` scopes it onto the
+    A nested board (a tab included) that authors its own `style:` scopes it onto the
     parent's via `scope_patch` — the same helper `compile_board_resolved_style`
     calls for the real cascade — so `formats` (a plain, unmarked dict field)
     resolves key-wise here exactly as it does at compile. A scope that authors
@@ -1581,7 +1587,7 @@ def _scope_style_patch(node: Any, inherited: StylePatch | None) -> StylePatch | 
     `style.formats: null` clears it for that scope and everything under it,
     same as it does at compile.
     """
-    if not isinstance(node, (AuthoredBoard, TabItem)):
+    if not isinstance(node, AuthoredBoard):
         return inherited
     return scope_patch(inherited, node.style)
 

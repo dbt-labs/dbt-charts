@@ -99,13 +99,12 @@ charts:
     x: month
     y: revenue
 tabs:
-  items:
-    - title: A
-      rows:
-        - c1
-    - title: B
-      rows:
-        - c1
+  A:
+    rows:
+      - c1
+  B:
+    rows:
+      - c1
 """)
     assert result.success
     executor = Run(
@@ -129,8 +128,6 @@ tabs:
             600.0,
             0.0,
             tab_titles=[],
-            active_tab=0,
-            tab_position="top",
             resolved_style=resolve_style(get_theme_style("clarity")),
             render_cache={},
             painted_canvas=None,

@@ -3,7 +3,7 @@
 use crate::families::color_scale::{ContinuousColor, NumericLegends};
 use crate::families::layers::{LayerClaim, LayerScale, OverlayLayer};
 use crate::families::legend::{LegendConfig, LegendEntry, LegendSymbol, legend_title_text, narrow_legend_entries};
-use ::bind::legend::{fold_legend_token, resolve_legend_values};
+use ::bind::legend::{fold_legend_token, legend_order, resolve_legend_values};
 
 use std::collections::HashMap;
 
@@ -234,12 +234,8 @@ pub(super) fn scatter_legend_entries(
             }
         }
     }
-    let Some(values) = &legend.values else { return entries };
-    if values.is_empty() {
-        return Vec::new();
-    }
     let domain: Vec<&str> = entries.iter().map(|(label, _, _)| label.as_str()).collect();
-    resolve_legend_values(values, &domain, None).into_iter().map(|i| entries[i].clone()).collect()
+    legend_order(legend.values.as_deref(), &domain).into_iter().map(|i| entries[i].clone()).collect()
 }
 
 /// Once-per-chart legend construction — `LegendState`. Built from a

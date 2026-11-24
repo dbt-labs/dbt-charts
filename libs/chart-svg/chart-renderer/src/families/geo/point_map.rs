@@ -12,7 +12,7 @@
 //! - the description Vega-Lite writes for a mark with a tooltip: each described
 //!   channel, then the tooltip list, a title seen once;
 //! - a color legend and a size legend, stacked at the right with Vega's own legend
-//!   defaults: the emitter forwards none of the chart's `legend` style.
+//!   defaults; an authored `legend.values` orders and narrows the color legend.
 //!
 //! Rows production drops before Vega-Lite sees them (a negative `size`; under
 //! `albersUsa`, a coordinate outside its three hand-written boxes) are counted
@@ -44,7 +44,7 @@ use crate::contract;
 use diagnostic::{warn, Diagnostic};
 use crate::families::color_scale::{ContinuousColor, GradientAt};
 use crate::families::legend::{color_channel_title, legend_fit_bounds, legend_origin, stack_legends, symbol_legend, vega_default_legend, vega_legend, LegendConfig, LegendEntry, LegendSymbol, SizeLegend, SizePaint, SizeRows, SizeScale, SizeScaleType, VEGA_LEGEND_SYMBOL_LIMIT};
-use ::bind::legend::{fold_symbol_limit};
+use ::bind::legend::{fold_symbol_limit, legend_order};
 use crate::families::heatmap::date_cell_day;
 use ::bind::temporal::{infer_vega_type, VegaType};
 use crate::frame::{ChartFrame, FrameTitle};
@@ -869,10 +869,10 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     let folded_label;
     let symbol_entries: Vec<LegendEntry> = match &bound.coloring {
         Some(Coloring::Categories { domain, fills, .. }) => {
-            let mut entries: Vec<LegendEntry> = domain
-                .iter()
-                .zip(fills)
-                .map(|(label, fill)| LegendEntry { label, fill, symbol: Some(LegendSymbol::FilledCircle), series_key: None, recede: None, action: None })
+            let names: Vec<&str> = domain.iter().map(String::as_str).collect();
+            let mut entries: Vec<LegendEntry> = legend_order(r.legend.values.as_deref(), &names)
+                .into_iter()
+                .map(|i| LegendEntry { label: &domain[i], fill: &fills[i], symbol: Some(LegendSymbol::FilledCircle), series_key: None, recede: None, action: None })
                 .collect();
             if let Some((kept, label)) = fold_symbol_limit(entries.len(), VEGA_LEGEND_SYMBOL_LIMIT as usize) {
                 folded_label = label;
@@ -973,7 +973,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         .collect::<Result<_, String>>()?;
     let basemap_paths: Vec<Option<PathData>> = match &bound.basemap {
         Some(features) => {
-            let path = fitter.at((plot_w, plot_h))?.into_path();
+            let path = fitter.at((plot_w, plot_h))?.into_path((!fit).then_some((plot_w, plot_h)));
             features.iter().map(|f| path.path(f).map(|d| d.map(|d| scene_path(&d)))).collect::<Result<_, _>>()?
         }
         None => Vec::new(),
@@ -1044,6 +1044,13 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             Some(symbol) => crate::families::scatter_shape::path(symbol, crate::common::symbol_radius(area))?,
             None => circle_glyph(area),
         };
+        // The points draw under a clip of the plot, so a glyph wholly past it paints nothing; left in, one
+        // far off the view widens the layer past what resvg draws (see `projection::CLIP_BLEED`).
+        let stroke = patch.stroke_width.unwrap_or(2.0);
+        let reach = glyph.bounds().map(|b| (b.x1 + xy[0] - stroke, b.y1 + xy[1] - stroke, b.x2 + xy[0] + stroke, b.y2 + xy[1] + stroke));
+        if reach.is_some_and(|(x1, y1, x2, y2)| x2 < 0.0 || y2 < 0.0 || x1 > plot_w || y1 > plot_h) {
+            continue;
+        }
         let path = Node::path(role, glyph, attrs).translate(xy[0], xy[1]);
         circles.push(match &p.href {
             Some(url) => {

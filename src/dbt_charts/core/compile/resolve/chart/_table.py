@@ -62,6 +62,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _base_kwargs,
     _shared_kwargs,
     board_family_style,
+    family_card_fill,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_warned_palette,
@@ -145,9 +146,7 @@ def _resolve_conditional(
     refusing a rule the table cannot paint.
 
     A rule's column must be a query column; a pivot's leaf names only exist after
-    render's pivot, so render finds them, and no aggregate can read them here. A
-    ``tone`` or ``glyph_color`` needs a glyph, which a rule can take from its own
-    key or the column.
+    render's pivot, so render finds them, and no aggregate can read them here.
     """
     available = set(data[0]) if data else set()
     resolved = dict(columns)
@@ -160,12 +159,6 @@ def _resolve_conditional(
             raise ValueError(
                 f"{where} targets column '{column}' "
                 f"which is not in the query result. Available: {sorted(available)}"
-            )
-        has_glyph = config.glyph or any(rule.glyph is not None for rule in rules)
-        if not has_glyph and any(r.glyph_color or r.tone for r in rules):
-            raise ValueError(
-                f"{where} sets tone or glyph_color "
-                f"without a glyph: set glyph in a rule or in style.columns.{column}."
             )
         if is_pivot:
             if any(has_aggregate(rule) for rule in rules):
@@ -485,10 +478,7 @@ def _with_resolved_scale_stops(
             columns=name,
             text=True,
         )
-        # A string cell renders verbatim, so number-like text ("2024") prints no suffix.
-        values = _coerced_column_values(
-            [row for row in rows if not isinstance(row.get(name), str)], name
-        )
+        values = _coerced_column_values(rows, name)
         return is_d3_si_spec(effective.spec) and prints_si_suffix(
             _per_cell_texts(values, effective.spec, effective.raw, formats)
         )
@@ -838,9 +828,15 @@ def _coerced_column_values(
     DECIMAL/NUMERIC columns, not float) and filters non-finite values
     (NaN/Infinity) to None -- a bare ``float(raw)`` cast would instead crash
     ``shared_scale_for_column``'s ``max(abs(v) for v in values)`` on a NaN row
-    order-dependently.
+    order-dependently. A text cell is never a number, however it reads: rows
+    arrive in their declared form, so a ``str`` cell is a text column's.
     """
-    return [v for row in rows if (v := coerce_numeric_cell(row.get(name))) is not None]
+    return [
+        v
+        for row in rows
+        if not isinstance(cell := row.get(name), str)
+        and (v := coerce_numeric_cell(cell)) is not None
+    ]
 
 
 def _resolve_table(
@@ -862,6 +858,9 @@ def _resolve_table(
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
     table = merge_unset(board_family_style(chart_style_context, normalized), primary)
+    card_fill = family_card_fill(chart_style_context)
+    if table.background is None and card_fill is not None:
+        table = table.model_copy(update={"background": card_fill})
     channels = _channels_for(normalized, data)
     column_defaults_val = table.column_defaults
     # Table-specific promoted field, lifted to the top level here so the

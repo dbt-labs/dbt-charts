@@ -5,8 +5,10 @@
 //! to the layer data at `size = [width, height]` of the view, otherwise its
 //! `translate` defaults to the view's center.
 
-use d3rs::geo::path::index::GeoPath;
+use d3rs::geo::clip::rectangle::clip_rectangle;
+use d3rs::geo::path::index::{GeoPath, PathProjection, PointRadius};
 use d3rs::geo::projection::fit::Fit;
+use d3rs::geo::stream::GeoStream;
 use super::vega::{by_vega_name, FitObjects, VegaParams, VegaProjection};
 use d3rs::geojson::GeoJson;
 use serde_json::{Map, Value};
@@ -26,9 +28,37 @@ impl Fitted {
         self.projection.forward(point)
     }
 
-    /// `geoPath(projection)`, with Vega's `pointRadius` when the params set one.
-    pub fn into_path(self) -> GeoPath<VegaProjection> {
-        self.projection.into_path(&self.params)
+    /// `geoPath(projection)`, with Vega's `pointRadius` when the params set one. A layer drawn under
+    /// a clip of the view `clip` = `(width, height)` is cut to that view grown by [`CLIP_BLEED`].
+    pub fn into_path(self, clip: Option<(f64, f64)>) -> GeoPath<ClippedToView> {
+        let extent = clip.map(|(w, h)| [[-CLIP_BLEED, -CLIP_BLEED], [w + CLIP_BLEED, h + CLIP_BLEED]]);
+        let path = GeoPath::new(ClippedToView { projection: self.projection, extent });
+        match self.params.point_radius {
+            Some(radius) => path.with_point_radius(PointRadius::Constant(radius)),
+            None => path,
+        }
+    }
+}
+
+/// How far past the view a clipped layer's geometry is kept. A placed projection projects every
+/// feature however far off the view, and resvg drops a clipped group whose ink spans more than
+/// about 10,000 px once three viewports nest it (a map in a `cols:` row), so the geometry is cut
+/// near the view; the margin keeps the edges the cut adds, with their strokes, under the clip.
+pub const CLIP_BLEED: f64 = 256.0;
+
+/// A projection whose output d3's `clipRectangle` cuts to `extent`, for every projection
+/// (`albersUsa` has no `clipExtent`).
+pub struct ClippedToView {
+    projection: VegaProjection,
+    extent: Option<[[f64; 2]; 2]>,
+}
+
+impl PathProjection for ClippedToView {
+    fn stream_object(&self, object: &GeoJson, sink: impl GeoStream) -> Result<(), String> {
+        match self.extent {
+            Some([[x0, y0], [x1, y1]]) => PathProjection::stream_object(&self.projection, object, clip_rectangle(x0, y0, x1, y1, sink)),
+            None => PathProjection::stream_object(&self.projection, object, sink),
+        }
     }
 }
 
@@ -64,7 +94,7 @@ impl<'a> Fitter<'a> {
                 return Ok(bounds);
             }
         }
-        let bounds = self.at(view)?.into_path().bounds(self.layer(0))?;
+        let bounds = self.at(view)?.into_path(None).bounds(self.layer(0))?;
         self.drawn.set(Some((view, bounds)));
         Ok(bounds)
     }
@@ -136,7 +166,7 @@ mod tests {
     }
 
     /// The path of the point at longitude 0, latitude 0.
-    fn origin_path(path: &GeoPath<VegaProjection>) -> String {
+    fn origin_path(path: &GeoPath<ClippedToView>) -> String {
         let point = GeoJson::Geometry(Geometry::Point { coordinates: vec![0.0, 0.0] });
         print::path_d(&scene_path(&path.path(&point).unwrap().unwrap()))
     }
@@ -148,7 +178,7 @@ mod tests {
     #[test]
     fn a_projection_without_scale_fits_the_data_to_the_view() {
         let data = vec![square(-10.0, -10.0, 10.0, 10.0)];
-        let path = Fitter::new("equirectangular", None, data.clone()).at((200.0, 100.0)).unwrap().into_path();
+        let path = Fitter::new("equirectangular", None, data.clone()).at((200.0, 100.0)).unwrap().into_path(None);
         let [[x0, y0], [x1, y1]] = path.bounds(&data[0]).unwrap();
         // The square is as tall as the view and centered across it; its edges are great-circle
         // arcs, which bow about a pixel past the corners the fit measured.
@@ -165,15 +195,34 @@ mod tests {
 
     #[test]
     fn a_scale_turns_the_fit_off_and_centers_the_projection_on_the_view() {
-        let path = Fitter::new("mercator", Some(&params(json!({"scale": 100}))), vec![]).at((200.0, 100.0)).unwrap().into_path();
+        let path = Fitter::new("mercator", Some(&params(json!({"scale": 100}))), vec![]).at((200.0, 100.0)).unwrap().into_path(None);
         assert!(origin_path(&path).starts_with("M100,50"));
     }
 
     #[test]
     fn an_authored_translate_is_kept() {
         let p = params(json!({"scale": 100, "translate": [10, 20]}));
-        let path = Fitter::new("mercator", Some(&p), vec![]).at((200.0, 100.0)).unwrap().into_path();
+        let path = Fitter::new("mercator", Some(&p), vec![]).at((200.0, 100.0)).unwrap().into_path(None);
         assert!(origin_path(&path).starts_with("M10,20"));
+    }
+
+    #[test]
+    fn a_clipped_path_keeps_to_the_view_and_its_bleed_for_every_projection() {
+        let (view, edge) = ((200.0, 100.0), CLIP_BLEED + 1e-6);
+        // At this zoom a region the size of a few states spans the view, and one across the country draws nothing.
+        let cases = [
+            ("mercator", json!({"scale": 20000, "center": [-155.5, 19.6]}), square(-170.0, 10.0, -140.0, 30.0)),
+            ("albersUsa", json!({"scale": 20000}), square(-110.0, 30.0, -85.0, 45.0)),
+        ];
+        for (name, p, spanning) in cases {
+            let p = params(p);
+            let at = || Fitter::new(name, Some(&p), vec![]).at(view).unwrap();
+            let far = square(-75.0, 40.0, -70.0, 45.0);
+            let [[x0, y0], [x1, y1]] = at().into_path(Some(view)).bounds(&spanning).unwrap();
+            assert!(x0 >= -edge && y0 >= -edge && x1 <= view.0 + edge && y1 <= view.1 + edge, "{name}: {x0} {y0} {x1} {y1}");
+            assert!(at().into_path(None).bounds(&spanning).unwrap()[1][0] > view.0 + 1000.0, "{name}: unclipped spans far past the view");
+            assert_eq!(at().into_path(Some(view)).path(&far).unwrap(), None, "{name}");
+        }
     }
 
     #[test]
@@ -212,7 +261,7 @@ mod tests {
     #[test]
     fn point_radius_reaches_the_path() {
         let p = params(json!({"scale": 100, "pointRadius": 2}));
-        let path = Fitter::new("mercator", Some(&p), vec![]).at((10.0, 10.0)).unwrap().into_path();
+        let path = Fitter::new("mercator", Some(&p), vec![]).at((10.0, 10.0)).unwrap().into_path(None);
         let point = GeoJson::Geometry(Geometry::Point { coordinates: vec![0.0, 0.0] });
         let circle = path.path(&point).unwrap().unwrap();
         assert!(circle.iter().any(|c| matches!(c, d3rs::path::Command::SvgArc { rx, ry, .. } if *rx == 2.0 && *ry == 2.0)));
@@ -223,8 +272,8 @@ mod tests {
         let data = vec![square(-10.0, -10.0, 10.0, 10.0), square(30.0, 5.0, 40.0, 25.0)];
         let fitter = Fitter::new("equirectangular", None, data.clone());
         for view in [(200.0, 100.0), (50.0, 300.0), (200.0, 100.0)] {
-            let reused = fitter.at(view).unwrap().into_path();
-            let fresh = Fitter::new("equirectangular", None, data.clone()).at(view).unwrap().into_path();
+            let reused = fitter.at(view).unwrap().into_path(None);
+            let fresh = Fitter::new("equirectangular", None, data.clone()).at(view).unwrap().into_path(None);
             for layer in &data {
                 assert_eq!(reused.bounds(layer).unwrap(), fresh.bounds(layer).unwrap(), "{view:?}");
                 assert_eq!(reused.path(layer).unwrap(), fresh.path(layer).unwrap(), "{view:?}");
@@ -237,7 +286,7 @@ mod tests {
         let data = vec![square(-10.0, -10.0, 10.0, 10.0)];
         let fitter = Fitter::new("equirectangular", None, data.clone());
         for view in [(200.0, 100.0), (200.0, 100.0), (50.0, 300.0), (200.0, 100.0)] {
-            let fresh = Fitter::new("equirectangular", None, data.clone()).at(view).unwrap().into_path();
+            let fresh = Fitter::new("equirectangular", None, data.clone()).at(view).unwrap().into_path(None);
             assert_eq!(fitter.layer_bounds(view).unwrap(), fresh.bounds(&data[0]).unwrap(), "{view:?}");
         }
     }

@@ -42,8 +42,6 @@ charts:
     row_role: row_role
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -51,13 +49,10 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
       row:
         stripe:
           color: transparent
-        divider:
-          visible: false
         roles:
           summary:
             font:
@@ -82,8 +77,6 @@ charts:
     row_role: row_role
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -91,13 +84,7 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
-      header:
-        font:
-          size: 11
-          weight: '600'
-          color: '#313233'
   variant_classic:
     type: table
     query: company_revenue_total
@@ -106,8 +93,6 @@ charts:
     row_role: row_role
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -115,7 +100,6 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
       font:
         family: '''Source Serif 4'', Georgia, ''Times New Roman'', serif'
@@ -125,25 +109,14 @@ charts:
           weight: '400'
           color: '#222222'
         divider:
-          width: 1
           continuous: false
-          visible: true
       row:
         stripe:
           color: transparent
-        divider:
-          visible: false
         roles:
           summary:
             font:
               weight: '400'
-            divider:
-              visible: true
-              width: 1
-          total:
-            divider:
-              visible: true
-              width: 1
 rows:
 - title: Variants — Minimal / BI / Classic (3-up)
   cols:

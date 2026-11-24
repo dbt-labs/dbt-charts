@@ -1,0 +1,3 @@
+kind: Fixes
+body: The `dct examples` table and KPI specimens no longer set styles the defaults already provide, so agents stop copying them.
+time: 2026-11-16T00:24:41.907025-08:00

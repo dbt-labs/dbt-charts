@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct import sigma places tiles on their pages when Sigma returns an empty workbook layout.
+time: 2026-11-16T00:01:12.671254-08:00

@@ -72,8 +72,8 @@ class TestWarehouseValidatePlan:
             e.message for e in r.errors if e.code == "ERR-WAREHOUSE-QUERY-INVALID"
         ]
         assert len(invalid) == 2
-        assert any("'@charts.@tabs.items[0].rows[0].query'" in m for m in invalid)
-        assert any("'@charts.@tabs.items[1].cols[0].query'" in m for m in invalid)
+        assert any("'@charts.@tabs[0].rows[0].query'" in m for m in invalid)
+        assert any("'@charts.@tabs[1].cols[0].query'" in m for m in invalid)
 
     @pytest.mark.parametrize(
         "extra",

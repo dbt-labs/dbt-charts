@@ -93,8 +93,6 @@ def _dispatch_layout(
             width,
             height,
             layout.tab_titles,
-            layout.default_tab or 0,
-            layout.tab_position or "top",
             background,
             resolved_style=resolved_style,
         )

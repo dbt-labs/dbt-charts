@@ -2340,7 +2340,7 @@ pub(super) fn fit(
         for ((cx, cy, aria, color, label_weight, href, _), ((text, w), spot)) in value_label_marks.iter().zip(value_label_texts.iter().zip(&spots)) {
             let Some(spot) = spot else { continue };
             let ink = vega_fit::text_ink(cx + spot.dx, cy + spot.dy, *w, value_label_size, spot.align, spot.baseline);
-            let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?;
+            let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::TextMark)?.extend(crate::contract::owner_attrs(aria.as_deref()));
             let anchor = r.link_open.anchor(href.as_deref());
             let label = crate::common::value_label(
                 cx + spot.dx,

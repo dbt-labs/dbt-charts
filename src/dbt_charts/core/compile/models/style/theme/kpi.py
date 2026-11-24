@@ -264,7 +264,7 @@ class _KpiChartStyleBase(_ChartStyleBaseAllOptional):
         str | KpiBackgroundGradient | None, Color(), Conditionable(rule_type=str)
     ] = Field(
         default=None,
-        description="Card background color, or a {column, scale} gradient by value",
+        description="Card fill, or a {column, scale} gradient; defaults to charts.background.",
     )
 
     # Override _ChartStyleBaseAllOptional.font to declare the inherit link.

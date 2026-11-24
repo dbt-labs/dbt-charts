@@ -1318,13 +1318,10 @@ charts:
     x: value
     y: value
 tabs:
-  id: t
-  default: Active
-  items:
-    - title: Active
-      rows: [active_chart]
-    - title: Hidden
-      rows: [hidden_chart]
+  Active:
+    rows: [active_chart]
+  Hidden:
+    rows: [hidden_chart]
 """
 
 

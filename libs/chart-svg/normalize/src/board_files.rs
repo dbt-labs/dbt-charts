@@ -20,18 +20,23 @@ use model_core::{parse, Tri};
 use project::ProjectPath;
 
 /// Replaces every board-file placement of `layout`, at any depth, with the board it names. `at` is
-/// the tree position of the board that holds `layout` and `chain` the files being inlined, the
-/// root first.
+/// the tree position of the board that holds `layout`, `path` its authored path, and `chain` the
+/// files being inlined, the root first.
 pub(crate) fn inline(
     layout: &mut LayoutAuthored,
     at: &ItemId,
+    path: &str,
     chain: &mut Vec<ProjectPath>,
     external: &External,
     imports: &mut Imports,
 ) -> Result<(), HoistError> {
-    let mut each = |pos: ItemId, item: &mut LayoutItemAuthored| match item {
+    let under = |segment: String| match path {
+        "" => segment,
+        _ => format!("{path}.{segment}"),
+    };
+    let mut each = |pos: ItemId, item_path: String, item: &mut LayoutItemAuthored| match item {
         LayoutItemAuthored::Chart(name) if is_board_file(name.as_str()) => {
-            if let Some(nested) = read(name.as_str(), &pos, chain, external, imports)? {
+            if let Some(nested) = read(name.as_str(), &pos, &item_path, chain, external, imports)? {
                 if crate::board_warnings::fragmenting_body(&nested.body) {
                     imports.prose.insert(pos);
                 }
@@ -40,7 +45,7 @@ pub(crate) fn inline(
             Ok(())
         }
         LayoutItemAuthored::Board(nested) => match &mut nested.body.layout {
-            Some(l) => inline(l, &pos, chain, external, imports),
+            Some(l) => inline(l, &pos, &item_path, chain, external, imports),
             None => Ok(()),
         },
         _ => Ok(()),
@@ -49,27 +54,27 @@ pub(crate) fn inline(
         LayoutAuthored::Rows(items) => items
             .iter_mut()
             .enumerate()
-            .try_for_each(|(i, it)| each(at.key("rows").index(i), it)),
+            .try_for_each(|(i, it)| each(at.key("rows").index(i), under(format!("rows.{i}")), it)),
         LayoutAuthored::Cols(items) => items
             .iter_mut()
             .enumerate()
-            .try_for_each(|(i, it)| each(at.key("cols").index(i), it)),
+            .try_for_each(|(i, it)| each(at.key("cols").index(i), under(format!("cols.{i}")), it)),
         LayoutAuthored::Grid(g) => g
             .items
             .iter_mut()
             .flatten()
             .enumerate()
             .filter_map(|(i, cell)| Some((i, cell.item.as_mut()?)))
-            .try_for_each(|(i, it)| each(at.key("grid").key("items").index(i).key("item"), it)),
+            .try_for_each(|(i, it)| {
+                each(at.key("grid").key("items").index(i).key("item"), under(format!("grid.items.{i}")), it)
+            }),
         LayoutAuthored::Tabs(t) => t
-            .items
             .iter_mut()
-            .flatten()
             .enumerate()
-            .filter_map(|(i, tab)| Some((i, tab.layout.as_mut()?)))
-            .try_for_each(|(i, l)| {
-                let pane = at.key("tabs").key("items").index(i);
-                inline(l, &pane, chain, external, imports)
+            .filter_map(|(i, (label, tab))| Some((i, label, tab.body.layout.as_mut()?)))
+            .try_for_each(|(i, label, l)| {
+                let pane = at.key("tabs").index(i);
+                inline(l, &pane, &under(format!("tabs.{label}")), chain, external, imports)
             }),
     }
 }
@@ -79,6 +84,7 @@ pub(crate) fn inline(
 fn read(
     name: &str,
     at: &ItemId,
+    path_here: &str,
     chain: &mut Vec<ProjectPath>,
     external: &External,
     imports: &mut Imports,
@@ -106,10 +112,10 @@ fn read(
         ))));
     }
     let (path, mut node) = external.open(name, &dir, name)?;
-    if crate::shape::refuse(&node, false).is_err() || crate::names::refuse(&node, false).is_err() {
+    if crate::shape::refuse(&node).is_err() || crate::names::refuse(&node, false).is_err() {
         return Ok(None);
     }
-    external.resolve_refs(&mut node, &path, imports)?;
+    external.resolve_refs(&mut node, &path, imports, "")?;
     let parsed = parse::<Board>(&node, None);
     let mut body = parsed.twin.body;
     if !parsed.errors.is_empty() || !crate::hoist::has_content!(body) {
@@ -129,7 +135,7 @@ fn read(
     if names(&body) {
         // Python names the spot only for a placement written in the file being compiled.
         let by = match chain.len() {
-            1 => format!("{placer} at {}", crate::board_warnings::authored(at)),
+            1 => format!("{placer} at {path_here}"),
             _ => placer.to_string(),
         };
         if let Some(first) = imports.placed.get(&path) {
@@ -143,7 +149,7 @@ fn read(
     }
     chain.push(path);
     let inlined = match &mut body.layout {
-        Some(l) => inline(l, at, chain, external, imports),
+        Some(l) => inline(l, at, path_here, chain, external, imports),
         None => Ok(()),
     };
     chain.pop();
@@ -183,10 +189,7 @@ fn layout_holds(layout: &LayoutAuthored, holds: fn(&BoardBodyAuthored) -> bool) 
             .filter_map(|c| c.item.as_ref())
             .any(nested),
         LayoutAuthored::Tabs(t) => t
-            .items
-            .iter()
-            .flatten()
-            .filter_map(|tab| tab.layout.as_ref())
-            .any(|l| layout_holds(l, holds)),
+            .values()
+            .any(|tab| holds(&tab.body)),
     }
 }

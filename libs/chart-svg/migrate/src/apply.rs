@@ -243,13 +243,19 @@ fn move_value(
     };
     if m.merge && occupied && !same_slot {
         let Some(held) = dest.get_mut(dest_key).map(|e| &mut e.value) else {
-            return other(format!("Cannot move {}: destination vanished", quoted_path(&m.old_path)));
+            return other(format!(
+                "Cannot move {}: destination vanished",
+                quoted_path(&m.old_path)
+            ));
         };
         let into = held.to_json();
         let merged = value.to_json();
         let mut at = destination.to_vec();
         merge_into(held, value, m, &mut at)?;
-        return Ok(Landed::Merged { value: merged, into });
+        return Ok(Landed::Merged {
+            value: merged,
+            into,
+        });
     }
     dest.insert(
         dest_key.clone(),
@@ -264,7 +270,10 @@ enum Landed {
     Same,
     Changed(Json),
     /// `value` merged into the mapping at the destination, which held `into`.
-    Merged { value: Json, into: Json },
+    Merged {
+        value: Json,
+        into: Json,
+    },
 }
 
 fn merge_conflict(m: &Move, at: &[String]) -> MigrationError {
@@ -458,7 +467,14 @@ fn apply_expansion(doc: &mut Node, m: &Move, out: &mut Applied) -> Result<(), Mi
             return other("expansion source is not a string".into());
         };
         let probe = Probe::new(board);
-        let positions = positions_along(&probe, board, &destination, target, vec![target.root()]);
+        let positions = positions_along(
+            &probe,
+            board,
+            &destination,
+            target,
+            vec![target.root()],
+            false,
+        );
         let mut expanded = indexmap::IndexMap::new();
         let mut notes = Vec::new();
         for (leaf, leaf_value) in expansion.get(&value).map(Vec::as_slice).unwrap_or_default() {
@@ -633,7 +649,7 @@ fn delete_tails(
         Kind::Seq(_) => {
             let (ip, lp) = (
                 w.schema.item_positions(positions),
-                w.live.item_positions(live_positions),
+                w.live.live_item_positions(live_positions),
             );
             let len = if let Kind::Seq(s) = &node.kind {
                 s.len()
@@ -701,7 +717,7 @@ fn walk_deletions(
         Kind::Seq(items) => {
             let (ip, lp) = (
                 w.schema.item_positions(positions),
-                w.live.item_positions(live_positions),
+                w.live.live_item_positions(live_positions),
             );
             items
                 .iter()
@@ -1158,7 +1174,7 @@ fn collect_deletions<'a>(
         Kind::Seq(items) => {
             let (ip, lp) = (
                 w.schema.item_positions(positions),
-                w.live.item_positions(live_positions),
+                w.live.live_item_positions(live_positions),
             );
             for (i, item) in items.iter().enumerate() {
                 prefix.push(i.to_string());

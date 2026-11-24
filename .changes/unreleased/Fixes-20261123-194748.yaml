@@ -1,0 +1,5 @@
+kind: Fixes
+body: A point_map legend now follows the order and selection in style.key.legend.values.
+time: 2026-11-23T19:47:48.184472064Z
+custom:
+    DbtChartsIssue: "140"

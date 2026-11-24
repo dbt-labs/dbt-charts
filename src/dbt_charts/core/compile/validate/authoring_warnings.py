@@ -309,16 +309,14 @@ def _walk_board_like_mapping(
 
     tabs = node.get("tabs")
     if isinstance(tabs, dict):
-        items = tabs.get("items")
-        if isinstance(items, list):
-            for index, item in enumerate(items):
-                _walk_layout_item(
-                    item,
-                    chart_types,
-                    [*path, "tabs", "items", str(index)],
-                    warnings,
-                    in_force,
-                )
+        for label, item in tabs.items():
+            _walk_layout_item(
+                item,
+                chart_types,
+                [*path, "tabs", label],
+                warnings,
+                in_force,
+            )
 
 
 def _walk_layout_item(

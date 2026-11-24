@@ -316,6 +316,61 @@ rows:
         finally:
             cache.close()
 
+    def test_chart_reading_a_truncated_upstream_warns_on_every_render(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A chart built from a truncated {{ queries.X.cache }} upstream shows a
+        number computed from incomplete data. The chart itself must carry the
+        warning, fresh and warm alike: a warm hit on the composed query never
+        reads the upstream's entry, so the fact has to live on its own."""
+        from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+        from ..._run import Run
+
+        monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "3")
+        board_yaml = """\
+title: Probe
+queries:
+  base:
+    sql: SELECT x FROM range(10) AS t(x)
+    source: db
+  row_count:
+    sql: SELECT count(*) AS n FROM {{ queries.base.cache }}
+    source: db
+charts:
+  c:
+    query: row_count
+    type: kpi
+    value: n
+rows:
+  - c
+"""
+        result = compile(board_yaml)
+        assert result.success and result.board is not None, result.errors
+        _, registry = self._project_and_registry(tmp_path)
+        cache = TrivialDuckDBCache(db_path=tmp_path / "cache.duckdb")
+        try:
+            for _ in range(2):
+                executor = Run(result.board, env=registry, result_cache=cache)
+                rendered = render(
+                    result.board, executor.ctx, executor.ledger, format="svg"
+                )
+                chart_w = [
+                    w for w in rendered.warnings if w.code == _CODE and w.chart == "c"
+                ]
+                assert len(chart_w) == 1, rendered.warnings
+                assert "'base'" in chart_w[0].message
+                assert "max_rows" in chart_w[0].message
+                assert "truncated to" not in chart_w[0].message
+            assert (
+                "row_count"
+                in Run(result.board, env=registry, result_cache=cache)
+                .lookup(["row_count"])
+                .hits
+            )
+        finally:
+            cache.close()
+
     def test_warm_read_re_slices_under_a_lowered_ceiling(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

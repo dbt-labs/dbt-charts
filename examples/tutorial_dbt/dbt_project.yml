@@ -4,6 +4,9 @@ config-version: 2
 
 profile: 'dbt_charts_examples'
 
+flags:
+  send_anonymous_usage_stats: false
+
 model-paths: ["models"]
 analysis-paths: ["analyses"]
 test-paths: ["tests"]

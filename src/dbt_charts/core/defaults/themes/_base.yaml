@@ -520,6 +520,11 @@ style:
     hover_emphasis:
       visible: true
       recede_contrast: 1.5
+      # The drop lines: the theme's annotation rule color, 1 px, round-capped
+      # dots (each dash is a dot), so they read apart from data and gridlines.
+      drop_line_color: chrome[7]
+      drop_line_width: 1.0
+      drop_line_dash: [0.1, 2.5]
 
 
     # `auto` shows a legend unless direct labels name the series; a concrete
@@ -1377,6 +1382,7 @@ style:
       columns: 24
       gap: 20.0
     tabs:
+      position: top
       bar_height: 40.0
       active_weight: '600'
       inactive_weight: '400'

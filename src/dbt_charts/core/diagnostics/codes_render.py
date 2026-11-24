@@ -1135,7 +1135,7 @@ WARN_QUERY_RESULT_TRUNCATED = REGISTRY.register(
         title="Chart query result truncated",
         message_template="{subject}: query result exceeded the {reason} limit; truncated to {kept_row_count} rows.",
         fix_template="Add a LIMIT to the query, narrow its filters, or raise execution.max_rows/max_result_bytes in dbt_charts.yml if the full result is genuinely needed.",
-        doc="Fires when a query's result exceeded the execution.max_rows or max_result_bytes safety ceiling and was truncated before it ever reached the result cache. The chart still renders with the truncated data; this is a safety net against an unbounded query exhausting memory or bloating the cache, not a hard error.",
+        doc="Fires when a query's result exceeded the execution.max_rows or max_result_bytes safety ceiling and was truncated before it ever reached the result cache. A query that reads a truncated result through `{{ queries.X.cache }}` is flagged too, on every render, cached or not, naming the queries it reads, since its own row count says nothing about the cut. The chart still renders with the truncated data; this is a safety net against an unbounded query exhausting memory or bloating the cache, not a hard error.",
         summary="Fired when a query result exceeded the max_rows/max_result_bytes safety ceiling and was truncated.",
         docs_topic="charts",
     )
@@ -1578,7 +1578,7 @@ WARN_LEGEND_VALUES_UNRESOLVED = REGISTRY.register(
         title="style.key.legend.values entry does not resolve against the legend domain",
         message_template="Chart {chart_id!r} authored `key.legend.values` entries {values} that did not resolve to exactly one legend entry. Legend domain: {domain}.",
         fix_template="Check the spelling against the legend domain, or remove the entry if it's expected to be legitimately absent sometimes.",
-        doc="Fires when `style.key.legend.values` names an entry that matches none of the chart's legend entries, or matches more than one. The entry is dropped rather than shown or causing a render failure. If every authored entry misses, the legend falls back to its default order. Covers every nominal/ordinal `color:` field on bar, area, line, scatter and heatmap, a wide `y: [...]` chart, an overlay's `layers:` labels, and a geoshape choropleth. Not checked: `point_map`/`bubble_map` (no legend resolution there), a quantitative, temporal, or boolean `color:` column (`key.legend.values` is used exactly as authored, with no diagnostic on a miss), and an overlay whose base `y` is non-quantitative (its shared color scale is never built, so `key.legend.values` passes through verbatim).",
+        doc="Fires when `style.key.legend.values` names an entry that matches none of the chart's legend entries, or matches more than one. The entry is dropped rather than shown or causing a render failure. If every authored entry misses, the legend falls back to its default order. Covers every nominal/ordinal `color:` field on bar, area, line, scatter and heatmap, a wide `y: [...]` chart, an overlay's `layers:` labels, a nominal `point_map`/`bubble_map` color, and a geoshape choropleth. Not checked: a quantitative, temporal, or boolean `color:` column (`key.legend.values` is used exactly as authored, with no diagnostic on a miss), and an overlay whose base `y` is non-quantitative (its shared color scale is never built, so `key.legend.values` passes through verbatim).",
         summary="Fired when an authored legend entry doesn't resolve against a chart's legend domain.",
         docs_topic="charts",
     )
@@ -2118,6 +2118,18 @@ ERR_HEATMAP_COLOR_NO_VALUES = REGISTRY.register(
         title="heatmap color field holds no numbers",
         message_template="The heatmap color field {field!r} holds no numeric value, so its gradient has nothing to span. To fix: color by a column that holds numbers, or by a category column.",
         doc="Fired when a heatmap's gradient color field has no numeric value in any row; the legend would otherwise label NaN and no cell would be filled.",
+        docs_topic="charts",
+    )
+)
+
+ERR_HEATMAP_SORT_DATE_AXES = REGISTRY.register(
+    ErrorCode(
+        code="ERR-HEATMAP-SORT-DATE-AXES",
+        domain="render",
+        title="heatmap sort has no category axis to rank",
+        message_template="The heatmap sorts by {sort_by!r}, but its x {x!r} and y {y!r} are both dates, which always keep their date order, so the sort would change nothing. To fix: drop sort:, or put a category column on x or y.",
+        doc="Fired when a heatmap authors `sort:` while both its x and y are date columns. A heatmap's sort ranks only its category axis; a date axis always keeps its date order, so its labels stay under the cells they name. With two date axes there is nothing to rank, and a sort that silently did nothing would claim an order the chart does not draw.",
+        summary="Fired when a heatmap authors sort while both its x and y are dates.",
         docs_topic="charts",
     )
 )

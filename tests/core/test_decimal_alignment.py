@@ -332,7 +332,7 @@ class TestResolveBakeDecision:
         ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
         chart = LineChart(id="fixture", type="line")
         baked = _bake_cartesian_axes(
-            ctx, chart, "line", "temporal", "quantitative", AxisOverrides()
+            ctx, chart, "line", "temporal", "quantitative", AxisOverrides(), True
         )
         return baked.y.style, baked.y.band_position
 
@@ -629,7 +629,7 @@ class TestDecimalPadForEdgeCases:
         ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
         chart = LineChart(id="fixture", type="line")
         baked = _bake_cartesian_axes(
-            ctx, chart, "line", "temporal", "quantitative", AxisOverrides()
+            ctx, chart, "line", "temporal", "quantitative", AxisOverrides(), True
         )
         ay_merged, ay_band_pos = baked.y.style, baked.y.band_position
 

@@ -41,12 +41,13 @@
 //! - **A variable's `options.label_column` is removed**: one `Deletion`. Nothing read it;
 //!   a select shows each option's value.
 
-
 use std::sync::Arc;
 
 use serde_json::Value as Json;
 
-use crate::decl::{path, Declarations, Deletion, DocumentRewrite, Grammars, Move, Rewritten, Rewrote};
+use crate::decl::{
+    path, Declarations, Deletion, DocumentRewrite, Grammars, Move, Rewritten, Rewrote,
+};
 use crate::pyrepr::repr_json;
 use crate::v0_11_0::{respell_secondary_ink, retired_scaffold_token_map};
 
@@ -70,7 +71,15 @@ const STATIC_COLOR_MARK_PAINT: [(&str, &[&str]); 12] = [
 /// The `style.charts.<family>` keys; `donut`, `bubble_map` and `map` share
 /// `pie`, `point_map` and `geoshape`.
 const STATIC_COLOR_THEME_FAMILIES: [&str; 9] = [
-    "bar", "histogram", "area", "line", "scatter", "point_map", "pie", "heatmap", "geoshape",
+    "bar",
+    "histogram",
+    "area",
+    "line",
+    "scatter",
+    "point_map",
+    "pie",
+    "heatmap",
+    "geoshape",
 ];
 /// A table's constant paint is its cell text color: the column default font.
 const TABLE_INK: [&str; 3] = ["column_defaults", "font", "color"];
@@ -81,11 +90,22 @@ const RAIL_FAMILIES: [&str; 3] = ["line", "area", "bar"];
 /// unset, so a board-wide hidden legend reached them. Scatter, heatmap and geoshape pinned it `true`.
 const BOARD_HIDDEN_LEGEND_FAMILIES: [&str; 2] = ["histogram", "point_map"];
 /// The legend leaves a pie's key never read: its legend is the attached table, placed by `position`.
-const PIE_LEGEND_LEAVES: [&str; 10] =
-    ["direction", "columns", "compact_columns", "row", "label", "title", "symbol_limit", "values", "symbol_shape", "symbol_fill"];
+const PIE_LEGEND_LEAVES: [&str; 10] = [
+    "direction",
+    "columns",
+    "compact_columns",
+    "row",
+    "label",
+    "title",
+    "symbol_limit",
+    "values",
+    "symbol_shape",
+    "symbol_fill",
+];
 const NOT_CHART_HOLDERS: [&str; 5] = ["style", "layers", "annotations", "support_table", "queries"];
 const ENDPOINT_VISIBLE: [&str; 2] = ["endpoint_labels", "visible"];
-const STRIP_REASON: &str = "A line or area prints its series names beside the plot, with no label strip to size.";
+const STRIP_REASON: &str =
+    "A line or area prints its series names beside the plot, with no label strip to size.";
 const TWICE: &str = "names the series twice: a legend beside endpoint labels. Set `key.type` to `legend` or `direct`.";
 
 type Path = Vec<String>;
@@ -127,12 +147,16 @@ fn coerce(value: &Json) -> Option<Visible> {
 
 fn visible(source: &[String], value: &Json) -> Result<Visible, String> {
     coerce(value).ok_or_else(|| {
-        format!("Cannot migrate `{}: {}`. Migrate this field manually.", source.join("."), repr_json(value))
+        format!(
+            "Cannot migrate `{}: {}`. Migrate this field manually.",
+            source.join("."),
+            repr_json(value)
+        )
     })
 }
 
 /// The mapping holding the key a path ends `depth` keys below.
-fn holder(source: &[String], depth: usize) -> Path {
+pub(crate) fn holder(source: &[String], depth: usize) -> Path {
     prefix(source, source.len().saturating_sub(depth))
 }
 
@@ -146,11 +170,15 @@ fn at(parent: &[String], tail: &[&str]) -> Path {
 
 fn endpoint_visible(doc: &Json, parent: &[String]) -> Result<Option<Visible>, String> {
     let at = at(parent, &ENDPOINT_VISIBLE);
-    value_at(doc, &at).filter(|v| !v.is_null()).map(|v| visible(&at, v)).transpose()
+    value_at(doc, &at)
+        .filter(|v| !v.is_null())
+        .map(|v| visible(&at, v))
+        .transpose()
 }
 
 fn endpoints_edge(doc: &Json, parent: &[String]) -> bool {
-    cascaded(doc, parent, &["legend", "position", "edge"]).and_then(Json::as_str) == Some("endpoints")
+    cascaded(doc, parent, &["legend", "position", "edge"]).and_then(Json::as_str)
+        == Some("endpoints")
 }
 
 fn shown_legend(doc: &Json, parent: &[String]) -> Result<bool, String> {
@@ -159,7 +187,10 @@ fn shown_legend(doc: &Json, parent: &[String]) -> Result<bool, String> {
 
 fn legend_flag(doc: &Json, parent: &[String]) -> Result<Option<Visible>, String> {
     let at = at(parent, &["legend", "visible"]);
-    value_at(doc, &at).filter(|v| !v.is_null()).map(|v| visible(&at, v)).transpose()
+    value_at(doc, &at)
+        .filter(|v| !v.is_null())
+        .map(|v| visible(&at, v))
+        .transpose()
 }
 
 /// The mappings a `parent` inherits from, nearest first. The cascade resolves a family path
@@ -171,7 +202,10 @@ fn inherited(doc: &Json, parent: &[String]) -> Vec<Path> {
         return Vec::new();
     };
     let charts_of = |board: &[String], boards: std::ops::Range<usize>| -> Vec<Path> {
-        boards.rev().map(|n| at(&prefix(board, n), &["style", "charts"])).collect()
+        boards
+            .rev()
+            .map(|n| at(&prefix(board, n), &["style", "charts"]))
+            .collect()
     };
     let with_family = |family: &str, charts: Vec<Path>| -> Vec<Path> {
         let families = charts.iter().map(|c| at(c, &[family])).collect::<Vec<_>>();
@@ -191,7 +225,10 @@ fn inherited(doc: &Json, parent: &[String]) -> Vec<Path> {
                 .into_iter()
                 .map(|c| at(&c, &[family]))
                 .collect::<Vec<_>>();
-            outer.into_iter().chain(charts_of(rest, 0..rest.len() + 1)).collect()
+            outer
+                .into_iter()
+                .chain(charts_of(rest, 0..rest.len() + 1))
+                .collect()
         }
         _ => vec![above.to_vec()],
     }
@@ -222,9 +259,18 @@ fn cascaded<'a>(doc: &'a Json, parent: &[String], tail: &[&str]) -> Option<&'a J
 /// `style`, `layers`, `annotations`, `support_table` and `queries` hold typed mappings that are not charts.
 fn charts_of_type(node: &Json, families: &[&str], at_path: &mut Path, out: &mut Vec<Path>) {
     match node {
-        Json::Object(m) if m.get("type").and_then(Json::as_str).is_some_and(|t| families.contains(&t)) => out.push(at_path.clone()),
+        Json::Object(m)
+            if m.get("type")
+                .and_then(Json::as_str)
+                .is_some_and(|t| families.contains(&t)) =>
+        {
+            out.push(at_path.clone())
+        }
         Json::Object(m) => {
-            for (key, child) in m.iter().filter(|(k, _)| !NOT_CHART_HOLDERS.contains(&k.as_str())) {
+            for (key, child) in m
+                .iter()
+                .filter(|(k, _)| !NOT_CHART_HOLDERS.contains(&k.as_str()))
+            {
                 at_path.push(key.clone());
                 charts_of_type(child, families, at_path, out);
                 at_path.pop();
@@ -256,35 +302,59 @@ fn rail_never_fires(doc: &Json, chart: &[String]) -> bool {
         _ => {}
     }
     let set = |key: &str| value_at(doc, &at(chart, &[key])).is_some_and(|v| !v.is_null());
-    if value_at(doc, &at(chart, &["layers"])).and_then(Json::as_array).is_some_and(|l| !l.is_empty()) || set("multiples") {
+    if value_at(doc, &at(chart, &["layers"]))
+        .and_then(Json::as_array)
+        .is_some_and(|l| !l.is_empty())
+        || set("multiples")
+    {
         return true;
     }
     if value_at(doc, &at(chart, &["type"])).and_then(Json::as_str) != Some("bar") {
         return false;
     }
-    set("y_start") || per_series_support_table(doc, chart) || cascaded(doc, &style, &["stack"]).is_none_or(|v| v.as_str() == Some("none"))
+    set("y_start")
+        || per_series_support_table(doc, chart)
+        || cascaded(doc, &style, &["stack"]).is_none_or(|v| v.as_str() == Some("none"))
 }
 
 fn per_series_support_table(doc: &Json, chart: &[String]) -> bool {
     let table = value_at(doc, &at(chart, &["support_table"]));
-    let entries = table.and_then(|t| t.get("entries")).or(table).and_then(Json::as_array);
+    let entries = table
+        .and_then(|t| t.get("entries"))
+        .or(table)
+        .and_then(Json::as_array);
     entries.is_some_and(|entries| {
         entries.iter().any(|e| {
-            e.get("per_series").is_some_and(|v| !v.is_null()) && e.get("by_measure").and_then(coerce) != Some(Visible::On)
+            e.get("per_series").is_some_and(|v| !v.is_null())
+                && e.get("by_measure").and_then(coerce) != Some(Visible::On)
         })
     })
 }
 
 /// The `key.<leaf>` write for `source`, refused when a hand-mixed document already authors one.
-fn key_write(doc: &Json, source: &[String], parent: &[String], leaf: &str, value: Json) -> Result<(Path, Option<Json>), String> {
+fn key_write(
+    doc: &Json,
+    source: &[String],
+    parent: &[String],
+    leaf: &str,
+    value: Json,
+) -> Result<(Path, Option<Json>), String> {
     let at = at(parent, &["key", leaf]);
     if value_at(doc, &at).is_some_and(|v| !v.is_null()) {
-        return Err(format!("Cannot migrate `{}`: `key.{leaf}` is already set beside it. Keep one.", source.join(".")));
+        return Err(format!(
+            "Cannot migrate `{}`: `key.{leaf}` is already set beside it. Keep one.",
+            source.join(".")
+        ));
     }
     Ok((at, Some(value)))
 }
 
-fn type_write(doc: &Json, source: &[String], parent: &[String], name: &str) -> Result<(Path, Option<Json>), String> {
+fn type_write(
+    doc: &Json,
+    source: &[String],
+    parent: &[String],
+    name: &str,
+) -> Result<(Path, Option<Json>), String> {
     key_write(doc, source, parent, "type", Json::from(name))
 }
 
@@ -308,7 +378,9 @@ fn scope(doc: &Json, source: &[String], depth: usize) -> Scope {
     let at_holder = source.len().saturating_sub(depth + 1);
     match source.get(at_holder).map(String::as_str) {
         Some("charts") => Scope::Board,
-        Some("style") => value_at(doc, &at(&prefix(source, at_holder), &["type"])).and_then(Json::as_str).map_or(Scope::Other, family),
+        Some("style") => value_at(doc, &at(&prefix(source, at_holder), &["type"]))
+            .and_then(Json::as_str)
+            .map_or(Scope::Other, family),
         Some(name) => family(name),
         None => Scope::Other,
     }
@@ -324,30 +396,59 @@ fn scope(doc: &Json, source: &[String], depth: usize) -> Scope {
 /// legend is dropped, since the pie keeps `auto`; a shown board-wide one pins `pie` to `auto`.
 fn legend_visible(doc: &Json, source: &[String], value: &Json) -> Result<Rewrote, String> {
     let parent = holder(source, 2);
-    let hide = Rewrote { value: Some(Json::Bool(false)), ..Rewrote::default() };
+    let hide = Rewrote {
+        value: Some(Json::Bool(false)),
+        ..Rewrote::default()
+    };
     match visible(source, value)? {
         Visible::Auto => Ok(Rewrote::default()),
         Visible::Off => match scope(doc, source, 2) {
             Scope::Other => Ok(hide),
             Scope::Pie => Ok(Rewrote::default()),
-            Scope::Rail if effective(doc, &parent, endpoint_visible)?.is_some_and(|(v, _)| v == Visible::Off) => Ok(hide),
+            Scope::Rail
+                if effective(doc, &parent, endpoint_visible)?
+                    .is_some_and(|(v, _)| v == Visible::Off) =>
+            {
+                Ok(hide)
+            }
             railed => {
-                let (scope_key, chart) =
-                    parent.split_last().ok_or_else(|| format!("Cannot migrate `{}`: it sits under no scope.", source.join(".")))?;
+                let (scope_key, chart) = parent.split_last().ok_or_else(|| {
+                    format!(
+                        "Cannot migrate `{}`: it sits under no scope.",
+                        source.join(".")
+                    )
+                })?;
                 if scope_key == "style" {
-                    return Ok(if rail_never_fires(doc, chart) { hide } else { Rewrote::default() });
+                    return Ok(if rail_never_fires(doc, chart) {
+                        hide
+                    } else {
+                        Rewrote::default()
+                    });
                 }
-                let families = if railed == Scope::Board { RAIL_FAMILIES.to_vec() } else { vec![scope_key.as_str()] };
+                let families = if railed == Scope::Board {
+                    RAIL_FAMILIES.to_vec()
+                } else {
+                    vec![scope_key.as_str()]
+                };
                 let mut writes = railless_chart_hides(doc, source, &parent, &families)?;
                 if railed == Scope::Board {
                     for family in BOARD_HIDDEN_LEGEND_FAMILIES {
                         let own = at(&parent, &[family]);
                         if legend_flag(doc, &own)?.is_none() {
-                            writes.push(key_write(doc, source, &own, "visible", Json::Bool(false))?);
+                            writes.push(key_write(
+                                doc,
+                                source,
+                                &own,
+                                "visible",
+                                Json::Bool(false),
+                            )?);
                         }
                     }
                 }
-                Ok(Rewrote { writes, ..Rewrote::default() })
+                Ok(Rewrote {
+                    writes,
+                    ..Rewrote::default()
+                })
             }
         },
         Visible::On => {
@@ -356,33 +457,61 @@ fn legend_visible(doc: &Json, source: &[String], value: &Json) -> Result<Rewrote
                 return Ok(Rewrote::default());
             }
             let endpoints = endpoint_visible(doc, &parent)?;
-            if scope != Scope::Other && (endpoints_edge(doc, &parent) || endpoints == Some(Visible::On)) {
-                return Err(format!("Cannot migrate `{}: true`, which {TWICE}", source.join(".")));
+            if scope != Scope::Other
+                && (endpoints_edge(doc, &parent) || endpoints == Some(Visible::On))
+            {
+                return Err(format!(
+                    "Cannot migrate `{}: true`, which {TWICE}",
+                    source.join(".")
+                ));
             }
             let mut writes = Vec::new();
             if endpoints != Some(Visible::Off) {
                 writes.push(type_write(doc, source, &parent, "legend")?);
                 if scope == Scope::Board {
-                    writes.push(key_write(doc, source, &at(&parent, &["pie"]), "type", Json::from("auto"))?);
+                    writes.push(key_write(
+                        doc,
+                        source,
+                        &at(&parent, &["pie"]),
+                        "type",
+                        Json::from("auto"),
+                    )?);
                 }
             }
-            Ok(Rewrote { value: Some(Json::Bool(true)), writes, ..Rewrote::default() })
+            Ok(Rewrote {
+                value: Some(Json::Bool(true)),
+                writes,
+                ..Rewrote::default()
+            })
         }
     }
 }
 
 /// `key.visible: false` on each chart whose hidden legend is the one at `parent` and whose rail
 /// could not fire.
-fn railless_chart_hides(doc: &Json, source: &[String], parent: &[String], families: &[&str]) -> Result<Vec<(Path, Option<Json>)>, String> {
+fn railless_chart_hides(
+    doc: &Json,
+    source: &[String],
+    parent: &[String],
+    families: &[&str],
+) -> Result<Vec<(Path, Option<Json>)>, String> {
     let mut charts = Vec::new();
     charts_of_type(doc, families, &mut Vec::new(), &mut charts);
     let mut writes = Vec::new();
     for chart in charts {
         let style = at(&chart, &["style"]);
-        let hidden_here = effective(doc, &style, legend_flag)?.is_some_and(|(v, holder)| v == Visible::Off && holder == parent);
-        let labels_hidden = effective(doc, &style, endpoint_visible)?.is_some_and(|(v, _)| v == Visible::Off);
+        let hidden_here = effective(doc, &style, legend_flag)?
+            .is_some_and(|(v, holder)| v == Visible::Off && holder == parent);
+        let labels_hidden =
+            effective(doc, &style, endpoint_visible)?.is_some_and(|(v, _)| v == Visible::Off);
         if hidden_here && !labels_hidden && rail_never_fires(doc, &chart) {
-            writes.push(key_write(doc, source, &style, "visible", Json::Bool(false))?);
+            writes.push(key_write(
+                doc,
+                source,
+                &style,
+                "visible",
+                Json::Bool(false),
+            )?);
         }
     }
     Ok(writes)
@@ -391,21 +520,36 @@ fn railless_chart_hides(doc: &Json, source: &[String], parent: &[String], famili
 /// A pie draws no legend of its own: every leaf but its `position` is dropped.
 fn pie_legend_leaf(doc: &Json, source: &[String], value: &Json) -> Result<Rewrote, String> {
     if scope(doc, source, 2) != Scope::Pie {
-        return Ok(Rewrote { value: Some(value.clone()), ..Rewrote::default() });
+        return Ok(Rewrote {
+            value: Some(value.clone()),
+            ..Rewrote::default()
+        });
     }
-    let notice = format!("`{}` no longer applies on a pie, whose key legend keeps only its `position`. Dropped.", source.join("."));
-    Ok(Rewrote { notice: Some(notice), ..Rewrote::default() })
+    let notice = format!(
+        "`{}` no longer applies on a pie, whose key legend keeps only its `position`. Dropped.",
+        source.join(".")
+    );
+    Ok(Rewrote {
+        notice: Some(notice),
+        ..Rewrote::default()
+    })
 }
 
 /// An `endpoints` edge is the `direct` type, anything else stays the legend's edge. Board-wide it
 /// is `direct` on the line, area and bar families, not on `charts`, which would reach a pie.
 fn legend_edge(doc: &Json, source: &[String], value: &Json) -> Result<Rewrote, String> {
     if value.as_str() != Some("endpoints") {
-        return Ok(Rewrote { value: Some(value.clone()), ..Rewrote::default() });
+        return Ok(Rewrote {
+            value: Some(value.clone()),
+            ..Rewrote::default()
+        });
     }
     let parent = holder(source, 3);
     if shown_legend(doc, &parent)? {
-        return Err(format!("Cannot migrate `{}: endpoints`, which {TWICE}", source.join(".")));
+        return Err(format!(
+            "Cannot migrate `{}: endpoints`, which {TWICE}",
+            source.join(".")
+        ));
     }
     if endpoint_visible(doc, &parent)? == Some(Visible::Off) {
         return Err(format!(
@@ -422,29 +566,52 @@ fn legend_edge(doc: &Json, source: &[String], value: &Json) -> Result<Rewrote, S
             let set = |tail: &[&str]| value_at(doc, &at(&own, tail)).is_some_and(|v| !v.is_null());
             if !set(&["legend", "position", "edge"]) && !set(&ENDPOINT_VISIBLE) {
                 if shown_legend(doc, &own)? {
-                    return Err(format!("Cannot migrate `{}: endpoints`, whose `{family}` {TWICE}", source.join(".")));
+                    return Err(format!(
+                        "Cannot migrate `{}: endpoints`, whose `{family}` {TWICE}",
+                        source.join(".")
+                    ));
                 }
                 writes.push(type_write(doc, source, &own, "direct")?);
             }
         }
-        return Ok(Rewrote { writes, ..Rewrote::default() });
+        return Ok(Rewrote {
+            writes,
+            ..Rewrote::default()
+        });
     }
-    let direct = (endpoint_visible(doc, &parent)? != Some(Visible::On)).then(|| type_write(doc, source, &parent, "direct")).transpose()?;
-    Ok(Rewrote { writes: direct.into_iter().collect(), ..Rewrote::default() })
+    let direct = (endpoint_visible(doc, &parent)? != Some(Visible::On))
+        .then(|| type_write(doc, source, &parent, "direct"))
+        .transpose()?;
+    Ok(Rewrote {
+        writes: direct.into_iter().collect(),
+        ..Rewrote::default()
+    })
 }
 
 /// `endpoint_labels.visible` as the key's type: `true` names series on the chart, `false` in a
 /// legend, unless the legend is hidden too (`legend_visible` hides the key).
 fn endpoint_type(doc: &Json, source: &[String], value: &Json) -> Result<Rewrote, String> {
     let parent = holder(source, 2);
-    let named = |name: &str| type_write(doc, source, &parent, name).map(|_| Rewrote { value: Some(Json::from(name)), ..Rewrote::default() });
+    let named = |name: &str| {
+        type_write(doc, source, &parent, name).map(|_| Rewrote {
+            value: Some(Json::from(name)),
+            ..Rewrote::default()
+        })
+    };
     match visible(source, value)? {
         Visible::On => named("direct"),
         Visible::Off => match effective(doc, &parent, legend_flag)? {
             Some((Visible::Off, holder)) if holder == parent => Ok(Rewrote::default()),
-            Some((Visible::Off, _)) => {
-                Ok(Rewrote { writes: vec![key_write(doc, source, &parent, "visible", Json::Bool(false))?], ..Rewrote::default() })
-            }
+            Some((Visible::Off, _)) => Ok(Rewrote {
+                writes: vec![key_write(
+                    doc,
+                    source,
+                    &parent,
+                    "visible",
+                    Json::Bool(false),
+                )?],
+                ..Rewrote::default()
+            }),
             _ => named("legend"),
         },
         Visible::Auto => Ok(Rewrote::default()),
@@ -462,15 +629,33 @@ fn key_moves(g: &Grammars) -> Vec<Move> {
             .collect::<Vec<_>>()
     };
     // Leaves before the containers that hold them, so each finds its container still whole.
-    let mut moves = rewritten(&[(&["key", "visible"], &["legend", "visible"])], Arc::new(legend_visible));
-    moves.extend(rewritten(&[(&["key", "legend", "position", "edge"], &["legend", "position", "edge"])], Arc::new(legend_edge)));
-    moves.extend(rewritten(&[(&["key", "type"], &ENDPOINT_VISIBLE)], Arc::new(endpoint_type)));
+    let mut moves = rewritten(
+        &[(&["key", "visible"], &["legend", "visible"])],
+        Arc::new(legend_visible),
+    );
+    moves.extend(rewritten(
+        &[(
+            &["key", "legend", "position", "edge"],
+            &["legend", "position", "edge"],
+        )],
+        Arc::new(legend_edge),
+    ));
+    moves.extend(rewritten(
+        &[(&["key", "type"], &ENDPOINT_VISIBLE)],
+        Arc::new(endpoint_type),
+    ));
     for leaf in PIE_LEGEND_LEAVES {
-        moves.extend(rewritten(&[(&["key", "legend", leaf], &["legend", leaf])], Arc::new(pie_legend_leaf)));
+        moves.extend(rewritten(
+            &[(&["key", "legend", leaf], &["legend", leaf])],
+            Arc::new(pie_legend_leaf),
+        ));
     }
     moves.extend(g.suffix_rename_moves(
         &[
-            (&["key", "direct", "offset"], &["endpoint_labels", "label_offset"]),
+            (
+                &["key", "direct", "offset"],
+                &["endpoint_labels", "label_offset"],
+            ),
             (&["layers", "*", "key"], &["layers", "*", "legend"]),
         ],
         None,
@@ -479,19 +664,28 @@ fn key_moves(g: &Grammars) -> Vec<Move> {
     moves.extend(g.suffix_rename_moves(&[(&["key", "direct"], &["series_label"])], None, None));
     // Only a bar has a label strip to size; a line or area's `height` is struck.
     moves.extend(g.suffix_rename_moves(
-        &[(&["style", "key", "direct", "height"], &["style", "endpoint_labels", "height"])],
+        &[(
+            &["style", "key", "direct", "height"],
+            &["style", "endpoint_labels", "height"],
+        )],
         None,
         Some("bar"),
     ));
     moves.extend(g.suffix_rename_moves(
-        &[(&["charts", "bar", "key", "direct", "height"], &["charts", "bar", "endpoint_labels", "height"])],
+        &[(
+            &["charts", "bar", "key", "direct", "height"],
+            &["charts", "bar", "endpoint_labels", "height"],
+        )],
         None,
         None,
     ));
-    let legend = g.suffix_rename_moves(&[(&["key", "legend"], &["legend"])], None, None).into_iter().map(|mut m| {
-        m.merge = true;
-        m
-    });
+    let legend = g
+        .suffix_rename_moves(&[(&["key", "legend"], &["legend"])], None, None)
+        .into_iter()
+        .map(|mut m| {
+            m.merge = true;
+            m
+        });
     moves.extend(legend);
     moves
 }
@@ -582,7 +776,12 @@ const RULE_PREDICATES: [&str; 10] = [
 /// support rule's `tone` moves to `support.tone`; a glyph, or a headline tone, has no successor in
 /// a rule, so it refuses. A value that is not that shape is left for the grammar to refuse.
 fn kpi_conditional_rules(doc: &Json, source: &[String], value: &Json) -> Result<Rewrote, String> {
-    let kept = || Ok(Rewrote { value: Some(value.clone()), ..Rewrote::default() });
+    let kept = || {
+        Ok(Rewrote {
+            value: Some(value.clone()),
+            ..Rewrote::default()
+        })
+    };
     let Json::Object(columns) = value else {
         return kept();
     };
@@ -598,7 +797,11 @@ fn kpi_conditional_rules(doc: &Json, source: &[String], value: &Json) -> Result<
         let Some(when) = entry.get("when").and_then(Json::as_array) else {
             return kept();
         };
-        let row = if Some(column.as_str()) == support_column { "support" } else { "value" };
+        let row = if Some(column.as_str()) == support_column {
+            "support"
+        } else {
+            "value"
+        };
         let mut rules = Vec::new();
         for rule in when {
             let Json::Object(rule) = rule else {
@@ -649,7 +852,11 @@ fn kpi_conditional_rules(doc: &Json, source: &[String], value: &Json) -> Result<
 
 fn kpi_moves(g: &Grammars) -> Vec<Move> {
     let conditional = g
-        .suffix_rename_moves(&[(&["style", "conditional"], &["conditional_formatting"])], None, Some("kpi"))
+        .suffix_rename_moves(
+            &[(&["style", "conditional"], &["conditional_formatting"])],
+            None,
+            Some("kpi"),
+        )
         .into_iter()
         .map(|mut m| {
             m.rewrite_in_document = Some(Arc::new(kpi_conditional_rules));
@@ -657,7 +864,11 @@ fn kpi_moves(g: &Grammars) -> Vec<Move> {
             m
         });
     let background = g
-        .suffix_rename_moves(&[(&["style", "background"], &["background"])], None, Some("kpi"))
+        .suffix_rename_moves(
+            &[(&["style", "background"], &["background"])],
+            None,
+            Some("kpi"),
+        )
         .into_iter()
         .map(|mut m| {
             m.conflicts_with = vec![path(&["style", "background"])];
@@ -689,12 +900,28 @@ pub fn declarations(g: &Grammars) -> Declarations {
         d.chart_type = chart_type.map(str::to_string);
         d
     };
-    let mut deletions = vec![deletion(&["style", "title", "font", "size"], TITLE_SIZE_REASON, None)];
+    let mut deletions = vec![deletion(
+        &["style", "title", "font", "size"],
+        TITLE_SIZE_REASON,
+        None,
+    )];
     for family in ["line", "area"] {
-        deletions.push(deletion(&["style", "charts", family, "endpoint_labels", "height"], STRIP_REASON, None));
-        deletions.push(deletion(&["style", "endpoint_labels", "height"], STRIP_REASON, Some(family)));
+        deletions.push(deletion(
+            &["style", "charts", family, "endpoint_labels", "height"],
+            STRIP_REASON,
+            None,
+        ));
+        deletions.push(deletion(
+            &["style", "endpoint_labels", "height"],
+            STRIP_REASON,
+            Some(family),
+        ));
     }
-    deletions.push(deletion(&["options", "label_column"], LABEL_COLUMN_REASON, None));
+    deletions.push(deletion(
+        &["options", "label_column"],
+        LABEL_COLUMN_REASON,
+        None,
+    ));
     Declarations {
         moves,
         deletions,

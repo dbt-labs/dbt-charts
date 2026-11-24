@@ -263,7 +263,7 @@ beyond that starts from the dbt Charts default.
 Render after every tile (`{{ s_skill_chart }}` owns the build-validate loop —
 one tile at a time, never one-shot). Then render the whole board{{#if_surface cli}}
 to PNG, every tab, and put each next to its `png/` page. A render shows one
-tab: give `tabs:` an `id:` and pass each tab's slug (its title, lowercased,
+tab: give `tabs:` an `id:` and pass each tab's slug (its label, lowercased,
 punctuation dropped, spaces and hyphens as `_`) as that variable, and fix every error on every tab:
 
 {{ s_render_png_example }}{{/if_surface}}{{#if_surface tool}} with

@@ -543,6 +543,25 @@ pub fn wcag_contrast(hex_a: &str, hex_b: &str) -> Result<f64, String> {
     Ok((l1 + 0.05) / (l2 + 0.05))
 }
 
+/// `_ink_on_fill` (`render/layouts.py`): `ink` when it reads at 4.5:1 on the
+/// opaque `fill_canvas`, else black or white, whichever contrasts more. An
+/// ink that does not parse or paints nothing is returned as it is.
+pub fn ink_on_fill(ink: &str, fill_canvas: &str) -> Result<String, String> {
+    let Ok(top) = parse_css_color(ink) else {
+        return Ok(ink.to_string());
+    };
+    if top.3 <= 0.0 {
+        return Ok(ink.to_string());
+    }
+    let (r, g, b, _) = parse_css_color(fill_canvas)?;
+    let (r, g, b, _) = composite_over(top, (r, g, b, 1.0));
+    if wcag_contrast(&rgb01_to_hex(r, g, b), fill_canvas)? >= 4.5 {
+        return Ok(ink.to_string());
+    }
+    let pole = if is_light_canvas(fill_canvas)? { "#000000" } else { "#ffffff" };
+    Ok(pole.to_string())
+}
+
 /// `is_light_canvas`: black ink has at least as much contrast against
 /// `canvas` as white does. The crossover sits near relative luminance 0.18,
 /// not 0.5 — both WCAG quantities are nonlinear.
@@ -772,6 +791,16 @@ mod tests {
         // A fixed 70% blend leaves a saturated blue far above 1.5:1 on a near-black canvas.
         let share = recede_share("#0073c2", "#161616", 1.5).unwrap();
         assert!(share < 0.5, "{share}");
+    }
+
+    #[test]
+    fn ink_on_fill_keeps_a_readable_ink_and_flips_one_that_is_not() {
+        assert_eq!(ink_on_fill("#222222", "#dbeafe").unwrap(), "#222222");
+        assert_eq!(ink_on_fill("#222222", "#17324d").unwrap(), "#ffffff");
+        assert_eq!(ink_on_fill("#EDEFF2", "#dbeafe").unwrap(), "#000000");
+        // A translucent ink is judged as it lands on the fill.
+        assert_eq!(ink_on_fill("rgba(0, 0, 0, 0.2)", "#ffffff").unwrap(), "#000000");
+        assert_eq!(ink_on_fill("var(--ink)", "#17324d").unwrap(), "var(--ink)");
     }
 
     #[test]

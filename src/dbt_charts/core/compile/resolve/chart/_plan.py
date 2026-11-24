@@ -227,6 +227,7 @@ def plan_cartesian(
         x_channel_type,
         y_channel_type,
         axis_overrides,
+        bool(data),
         multiples=multiples,
         y=y,
         temporal_band_axes=temporal_band_axes,

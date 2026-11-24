@@ -29,6 +29,13 @@ def test_sanitize_color_invalid_raises():
         sanitize_color("not-a-color")
 
 
+def test_sanitize_color_css_name_returns_hex_and_unknown_word_raises():
+    assert sanitize_color("white") == "#ffffff"
+    assert sanitize_color("WHITE") == "#ffffff"
+    with pytest.raises(InvalidColorError):
+        sanitize_color("whit")
+
+
 def test_sanitize_color_none_returns_none():
     assert sanitize_color(None) is None
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -54,6 +54,9 @@ class GridLayoutStyle(BaseModel):
 class TabsStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    position: Literal["top", "left"] = Field(
+        description="Which edge the tab bar sits on (top or left)."
+    )
     bar_height: float = Field(description="Tab bar height in pixels.")
     border: BorderStyle = Field(
         description=(

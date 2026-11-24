@@ -196,8 +196,6 @@ class ResolvedLayout:
     tab_titles: tuple[str, ...] = ()
     tab_slugs: tuple[str, ...] = ()
     tab_variable: str | None = None
-    default_tab: int = 0
-    tab_position: str | None = None
 
 
 @dataclass(frozen=True)

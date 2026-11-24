@@ -407,19 +407,21 @@ fn zone(board: &Board) -> String {
     crate::scope::zone_name(board.regional.as_ref()).to_string()
 }
 
-/// The tab each tabs layout shows, by the position of the board or pane that owns it: the tab its
-/// variable names in `given`, else its default (`resolve_active_tab_index`). Only null, `false` and `""` are unset; any other value that names no
+/// The tabs each tabs layout may show, by the position of the board or pane that owns it: the tab its
+/// variable names in `given`, else the first (`resolve_active_tab_index`). Only null, `false` and `""` are unset; any other value that names no
 /// tab, a number, list or object included, is `ERR-TAB-UNKNOWN`: malformed input is refused, never
-/// quietly replaced by the default.
+/// quietly replaced by the first, and so is a tab hidden by `visible: false`. A first tab that may be
+/// hidden adds every tab that may open in its place, the first drawn one: a condition is not read
+/// until render.
 fn open_tabs(
     compiled: &CompiledBoard,
     given: &IndexMap<String, Value>,
-) -> Result<BTreeMap<ItemId, usize>, Diagnostic> {
+) -> Result<BTreeMap<ItemId, BTreeSet<usize>>, Diagnostic> {
     let mut open = BTreeMap::new();
     for (at, tabs) in &compiled.structure.layout.tabs {
         let index = match given.get(&tabs.variable) {
-            None | Some(Value::Null) | Some(Value::Bool(false)) => tabs.default_tab,
-            Some(Value::String(s)) if s.is_empty() => tabs.default_tab,
+            None | Some(Value::Null) | Some(Value::Bool(false)) => 0,
+            Some(Value::String(s)) if s.is_empty() => 0,
             Some(value) => {
                 let text = value
                     .as_str()
@@ -429,7 +431,26 @@ fn open_tabs(
                 })?
             }
         };
-        open.insert(at.clone(), index);
+        if tabs.shown[index] == Some(false) && index != 0 {
+            let drawn = tabs.slugs.iter().zip(&tabs.shown).filter(|(_, s)| **s != Some(false));
+            let slugs: Vec<String> = drawn.map(|(slug, _)| slug.clone()).collect();
+            return Err(diag::err_tab_unknown(tabs.variable.as_str(), tabs.slugs[index].as_str(), slugs));
+        }
+        let mut shows = BTreeSet::new();
+        if tabs.shown[index] != Some(false) {
+            shows.insert(index);
+        }
+        if tabs.shown[index] != Some(true) && index == 0 {
+            for (fallback, shown) in tabs.shown.iter().enumerate() {
+                if *shown != Some(false) {
+                    shows.insert(fallback);
+                }
+                if *shown == Some(true) {
+                    break;
+                }
+            }
+        }
+        open.insert(at.clone(), shows);
     }
     Ok(open)
 }
@@ -475,8 +496,8 @@ fn generated(compiled: &CompiledBoard) -> Result<IndexMap<String, VariableValue>
     for (at, tabs) in &layout.tabs {
         let slug = tabs
             .slugs
-            .get(tabs.default_tab)
-            .ok_or_else(|| diag::err_internal(format!("no default tab at {}", at.as_str())))?;
+            .first()
+            .ok_or_else(|| diag::err_internal(format!("no tab at {}", at.as_str())))?;
         all.push((
             at,
             tabs.variable.as_str(),
@@ -512,7 +533,7 @@ struct Walk<'a> {
     chart_queries: IndexMap<String, ChartQueries>,
     variable_queries: IndexMap<String, VariableQueries>,
     /// The tab each tabs layout shows, when scoping; every tab is shown otherwise.
-    choice: Option<&'a BTreeMap<ItemId, usize>>,
+    choice: Option<&'a BTreeMap<ItemId, BTreeSet<usize>>>,
 }
 
 /// The key a query holds in `Board.queries`: its name, or `<file>#<name>` from another file.
@@ -543,7 +564,7 @@ impl Walk<'_> {
         key
     }
 
-    /// Whether the tabs layout owned by `at` shows its tab `index`.
+    /// Whether the tabs layout owned by `at` may show its tab `index`.
     fn shows(&self, at: &ItemId, index: usize) -> Result<bool, Diagnostic> {
         let Some(choice) = self.choice else {
             return Ok(true);
@@ -551,7 +572,7 @@ impl Walk<'_> {
         let open = choice
             .get(at)
             .ok_or_else(|| diag::err_internal(format!("no open tab at {}", at.as_str())))?;
-        Ok(*open == index)
+        Ok(open.contains(&index))
     }
 
     /// The queries a display text reads as `queries.<name>`. Text that does not parse reads none:
@@ -566,18 +587,23 @@ impl Walk<'_> {
         }
     }
 
-    /// The titles and text of the tabs of `layout` (owned by `at`), nested tabs included; a
-    /// hidden tab's are read by no one.
+    /// The labels, titles and text of the tabs of `layout` (owned by `at`), nested tabs included;
+    /// a hidden tab's are read by no one. The tab bar reads each tab's `visible` probe, open or not.
     fn tabs(&mut self, layout: &Layout, at: &ItemId) -> Result<(), Diagnostic> {
         if let Layout::Tabs(tabs) = layout {
             let outer = self.live;
-            for (i, tab) in tabs.items.iter().enumerate() {
+            for (i, (label, tab)) in tabs.iter().enumerate() {
+                self.live = outer;
+                self.visible(tab.visible.as_ref());
                 self.live = outer && self.shows(at, i)?;
-                self.text(tab.title.as_str(), Kind::Label);
-                if let Some(text) = &tab.text {
+                self.text(label.as_str(), Kind::Label);
+                if let Some(title) = &tab.body.title {
+                    self.text(title.as_str(), Kind::Label);
+                }
+                if let Some(text) = &tab.body.text {
                     self.text(text.as_str(), Kind::Markdown);
                 }
-                self.tabs(&tab.layout, &at.key("tabs").key("items").index(i))?;
+                self.tabs(&tab.body.layout, &at.key("tabs").index(i))?;
             }
             self.live = outer;
         }
@@ -794,7 +820,7 @@ impl Walk<'_> {
             let mut shown = outer;
             for &index in &placement.pane {
                 shown = shown && self.shows(&pane_at, index)?;
-                pane_at = pane_at.key("tabs").key("items").index(index);
+                pane_at = pane_at.key("tabs").index(index);
             }
             self.live = shown;
             match placement.item {

@@ -5262,7 +5262,8 @@ pub fn category_paint(
     if !plan.is_active() {
         return Ok(crate::pattern::Paint::Color(hue));
     }
-    plan.category(::bind::category_colors::slot_for(scale, value, palette.len())?, &hue)
+    let rung = scale.slots.get_index_of(value).ok_or_else(|| format!("`{value}` has no place in the board's `{}` category-color scale.", scale.field))?;
+    plan.category(::bind::category_colors::slot_for(scale, value, palette.len())?, rung, scale.slots.len(), &hue)
 }
 
 /// The INK `value`'s fill pairs with: the palette slot's companion, except a
@@ -5316,7 +5317,7 @@ pub fn series_color(
     if !plan.is_active() {
         return Ok(crate::pattern::Paint::Color(hue.to_string()));
     }
-    plan.category(idx, hue)
+    plan.category(idx, idx, palette_domain.len(), hue)
 }
 
 /// The companion ink `value`'s fill pairs with, mirroring
@@ -5333,7 +5334,11 @@ pub fn series_ink(
     companions: &[String],
     pin_companions: &[(String, String)],
     scale: Option<&CategoryColorScale>,
+    ladder_ink: Option<&str>,
 ) -> Result<String, String> {
+    if let Some(ink) = ladder_ink {
+        return Ok(ink.to_string());
+    }
     if let Some(scale) = scale {
         return category_ink(scale, value, companions, pin_companions);
     }
@@ -5439,6 +5444,22 @@ mod category_color_tests {
         assert!(north.for_mark(100.0, "none", 0.0).fill.contains("crosshatch-00aa00-ffffff"), "no scale: North is domain position 1");
     }
 
+    /// A ladder is indexed by a value's place among the board scale's values, not by its palette
+    /// slot: a pin gives slot 5 to the first of three values, which is still the first rung.
+    #[test]
+    fn a_ladder_follows_the_scale_s_value_order_not_the_palette_slot() {
+        use crate::pattern::PatternPlan;
+        let s = scale(json!({"field": "region", "slots": {"C": 5, "A": 0, "B": 1}, "overrides": {}}));
+        let palette = pal(&["#222222"; 10]);
+        let domain = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let resolved = json!({"id": "c", "pattern": {"field": "region", "scale": "category", "ladder": "one-ink", "color": "#222222", "ground": "background", "inverse": false}, "canvas": "#ffffff"});
+        let plan = PatternPlan::from_resolved(&resolved).unwrap();
+        let fill = |value: &str| series_color(value, &domain, &palette, Some(&s), &plan).unwrap().for_mark(100.0, "none", 0.0).fill;
+        assert_eq!(fill("C"), "#222222", "the first value is solid");
+        assert!(fill("A").starts_with("url(#"), "the second is the loose dots");
+        assert_eq!(fill("B"), "#ffffff", "the third is open");
+    }
+
     /// An authored override wins outright, even over a value that also owns
     /// a slot for its companion ink — mirrors `color_at`.
     #[test]
@@ -5492,7 +5513,7 @@ mod category_color_tests {
         let domain = vec!["East".to_string()];
         let err = series_color("Ghost", &domain, &palette, None, &Default::default()).unwrap_err();
         assert!(err.contains("Ghost"), "{err}");
-        let err = series_ink("Ghost", &domain, &palette, &palette, &[], None).unwrap_err();
+        let err = series_ink("Ghost", &domain, &palette, &palette, &[], None, None).unwrap_err();
         assert!(err.contains("Ghost"), "{err}");
     }
 
@@ -5522,7 +5543,7 @@ mod category_color_tests {
         let palette = vec!["#1f77b4".to_string()];
         let companions = vec!["#00588c".to_string()];
         for series in &domain {
-            assert_eq!(series_ink(series, &domain, &palette, &companions, &[], None).unwrap(), "#00588c");
+            assert_eq!(series_ink(series, &domain, &palette, &companions, &[], None, None).unwrap(), "#00588c");
         }
     }
 
@@ -5543,7 +5564,7 @@ mod category_color_tests {
         let companions = pal(&["#d0", "#d1", "#d2", "#d3"]);
         let domain = vec!["East".to_string()]; // local index 0, board slot 3
         assert_eq!(
-            series_ink("East", &domain, &companions, &companions, &[], Some(&s)).unwrap(),
+            series_ink("East", &domain, &companions, &companions, &[], Some(&s), None).unwrap(),
             "#d3"
         );
     }
@@ -5555,8 +5576,8 @@ mod category_color_tests {
         let domain = pal(&["a", "b", "c"]);
         let palette = pal(&["#111", "#222", "#333"]);
         let companions = pal(&["#aaa"]);
-        assert_eq!(series_ink("a", &domain, &palette, &companions, &[], None).unwrap(), "#aaa");
-        assert_eq!(series_ink("c", &domain, &palette, &companions, &[], None).unwrap(), "#333");
+        assert_eq!(series_ink("a", &domain, &palette, &companions, &[], None, None).unwrap(), "#aaa");
+        assert_eq!(series_ink("c", &domain, &palette, &companions, &[], None, None).unwrap(), "#333");
     }
 }
 

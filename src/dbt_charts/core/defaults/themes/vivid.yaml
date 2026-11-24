@@ -185,9 +185,6 @@ style:
         # No border on shadowed themes: the shadow separates the card, so the
         # outline is redundant (kept only on stark — see clarity.yaml).
         width: 0.0
-    hover_emphasis:
-      drop_line_color: chrome[6]
-      drop_line_width: 2.0
   variables:
     font:
       color: *mid

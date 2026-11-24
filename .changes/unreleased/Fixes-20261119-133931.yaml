@@ -1,0 +1,3 @@
+kind: Fixes
+body: Hovering a chart fades every label with its mark and brings a pointed-at series to the front.
+time: 2026-11-19T13:39:31.183131-08:00

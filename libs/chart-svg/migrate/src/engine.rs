@@ -158,7 +158,7 @@ fn apply_identity_moves(
         .all
         .moves
         .iter()
-        .filter(|m| m.old_path == m.new_path && m.rewrite_in_document.is_none())
+        .filter(|m| m.old_path == m.new_path && m.rewrite_in_document.is_none() && !m.reshapes)
         .collect();
     let probe = Probe::new(doc);
     if !identity
@@ -617,7 +617,9 @@ pub fn retired_keys(doc: &Node) -> Vec<RetiredKey> {
     let probe = Probe::new(doc);
     for e in entries().iter().rev() {
         for m in reg.moves_from(&e.version) {
-            if m.old_path == m.new_path || m.live || !m.old_path.iter().all(|p| p == "*" || keys.contains(p))
+            if m.old_path == m.new_path
+                || m.live
+                || !m.old_path.iter().all(|p| p == "*" || keys.contains(p))
             {
                 continue;
             }

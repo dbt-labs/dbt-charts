@@ -2,7 +2,13 @@
 
 use crate::primitives::BorderStyle;
 use crate::style::font::FontStyle;
+use crate::string_enum;
 use model_derive::Model;
+
+string_enum!(
+    /// Which edge the tab bar sits on.
+    TabPosition { Top = "top", Left = "left" }
+);
 
 /// Plot-area (view) defaults.
 #[derive(Debug, Clone, PartialEq, Model)]
@@ -42,6 +48,8 @@ pub struct GridLayoutStyle {
 #[derive(Debug, Clone, PartialEq, Model)]
 #[model(constraint(range(rail_max_lines, ge = 1)))]
 pub struct TabsStyle {
+    /// Which edge the tab bar sits on.
+    pub position: TabPosition,
     /// Tab bar height in pixels.
     pub bar_height: f64,
     /// Line drawn along the tab bar and around the active tab: stroke width,

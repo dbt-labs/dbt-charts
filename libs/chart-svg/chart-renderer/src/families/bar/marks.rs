@@ -423,6 +423,8 @@ pub(crate) fn layer_bar_labels(
                 ink: None,
                 font_color: None,
                 font_weight: None,
+                on: crate::pattern::LabelOn::Color,
+                rect: None,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -699,6 +701,16 @@ pub(super) fn hover_band_for(r: &BarResolved, rows: &[serde_json::Map<String, Va
         ("zero", Some(series)) => HoverBand::stacked(rows, &r.x, &r.y, series, r.stacked_domain_max),
         _ => None,
     }
+}
+
+/// `nodes`, drawn at a position shifted by `anchor` (a ladder tile's origin, see
+/// [`crate::pattern::MarkPaint::anchor`]), in a group that shifts them back: the tile, whose origin is the user
+/// space's, then starts at the anchor. A zero anchor is no cut.
+pub(super) fn anchored(anchor: (f64, f64), nodes: Vec<Node>) -> Vec<Node> {
+    if anchor == (0.0, 0.0) {
+        return nodes;
+    }
+    vec![Node::group(Role::Chrome, Attrs::new(), nodes).translate(anchor.0, anchor.1)]
 }
 
 /// A bar as nodes: a `<path>` with rounded corners at its FAR end (production's `cornerRadiusEnd`

@@ -115,13 +115,12 @@ class TestNestedLayoutRefPosition:
                 "    type: bar",
                 "    query: q1",
                 "tabs:",
-                "  items:",
-                "    - title: A",
-                "      rows:",
-                "        - real_chart",
-                "    - title: B",
-                "      rows:",
-                "        - missing_in_tab",
+                "  A:",
+                "    rows:",
+                "      - real_chart",
+                "  B:",
+                "    rows:",
+                "      - missing_in_tab",
             ]
         )
         result = compile(yaml_content, file="f.yaml")
@@ -149,10 +148,9 @@ class TestNestedLayoutRefPosition:
                 "  - real_chart",
                 "  - title: Nested",
                 "    tabs:",
-                "      items:",
-                "        - title: A",
-                "          rows:",
-                "            - missing_in_nested_tab",
+                "      A:",
+                "        rows:",
+                "          - missing_in_nested_tab",
             ]
         )
         result = compile(yaml_content, file="f.yaml")

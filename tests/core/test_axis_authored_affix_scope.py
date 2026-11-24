@@ -11,13 +11,18 @@ from dbt_charts.core.compile.config import (
     get_theme_style,
 )
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.models.chart.normalized import LineChart, ScatterChart
 from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     AxisXStylePatch,
     AxisYLabelStylePatch,
     AxisYStylePatch,
     DimensionLabelStylePatch,
+    LineChartStylePatch,
+    ScatterChartStylePatch,
 )
+from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart._axes import (
     AxisOverrides,
     _bake_cartesian_axes,
@@ -40,7 +45,7 @@ def _bake_ay_with_format(chart_type: str, y_channel_type: str, fmt: FormatConfig
         y=AxisYStylePatch(labels=AxisYLabelStylePatch(format=fmt))
     )
     return _bake_cartesian_axes(
-        ctx, chart, chart_type, "nominal", y_channel_type, overrides
+        ctx, chart, chart_type, "nominal", y_channel_type, overrides, True
     )
 
 
@@ -51,7 +56,7 @@ def _bake_ay_with_format_and_expr(chart_type: str, fmt: str | FormatConfig, expr
         y=AxisYStylePatch(labels=AxisYLabelStylePatch(format=fmt, expr=expr))
     )
     return _bake_cartesian_axes(
-        ctx, chart, chart_type, "nominal", "quantitative", overrides
+        ctx, chart, chart_type, "nominal", "quantitative", overrides, True
     )
 
 
@@ -89,6 +94,46 @@ def test_ordinal_channel_rejects_the_authored_affix():
     assert exc_info.value.code.code == "ERR-FORMAT-AFFIX-NOMINAL-AXIS-UNSUPPORTED"
 
 
+@pytest.mark.parametrize(
+    "chart",
+    [
+        pytest.param(
+            ScatterChart(
+                id="s",
+                type="scatter",
+                query=SqlQuery(sql="SELECT 1", source="t"),
+                query_name="q",
+                x="sold_date",
+                y="price",
+                style=ScatterChartStylePatch.model_validate(
+                    {"axis_y": {"labels": {"format": "currency_compact"}}}
+                ),
+            ),
+        ),
+        pytest.param(
+            LineChart(
+                id="l",
+                type="line",
+                query=SqlQuery(sql="SELECT 1", source="t"),
+                query_name="q",
+                x="n",
+                y="price",
+                style=LineChartStylePatch.model_validate(
+                    {"axis_x": {"labels": {"format": "compact"}}}
+                ),
+            ),
+        ),
+    ],
+    ids=["scatter_axis_y", "line_axis_x"],
+)
+def test_empty_result_does_not_reject_the_affix(chart):
+    """With no rows a channel has no values to classify, so its nominal
+    default is not evidence of a categorical axis: the chart resolves and
+    renders its empty state."""
+    ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
+    resolve(chart, [], ctx)
+
+
 def test_nominal_x_channel_rejects_the_authored_affix():
     """The x-axis half of the same rejection: axis_x.labels.format authored
     with an affix while the x channel resolves nominal."""
@@ -102,7 +147,9 @@ def test_nominal_x_channel_rejects_the_authored_affix():
         )
     )
     with pytest.raises(CompilationError) as exc_info:
-        _bake_cartesian_axes(ctx, chart, "bar", "nominal", "quantitative", overrides)
+        _bake_cartesian_axes(
+            ctx, chart, "bar", "nominal", "quantitative", overrides, True
+        )
     assert exc_info.value.code.code == "ERR-FORMAT-AFFIX-NOMINAL-AXIS-UNSUPPORTED"
 
 
@@ -120,7 +167,7 @@ def test_house_alias_ruler_suppresses_the_authored_affix_override():
         )
     )
     baked = _bake_cartesian_axes(
-        ctx, chart, "bar", "nominal", "quantitative", overrides
+        ctx, chart, "bar", "nominal", "quantitative", overrides, True
     )
     resolved = build_resolved_axis(
         baked.y.style,
@@ -159,7 +206,7 @@ def test_authored_affix_persists_on_labels_format_alongside_a_ladder():
         )
     )
     baked = _bake_cartesian_axes(
-        ctx, chart, "bar", "nominal", "quantitative", overrides
+        ctx, chart, "bar", "nominal", "quantitative", overrides, True
     )
     resolved = build_resolved_axis(
         baked.y.style,
@@ -215,7 +262,7 @@ def _resolved_ay_axis(
         y=AxisYStylePatch(labels=AxisYLabelStylePatch(format=fmt))
     )
     baked = _bake_cartesian_axes(
-        ctx, chart, chart_type, "nominal", "quantitative", overrides
+        ctx, chart, chart_type, "nominal", "quantitative", overrides, True
     )
     return build_resolved_axis(
         baked.y.style,

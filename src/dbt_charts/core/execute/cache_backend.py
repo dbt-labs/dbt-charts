@@ -82,6 +82,10 @@ class TruncationInfo:
     query_name: str
     kept_row_count: int
     reason: TruncatedReason
+    # The {{ queries.X.cache }} queries the result was built from. A cut in any
+    # of them reaches this result; the plan names them, so a fresh run and a
+    # warm hit agree without the store recording which one was cut.
+    upstreams: tuple[str, ...] = ()
 
 
 # Canonical type for a query-result rowset: a list of column-name → value dicts.

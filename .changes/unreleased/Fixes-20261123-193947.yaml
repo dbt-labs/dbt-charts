@@ -1,0 +1,5 @@
+kind: Fixes
+body: WARN-REAGGREGATION no longer fires on `COUNT(DISTINCT IF(...))` or `COUNT(DISTINCT CASE ...)` when the aggregated column appears only in the condition.
+time: 2026-11-23T19:39:47.6833158Z
+custom:
+    DbtChartsIssue: "115"

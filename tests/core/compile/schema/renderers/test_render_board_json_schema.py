@@ -97,9 +97,6 @@ class TestFieldSetParity:
     def test_grid_layout_field_parity(self, board_schema) -> None:
         self._check_model(board_schema, "GridLayout")
 
-    def test_tab_layout_field_parity(self, board_schema) -> None:
-        self._check_model(board_schema, "TabLayout")
-
     def test_all_definitions_have_descriptions_on_properties(
         self, board_schema
     ) -> None:

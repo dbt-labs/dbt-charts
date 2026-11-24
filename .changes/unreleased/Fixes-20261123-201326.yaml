@@ -1,0 +1,5 @@
+kind: Fixes
+body: A percentage `width:` in a `cols:` row is now the same size whatever the row's column count, so cards line up across rows when a gap is set.
+time: 2026-11-23T20:13:26.750020945Z
+custom:
+    DbtChartsIssue: "110"

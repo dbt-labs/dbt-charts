@@ -43,6 +43,7 @@ from pydantic import BaseModel, ValidationError as PydanticValidationError
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
+from dbt_charts.core.compile.authoring.paths import join_path
 from dbt_charts.core.compile.config import (
     ProjectSourcesConfig,
     resolve_html_policy_ceiling,
@@ -307,7 +308,7 @@ def _set_reference_error_field_path(e: ReferenceError, authored: AuthoredBoard) 
     }
     section = sections.get(e.ref_path[0])
     if isinstance(section, dict) and e.ref_path[1] in section:
-        e.field_path = ".".join(e.ref_path)
+        e.field_path = join_path(e.ref_path)
 
 
 def _own_format_names(yaml_content: str) -> frozenset[str]:
@@ -373,7 +374,7 @@ def compile_authored_board(
             if authored.charts is None or chart_name not in authored.charts:
                 continue
             ref_path = ["charts", chart_name, "query"]
-            error.field_path = ".".join(ref_path)
+            error.field_path = join_path(ref_path)
         return CompileResult(
             errors=[e.to_diagnostic(file=file) for e in validation_errors]
         )
@@ -1344,8 +1345,6 @@ def _extract_nested_boards(board: AuthoredBoard) -> list[tuple[str, AuthoredBoar
         Each nested AuthoredBoard found in the layout, with its dotted path
         relative to ``board``, spelled as ``LayoutItem.source_path`` spells it
     """
-    from dbt_charts.core.compile.models.board.authored import TabItem
-
     nested_boards: list[tuple[str, AuthoredBoard]] = []
     items: list[tuple[str, Any]] = []  # type-state: explicit_any — any layout item
 
@@ -1361,25 +1360,15 @@ def _extract_nested_boards(board: AuthoredBoard) -> list[tuple[str, AuthoredBoar
             (f"grid.items.{i}", gi.item) for i, gi in enumerate(board.grid.items)
         )
 
-    # Collect items from tabs (always TabLayout now — dict form removed)
     if board.tabs:
         items.extend(
-            (f"tabs.items.{i}", item) for i, item in enumerate(board.tabs.items)
+            (join_path(("tabs", label)), item) for label, item in board.tabs.items()
         )
 
     # Process all items to find nested boards
     for path, item in items:
         if isinstance(item, AuthoredBoard):
             nested_boards.append((path, item))
-        elif isinstance(item, TabItem):
-            # Tab items contain their own rows/cols — treat as an inline board
-            tab_board = AuthoredBoard.model_construct(
-                rows=item.rows,
-                cols=item.cols,
-                grid=item.grid,
-                tabs=item.tabs,
-            )
-            nested_boards.append((path, tab_board))
 
     return nested_boards
 

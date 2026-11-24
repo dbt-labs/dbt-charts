@@ -215,22 +215,12 @@ impl Walk {
             }
             LayoutAuthored::Tabs(t) => {
                 at.push(Step::Key("tabs"));
-                at.push(Step::Key("items"));
-                for (i, tab) in t.items.iter().flatten().enumerate() {
+                for (i, tab) in t.values().enumerate() {
                     at.push(Step::Index(i));
-                    let (children, plain, theme) = self.scope(
-                        &tab.style,
-                        None,
-                        gap_layout(tab.layout.as_ref()),
-                        at,
-                        parent,
-                    )?;
-                    if let Some(inner) = &tab.layout {
-                        self.layout(inner, at, (children.as_ref(), plain.as_ref(), &theme))?;
-                    }
+                    self.board(&tab.body, at, parent)?;
                     at.pop();
                 }
-                at.truncate(at.len() - 2);
+                at.pop();
                 Ok(())
             }
         }
@@ -259,13 +249,22 @@ impl Walk {
         at: &mut Vec<Step<'k>>,
         parent: Parent<'_>,
     ) -> Result<(), ScopeError> {
-        let LayoutItemAuthored::Board(nested) = item else {
-            return Ok(());
-        };
-        let layout = nested.body.layout.as_ref();
-        let declared = declared_theme(&nested.body)?;
+        match item {
+            LayoutItemAuthored::Board(nested) => self.board(&nested.body, at, parent),
+            _ => Ok(()),
+        }
+    }
+
+    fn board<'k>(
+        &mut self,
+        body: &'k BoardBodyAuthored,
+        at: &mut Vec<Step<'k>>,
+        parent: Parent<'_>,
+    ) -> Result<(), ScopeError> {
+        let layout = body.layout.as_ref();
+        let declared = declared_theme(body)?;
         let (children, plain, theme) =
-            self.scope(&nested.body.style, declared, gap_layout(layout), at, parent)?;
+            self.scope(&body.style, declared, gap_layout(layout), at, parent)?;
         if let Some(layout) = layout {
             self.layout(layout, at, (children.as_ref(), plain.as_ref(), &theme))?;
         }
@@ -424,19 +423,12 @@ fn install_layout<'k>(
         }
         LayoutAuthored::Tabs(t) => {
             at.push(Step::Key("tabs"));
-            at.push(Step::Key("items"));
-            for (i, tab) in t.items.iter_mut().flatten().enumerate() {
+            for (i, tab) in t.values_mut().enumerate() {
                 at.push(Step::Index(i));
-                set_style(&mut tab.style, at, nested);
-                // A tab that writes no layout (only `text:`) holds Python's empty `rows`. This
-                // runs after the layout facts, which Python computes before it fills them.
-                let inner = tab
-                    .layout
-                    .get_or_insert_with(|| LayoutAuthored::Rows(Vec::new()));
-                install_layout(inner, at, nested);
+                install_board(&mut tab.body, at, nested);
                 at.pop();
             }
-            at.truncate(at.len() - 2);
+            at.pop();
         }
     }
 }
@@ -461,11 +453,18 @@ fn install_item<'k>(
     at: &mut Vec<Step<'k>>,
     nested: &BTreeMap<String, Resolved<Style>>,
 ) {
-    let LayoutItemAuthored::Board(board) = item else {
-        return;
-    };
-    set_style(&mut board.body.style, at, nested);
-    if let Some(layout) = &mut board.body.layout {
+    if let LayoutItemAuthored::Board(board) = item {
+        install_board(&mut board.body, at, nested);
+    }
+}
+
+fn install_board<'k>(
+    body: &'k mut BoardBodyAuthored,
+    at: &mut Vec<Step<'k>>,
+    nested: &BTreeMap<String, Resolved<Style>>,
+) {
+    set_style(&mut body.style, at, nested);
+    if let Some(layout) = &mut body.layout {
         install_layout(layout, at, nested);
     }
 }

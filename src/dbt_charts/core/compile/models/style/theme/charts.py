@@ -98,9 +98,9 @@ class HoverEmphasisStyle(BaseModel):
     for the trigger, which would read as gating the tooltip beside it (it
     does not).
 
-    The line/area drop line's color and width: each theme picks a neutral one
-    scaffold rung past its own measure gridline, at twice that gridline's
-    width, so the line reads as structure rather than as another data series.
+    The drop lines' color, width and dash: each theme draws them in its own
+    annotation rule color, 1 px wide and dotted, so they read apart from data
+    series and gridlines.
 
     The browser runtime reads `visible` and `recede_contrast`, and the engine
     reads the same pair to bake the receded look of a mark a board variable
@@ -122,6 +122,9 @@ class HoverEmphasisStyle(BaseModel):
     )
     drop_line_width: float = Field(
         description="Width, in pixels, of the vertical drop line from a hovered line/area datum down to its axis."
+    )
+    drop_line_dash: list[float] = Field(
+        description="Dash pattern, in pixels, of the drop lines a hovered datum draws to its axes. Lines are round-capped, so a short dash such as [0.1, 2.5] draws dots."
     )
 
 

@@ -355,6 +355,8 @@ def disable_usage_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
     subprocesses inherit. ``tests/telemetry/`` unsets it to test emission.
     """
     monkeypatch.setenv("DO_NOT_TRACK", "1")
+    monkeypatch.setenv("DBT_SEND_ANONYMOUS_USAGE_STATS", "false")
+    monkeypatch.setenv("DBT_ENGINE_SEND_ANONYMOUS_USAGE_STATS", "false")
 
 
 @pytest.fixture(autouse=True)

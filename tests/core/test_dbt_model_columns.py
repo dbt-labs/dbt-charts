@@ -804,6 +804,41 @@ def test_missing_column_error_suggests_the_close_name(tmp_path):
     assert "amount_usd" in error.hint
 
 
+def test_a_bound_variable_keeps_the_column_check_on(tmp_path):
+    """`{{ status }}` binds a value, never a column, so the query's columns stay
+    checkable against the model."""
+    project = _project_with_manifest(
+        tmp_path,
+        {
+            "model.p.orders": _model(
+                "orders", "SELECT order_id, status, amount FROM raw"
+            )
+        },
+    )
+    result = compile_board(
+        yaml.dump(
+            {
+                "source": "s",
+                "variables": {"status": {"input": "text", "default": "open"}},
+                "queries": {
+                    "q": "SELECT order_id, amont FROM {{ ref('orders') }} "
+                    "WHERE status = {{ status }}"
+                },
+                "charts": {"c": {"query": "q", "type": "table"}},
+                "rows": ["c"],
+            }
+        )
+    )
+    assert result.board is not None, result.errors
+    check_model_columns(result, project)
+    assert "WARN-DBT-QUERY-COLUMNS-INDETERMINATE" not in [
+        w.code for w in result.warnings
+    ]
+    (error,) = result.errors
+    assert error.code == "ERR-DBT-MODEL-COLUMN-MISSING"
+    assert "amont" in error.message
+
+
 class TestCompiledCodePreference:
     def test_compiled_code_is_preferred_over_raw_code(self, tmp_path):
         """A compiled manifest carries jinja-rendered SQL — a model unresolved

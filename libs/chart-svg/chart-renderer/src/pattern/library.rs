@@ -95,6 +95,17 @@ pub struct Step {
     pub l_star: f64,
 }
 
+/// One step of a ladder: the full-size step, and the same marks and tone as tiles at three
+/// quarters and half size for narrow bars. A size whose strokes would fall under the screen-scale
+/// floor is absent: a mark that needs it draws the step's flat tint.
+#[derive(Debug, Deserialize)]
+pub struct LadderStep {
+    #[serde(flatten)]
+    pub step: Step,
+    pub three_quarter: Option<Tile>,
+    pub half: Option<Tile>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Library {
     /// Rendered ink over nominal coverage: a flat tint is mixed at `coverage * flat_k`.
@@ -102,6 +113,9 @@ pub struct Library {
     pub motifs: BTreeMap<String, Tile>,
     /// `ramps[name][step count]`: the tiles of a ramp of that many steps, lightest first.
     pub ramps: BTreeMap<String, BTreeMap<String, Vec<Step>>>,
+    /// `ladders[name][series count]`: the steps between solid and open for that many series,
+    /// darkest (the base of a stack) first, ending in the loose dots.
+    pub ladders: BTreeMap<String, BTreeMap<String, Vec<LadderStep>>>,
 }
 
 static SHIPPED: LazyLock<Library> = LazyLock::new(|| {
@@ -142,6 +156,19 @@ pub fn key_node(key_id: &str, tile_id: &str, tile: &Tile, ink: &str) -> Node {
     );
     let attrs = Attrs::new().set("id", key_id).set("patternUnits", "userSpaceOnUse");
     Node::new(Role::Chrome, attrs, Shape::Pattern { w: KEY_W, h: KEY_H, transform: None, children: vec![cropped, outline] })
+}
+
+/// The `<defs>` of a legend key `key_id` whose fill is the flat `fill`: a `KEY_W` x `KEY_H` pattern
+/// of that color under the same 1 px outline in `ink` a tiled key has.
+pub fn flat_key_node(key_id: &str, fill: &str, ink: &str) -> Node {
+    let bed = Node::rect(Role::Chrome, (0.0, 0.0, KEY_W, KEY_H), Attrs::new().set("fill", fill));
+    let outline = Node::rect(
+        Role::Chrome,
+        (0.5, 0.5, KEY_W - 1.0, KEY_H - 1.0),
+        Attrs::new().set("fill", "none").set("stroke", ink).num("stroke-width", 1.0),
+    );
+    let attrs = Attrs::new().set("id", key_id).set("patternUnits", "userSpaceOnUse");
+    Node::new(Role::Chrome, attrs, Shape::Pattern { w: KEY_W, h: KEY_H, transform: None, children: vec![bed, outline] })
 }
 
 #[cfg(test)]

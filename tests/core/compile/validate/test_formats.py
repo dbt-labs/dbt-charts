@@ -1880,21 +1880,20 @@ queries:
     source: db
     sql: SELECT 'Jan' AS month, 100 AS revenue
 tabs:
-  items:
-    - title: Detail
-      style:
-        formats: null
-        background: "#ffffff"
-      rows:
-        - title: Inner
-          type: bar
-          query: q
-          x: month
-          y: revenue
-          style:
-            axis_y:
-              labels:
-                format: arr
+  Detail:
+    style:
+      formats: null
+      background: "#ffffff"
+    rows:
+      - title: Inner
+        type: bar
+        query: q
+        x: month
+        y: revenue
+        style:
+          axis_y:
+            labels:
+              format: arr
 """
     )
     assert not result.success, (

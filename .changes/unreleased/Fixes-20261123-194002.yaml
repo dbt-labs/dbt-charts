@@ -1,0 +1,5 @@
+kind: Fixes
+body: A chart whose query returns no rows now shows its empty state when its axis format uses a notation such as `currency_compact`, instead of failing the board.
+time: 2026-11-23T19:40:02.142636758Z
+custom:
+    DbtChartsIssue: "144"

@@ -133,13 +133,13 @@ impl<'a, F: Facts> Runs<'a, F> {
         self.close(run, level.gap);
         if let Layout::Tabs(tabs) = level.layout {
             let (body, at) = level.owner.ok_or_else(|| diag::err_internal("a tabs layout inside a tab is refused before it is planned"))?;
-            for (index, tab) in tabs.items.iter().enumerate() {
+            for (index, tab) in tabs.values().enumerate() {
                 // Each pane starts from the row holding it, not from a card beside it.
                 let gap = self.pane_gap(body, index)?;
                 self.last_gap = Some(gap);
                 let pane = Level {
                     text: None,
-                    layout: &tab.layout,
+                    layout: &tab.body.layout,
                     placements: items(body, &at).filter(|placement| placement.pane.first() == Some(&index)).collect(),
                     gap,
                     owner: None,

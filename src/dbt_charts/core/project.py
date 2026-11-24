@@ -1186,8 +1186,8 @@ def read_board_text(path: ProjectPath) -> BoardRead:
     from dbt_charts.core.compile.engine import engine_index as read_engine_index
     from dbt_charts.core.compile.parse.board_text import (
         BoardText,
+        board_title,
         parse_board_text,
-        title_from_slug,
     )
     from dbt_charts.core.diagnostics.execution import ExecutionError
 
@@ -1203,7 +1203,7 @@ def read_board_text(path: ProjectPath) -> BoardRead:
         text = parse_board_text(slug, content, is_markdown=path.is_markdown)
     else:
         text = BoardText(
-            title=index["title"] or title_from_slug(slug),
+            title=board_title(slug, index["title"]),
             notes=index["notes"]
             or "",  # type-state: silent_fallback — no notes is empty text
             tags=tuple(index["tags"]),

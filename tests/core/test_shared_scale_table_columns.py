@@ -697,7 +697,9 @@ class TestUnformattedColumnThatDoesNotCompact:
     grouped digits on every row: it never mixes compaction units (5 / 1.2 K /
     77), and mixed fractional depths still align on the decimal point."""
 
-    def _resolve(self, values: list[float], *, allow_shared_scale: bool = True):
+    def _resolve(
+        self, values: list[float] | list[str], *, allow_shared_scale: bool = True
+    ):
         columns = {"amount": TableColumnConfig()}
         resolved = _with_resolved_scale_stops(
             columns,
@@ -758,6 +760,15 @@ class TestUnformattedColumnThatDoesNotCompact:
     def test_a_legend_table_never_bakes_exact_digits(self) -> None:
         column = self._resolve([5.0, 1200.0, 77.0], allow_shared_scale=False)
         assert column.format is None
+
+    def test_a_text_column_of_numeric_looking_cells_bakes_no_number_format(
+        self,
+    ) -> None:
+        # dbt-labs/dbt-charts#135: text is text however its cells look.
+        column = self._resolve(["2028-07-02", "730320810000", "1"])
+        assert column.format is None
+        assert column.shared_scale is None
+        assert column.decimal_pad_table == ()
 
 
 @pytest.mark.parametrize(

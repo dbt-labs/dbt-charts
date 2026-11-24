@@ -102,11 +102,10 @@ rows:
   - tbl
   - k
   - tabs:
-      items:
-        - title: a tab label of the region
-          rows: [sc]
-        - title: second tab
-          rows: [auth]
+      a tab label of the region:
+        rows: [sc]
+      second tab:
+        rows: [auth]
 """
 
 

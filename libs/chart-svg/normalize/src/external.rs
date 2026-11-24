@@ -240,41 +240,38 @@ impl External<'_> {
         }
     }
 
-    /// The boards a layout nests: `rows` and `cols` items, `grid.items[].item`; a tab is not a
-    /// board (it has no `queries:`), so only the layout inside it is walked.
+    /// The boards a layout nests: `rows` and `cols` items, `grid.items[].item` and each tab's
+    /// pane. `at` is the dotted path of `m` in the file.
     fn resolve_nested(
         &self,
         m: &mut Entries,
         board: &ProjectPath,
         imports: &mut Imports,
+        at: &str,
     ) -> Result<(), HoistError> {
         for key in ["rows", "cols"] {
             if let Some(yaml::Kind::Seq(items)) = m.get_mut(key).map(|e| &mut e.value.kind) {
-                for item in items {
-                    self.resolve_refs(item, board, imports)?;
+                for (i, item) in items.iter_mut().enumerate() {
+                    self.resolve_refs(item, board, imports, &dotted(at, &format!("{key}.{i}")))?;
                 }
             }
         }
-        for (key, is_grid) in [("grid", true), ("tabs", false)] {
-            let Some(yaml::Kind::Map(layout)) = m.get_mut(key).map(|e| &mut e.value.kind) else {
-                continue;
-            };
-            let Some(yaml::Kind::Seq(items)) = layout.get_mut("items").map(|e| &mut e.value.kind)
-            else {
-                continue;
-            };
-            for item in items {
-                let yaml::Kind::Map(cell) = &mut item.kind else {
-                    continue;
-                };
-                match is_grid {
-                    true => {
+        if let Some(yaml::Kind::Map(grid)) = m.get_mut("grid").map(|e| &mut e.value.kind) {
+            if let Some(yaml::Kind::Seq(cells)) = grid.get_mut("items").map(|e| &mut e.value.kind) {
+                for (i, cell) in cells.iter_mut().enumerate() {
+                    if let yaml::Kind::Map(cell) = &mut cell.kind {
                         if let Some(e) = cell.get_mut("item") {
-                            self.resolve_refs(&mut e.value, board, imports)?;
+                            let item_at = dotted(at, &format!("grid.items.{i}.item"));
+                            self.resolve_refs(&mut e.value, board, imports, &item_at)?;
                         }
                     }
-                    false => self.resolve_nested(cell, board, imports)?,
                 }
+            }
+        }
+        if let Some(yaml::Kind::Map(panes)) = m.get_mut("tabs").map(|e| &mut e.value.kind) {
+            for (label, pane) in panes.iter_mut() {
+                let pane_at = dotted(at, &format!("tabs.{label}"));
+                self.resolve_refs(&mut pane.value, board, imports, &pane_at)?;
             }
         }
         Ok(())
@@ -283,11 +280,13 @@ impl External<'_> {
     /// Replaces every `queries:`, `variables:` and `charts:` entry of the board `node` (and of the
     /// boards nested in its layout) that is a ref with the entry it names, under the entry's own
     /// name, as Python registers it. A chart's file is kept in `imports` under its local name.
+    /// `at` is the dotted path of `node` in the file, empty for the file's own board.
     pub(crate) fn resolve_refs(
         &self,
         node: &mut yaml::Node,
         board: &ProjectPath,
         imports: &mut Imports,
+        at: &str,
     ) -> Result<(), HoistError> {
         let dir = dir_of(board);
         let yaml::Kind::Map(m) = &mut node.kind else {
@@ -297,7 +296,10 @@ impl External<'_> {
             let section = m.get_mut(kind.section()).map(|e| &mut e.value.kind);
             if let Some(yaml::Kind::Map(entries)) = section {
                 for (name, e) in entries.iter_mut() {
-                    let Some(spec) = ref_of(&e.value, kind) else {
+                    let field = dotted(at, &format!("{}.{name}.ref", kind.section()));
+                    let Some(spec) = authored_ref(&e.value, kind)
+                        .map_err(|why| grammar_refused(&field, &why))?
+                    else {
                         continue;
                     };
                     e.value = match kind {
@@ -317,7 +319,7 @@ impl External<'_> {
                 }
             }
         }
-        self.resolve_nested(m, board, imports)?;
+        self.resolve_nested(m, board, imports, at)?;
         Ok(())
     }
 
@@ -341,7 +343,9 @@ impl External<'_> {
                     ),
                 ));
             };
-            let Some(next) = ref_of(&entry.value, RefKind::Chart) else {
+            let Some(next) = authored_ref(&entry.value, RefKind::Chart)
+                .map_err(|why| grammar_refused(&format!("charts.{name}.ref"), &why))?
+            else {
                 break (entry.value.clone(), name, path, file);
             };
             let site = format!("{path}.charts.{name}");
@@ -740,18 +744,45 @@ fn stamp_declaring_source(
 /// only `ref:` (read as written, so padding is the grammar's error). A query string is read after
 /// trimming, as Python's `normalize_query_value` does; a variable or chart string is not.
 fn ref_of(node: &yaml::Node, kind: RefKind) -> Option<String> {
-    let text = match &node.kind {
+    authored_ref(node, kind).ok().flatten()
+}
+
+/// [`ref_of`], refusing a value that is a ref by its form but not by the grammar, as Python's
+/// discriminator routes it: any variable or chart string, or a mapping holding only `ref:`. A query
+/// string the grammar refuses is SQL, not a ref.
+fn authored_ref(node: &yaml::Node, kind: RefKind) -> Result<Option<String>, String> {
+    let (text, by_form) = match &node.kind {
         yaml::Kind::Scalar(yaml::Value::Str(s)) => match kind {
-            RefKind::Query => s.trim(),
-            RefKind::Variable | RefKind::Chart => s.as_str(),
+            RefKind::Query => (s.trim(), false),
+            RefKind::Variable | RefKind::Chart => (s.as_str(), true),
         },
         yaml::Kind::Map(m) if m.len() == 1 => match m.get("ref").map(|e| &e.value.kind) {
-            Some(yaml::Kind::Scalar(yaml::Value::Str(s))) => s.as_str(),
-            _ => return None,
+            Some(yaml::Kind::Scalar(yaml::Value::Str(s))) => (s.as_str(), true),
+            _ => return Ok(None),
         },
-        _ => return None,
+        _ => return Ok(None),
     };
-    kind.parse(text).ok().map(|_| text.to_string())
+    match kind.parse(text) {
+        Ok(_) => Ok(Some(text.to_string())),
+        Err(why) if by_form => Err(why),
+        Err(_) => Ok(None),
+    }
+}
+
+/// A ref the grammar refuses, at its `ref` field (Python's `ERR-VALIDATION-FIELD`).
+fn grammar_refused(field: &str, why: &str) -> HoistError {
+    HoistError::FieldInvalid(Box::new(diag::err_validation_field(
+        field,
+        format!("Value error, {why}"),
+    )))
+}
+
+/// `rest` under the dotted path `at`.
+fn dotted(at: &str, rest: &str) -> String {
+    match at.is_empty() {
+        true => rest.to_string(),
+        false => format!("{at}.{rest}"),
+    }
 }
 
 /// The display-text fields of an authored chart, by path (Python's `display_texts`): a KPI's label

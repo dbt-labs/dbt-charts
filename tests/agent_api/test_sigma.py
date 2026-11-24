@@ -540,9 +540,7 @@ def test_a_query_of_an_element_no_longer_in_the_workbook_is_listed(
     assert "elements no longer in the workbook: gone" in outline
 
 
-def test_elements_the_layout_does_not_place_are_listed_apart(
-    http: Any, tmp_path: Path
-) -> None:
+def _empty_layout(http: Any) -> None:
     http[("GET", f"/v2/workbooks/{WID}")] = _json(
         {
             **CONTENTS,
@@ -553,6 +551,16 @@ def test_elements_the_layout_does_not_place_are_listed_apart(
         }
     )
 
+
+def test_elements_the_layout_does_not_place_are_listed_apart(
+    http: Any, tmp_path: Path
+) -> None:
+    _empty_layout(http)
+    for page_id in ("p1", "p2"):
+        http[("GET", f"/v2/workbooks/{WID}/pages/{page_id}/elements")] = _json(
+            {"entries": []}
+        )
+
     out = _run(tmp_path)
 
     outline = (out / "outline.md").read_text()
@@ -560,6 +568,53 @@ def test_elements_the_layout_does_not_place_are_listed_apart(
     for element_id in ("c1", "k1", "h1"):
         assert f"sql: queries/{element_id}.sql" in unplaced
     assert "kpi/total-revenue-k1.csv" not in _files(out)
+
+
+def test_an_empty_layout_places_tiles_from_each_pages_element_listing(
+    http: Any, tmp_path: Path
+) -> None:
+    _empty_layout(http)
+    http[("GET", f"/v2/workbooks/{WID}/pages/p1/elements")] = _json(
+        {"entries": [{"elementId": "k1"}, {"elementId": "c1"}]}
+    )
+    http[("GET", f"/v2/workbooks/{WID}/pages/p2/elements")] = _json(
+        {"entries": [{"elementId": "h1"}]}
+    )
+
+    outline = (_run(tmp_path) / "outline.md").read_text()
+
+    page1, rest = outline.split("## Page: Summary & Co", 1)[1].split(
+        "## Page: Data prep"
+    )
+    assert page1.index("`k1`") < page1.index("`c1`")
+    assert "`h1`" in rest
+    assert "cols" not in outline
+    assert "## Not placed on any page" not in outline
+
+
+def test_an_element_no_page_lists_stays_unplaced_when_the_layout_is_empty(
+    http: Any, tmp_path: Path
+) -> None:
+    _empty_layout(http)
+    http[("GET", f"/v2/workbooks/{WID}/pages/p1/elements")] = _json(
+        {"entries": [{"elementId": "k1"}]}
+    )
+    http[("GET", f"/v2/workbooks/{WID}/pages/p2/elements")] = _json({"entries": []})
+
+    outline = (_run(tmp_path) / "outline.md").read_text()
+
+    unplaced = outline.split("## Not placed on any page", 1)[1]
+    assert "`c1`" in unplaced and "`h1`" in unplaced and "`k1`" not in unplaced
+
+
+def test_a_failed_page_element_listing_names_the_page(
+    http: Any, tmp_path: Path
+) -> None:
+    _empty_layout(http)
+    http[("GET", f"/v2/workbooks/{WID}/pages/p1/elements")] = _server_error
+
+    with pytest.raises(BundleError, match="page 'Summary & Co'"):
+        _run(tmp_path)
 
 
 def test_a_query_with_neither_sql_nor_an_error_is_refused(

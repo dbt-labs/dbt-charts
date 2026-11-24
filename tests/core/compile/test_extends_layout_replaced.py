@@ -237,14 +237,16 @@ def test_same_kind_grid_replaces_the_parent_grid(
 def test_same_kind_tabs_replace_the_parent_tabs(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    tabs = "tabs:\n  items:\n    - title: T\n      text: {}\n"
+    tabs = "tabs:\n  {}:\n    text: body\n"
     result = _compile(
         tmp_path,
         local_project,
-        f"extends: ./base.yml\n{tabs.format('mine')}",
-        parent=f"title: Base\n{tabs.format('theirs')}",
+        f"extends: ./base.yml\n{tabs.format('Mine')}",
+        parent=f"title: Base\n{tabs.format('Theirs')}",
     )
     assert not result.errors
+    assert result.board is not None
+    assert result.board.layout.tab_titles == ["Mine"]
     (warning,) = _warnings(result)
     assert (
         warning.message

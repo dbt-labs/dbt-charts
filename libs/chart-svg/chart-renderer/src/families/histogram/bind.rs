@@ -524,10 +524,5 @@ fn legend_entries(
     names: &[&str],
     fill: impl Fn(&str) -> String,
 ) -> Vec<(String, String)> {
-    let order: Vec<usize> = match &legend.values {
-        Some(authored) if authored.is_empty() => Vec::new(),
-        Some(authored) => ::bind::legend::resolve_legend_values(authored, names, None),
-        None => (0..names.len()).collect(),
-    };
-    order.into_iter().map(|i| (names[i].to_string(), fill(names[i]))).collect()
+    ::bind::legend::legend_order(legend.values.as_deref(), names).into_iter().map(|i| (names[i].to_string(), fill(names[i]))).collect()
 }

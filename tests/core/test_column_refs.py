@@ -145,9 +145,10 @@ def test_templated_expression_in_column_position_is_indeterminate():
         yaml.dump(
             {
                 "source": "s",
-                "variables": {"day_col": {"input": "text", "default": "day"}},
+                "variables": {"country": {"input": "text", "default": "NZ"}},
                 "queries": {
-                    "q": "SELECT customer_id FROM orders WHERE {{ day_col }} = 1"
+                    "q": "SELECT customer_id FROM orders "
+                    "WHERE {{ filter('country', country) }}"
                 },
                 "charts": {"c": {"query": "q", "type": "table"}},
                 "rows": ["c"],
@@ -160,6 +161,49 @@ def test_templated_expression_in_column_position_is_indeterminate():
     assert refs["q"].columns == set()
     assert refs["q"].indeterminate is not None
     assert "templated" in refs["q"].indeterminate
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT customer_id FROM orders WHERE status = {{ status }}",
+        "SELECT customer_id FROM orders WHERE {{ status }} = status",
+        "SELECT customer_id FROM orders WHERE status IN ({{ status }})",
+        "SELECT customer_id FROM orders WHERE status = '{{ status }}'",
+    ],
+)
+def test_a_bound_variable_is_a_value_not_a_column(sql):
+    """A board variable in the query body always renders as a bound parameter,
+    so it can never name a column."""
+    result = compile_board(
+        yaml.dump(
+            {
+                "source": "s",
+                "variables": {"status": {"input": "text", "default": "open"}},
+                "queries": {"q": sql},
+                "charts": {"c": {"query": "q", "type": "table"}},
+                "rows": ["c"],
+            }
+        ),
+        project_sources=_SOURCES,
+    )
+    assert result.board is not None, result.errors
+    refs = extract_base_column_refs(result)
+    assert refs["q"].indeterminate is None
+    assert refs["q"].columns == {("orders", "customer_id"), ("orders", "status")}
+
+
+def test_a_jinja_assigned_name_stays_indeterminate():
+    """`{% set %}` and loop targets render as raw text, not bound values — they
+    can name a column."""
+    for sql in (
+        "{% set col = 'amount' %}SELECT {{ col }} FROM orders",
+        "SELECT {% for col in ['a'] %}{{ col }}{% endfor %} FROM orders",
+    ):
+        refs = extract_base_column_refs(_compile({"q": sql}))
+        assert refs["q"].columns == set(), sql
+        assert refs["q"].indeterminate is not None, sql
+        assert "templated" in refs["q"].indeterminate, sql
 
 
 def test_templated_value_inside_a_literal_does_not_disturb_extraction():
@@ -310,17 +354,14 @@ def test_snowflake_uppercasing_does_not_defeat_placeholder_detection():
         }
     )
     for sql in (
-        "SELECT customer_id FROM orders WHERE {{ day_col }} = 1",
+        "SELECT customer_id FROM orders WHERE day_{{ env }} = 1",
         "SELECT customer_id FROM events_{{ env }}",
     ):
         result = compile_board(
             yaml.dump(
                 {
                     "source": "s",
-                    "variables": {
-                        "day_col": {"input": "text", "default": "day"},
-                        "env": {"input": "text", "default": "prod"},
-                    },
+                    "variables": {"env": {"input": "text", "default": "prod"}},
                     "queries": {"q": sql},
                     "charts": {"c": {"query": "q", "type": "table"}},
                     "rows": ["c"],

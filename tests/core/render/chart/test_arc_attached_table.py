@@ -252,7 +252,7 @@ def test_arc_resolution_suppresses_label_rows_below_threshold(make_chart):
     )
     assert isinstance(artifact.payload, str)
     painted = re.findall(
-        r'aria-roledescription="text mark"><tspan[^>]*>([^<]*)</tspan>',
+        r'aria-roledescription="text mark"[^>]*><tspan[^>]*>([^<]*)</tspan>',
         artifact.payload,
     )
     assert painted == ["Big", "Med", "Small1"]

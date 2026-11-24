@@ -254,3 +254,28 @@ def test_a_redefined_grain_name_paints_in_a_table_and_a_kpi(
     result = _render(board, tmp_path)
     assert _codes(result) == []
     assert ">Jan 2024<" in _svg(result)
+
+
+def test_an_unknown_axis_format_never_hints_an_unredefined_grain_name(
+    tmp_path: Path,
+) -> None:
+    chart = (
+        _BAR + "    style:\n      axis_x:\n        labels:\n          format: month\n"
+    )
+    result = _render(_board(chart), tmp_path)
+    assert result.validation_errors
+    hints = [d.hint or "" for d in result.validation_errors]
+    assert not any("date_month" in h for h in hints), hints
+
+
+def test_an_unknown_time_slot_format_is_not_called_a_number_format(
+    tmp_path: Path,
+) -> None:
+    rows = '[["2024-01-01", 1]]'
+    chart = (
+        _BAR + "    style:\n      axis_x:\n        labels:\n          format: month\n"
+    )
+    result = _render(_board(chart, rows=rows), tmp_path)
+    messages = [d.message for d in result.validation_errors]
+    assert messages
+    assert not any("Unknown number format 'month'" in m for m in messages), messages

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import List, Optional, Tuple
 
 from .types import (
@@ -36,6 +37,47 @@ _EMPHASIS = {
     "bold": SpanType.BOLD,
     "italic": SpanType.ITALIC,
 }
+
+# A backslash escape (CommonMark) hides its punctuation mark from the inline
+# patterns as a plane-16 private-use stand-in, restored once spans are built.
+# One left-to-right pass skips code spans, which bind first and take a backslash
+# literally; an escape before a backtick still keeps it from opening one.
+_STAND_IN_BASE = 0x10FF00
+_ESCAPE_OR_CODE = re.compile(r"(`[^`]+`)|\\([!-/:-@\[-`{-~])")
+_STAND_IN = re.compile("[\U0010ff21-\U0010ff7e]")
+
+
+def _hide_escapes(text: str) -> str:
+    clash = _STAND_IN.search(text)
+    if clash:
+        raise ValueError(
+            f"Markdown text holds U+{ord(clash.group()):X}, a character reserved "
+            "for backslash escapes"
+        )
+    return _ESCAPE_OR_CODE.sub(
+        lambda m: m.group(1) or chr(_STAND_IN_BASE + ord(m.group(2))), text
+    )
+
+
+def _show_escapes(text: str) -> str:
+    return _STAND_IN.sub(lambda m: chr(ord(m.group()) - _STAND_IN_BASE), text)
+
+
+def _span_with_escapes_shown(span: Span) -> Span:
+    return replace(
+        span,
+        text=_show_escapes(span.text),
+        url=span.url and _show_escapes(span.url),
+        title=span.title and _show_escapes(span.title),
+    )
+
+
+def _is_bold(span: Span) -> bool:
+    return span.bold or span.span_type in (SpanType.BOLD, SpanType.BOLD_ITALIC)
+
+
+def _is_italic(span: Span) -> bool:
+    return span.italic or span.span_type in (SpanType.ITALIC, SpanType.BOLD_ITALIC)
 
 
 class MarkdownParser:
@@ -104,9 +146,10 @@ class MarkdownParser:
 
     # Regex patterns for inline elements
     INLINE_CODE = re.compile(r"`([^`]+)`")
-    BOLD_ITALIC = re.compile(r"\*\*\*(.+?)\*\*\*|___(.+?)___")
-    BOLD = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
-    ITALIC = re.compile(r"\*([^*]+)\*|_([^_]+)_")
+    # CommonMark: an underscore inside a word (snake_case) is never emphasis.
+    BOLD_ITALIC = re.compile(r"\*\*\*(.+?)\*\*\*|(?<!\w)___(.+?)___(?!\w)")
+    BOLD = re.compile(r"\*\*(.+?)\*\*|(?<!\w)__(.+?)__(?!\w)")
+    ITALIC = re.compile(r"\*([^*]+)\*|(?<!\w)_([^_]+)_(?!\w)")
     LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)(?:\s+[\"']([^\"']+)[\"'])?\)")
     # Inline image with optional {width=X height=Y} attributes -- same
     # authoring shorthand as the standalone IMAGE_BLOCK.
@@ -615,31 +658,32 @@ class MarkdownParser:
         return cells
 
     def _link_spans(self, label: str, url: str, title: Optional[str]) -> List[Span]:
-        """The LINK spans of a link *label*: each inline-code run in it is its own
-        span with ``code`` set, so the backticks never reach the page."""
-        # split() with INLINE_CODE's one group alternates text and code runs.
+        """The LINK spans of a link *label*: one per inline run, keeping its code
+        and emphasis, so neither backticks nor asterisks reach the page."""
         return [
             Span(
-                text=run,
+                text=span.text,
                 span_type=SpanType.LINK,
                 url=url,
                 title=title,
-                code=index % 2 == 1,
+                code=span.span_type == SpanType.CODE,
+                bold=_is_bold(span),
+                italic=_is_italic(span),
             )
-            for index, run in enumerate(self.INLINE_CODE.split(label))
-            if run
+            for span in self._parse_hidden(label)
         ]
 
     def _emphasis_spans(self, inner: str, span_type: SpanType) -> List[Span]:
-        """The spans of emphasized text: each code run in it is emphasized code."""
+        """The spans of emphasized text: plain runs take *span_type*; any other
+        run (code, a link, nested emphasis) keeps its type and inherits the
+        emphasis."""
         bold = span_type in (SpanType.BOLD, SpanType.BOLD_ITALIC)
         italic = span_type in (SpanType.ITALIC, SpanType.BOLD_ITALIC)
         return [
-            Span(text=run, span_type=SpanType.CODE, bold=bold, italic=italic)
-            if index % 2 == 1
-            else Span(text=run, span_type=span_type)
-            for index, run in enumerate(self.INLINE_CODE.split(inner))
-            if run
+            Span(text=span.text, span_type=span_type)
+            if span.span_type == SpanType.TEXT
+            else replace(span, bold=span.bold or bold, italic=span.italic or italic)
+            for span in self._parse_hidden(inner)
         ]
 
     def _parse_inline(self, text: str) -> List[Span]:
@@ -648,11 +692,13 @@ class MarkdownParser:
 
         Handles: bold, italic, bold+italic, inline code, links, images.
         """
-        if not text:
-            return []
+        return [
+            _span_with_escapes_shown(span)
+            for span in self._parse_hidden(_hide_escapes(text))
+        ]
 
+    def _parse_hidden(self, remaining: str) -> List[Span]:
         spans: List[Span] = []
-        remaining = text
 
         while remaining:
             # Find the earliest match

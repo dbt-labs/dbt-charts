@@ -26,6 +26,7 @@ from dbt_charts.core.compile.models.constraints import (
     IsList,
     IsSet,
     ItemsMatch,
+    ItemsSet,
     NotNull,
     Requires,
     ValueIn,
@@ -512,6 +513,10 @@ def _condition(
             return {"not": call} if negate else call
         case IsList(key):
             return _at(key, {"type": "array"})
+        case ItemsSet(key, item_keys, negate):
+            item_sets = {"anyOf": [_is_set(k, nonempty=False) for k in item_keys]}
+            found = _at(key, {"type": "array", "contains": item_sets})
+            return {"not": found} if negate else found
 
 
 def _when(

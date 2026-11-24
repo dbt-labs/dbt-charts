@@ -18,7 +18,7 @@ from dbt_charts.core.compile.config import (
     get_config,
     get_theme_style,
 )
-from dbt_charts.core.compile.models.board.normalized import Board
+from dbt_charts.core.compile.models.board.normalized import NO_TITLE_SHIFT, Board
 from dbt_charts.core.compile.models.chart.normalized import (
     BarChart,
     KpiChart,
@@ -857,7 +857,7 @@ rows:
 
         nested = self._nested_board()
         content_width, non_layout_height, _ = nested_board_sizing_context(
-            nested, 320.0, 0.0, None
+            nested, 320.0, 0.0, None, NO_TITLE_SHIFT
         )
 
         nrs = nested.resolved_style

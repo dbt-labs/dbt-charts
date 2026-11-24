@@ -37,12 +37,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from dbt_charts.core.compile.authoring.paths import join_path
 from dbt_charts.core.compile.config import user_facing_theme_names
 from dbt_charts.core.compile.errors import ValidationError
 from dbt_charts.core.compile.merge import get_theme_names, is_path_ref
 from dbt_charts.core.compile.models.board.authored import (
     AuthoredBoard,
-    TabItem,
 )
 from dbt_charts.core.compile.models.chart.authored import (
     AuthoredChart,
@@ -58,17 +58,17 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_UNRESOLVED_REFERENCE,
 )
 
-LayoutNode = str | AuthoredBoard | AuthoredChart | TabItem | dict[str, AuthoredChart]
+LayoutNode = str | AuthoredBoard | AuthoredChart | dict[str, AuthoredChart]
 
 
 def _layout_children_with_locations(
     node: LayoutNode, prefix: str = ""
 ) -> list[tuple[str, LayoutNode]]:
-    """Direct layout children of a board or tab node, each labeled with its
+    """Direct layout children of a board node, each labeled with its
     source-map location (dotted, sequence indices included, matching
     `_get_layout_items`'s spelling).
     """
-    if not isinstance(node, (AuthoredBoard, TabItem)):
+    if not isinstance(node, AuthoredBoard):
         return []
 
     prefix = f"{prefix}." if prefix else ""
@@ -86,14 +86,14 @@ def _layout_children_with_locations(
         )
     if node.tabs:
         children.extend(
-            (f"{prefix}tabs.items.{i}", tab_item)
-            for i, tab_item in enumerate(node.tabs.items)
+            (prefix + join_path(("tabs", label)), tab_item)
+            for label, tab_item in node.tabs.items()
         )
     return children
 
 
 def _layout_children(node: LayoutNode) -> list[LayoutNode]:
-    """Direct layout children of a board or tab node."""
+    """Direct layout children of a board node."""
     return [child for _, child in _layout_children_with_locations(node)]
 
 
@@ -340,7 +340,7 @@ def _get_layout_items(
     grids — anywhere `_layout_children` can reach.
 
     Locations are source-map keys: dotted all the way down, sequence indices
-    included (`rows.0`, `tabs.items.1.rows.0`). They are used both to resolve
+    included (`rows.0`, `tabs.Overview.rows.0`). They are used both to resolve
     a diagnostic's position and as the human-readable location in its message,
     so there is one spelling rather than a display form and a lookup form that
     can drift.
@@ -365,11 +365,7 @@ def _walk_layout_items(
     their own children in turn."""
     items: list[tuple[str, Any]] = []  # type-state: explicit_any — see above
     for child_location, child in _layout_children_with_locations(node, location):
-        # A tab is a container, not a chart/board reference in its own right
-        # — record its location for the recursion below, but don't offer it
-        # up to `_validate_layout_references` as a leaf item.
-        if not isinstance(child, TabItem):
-            items.append((child_location, child))
+        items.append((child_location, child))
         items.extend(_walk_layout_items(child, child_location))
     return items
 

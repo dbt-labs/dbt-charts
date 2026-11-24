@@ -131,10 +131,10 @@ impl TableFaces {
         let default_ink = style.column_defaults.font.as_ref().and_then(|font| font.color.as_ref()).map(|color| sanitize_color(color.as_str())).transpose()?.flatten();
         let body_ink = match default_ink {
             Some(ink) => ink,
-            None => Some(style.font.color.as_str()).filter(|ink| !ink.is_empty()).ok_or_else(|| Diagnostic::refused(refuse!("a table with an empty font color is not supported")))?,
+            None => Some(style.font.color.as_str()).filter(|ink| !ink.is_empty()).map(str::to_string).ok_or_else(|| Diagnostic::refused(refuse!("a table with an empty font color is not supported")))?,
         };
         let header = &style.header.font;
-        let header_ink = sanitize_color(header.color.as_str())?.unwrap_or(body_ink);
+        let header_ink = sanitize_color(header.color.as_str())?.unwrap_or_else(|| body_ink.clone());
         let title = title.filter(|text| !text.is_empty()).map(|text| table_title(text, style, placed, width)).transpose()?;
         let subtitle = subtitle.filter(|text| !text.is_empty()).map(|text| table_subtitle(text, style, placed)).transpose()?;
         let numeral = placed.fonts.get("numeral").and_then(|font| font.family.as_ref()).ok_or_else(|| diag::err_internal("style.fonts.numeral.family is unset after the theme cascade"))?;
@@ -152,9 +152,9 @@ impl TableFaces {
             empty: Face::of(style.font.family.as_str(), empty.size, &empty.weight, empty.color.as_str(), emoji),
             filters: Face::of(filters.family.as_str(), filters.size, &filters.weight, filters.color.as_str(), emoji),
             link_ink: placed.font.color.as_str().to_string(),
-            numeral: Face::of(numeral.as_str(), style.font.size, &style.font.weight, body_ink, emoji),
-            body: Face::of(style.font.family.as_str(), style.font.size, &style.font.weight, body_ink, emoji),
-            header: Face::of(header.family.as_str(), header.size, &header.weight, header_ink, emoji),
+            numeral: Face::of(numeral.as_str(), style.font.size, &style.font.weight, &body_ink, emoji),
+            body: Face::of(style.font.family.as_str(), style.font.size, &style.font.weight, &body_ink, emoji),
+            header: Face::of(header.family.as_str(), header.size, &header.weight, &header_ink, emoji),
             title,
             subtitle,
         })
@@ -362,11 +362,11 @@ fn paint_family(family: &str) -> String {
 
 /// colors.py:`sanitize_color` (table.rs:`sanitize_color`): empty is unset, a color `bind::table::sanitized_color` accepts
 /// stands, anything else is production's `ERR-CSS-COLOR-INVALID-AT-RENDER`.
-fn sanitize_color(color: &str) -> Result<Option<&str>, Diagnostic> {
+fn sanitize_color(color: &str) -> Result<Option<String>, Diagnostic> {
     if color.is_empty() {
         return Ok(None);
     }
-    bind::table::sanitized_color(color).map(Some).ok_or_else(|| Diagnostic::refused(refuse!("a table color that is not a hex color, transparent or none is not supported")))
+    bind::table::sanitized_color(color).map(Some).ok_or_else(|| Diagnostic::refused(refuse!("a table color that is not a hex color, a CSS color name, transparent or none is not supported")))
 }
 
 /// Every leaf of the table's style that this slice draws another way than production does.
@@ -1274,7 +1274,7 @@ fn lane_cell(cell: &TableCell, lane: &Lane, pad_units: Option<&(String, String)>
 
 /// The board's font color as a linked cell and a row band paint it: production requires one and refuses a color that
 /// is no hex.
-fn link_ink(color: &str) -> Result<&str, Diagnostic> {
+fn link_ink(color: &str) -> Result<String, Diagnostic> {
     sanitize_color(color)?.ok_or_else(|| diag::err_internal("the board's root font color is empty after the theme cascade"))
 }
 
@@ -1397,9 +1397,13 @@ pub fn draw(card: &TableCard, plan: &Plan) -> Result<Vec<Node>, Diagnostic> {
             // layout.rs:`paint_data_rows`: a cell's own link wraps its text in an anchor and a `color` group; the link
             // color replaces the body's unless the column authors an ink, and a linked cell weighs 500 unless the column does.
             let cell_link: Option<&CellLink> = links.and_then(|links| links.cells[col][row].as_ref());
+            let linked;
             let ink = match (&column.ink, cell_link) {
                 (Some(ink), _) => ink.as_str(),
-                (None, Some(_)) => link_ink(&faces.link_ink)?,
+                (None, Some(_)) => {
+                    linked = link_ink(&faces.link_ink)?;
+                    linked.as_str()
+                }
                 (None, None) => body_ink,
             };
             let weight = column.weight.as_deref().or(cell_link.map(|_| "500"));

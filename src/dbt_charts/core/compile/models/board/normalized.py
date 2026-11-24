@@ -251,7 +251,6 @@ class Layout(BaseModel):
 
     Tabs-specific:
         tab_titles: Titles for each tab
-        default_tab: Index of default active tab
 
     Calculated:
         width, height: Total dimensions (set by sizing)
@@ -286,13 +285,6 @@ class Layout(BaseModel):
     tab_variable: str | None = Field(
         default=None,
         description="Variable name controlling the active tab (tabs layout only).",
-    )
-    default_tab: int | None = Field(
-        default=None, description="Index of the default active tab (tabs layout only)."
-    )
-    tab_position: Literal["top", "left"] | None = Field(
-        default=None,
-        description="Tab bar position: 'top' or 'left' (tabs layout only).",
     )
 
     # Calculated dimensions (outer dimensions including padding/margin)

@@ -124,6 +124,10 @@ pub struct Move {
     /// into it key by key, recursively. A leaf both hold refuses, so nothing the
     /// author wrote is overridden.
     pub merge: bool,
+    /// Rewrites the shape the boundary's other moves locate their positions in
+    /// (a list re-keyed as a mapping), so it runs only in its own boundary,
+    /// never in the identity pass ahead of the older boundaries.
+    pub reshapes: bool,
     /// Both paths are valid in the current grammar, so the document alone says
     /// whether it fires (its `rewrite_in_document` may `leave`). Recognition
     /// never reads it as evidence; it runs on every load, before the
@@ -153,6 +157,7 @@ impl Move {
             chart_type: None,
             conflicts_with: Vec::new(),
             merge: false,
+            reshapes: false,
             live: false,
         }
     }

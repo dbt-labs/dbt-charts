@@ -95,13 +95,12 @@ _PARSE_FIXTURES = {
     ),
     "tabs": (
         "tabs:\n"
-        "  items:\n"
-        "    - title: One\n"
-        "      rows:\n"
-        "        - label: Inside\n"
-        "          type: kpi\n"
-        "          query: q\n"
-        "          value: v\n"
+        "  One:\n"
+        "    rows:\n"
+        "      - label: Inside\n"
+        "        type: kpi\n"
+        "        query: q\n"
+        "        value: v\n"
     ),
     "multi-metric-bar": (
         "rows:\n"
@@ -1381,7 +1380,7 @@ def test_grid_and_tab_layouts_produce_targets() -> None:
     `resolve_target` maps a leaf to its containing object by popping segments,
     so an unwalked layout family does not error — every click inside it lands
     silently on the board, and a save there writes board-level keys. The
-    renderer stamps `grid.items.N` and `tabs.items.N`, so those are the keys.
+    renderer stamps `grid.items.N` and `tabs.<label>`, so those are the keys.
     """
     grid = _targets(
         "grid:\n"
@@ -1397,15 +1396,27 @@ def test_grid_and_tab_layouts_produce_targets() -> None:
 
     tabs = _targets(
         "tabs:\n"
-        "  items:\n"
-        "    - title: One\n"
-        "      rows:\n"
-        "        - label: Inside\n"
-        "          type: kpi\n"
-        "          query: q\n"
-        "          value: v\n"
+        "  One:\n"
+        "    rows:\n"
+        "      - label: Inside\n"
+        "        type: kpi\n"
+        "        query: q\n"
+        "        value: v\n"
     )
-    assert tabs["tabs.items.0.rows.0"].model == "KpiChart"
+    assert tabs["tabs.One.rows.0"].model == "KpiChart"
+
+
+def test_a_tab_label_with_dots_is_one_quoted_path_segment() -> None:
+    tabs = _targets(
+        "tabs:\n"
+        "  Q1.5 / Q2:\n"
+        "    rows:\n"
+        "      - label: Inside\n"
+        "        type: kpi\n"
+        "        query: q\n"
+        "        value: v\n"
+    )
+    assert tabs['tabs["Q1.5 / Q2"].rows.0'].model == "KpiChart"
 
 
 def test_a_nested_board_is_offered_no_frame_controls() -> None:
@@ -1757,14 +1768,7 @@ def test_the_board_offers_no_control_a_design_edit_should_not_reach() -> None:
 
 
 def test_a_layout_container_is_not_a_target() -> None:
-    """`grid:` and `tabs:` are containers; only the items under them are targets.
-
-    Load-bearing rather than incidental: `id` is suppressed globally, and
-    `TabLayout.id` — which names a tab's URL param and is genuinely authorable
-    — is only spared because the container it lives on is never offered. If a
-    future walk ever made containers targets, that control would vanish with
-    every other test still green.
-    """
+    """`grid:` and `tabs:` are containers; only the items under them are targets."""
     grid = _targets(
         "grid:\n"
         "  columns: 2\n"
@@ -1780,17 +1784,16 @@ def test_a_layout_container_is_not_a_target() -> None:
 
     tabs = _targets(
         "tabs:\n"
-        "  id: view\n"
-        "  items:\n"
-        "    - title: One\n"
-        "      rows:\n"
-        "        - label: Inside\n"
-        "          type: kpi\n"
-        "          query: q\n"
-        "          value: v\n"
+        "  One:\n"
+        "    title: Pane\n"
+        "    rows:\n"
+        "      - label: Inside\n"
+        "        type: kpi\n"
+        "        query: q\n"
+        "        value: v\n"
     )
     assert "tabs" not in tabs
-    assert "tabs.items.0" in tabs
+    assert "tabs.One" in tabs
 
 
 def test_a_nested_style_group_is_reachable_from_a_chart_target() -> None:
@@ -1883,12 +1886,10 @@ def test_the_group_graph_is_acyclic_so_the_ancestor_guard_never_fires() -> None:
 
     union = schema.models["AuthoredChart"].union
     assert union is not None
-    # `TabItem` and `Variable` are targets too (`tabs.items.0` and
-    # `variables.<name>`), so `_describe` can be entered at either and both need
-    # a root.
+    # `Variable` is a target too (`variables.<name>`), so `_describe` can be
+    # entered there and needs a root.
     for root in (
         "AuthoredBoard",
-        "TabItem",
         "Variable",
         *sorted(union.variants.values()),
     ):
@@ -2110,19 +2111,18 @@ def test_a_nested_scope_s_own_aliases_merge_onto_its_parent_s() -> None:
         "  formats:\n"
         '    arr: "$,.0f"\n'
         "tabs:\n"
-        "  items:\n"
-        "    - title: Detail\n"
-        "      style:\n"
-        "        formats:\n"
-        '          bps: ".2%"\n'
-        "      rows:\n"
-        "        - title: R\n"
-        "          type: bar\n"
-        "          query: q\n"
-        "          x: m\n"
-        "          y: v\n"
+        "  Detail:\n"
+        "    style:\n"
+        "      formats:\n"
+        '        bps: ".2%"\n'
+        "    rows:\n"
+        "      - title: R\n"
+        "        type: bar\n"
+        "        query: q\n"
+        "        x: m\n"
+        "        y: v\n"
     )
-    props = _flat(build_design_target(board, "tabs.items.0.rows.0"))
+    props = _flat(build_design_target(board, "tabs.Detail.rows.0"))
     offered = props["style.axis_y.labels.format"].enum_values or ()
     assert "bps" in offered, "the tab's own alias is not offered"
     assert "arr" in offered, "the parent's alias, merged in, is not offered"
@@ -2178,19 +2178,18 @@ def test_a_scope_that_styles_without_touching_formats_inherits_the_parent_s() ->
         "  formats:\n"
         '    arr: "$,.0f"\n'
         "tabs:\n"
-        "  items:\n"
-        "    - title: Detail\n"
-        "      style:\n"
-        '        background: "#fff"\n'
-        "      rows:\n"
-        "        - title: R\n"
-        "          type: bar\n"
-        "          query: q\n"
-        "          x: m\n"
-        "          y: v\n"
+        "  Detail:\n"
+        "    style:\n"
+        '      background: "#fff"\n'
+        "    rows:\n"
+        "      - title: R\n"
+        "        type: bar\n"
+        "        query: q\n"
+        "        x: m\n"
+        "        y: v\n"
     )
     offered = (
-        _flat(build_design_target(board, "tabs.items.0.rows.0"))[
+        _flat(build_design_target(board, "tabs.Detail.rows.0"))[
             "style.axis_y.labels.format"
         ].enum_values
         or ()
@@ -2211,20 +2210,19 @@ def test_an_explicit_formats_null_clears_the_table_for_that_scope() -> None:
         "  formats:\n"
         '    arr: "$,.0f"\n'
         "tabs:\n"
-        "  items:\n"
-        "    - title: Detail\n"
-        "      style:\n"
-        "        formats: null\n"
-        '        background: "#fff"\n'
-        "      rows:\n"
-        "        - title: R\n"
-        "          type: bar\n"
-        "          query: q\n"
-        "          x: m\n"
-        "          y: v\n"
+        "  Detail:\n"
+        "    style:\n"
+        "      formats: null\n"
+        '      background: "#fff"\n'
+        "    rows:\n"
+        "      - title: R\n"
+        "        type: bar\n"
+        "        query: q\n"
+        "        x: m\n"
+        "        y: v\n"
     )
     offered = (
-        _flat(build_design_target(board, "tabs.items.0.rows.0"))[
+        _flat(build_design_target(board, "tabs.Detail.rows.0"))[
             "style.axis_y.labels.format"
         ].enum_values
         or ()

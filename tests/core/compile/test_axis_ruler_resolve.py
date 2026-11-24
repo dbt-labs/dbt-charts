@@ -93,6 +93,7 @@ def _merged_axis_y():
         "nominal",
         "quantitative",
         AxisOverrides(),
+        True,
     )
     return baked.y.style
 

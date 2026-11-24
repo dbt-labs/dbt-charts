@@ -23,7 +23,7 @@ use d3rs::geo::projection::orthographic::orthographic;
 use d3rs::geo::projection::stereographic::stereographic;
 use d3rs::geo::projection::transverse_mercator::transverse_mercator;
 use d3rs::geo::projection::Projection;
-use d3rs::geo::path::index::{GeoPath, PathProjection, PointRadius};
+use d3rs::geo::path::index::PathProjection;
 use d3rs::geo::stream::GeoStream;
 use d3rs::geojson::{Feature, FeatureCollection, GeoJson};
 use serde::Deserialize;
@@ -294,15 +294,6 @@ impl VegaProjection {
     pub fn fit_objects_bounds(&mut self, objects: &FitObjects) -> Result<[[f64; 2]; 2], String> {
         let data = collect_geojson(objects)?;
         Fit::fit_bounds(self, &data)
-    }
-
-    /// `proj.path` with `pointRadius` from `params`, as the `Projection` transform sets it.
-    pub fn into_path(self, params: &VegaParams) -> GeoPath<Self> {
-        let path = GeoPath::new(self);
-        match params.point_radius {
-            Some(radius) => path.with_point_radius(PointRadius::Constant(radius)),
-            None => path,
-        }
     }
 
     /// Vega's `Projection` transform on this projection: [`apply_vega_params`] or its `identity` subset.

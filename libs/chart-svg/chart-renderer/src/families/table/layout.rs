@@ -3877,7 +3877,7 @@ fn lay_out_empty(
         .filter(|b| !b.is_empty() && !b.eq_ignore_ascii_case("transparent"))
     {
         let (bx, by, bw, bh) = card_box(width, table_height, padding.as_ref());
-        tree.rounded(Role::Chrome, (bx, by, bw, bh), 4.0, Attrs::new().quick("fill", bg));
+        tree.rounded(Role::Chrome, (bx, by, bw, bh), th.border.radius, Attrs::new().quick("fill", bg));
     }
     emit_title_band(&mut tree, &band, outer);
     let headline_y = (table_height - EmptyLine::height(&line)) / 2.0;
@@ -5595,7 +5595,7 @@ pub(crate) fn lay_out(
         tree.rounded(
             Role::Chrome,
             (bx, by, bw, bh),
-            4.0,
+            th.border.radius,
             Attrs::new()
                 .quick("fill", bg)
                 .set_if(pool_page_rows.is_some(), "data-dbt-flow-bg", ""),
@@ -5651,7 +5651,7 @@ pub(crate) fn lay_out(
         let header_measurer = fonts.measurer(measure::stand_in_family(&header_family))?;
         for (level_idx, level) in pivot_levels.iter().enumerate() {
             let row_y = header_y + group_row_height * level_idx as f64;
-            if let Some(fill) = header_fill {
+            if let Some(fill) = header_fill.as_deref() {
                 // The full table
                 // width less the outer padding on both sides.
                 tree.rect(Role::Chrome, (outer, row_y, table_w - 2.0 * outer, group_row_height), Attrs::new().quick("fill", fill));

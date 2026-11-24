@@ -395,7 +395,7 @@ def test_prose_above_a_root_tabs_board_follows_the_panel_gap() -> None:
     """Tab panels are full width; the cards inside place with the inherited style.gap."""
     svg = render_board_to_svg(
         f"width: 1200\n{QUERY}style:\n  gap: 40\ntext: |\n{_text_block('ROOT', 1400)}\n"
-        "tabs:\n  items:\n    - title: One\n      cols:\n        - a\n        - b\n        - c\n"
+        "tabs:\n  One:\n    cols:\n      - a\n      - b\n      - c\n"
     )
     starts = prose_starts_without_tab_label(svg)
     assert_on(starts, card_edges(svg, 3))
@@ -442,22 +442,22 @@ def test_three_columns_hold_at_widths_not_divisible_by_three(width: int) -> None
 def test_prose_above_tabs_follows_the_panel_that_places_the_cards() -> None:
     svg = render_board_to_svg(
         f"width: 1200\n{QUERY}text: |\n{_text_block('ROOT', 1400)}\n"
-        "tabs:\n  items:\n    - title: One\n      style:\n        gap: 60\n"
-        "      cols:\n        - a\n        - b\n        - c\n"
+        "tabs:\n  One:\n    style:\n      gap: 60\n"
+        "    cols:\n      - a\n      - b\n      - c\n"
     )
     starts = prose_starts_without_tab_label(svg)
     assert_on(starts, card_edges(svg, 3))
 
 
 def test_prose_above_tabs_follows_the_active_panel() -> None:
-    """Two panels with different gaps: the default one places the cards."""
+    """Two panels with different gaps: the open one places the cards."""
     svg = render_board_to_svg(
         f"width: 1200\n{QUERY}text: |\n{_text_block('ROOT', 1400)}\n"
-        "tabs:\n  default: Second\n  items:\n"
-        "    - title: First\n      style:\n        gap: 10\n"
-        "      cols:\n        - a\n        - b\n        - c\n"
-        "    - title: Second\n      style:\n        gap: 60\n"
-        "      cols:\n        - a\n        - b\n        - c\n"
+        "tabs:\n"
+        "  Second:\n    style:\n      gap: 60\n"
+        "    cols:\n      - a\n      - b\n      - c\n"
+        "  First:\n    style:\n      gap: 10\n"
+        "    cols:\n      - a\n      - b\n      - c\n"
     )
     lines = text_lines(svg)
     tab_bar = min(y for _, y, t in lines if t == "First")
@@ -540,15 +540,21 @@ def test_a_block_that_is_multi_column_only_at_full_width_does_not_count() -> Non
     assert widest(svg, "ONE") > 55
 
 
-def _tabs_board(default: str) -> str:
-    short = "\n".join("            " + t for t in passage("TABA", 200).split("\n"))
-    big = "\n".join("            " + t for t in passage("TABB", 1400).split("\n"))
+def _tabs_board(opened: str) -> str:
+    """Tabs `First` (a short passage) and `Second` (a long one), `opened` first."""
+    short = "\n".join("          " + t for t in passage("TABA", 200).split("\n"))
+    big = "\n".join("          " + t for t in passage("TABB", 1400).split("\n"))
+    panes = {
+        "First": f"      First:\n        text: |\n{short}\n",
+        "Second": f"      Second:\n        text: |\n{big}\n",
+    }
+    closed = "Second" if opened == "First" else "First"
     return (
         f"width: 1200\n{QUERY}rows:\n"
         + prose_row(passage("ONE", 200))
-        + f"  - tabs:\n      default: {default}\n      items:\n"
-        f"        - title: First\n          text: |\n{short}\n"
-        f"        - title: Second\n          text: |\n{big}\n"
+        + "  - tabs:\n"
+        + panes[opened]
+        + panes[closed]
     )
 
 

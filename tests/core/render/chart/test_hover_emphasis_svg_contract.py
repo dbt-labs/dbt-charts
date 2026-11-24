@@ -9,8 +9,7 @@ Others render must stamp on explicitly, since no VL attribute says them
 directly: ``data-dbt-chart-canvas`` is the color receded marks blend toward
 (Vega paints no ground rect for a chart transparent over its board),
 ``data-dbt-magnitude-colored`` answers "is rewriting this chart's color safe",
-and ``data-dbt-value-label`` marks a mark's own printed value so its twin
-search can be scoped to it. If any of these stopped arriving, hovering would
+and ``data-dbt-value-label`` groups a mark's own printed values. If any of these stopped arriving, hovering would
 silently do nothing (or worse, recede a gradient chart's color) -- so these
 tests are the render-side half of that contract.
 """
@@ -131,12 +130,10 @@ def test_a_faceted_chart_emits_one_shared_cell_with_unclassed_panel_children() -
 
 
 def test_value_label_marks_a_bars_label_but_not_a_donuts_outside_or_center() -> None:
-    """``data-dbt-value-label`` is the join key recedableMarks() reads to
-    scope its twin search to a mark's OWN printed value -- a bar's label must
-    carry it, and a donut's leader-lined outside label and center-total
-    layers (painted by the engine's pie family, never through the value-label
-    feature) must not, or they would incorrectly recede with an unrelated
-    wedge.
+    """``data-dbt-value-label`` groups a mark's OWN printed values -- a bar's
+    label must carry it, and a donut's leader-lined outside label and
+    center-total layers (painted by the engine's pie family, never through the
+    value-label feature) must not.
     """
     bar_svg = _render(
         "type: bar\n    x: cat\n    y: val\n"

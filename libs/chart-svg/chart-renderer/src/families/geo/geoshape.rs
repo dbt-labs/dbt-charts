@@ -585,7 +585,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     }
     let (plot_left, plot_top) = frame.origin(&m);
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
-    let path = fitter.at((plot_w, plot_h))?.into_path();
+    let path = fitter.at((plot_w, plot_h))?.into_path((!fit).then_some((plot_w, plot_h)));
     let paths: Vec<Option<PathData>> =
         bound.decoded.features.iter().map(|f| path.path(&GeoJson::Feature(f.clone())).map(|d| d.map(|d| scene_path(&d)))).collect::<Result<_, _>>()?;
 

@@ -77,6 +77,7 @@ from dbt_charts.core.compile.template.display_text import (
 
 __all__ = [
     "AutomaticLinkCandidate",
+    "family_card_fill",
     "_FAMILY_SLOT",
     "donut_over_pie",
     "board_family_style",
@@ -142,6 +143,13 @@ def _bound_scales(
         for s in chart_style_context.category_colors
         if s.field in drawn and max(s.slots.values(), default=-1) < len(palette)
     )
+
+
+def family_card_fill(context: ChartStyleContext) -> str | None:
+    fill = context.background
+    if fill.lower() in {"transparent", context.board_canvas.lower()}:
+        return None
+    return fill
 
 
 def _base_kwargs(

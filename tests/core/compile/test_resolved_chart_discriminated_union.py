@@ -301,6 +301,7 @@ def _default_axis_d(chart_type: str, x_type: str, y_type: str) -> tuple[dict, di
         x_type,
         y_type,
         AxisOverrides(),
+        True,
     )
     ax_merged, ay_merged, ax_band_position, ay_band_position = (
         baked.x.style,

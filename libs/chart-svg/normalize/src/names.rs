@@ -83,11 +83,9 @@ fn board(node: &Node, prefix: Option<String>) -> Result<(), Diagnostic> {
             }
         }
     }
-    if let Some(Kind::Map(tabs)) = m.get("tabs").map(|e| &e.value.kind) {
-        if let Some(Kind::Seq(panes)) = tabs.get("items").map(|e| &e.value.kind) {
-            for (i, pane) in panes.iter().enumerate() {
-                board(pane, under(&prefix, &format!("tabs.items.{i}")))?;
-            }
+    if let Some(Kind::Map(panes)) = m.get("tabs").map(|e| &e.value.kind) {
+        for (label, pane) in panes.iter() {
+            board(&pane.value, under(&prefix, &diagnostic::dotted(&["tabs", label.as_str()])))?;
         }
     }
     Ok(())
@@ -151,8 +149,8 @@ mod tests {
         assert!(refused(nested, false).contains("at variables.a b "));
         let grid = "grid:\n  items:\n    - item:\n        charts:\n          c.d: {}\n";
         assert!(refused(grid, true).contains("at grid.items.0.charts.c.d "));
-        let tab = "tabs:\n  items:\n    - title: T\n      rows:\n        - queries:\n            q-1: {}\n";
-        assert!(refused(tab, true).contains("at tabs.items.0.rows.0.queries.q-1 "));
+        let tab = "tabs:\n  T 1:\n    rows:\n      - queries:\n          q-1: {}\n";
+        assert!(refused(tab, true).contains("at tabs[\"T 1\"].rows.0.queries.q-1 "));
     }
 
     #[test]

@@ -7,18 +7,18 @@ import pytest
 from dbt_charts.core.compile.compiler import compile as compile_board
 
 _CHARTS = "charts:\n  a: {type: kpi, query: {columns: [v], values: [[1]]}, value: v}\n"
-_TAB = "tabs:\n  items:\n    - title: T\n      {}\n"
+_TAB = "tabs:\n  T:\n    {}\n"
 
 _BOARDS = {
     "root": ("rows: [a]\ncols: [a]\n", ""),
-    "tab-rows-cols": (_TAB.format("rows: [a]\n      cols: [a]"), "tabs.items.0"),
+    "tab-rows-cols": (_TAB.format("rows: [a]\n    cols: [a]"), "tabs.T"),
     "tab-rows-grid": (
-        _TAB.format("rows: [a]\n      grid: {columns: 2, items: [{item: a}]}"),
-        "tabs.items.0",
+        _TAB.format("rows: [a]\n    grid: {columns: 2, items: [{item: a}]}"),
+        "tabs.T",
     ),
     "tab-cols-grid": (
-        _TAB.format("cols: [a]\n      grid: {columns: 2, items: [{item: a}]}"),
-        "tabs.items.0",
+        _TAB.format("cols: [a]\n    grid: {columns: 2, items: [{item: a}]}"),
+        "tabs.T",
     ),
     "nested": ("rows:\n  - rows: [a]\n    cols: [a]\n", "rows.0"),
 }

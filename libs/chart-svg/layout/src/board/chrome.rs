@@ -7,7 +7,7 @@
 //! pipeline yet.
 
 use bind::font_stack::with_emoji;
-use board_model::board::TabPosition;
+use board_model::style::layout::TabPosition;
 use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
 use measure::shaped::{Font, FontBook};
@@ -41,11 +41,7 @@ impl TabStrip {
 
 /// A label's text, which must be plain: a template is resolved by display text, which this chrome does
 /// not run.
-pub fn plain<'a>(
-    text: &'a board_model::facet::DisplayText,
-    what: &str,
-) -> Result<&'a str, Diagnostic> {
-    let text = text.as_str();
+pub fn plain<'a>(text: &'a str, what: &str) -> Result<&'a str, Diagnostic> {
     if text.contains("{{") || text.contains("{%") {
         return Err(Diagnostic::refused(refuse!(
             "{what} with template syntax is not supported"
@@ -112,11 +108,10 @@ fn fit_label(
 /// padding, whole pixels, within `min_width` and `max_width`) and `_fit_label` for each.
 pub fn tab_strip(
     style: &Style,
-    position: TabPosition,
     titles: &[&str],
     book: &FontBook,
 ) -> Result<TabStrip, Diagnostic> {
-    if position != TabPosition::Top {
+    if style.layout.tabs.position != TabPosition::Top {
         return Err(Diagnostic::refused(refuse!(
             "a tab rail beside the pane is not supported"
         )));
@@ -159,10 +154,16 @@ fn box_rect(class: &str, (x, y, w, h): (f64, f64, f64, f64)) -> Node {
 
 /// `render_tabs_layout`'s bar: a group holding the outline of the active tab joined to the baseline, then
 /// a cell per tab (inactive ones link to `hrefs[i]`, a tab with an `authored` path carries it), the group
-/// placed `inset` below the slot. `width` is the layout's width.
+/// placed `inset` below the slot. `width` is the layout's width. A `pane_fill` that paints (neither empty
+/// nor `transparent`) is the open pane's background, drawn under the outline as the same walk met at the
+/// bar's bottom edge: its only area is the tab, and it touches the pane. The selected label is then the
+/// pane's title, in `pane_ink` where that reads on `fill_canvas`, the fill over what is behind it
+/// (`ink_on_fill`; `None` when that is no opaque color), and the fill names the ink the label takes on
+/// the bare bar, which the page shows while a clicked tab loads.
 pub fn draw_tab_strip(
     style: &Style,
     strip: &TabStrip,
+    (pane_fill, pane_ink, fill_canvas): (&str, &str, Option<&str>),
     active: usize,
     hrefs: &[String],
     authored: &[String],
@@ -171,10 +172,17 @@ pub fn draw_tab_strip(
     let tabs = &style.layout.tabs;
     let family = with_emoji(tabs.font.family.as_str(), &style.font.emoji);
     let ink = |color: &board_model::facet::Color| color.as_str().to_string();
-    let (active_ink, inactive_ink) = (
+    let (bar_ink, inactive_ink) = (
         ink(&style.title.font.color),
         ink(&style.variables.font.color),
     );
+    let painted = !pane_fill.is_empty() && pane_fill != "transparent";
+    let active_ink = match fill_canvas {
+        Some(canvas) if painted => {
+            dbt_charts_color::ink_on_fill(pane_ink, canvas).map_err(diag::err_internal)?
+        }
+        _ => bar_ink.clone(),
+    };
     let stroke = tabs.border.width;
     let bar = tabs.bar_height;
     let end = strip.cells.last().map_or(0.0, |c| c.x + c.width);
@@ -190,24 +198,36 @@ pub fn draw_tab_strip(
         .radius
         .min((right - left) / 2.0)
         .min(baseline - top);
-    let rule = PathData::new()
-        .move_to(0.0, baseline)
-        .line_to(left, baseline)
-        .line_to(left, top + radius)
-        .arc_to(radius, true, left + radius, top)
-        .line_to(right - radius, top)
-        .arc_to(radius, true, right, top + radius)
-        .line_to(right, baseline)
-        .line_to(width.max(end), baseline);
-    let mut parts = vec![Node::path(
+    let outline = |joint: f64| {
+        PathData::new()
+            .move_to(0.0, joint)
+            .line_to(left, joint)
+            .line_to(left, top + radius)
+            .arc_to(radius, true, left + radius, top)
+            .line_to(right - radius, top)
+            .arc_to(radius, true, right, top + radius)
+            .line_to(right, joint)
+            .line_to(width.max(end), joint)
+    };
+    let mut parts = Vec::new();
+    if painted {
+        parts.push(Node::path(
+            Role::Chrome,
+            outline(bar),
+            Attrs::new()
+                .set("fill", pane_fill)
+                .set("data-bar-ink", bar_ink.as_str()),
+        ));
+    }
+    parts.push(Node::path(
         Role::Chrome,
-        rule,
+        outline(baseline),
         Attrs::new()
             .set("fill", "none")
             .set("stroke", tabs.border.color.as_str())
             .num("stroke-width", stroke)
             .set("stroke-linejoin", "round"),
-    )];
+    ));
     for (i, cell) in strip.cells.iter().enumerate() {
         let is_active = i == active;
         let weight = if is_active {
@@ -289,11 +309,11 @@ pub fn draw_tab_strip(
     .translate(0.0, strip.inset))
 }
 
-/// `svg_utils.authored_attrs` for a tab's title: the pane's path and its kind.
+/// `svg_utils.authored_attrs` for a tab: its pane's path, keyed by the label the tab shows.
 fn authored_attrs(path: &str) -> Attrs {
     Attrs::new()
         .set("data-authored-path", path)
-        .set("data-authored-kind", "title")
+        .set("data-authored-kind", "tab")
 }
 
 /// `layouts.py::render_details_summary`'s height: `layout.details.summary_height`.
@@ -403,4 +423,3 @@ pub fn toggle_url(variables: &[(String, String)], name: &str, value: &str) -> St
         .collect();
     format!("?{}", query.join("&"))
 }
-

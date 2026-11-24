@@ -44,16 +44,14 @@ pub(super) enum Variant {
 pub(super) enum Reveal {
     Bar,
     Chart,
-    None,
 }
 
 impl Reveal {
-    /// The `data-dbt-*` value the hover runtime reads, or `None` when hover draws nothing.
-    pub(super) fn published(self) -> Option<&'static str> {
+    /// The `data-dbt-*` value the hover runtime reads.
+    pub(super) fn published(self) -> &'static str {
         match self {
-            Reveal::Bar => Some("bar"),
-            Reveal::Chart => Some("chart"),
-            Reveal::None => None,
+            Reveal::Bar => "bar",
+            Reveal::Chart => "chart",
         }
     }
 }
@@ -378,7 +376,8 @@ impl Torn {
                 .num("font-size", font.size)
                 .set("font-weight", font.weight.as_str())
                 .set("fill", fill)
-                .extend(::layout::contract::aria_attrs(aria, ::layout::contract::ItemRole::TextMark)?);
+                .extend(::layout::contract::aria_attrs(aria, ::layout::contract::ItemRole::TextMark)?)
+                .extend(crate::contract::owner_attrs(aria));
             let node = Node::text(Role::Label, (at.0, at.1 + measure::baseline_shift(baseline, font.size)), attrs, text);
             match aria {
                 Some(_) => ::layout::contract::value_label_group("layer_0_marks", vec![node]),
@@ -493,13 +492,37 @@ fn no_labels() -> String {
     "torn chart missing style.mark.labels".to_string()
 }
 
-/// Swaps every rect or path among `nodes` (a mark's group, link and clip included) for `path`.
+/// Swaps every rect or path among `nodes` (a mark's group, link and clip included) for `path`, given
+/// in the frame `nodes` are drawn in: a group that translates its children (a ladder bar cut from its
+/// own anchor) gets the path moved back by that translate.
 pub(super) fn retrace(nodes: &mut [Node], path: &scene::PathData) {
     for node in nodes {
         match &mut node.shape {
             Shape::Rect { .. } | Shape::Path(_) => node.shape = Shape::Path(path.clone()),
-            Shape::Group(children) | Shape::Link(children) | Shape::ClipPath(children) => retrace(children, path),
+            Shape::Group(children) | Shape::Link(children) | Shape::ClipPath(children) => {
+                let (dx, dy) = node.transform.iter().fold((0.0, 0.0), |(dx, dy), t| match *t {
+                    scene::Transform::Translate { x, y } => (dx - x, dy - y),
+                    _ => (dx, dy),
+                });
+                retrace(children, &moved(path, dx, dy));
+            }
             _ => {}
         }
     }
+}
+
+fn moved(path: &scene::PathData, dx: f64, dy: f64) -> scene::PathData {
+    use scene::PathCommand::{A, C, L, M, Z};
+    scene::PathData(
+        path.commands()
+            .iter()
+            .map(|&command| match command {
+                M(x, y) => M(x + dx, y + dy),
+                L(x, y) => L(x + dx, y + dy),
+                C(a, b, c, d, x, y) => C(a + dx, b + dy, c + dx, d + dy, x + dx, y + dy),
+                A { rx, ry, rot, large, sweep, x, y } => A { rx, ry, rot, large, sweep, x: x + dx, y: y + dy },
+                Z => Z,
+            })
+            .collect(),
+    )
 }

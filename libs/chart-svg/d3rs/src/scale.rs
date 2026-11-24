@@ -196,8 +196,17 @@ impl Continuous {
     }
 
     fn transformed_domain(&self) -> Vec<f64> {
-        let reflect = self.reflect();
-        self.domain.iter().map(|d| self.transform.apply(reflect, *d)).collect()
+        self.domain.iter().map(|d| self.transformed(*d)).collect()
+    }
+
+    /// `x` in the space the scale interpolates linearly: d3's `transform(x)`, reflected as `rescale` sets it.
+    pub fn transformed(&self, x: f64) -> f64 {
+        self.transform.apply(self.reflect(), x)
+    }
+
+    /// The inverse of `transformed`: d3's `untransform(x)`.
+    pub fn untransformed(&self, x: f64) -> f64 {
+        self.transform.undo(self.reflect(), x)
     }
 
     /// `clamper(domain[0], domain[n - 1])`.
@@ -218,13 +227,13 @@ impl Continuous {
         if x.is_nan() {
             return f64::NAN;
         }
-        let x = self.transform.apply(self.reflect(), self.clamped(x));
+        let x = self.transformed(self.clamped(x));
         piecewise(&self.transformed_domain(), &self.range, x, interpolate)
     }
 
     /// `scale.invert(y)`.
     pub fn invert(&self, y: f64) -> f64 {
-        let x = self.transform.undo(self.reflect(), piecewise(&self.range, &self.transformed_domain(), y, interpolate));
+        let x = self.untransformed(piecewise(&self.range, &self.transformed_domain(), y, interpolate));
         self.clamped(x)
     }
 

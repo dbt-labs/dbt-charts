@@ -507,13 +507,12 @@ rows:
       - text: {_TALL_TEXT}
       - chart_direct
       - tabs:
-          items:
-            - title: One
-              rows:
-                - chart_a
-            - title: Two
-              rows:
-                - chart_b
+          One:
+            rows:
+              - chart_a
+          Two:
+            rows:
+              - chart_b
 """)
 
     assert boxes["chart_a"] > boxes["chart_direct"] * 0.8

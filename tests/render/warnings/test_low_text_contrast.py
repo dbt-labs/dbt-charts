@@ -388,9 +388,7 @@ _ALPHA_CONTAINER_CHILDREN = {
     "rows": "rows:\n      - text: Body text here.\n",
     "cols": "cols:\n      - text: Body text here.\n",
     "grid": "grid:\n      items:\n        - item:\n            text: Body text here.\n",
-    "tabs": (
-        "tabs:\n      items:\n        - title: Tab 1\n          text: Body text here.\n"
-    ),
+    "tabs": ("tabs:\n      Tab 1:\n        text: Body text here.\n"),
 }
 
 

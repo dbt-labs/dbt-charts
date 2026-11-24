@@ -228,6 +228,9 @@ const LEGEND_LABEL_CLASS: &str = "mark-text role-legend-label";
 /// The series a legend entry, a direct label, or a line or area's own ink belongs to.
 pub const SERIES_KEY: &str = "data-dbt-series";
 
+/// The category (the x value, or a ring slice's color value) a label or mark belongs to.
+pub const CATEGORY_KEY: &str = "data-dbt-category";
+
 /// The group Vega draws around legend label text (`role-legend-label`): the
 /// runtime reads a legend's labels from it. A gradient legend has one for all
 /// its tick labels, a symbol legend one per entry. `series_key` is the

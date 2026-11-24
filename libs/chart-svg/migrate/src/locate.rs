@@ -17,13 +17,14 @@ pub struct Loc {
 }
 
 /// Schema positions of the value at `path` below `node`, narrowed by each
-/// mapping on the way down.
+/// mapping on the way down. `live` reads a list as [`Schema::live_item_positions`] does.
 pub fn positions_along<'d>(
     probe: &Probe<'d>,
     node: &'d Node,
     path: &[String],
     schema: &'static Schema,
     positions: Vec<Pos>,
+    live: bool,
 ) -> Vec<Pos> {
     let mut positions = positions;
     let mut node = node;
@@ -38,7 +39,11 @@ pub fn positions_along<'d>(
                 }
             }
             Kind::Seq(items) => {
-                positions = schema.item_positions(&positions);
+                positions = if live {
+                    schema.live_item_positions(&positions)
+                } else {
+                    schema.item_positions(&positions)
+                };
                 match part.parse::<usize>().ok().and_then(|i| items.get(i)) {
                     Some(n) => node = n,
                     None => break,
@@ -101,8 +106,8 @@ pub fn boards<'d>(
         let Some(node) = at(doc, &here) else { continue };
         if lead == "*" || child(node, lead).is_some() {
             out.push(Board {
-                positions: positions_along(probe, doc, &here, schema, vec![schema.root()]),
-                live_positions: positions_along(probe, doc, &here, live, vec![live.root()]),
+                positions: positions_along(probe, doc, &here, schema, vec![schema.root()], false),
+                live_positions: positions_along(probe, doc, &here, live, vec![live.root()], true),
                 at: here.clone(),
             });
         }
@@ -193,7 +198,7 @@ fn source_locations<'d>(
         (Kind::Seq(s), "*") => {
             let (ip, lp) = (
                 schema.item_positions(positions),
-                live.item_positions(live_positions),
+                live.live_item_positions(live_positions),
             );
             for (i, n) in s.iter().enumerate() {
                 descend(&i.to_string(), n, true, ip.clone(), lp.clone());

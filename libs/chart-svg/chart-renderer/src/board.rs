@@ -282,17 +282,13 @@ struct LayoutDoc {
     columns: Option<i64>,
     // Tabs-specific — `()`/`None` on every rows/cols/grid layout, matching
     // `ResolvedLayout`'s own defaults (`tab_titles`/`tab_slugs: ()`,
-    // `tab_variable: None`, `default_tab: 0`, `tab_position: None`).
+    // `tab_variable: None`).
     #[serde(default)]
     tab_titles: Vec<String>,
     #[serde(default)]
     tab_slugs: Vec<String>,
     #[serde(default)]
     tab_variable: Option<String>,
-    #[serde(default)]
-    default_tab: i64,
-    #[serde(default)]
-    tab_position: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -479,6 +475,7 @@ struct LayoutStyleDoc {
 
 #[derive(Deserialize)]
 struct TabsStyleDoc {
+    position: String,
     bar_height: f64,
     border: BorderStyleDoc,
     font: TabsFontDoc,
@@ -1688,6 +1685,8 @@ fn details_chrome_from_style(style: &StyleDoc) -> DetailsChrome {
 /// per level rather than per tab item.
 #[derive(Clone)]
 struct TabsChrome {
+    /// `style.layout.tabs.position == "left"`: a vertical rail beside the pane, else the top bar.
+    left_rail: bool,
     /// `resolved_style.frame.card_padding`: the bar sits this far below its
     /// slot top, like card ink.
     inset: f64,
@@ -1716,13 +1715,6 @@ struct TabsChrome {
     active_font_color: String,
     /// `resolved_style.variables.font.color` (inactive tab).
     inactive_font_color: String,
-}
-
-/// `layout.tab_position == "left"`: a vertical rail beside the pane. Every
-/// other value is the top bar, as in `sizing.py::tab_content_offset`
-/// (the authored model only admits `top`/`left`).
-fn is_left_rail(layout: &LayoutDoc) -> bool {
-    layout.tab_position.as_deref() == Some("left")
 }
 
 /// `sizing.py::tab_labels`: each tab's label as drawn, its title (or the
@@ -1814,7 +1806,7 @@ fn tabs_pane(layout: &LayoutDoc, style: &StyleDoc, fonts: &FontBook) -> Result<s
 }
 
 fn tabs_pane_for(layout: &LayoutDoc, tabs: &TabsChrome, fonts: &FontBook) -> Result<sizing::TabsPane, String> {
-    if layout.kind != "tabs" || !is_left_rail(layout) {
+    if layout.kind != "tabs" || !tabs.left_rail {
         return Ok(sizing::TabsPane { x: 0.0, y: tabs.inset + tabs.bar_height, min_height: 0.0 });
     }
     let measure = tab_label_measurer(tabs, fonts)?;
@@ -1835,6 +1827,7 @@ fn tabs_pane_for(layout: &LayoutDoc, tabs: &TabsChrome, fonts: &FontBook) -> Res
 fn tabs_chrome_from_style(style: &StyleDoc) -> TabsChrome {
     let tabs = &style.layout.tabs;
     TabsChrome {
+        left_rail: tabs.position == "left",
         inset: style.frame.card_padding,
         bar_height: tabs.bar_height,
         min_width: tabs.min_width,
@@ -2953,12 +2946,11 @@ fn render_tabs_layout(
         return Ok((String::new(), 0.0));
     }
     let tabs = &chrome.tabs_style;
-    let left_rail = is_left_rail(layout);
+    let left_rail = tabs.left_rail;
     let active_index = resolve_active_tab_index(
         layout.items.len(),
         layout.tab_variable.as_deref(),
         &layout.tab_slugs,
-        layout.default_tab,
         &payload.variable_values,
     )?;
     // The bar (or rail) is inset like card ink; the pane starts below the bar
@@ -2993,6 +2985,28 @@ fn render_tabs_layout(
     let (item_svg, actual_item_height) = match &rendered {
         Some(r) => (r.svg.as_str(), r.height),
         None => ("", 0.0),
+    };
+
+    // A pane with a background carries it into its tab. An unstyled pane
+    // resolves to "transparent" and paints nothing.
+    let pane_fill = active_item
+        .board
+        .as_ref()
+        .and_then(|board| board["style"]["background"].as_str())
+        .filter(|fill| !fill.is_empty() && *fill != "transparent");
+    let active_ink = match pane_fill {
+        Some(fill) => {
+            let canvas = dbt_charts_color::ink_canvas(&[fill, &chrome.card_style.ink_canvas])?;
+            let pane_ink = active_item
+                .board
+                .as_ref()
+                .and_then(|board| board["style"]["title"]["font"]["color"].as_str());
+            match pane_ink {
+                Some(ink) => dbt_charts_color::ink_on_fill(ink, &canvas)?,
+                None => tabs.active_font_color.clone(),
+            }
+        }
+        None => tabs.active_font_color.clone(),
     };
 
     let n = layout.items.len();
@@ -3030,7 +3044,7 @@ fn render_tabs_layout(
             };
         }
         let weight = if is_active { &tabs.active_weight } else { &tabs.inactive_weight };
-        let text_fill = if is_active { &tabs.active_font_color } else { &tabs.inactive_font_color };
+        let text_fill = if is_active { &active_ink } else { &tabs.inactive_font_color };
         let tooltip = if cut {
             format!("<title>{}</title>", html_escape(label))
         } else {
@@ -3085,10 +3099,10 @@ fn render_tabs_layout(
             r#"role="tab" aria-selected="{is_active}" transform="translate({}, {ty})""#,
             float_repr(tab_x)
         );
-        // A tab label is its pane's title, so it carries that key's own path.
+        // A tab carries its pane's path, keyed by the label the tab shows.
         let source_path = &layout.items[idx].source_path;
         if !source_path.is_empty() {
-            attrs.push_str(&title::authored_attrs(&format!("{source_path}.title"), "title"));
+            attrs.push_str(&title::authored_attrs(source_path, "tab"));
         }
         match layout.tab_variable.as_deref() {
             Some(tab_variable) if !is_active => {
@@ -3115,62 +3129,84 @@ fn render_tabs_layout(
     let actual_height = (content_y + actual_item_height).max(pane.min_height);
     let stroke = tabs.border_width;
     let f = float_repr;
-    let d = if left_rail {
+    // `outline(joint)` walks the bar to the active tab, around it, and on to the
+    // bar's end, meeting the bar at `joint`.
+    let (rule_joint, pane_joint, outline): (f64, f64, Box<dyn Fn(f64) -> String>) = if left_rail {
         // The active tab is a folder open to the right, joined to a
         // full-height rule along the rail's right edge.
-        let rule_x = rail_width - stroke / 2.0;
+        let rule_joint = rail_width - stroke / 2.0;
         let outer_x = stroke / 2.0;
         let top = active_span.0 + stroke / 2.0;
         let bottom = active_span.1 - stroke / 2.0;
-        let radius = tabs.border_radius.min((bottom - top) / 2.0).min(rule_x - outer_x);
+        let radius = tabs.border_radius.min((bottom - top) / 2.0).min(rule_joint - outer_x);
         let line_end = (actual_height - tabs.inset).max(tab_y);
-        format!(
-            "M {} 0 V {} H {} A {r} {r} 0 0 0 {} {} V {} A {r} {r} 0 0 0 {} {} H {} V {}",
-            f(rule_x),
-            f(top),
-            f(outer_x + radius),
-            f(outer_x),
-            f(top + radius),
-            f(bottom - radius),
-            f(outer_x + radius),
-            f(bottom),
-            f(rule_x),
-            f(line_end),
-            r = f(radius),
-        )
+        let outline = move |joint: f64| {
+            format!(
+                "M {} 0 V {} H {} A {r} {r} 0 0 0 {} {} V {} A {r} {r} 0 0 0 {} {} H {} V {}",
+                f(joint),
+                f(top),
+                f(outer_x + radius),
+                f(outer_x),
+                f(top + radius),
+                f(bottom - radius),
+                f(outer_x + radius),
+                f(bottom),
+                f(joint),
+                f(line_end),
+                r = f(radius),
+            )
+        };
+        (rule_joint, rail_width, Box::new(outline))
     } else {
-        let baseline_y = tabs.bar_height - stroke / 2.0;
+        let rule_joint = tabs.bar_height - stroke / 2.0;
         let top_y = stroke / 2.0;
         let left = active_span.0 + stroke / 2.0;
         let right = active_span.1 - stroke / 2.0;
-        let radius = tabs.border_radius.min((right - left) / 2.0).min(baseline_y - top_y);
+        let radius = tabs.border_radius.min((right - left) / 2.0).min(rule_joint - top_y);
         let line_end = available_width.max(tab_x);
-        format!(
-            "M 0 {} H {} V {} A {r} {r} 0 0 1 {} {} H {} A {r} {r} 0 0 1 {} {} V {} H {}",
-            f(baseline_y),
-            f(left),
-            f(top_y + radius),
-            f(left + radius),
-            f(top_y),
-            f(right - radius),
-            f(right),
-            f(top_y + radius),
-            f(baseline_y),
-            f(line_end),
-            r = f(radius),
-        )
+        let outline = move |joint: f64| {
+            format!(
+                "M 0 {} H {} V {} A {r} {r} 0 0 1 {} {} H {} A {r} {r} 0 0 1 {} {} V {} H {}",
+                f(joint),
+                f(left),
+                f(top_y + radius),
+                f(left + radius),
+                f(top_y),
+                f(right - radius),
+                f(right),
+                f(top_y + radius),
+                f(joint),
+                f(line_end),
+                r = f(radius),
+            )
+        };
+        (rule_joint, tabs.bar_height, Box::new(outline))
     };
     let rule = format!(
-        r#"<path d="{d}" fill="none" stroke="{}" stroke-width="{}" stroke-linejoin="round"{}/>"#,
+        r#"<path d="{}" fill="none" stroke="{}" stroke-width="{}" stroke-linejoin="round"{}/>"#,
+        outline(rule_joint),
         xml_escape_attr(&tabs.border_color),
         f(stroke),
         tabs.border_dash_attrs,
     );
+    // The fill is the same outline, met at the bar's pane-side edge, so its only
+    // area is the tab and a top bar's tab touches its pane. It names the ink the
+    // label takes on the bare bar, which the page shows while a clicked tab loads.
+    let tab_fill = pane_fill
+        .map(|fill| {
+            format!(
+                r#"<path d="{}" fill="{}" data-bar-ink="{}"/>"#,
+                outline(pane_joint),
+                xml_escape_attr(fill),
+                xml_escape_attr(&tabs.active_font_color),
+            )
+        })
+        .unwrap_or_default();
     let orientation = if left_rail { r#" aria-orientation="vertical""# } else { "" };
     let tab_bar_svg = translate_group(
         "0",
         &num_full(px(tabs.inset)),
-        &format!(r#"<g role="tablist"{orientation}>{rule}{}</g>"#, tab_bar_parts.join("")),
+        &format!(r#"<g role="tablist"{orientation}>{tab_fill}{rule}{}</g>"#, tab_bar_parts.join("")),
         "",
     );
 
@@ -3382,7 +3418,6 @@ fn sized_item_boxes(
             available_height,
             layout.tab_variable.as_deref(),
             &layout.tab_slugs,
-            layout.default_tab,
             ctx,
         )
         .map(|b| (b, HashSet::new())),
@@ -3780,7 +3815,6 @@ fn active_tab_index(layout: &LayoutDoc, payload: &BoardPayload) -> Result<Option
         layout.items.len(),
         layout.tab_variable.as_deref(),
         &layout.tab_slugs,
-        layout.default_tab,
         &payload.variable_values,
     )
     .map(Some)
@@ -5887,6 +5921,7 @@ mod nested_box_sidecar_tests {
                 "box_shadow": null,
                 "layout": {
                     "tabs": {
+                        "position": "top",
                         "bar_height": 40.0,
                         "min_width": 96.0, "max_width": 240.0, "rail_max_lines": 2, "padding_x": 16.0,
                         "border": {"width": 1.0, "color": "#8A8C8F", "radius": 6.0},

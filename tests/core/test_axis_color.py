@@ -322,11 +322,3 @@ def test_an_authored_grid_color_is_not_softened() -> None:
         [_layer(position="right", color=INK, grid={"color": "#112233"})]
     ).layers[0]
     assert own.axis_y.grid is not None and own.axis_y.grid.opacity is None
-
-
-@pytest.mark.parametrize(
-    "axis_y", [{"color": INK}, {"grid": {"dash": [4, 2]}}, {"grid": {"color": INK}}]
-)
-def test_layer_axis_style_without_a_position_raises(axis_y: dict[str, Any]) -> None:
-    with pytest.raises(CompilationError, match="no layer on this chart pins"):
-        _resolve([_layer(**axis_y)])

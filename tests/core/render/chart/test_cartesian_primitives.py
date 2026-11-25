@@ -38,7 +38,8 @@ def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
         "temporal",
         "quantitative",
         AxisOverrides(),
-        True,
+        False,
+        False,
     )
     ax_merged, ay_merged, ax_band_position, ay_band_position = (
         baked.x.style,
@@ -235,7 +236,8 @@ class TestPinNormalizeAxisFormat:
             "temporal",
             "quantitative",
             AxisOverrides(),
-            True,
+            False,
+            False,
         )
         return build_resolved_axis(
             baked.y.style,

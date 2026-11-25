@@ -105,6 +105,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     NON_ASPECT_RATIO_TYPES,
     Chart,
     CustomChart,
+    KpiChart,
     PieChart,
     SparkBarChart,
     TableChart,
@@ -268,7 +269,8 @@ def get_chart_content_height(
       5. style.charts.default_chart_height when no width is available.
 
     SVG-family renderers own their own sizing contract:
-      - kpi    → resolved_style.chart_defaults.kpi.default_height (theme cascade)
+      - kpi    → the chart's own style.default_height, else the board's
+                 resolved_style.chart_defaults.kpi.default_height
       - table  → style.charts.default_table_height (replaced by row-count sizing at render)
       - callout → 0.0 placeholder (replaced by natural render-first sizing)
       - spark_bar → config-derived upper bound from max_bars/bar.height
@@ -282,8 +284,8 @@ def get_chart_content_height(
     Args:
         chart: The compiled chart to get height for
         width: Available width in pixels; enables aspect-ratio-driven sizing
-        resolved_style: Board-resolved style; KPI height reads from
-            resolved_style.chart_defaults.kpi.default_height.
+        resolved_style: Board-resolved style; a KPI without its own
+            style.default_height reads resolved_style.chart_defaults.kpi.default_height.
 
     Returns:
         Appropriate height in pixels for this chart type
@@ -292,7 +294,12 @@ def get_chart_content_height(
         return resolved_style.chart_defaults.default_chart_height
 
     chart_type = chart.type
-    if chart_type == "kpi":
+    if isinstance(chart, KpiChart):
+        # The chart's own `style.default_height` is the chart tier of
+        # `style.charts.kpi.default_height`: set, it wins over the board's.
+        own = chart.style.default_height if chart.style is not None else None
+        if own is not None:
+            return float(own)
         return float(resolved_style.chart_defaults.kpi.default_height)
     elif chart_type == "table":
         return resolved_style.chart_defaults.default_table_height

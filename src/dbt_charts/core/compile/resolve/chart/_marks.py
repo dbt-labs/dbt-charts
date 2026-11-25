@@ -14,6 +14,7 @@ from dbt_charts.core.compile.format import (
     resolve_label_format,
 )
 from dbt_charts.core.compile.models.primitives import (
+    AuthoredFormat,
     FormatTable,
     ResolvedFormat,
     StrokeStyle,
@@ -162,6 +163,32 @@ def _label_format_fallback(
     )
 
 
+def datum_format(
+    labels_format: AuthoredFormat | None,
+    formats: FormatTable | None,
+    query_formats: Mapping[str, str] | None,
+    column: str,
+    rows: Sequence[Mapping[str, Any]],  # type-state: explicit_any — warehouse rows
+) -> tuple[ResolvedFormat, bool]:
+    """The format a datum prints in beside its mark, never the ruler's or the tooltip's.
+
+    The authored format, then the column's declared one, then the type default
+    (an integer column prints whole), then the board's default for the kind.
+    Returns ``(format, is_house)``.
+    """
+    cells = [row.get(column) for row in rows]
+    fmt = column_format(
+        "number",
+        formats,
+        labels_format,
+        query_formats=query_formats,
+        columns=column,
+        inferred=inferred_number_format(column, cells),
+        values=[c for c in cells if c is not None],
+    )
+    return fmt, fmt.is_house and is_d3_si_spec(fmt.spec)
+
+
 def callout_label_format(
     labels: _AuthoredLabelsT,
     resolved_cls: type[_ResolvedLabelsT],
@@ -170,24 +197,9 @@ def callout_label_format(
     column: str,
     rows: Sequence[Mapping[str, Any]],  # type-state: explicit_any — warehouse rows
 ) -> tuple[_ResolvedLabelsT, bool]:
-    """``labels`` resolved as a callout: a datum beside its mark, never the ruler's format.
-
-    The label's own format, then the column's declared one, then the type default
-    (an integer column prints whole), then the board's default for the kind.
-    """
-    cells = [row.get(column) for row in rows]
-    fmt = column_format(
-        "number",
-        formats,
-        labels.format,
-        query_formats=query_formats,
-        columns=column,
-        inferred=inferred_number_format(column, cells),
-        values=[c for c in cells if c is not None],
-    )
-    return _with_label_format(labels, resolved_cls, fmt), (
-        fmt.is_house and is_d3_si_spec(fmt.spec)
-    )
+    """``labels`` resolved as a callout: a datum beside its mark (see ``datum_format``)."""
+    fmt, is_house = datum_format(labels.format, formats, query_formats, column, rows)
+    return _with_label_format(labels, resolved_cls, fmt), is_house
 
 
 def _resolve_authored_label_format(

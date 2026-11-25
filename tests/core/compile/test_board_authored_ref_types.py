@@ -107,14 +107,11 @@ class TestQueryRef:
 
         assert isinstance(board.queries["q"], _BaseQueryFields)
 
-    def test_query_wrong_section_string_becomes_sql(self):
-        """A cross-file style string with wrong section (.charts.) becomes SQL, not a QueryRef."""
-        # "shared.yml.charts.sales" doesn't match .queries. so it's treated as SQL identifier.
-        board = _board(queries={"q": "shared.yml.charts.sales"})
-        assert board.queries is not None
-        from dbt_charts.core.compile.models.query.authored import _BaseQueryFields
-
-        assert isinstance(board.queries["q"], _BaseQueryFields)
+    def test_query_wrong_section_string_is_a_refused_ref(self):
+        """A one-token string naming the wrong section (.charts.) is a ref, never
+        SQL, so the query ref grammar refuses it."""
+        with pytest.raises(PydanticValidationError, match="Invalid query reference"):
+            _board(queries={"q": "shared.yml.charts.sales"})
 
     def test_query_typo_loc_carries_no_model_label(self):
         """A typo in a Query block should NOT have 'Query' or 'QueryRef' in loc."""

@@ -5,7 +5,7 @@
 //!
 //! Dissolved into parse: `encoding` (a Vega-Lite passthrough key) is an unknown key.
 
-use super::{ColorColumn, NonBlankColumn, NumberPair};
+use super::{ColorColumn, NonBlankColumn};
 use crate::facet::{Color, DisplayText};
 use crate::primitives::FormatSpec;
 use crate::rule::Auto;
@@ -16,15 +16,32 @@ use crate::style::line::LineLayerStyle;
 use crate::style::scatter::ScatterLayerStyle;
 use diagnostic::diag;
 use diagnostic::Diagnostic;
-use model_core::{Authored, Engine, Patch, Tri};
+use model_core::{Authored, Engine, Patch, Scalar, Tri, TypeExpr};
 use model_derive::Model;
+
+const LAYER_DOMAIN_END: TypeExpr = TypeExpr::Either(
+    &TypeExpr::Scalar(Scalar::Int),
+    &TypeExpr::Scalar(Scalar::Float),
+);
+const LAYER_DOMAIN_ITEMS: TypeExpr =
+    TypeExpr::Tuple(&[&LAYER_DOMAIN_END, &LAYER_DOMAIN_END]);
+
+/// Where a layer's own y scale's ends sit; `[min, max]` is its shorthand.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(shorthand_with = crate::primitives::domain_list, shorthand_items = LAYER_DOMAIN_ITEMS)]
+pub struct LayerScaleDomain {
+    /// Where the layer's y scale's low end sits.
+    pub min: crate::unit::Number,
+    /// Where the layer's y scale's high end sits.
+    pub max: crate::unit::Number,
+}
 
 /// Per-layer y-axis scale patch.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct LayerAxisYScale {
-    /// Explicit [min, max] domain for this layer's y scale.
+    /// Where this layer's y scale's ends sit, as [min, max].
     #[model(absent = "the domain follows the layer's data")]
-    pub domain: Option<NumberPair>,
+    pub domain: Option<LayerScaleDomain>,
     /// Whether marks outside the domain are cut off at the plot edge. False lets them run past the plot.
     #[model(fill = true)]
     pub clip: bool,

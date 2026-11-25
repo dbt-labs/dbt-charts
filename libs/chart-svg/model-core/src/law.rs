@@ -215,6 +215,7 @@ fn range(c: &Constraint, view: &dyn Keyed) -> Result<bool, Unanswerable> {
     let v = value(view, first_field(c))?.unwrap_or(Json::Null);
     let numbers = match &v {
         Json::Array(items) => items.iter().filter_map(Json::as_f64).collect(),
+        Json::Object(fields) => fields.values().filter_map(Json::as_f64).collect(),
         one => one.as_f64().into_iter().collect::<Vec<_>>(),
     };
     Ok(numbers.into_iter().all(|n| in_bounds(n, &c.bounds)))
@@ -228,10 +229,14 @@ fn compiled(c: &Constraint) -> Result<regex::Regex, Unanswerable> {
         .map_err(|e| Unanswerable(format!("pattern `{pattern}` does not compile: {e}")))
 }
 
-/// The first item of an `items_match` list that is no string fully matching its pattern.
+/// The first item of an `items_match` list, value of its mapping, or its one value, that is no
+/// string fully matching its pattern. A null value of a mapping is an unset key.
 pub fn bad_item(c: &Constraint, view: &dyn Keyed) -> Result<Option<Json>, Unanswerable> {
-    let Some(Json::Array(items)) = value(view, first_field(c))? else {
-        return Ok(None);
+    let items = match value(view, first_field(c))? {
+        None | Some(Json::Null) => return Ok(None),
+        Some(Json::Array(items)) => items,
+        Some(Json::Object(fields)) => fields.into_values().filter(|v| !v.is_null()).collect(),
+        Some(one) => vec![one],
     };
     let re = compiled(c)?;
     Ok(items
@@ -469,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn items_match_checks_each_string_of_a_list_under_its_conditions() {
+    fn items_match_checks_a_text_or_each_string_of_a_list_under_its_conditions() {
         const WHEN: &[Condition] = &[Condition::ValueIn {
             key: "type",
             values: &[Value::Str("temporal")],
@@ -496,6 +501,14 @@ mod tests {
             Ok(true)
         );
         assert_eq!(satisfied(&c, &doc(r#"{"type": "temporal"}"#)), Ok(true));
+        assert_eq!(
+            satisfied(&c, &doc(r#"{"type": "temporal", "domain": "2020"}"#)),
+            Ok(true)
+        );
+        assert_eq!(
+            satisfied(&c, &doc(r#"{"type": "temporal", "domain": 2020}"#)),
+            Ok(false)
+        );
     }
 
     #[test]

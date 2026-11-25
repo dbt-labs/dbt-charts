@@ -17,6 +17,8 @@ use board_model::board::Board;
 use board_model::chart::query::ChartQuery;
 use board_model::chart::kpi::{KpiBackground, KpiSupportConfig};
 use board_model::chart::KpiChart;
+use board_model::primitives::ScaleDomainAuthored;
+use board_model::unit::Number;
 use board_model::facet::{Color, FormatName};
 use board_model::ids::{ChartId, QueryId};
 use board_model::primitives::{FormatSpec, LinkOpen, ScalePalette, Tone};
@@ -549,7 +551,9 @@ fn gradient_fill(kpi: &KpiChartStyle, column: Option<&str>, row: &serde_json::Ma
     let scale = &gradient.scale.rest;
     let column = column.ok_or_else(|| diag::err_internal("a KPI background gradient reaches bind with no column"))?;
     let palette = gradient.scale.palette.as_ref().ok_or_else(|| diag::err_internal("a KPI background scale reaches bind with no palette"))?;
-    let (min, max) = (first_set([scale.min.as_ref()]).map(|limit| limit.get()), first_set([scale.max.as_ref()]).map(|limit| limit.get()));
+    let domain = first_set([scale.domain.as_ref()]);
+    let end = |pick: fn(&ScaleDomainAuthored) -> Tri<&Number>| domain.and_then(|d| first_set([pick(d)])).map(|n| n.get());
+    let (min, max) = (end(|d| d.min.as_ref()), end(|d| d.max.as_ref()));
     let hinge = first_set([scale.hinge.as_ref()]).map(|hinge| match hinge {
         Engine::Value(pivot) => json!(pivot),
         Engine::Rule(Auto::Auto) => json!("auto"),

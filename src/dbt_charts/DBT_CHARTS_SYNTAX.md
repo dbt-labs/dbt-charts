@@ -755,7 +755,7 @@ resolve to the same recipe, and the same error names the recipe if you guess a `
 | stacked column | type: bar with style.orientation: vertical, color:, and style.stack: zero |
 | grouped column, clustered column | type: bar with style.orientation: vertical, color:, and style.stack: none |
 | lollipop | type: bar with style.marks.bar.band_width thinned to a stem, plus a layers: scatter on the same y (style.marks.bar.size is a separate fixed-pixel mode and does not thin the bar) |
-| bullet | type: bar with style.stack: zero, style.stack_order: data and color: on the qualitative range column — one row per (category, band) — plus a layers: bar on the value and a layers: line on the target, both reading their own one-row-per-category source via layers[].query (sharing the ranges' rows multiplies each by the band count). Thin the value bar with style.marks.bar.band_width so the ranges stay visible, give the target style.marks.line.curve: step with connect: false for the goal tick, and set style.orientation: vertical |
+| bullet | type: bar with style.stack: zero, style.series_order: data and color: on the qualitative range column — one row per (category, band) — plus a layers: bar on the value and a layers: line on the target, both reading their own one-row-per-category source via layers[].query (sharing the ranges' rows multiplies each by the band count). Thin the value bar with style.marks.bar.band_width so the ranges stay visible, give the target style.marks.line.curve: step with connect: false for the goal tick, and set style.orientation: vertical |
 | slope | type: line with a two-category x and color: on the series column (year-shaped x values resolve to a continuous temporal scale, which fills in the span between the pair) |
 | bump | type: line on a rank column with color: on the series column (the data is entity x period x rank, so without it the rows collide on the period key) and a descending style.axis_y.scale.continuous.domain (e.g. [6, 1]) so rank 1 is on top |
 | dot plot, cleveland dot plot | type: scatter with a categorical x and a measure y; for several dots per category use long-format rows with color: on the series column rather than layers:, which keeps the shape rotatable |
@@ -1075,9 +1075,7 @@ style:
       scale:
         background:
           palette: dbt-seq-blue                # palette name, or an explicit stop list
-          domain: data                   # currently only "data"
-          min: 0
-          max: 1000000
+          domain: [0, 1000000]
           null_color: dbt-grays.2
           hinge: auto                    # number | "auto"
           arm_mode: asymmetric           # asymmetric | symmetric
@@ -1329,10 +1327,10 @@ Common fields: `text` (one line; `{{ value | format }}` prints the anchor, `{{ s
 - **`fit`:** `linear()`, `polynomial(<order >= 2>)`, `exponential()`, `log()`, `power()`. **`interval`:** `confidence(<pct>)`, `prediction(<pct>)`. A categorical x cannot be fitted. The mark that draws the trend's column gates it: line and scatter fit; a bar (or a stacked bar's `series: total`) fits with `WARN-TREND-ON-BARS`; an area is an error (draw the column as a line or scatter layer and set `y_column`). Chart `type:` alone never decides.
 - **`series`:** required on a computed annotation (aggregate or trend) when the chart has `color`: `each`, a list of names, or `total` (pooled; the per-x sum when stacked). Error on a literal-only annotation. Only `total` on a stacked chart.
 - **`y_column`:** names the y column (picks its axis and rows). Required for a computed y anchor, trend, or derived note on a chart with several y columns or `layers:`.
-- **Position:** an annotation's text mark (`style:` > `marks:` > `text:` > `position:`) takes `edge` (`top|bottom|left|right`), `align` (`start|center|end`), `overlay` (`true|false`); `dx`/`dy` nudge. Text moves off the chart's marks, value labels and other text: it slides along its edge, and an `auto` edge or align (rules, bands, notes; the default) may also change. Text also takes `font`, `halo`, `halo_opacity`, `box`, and `max_width` (frame notes, bands and trends; a band with none wraps to its own width).
+- **Position:** an annotation's text mark (`style:` > `marks:` > `text:` > `position:`) takes `edge` (`top|bottom|left|right`), `align` (`start|center|end`), `overlay` (`true|false`); `dx`/`dy` nudge. Text moves off the chart's marks, value labels and other text: it slides along its edge, and an `auto` edge or align (rules, bands, notes; the default) may also change. Crowded rule labels keep their rules' order: a label may end at its rule, then step onto up to three lines with the rule run on to it; past that every rule gets a circled number and a key under the plot. Text also takes `font`, `halo`, `halo_opacity`, `box`, and `max_width` (frame notes, bands and trends; a band with none wraps to its own width).
 - **Theme:** `style.annotations.<rule|band|note|trend>.marks.*` on the board or a chart; an annotation's own `style:` wins.
 - **Not accepted** on pie, donut, map, table, or KPI charts.
-- **Errors:** `ERR-ANNOTATION-INVALID`, `ERR-ANNOTATION-UNSUPPORTED`, `ERR-ANNOTATION-MARGIN-UNSUPPORTED`; warnings `WARN-ANNOTATION-NOTHING-DRAWN`, `WARN-ANNOTATION-NOTE-MOVED`, `WARN-TREND-ON-BARS`.
+- **Errors:** `ERR-ANNOTATION-INVALID`, `ERR-ANNOTATION-UNSUPPORTED`, `ERR-ANNOTATION-MARGIN-UNSUPPORTED`; warnings `WARN-ANNOTATION-NOTHING-DRAWN`, `WARN-ANNOTATION-NOTE-MOVED`, `WARN-ANNOTATION-RULE-LABELS-NUMBERED`, `WARN-TREND-ON-BARS`.
 
 ### Conditional formatting
 
@@ -1572,7 +1570,7 @@ keeps the same color on every chart that draws it (and the same direct-label
 ink, table swatch, and nested-board coloring). Every `color:` field binds,
 including a chart with `layers:` (its base `color:` binds; layers keep their
 own series colors). Slots go to pins first, then a linked variable's options,
-then an explicit `stack_order`, then labels that carry a number (`P1`..`P10`)
+then an explicit `series_order`, then labels that carry a number (`P1`..`P10`)
 by number, then by size (largest total by magnitude first; a scatter's average,
 a waterfall's bar length; ties alphabetical), ranked on
 the board's default variable values. Pins apply board-wide, from a nested board

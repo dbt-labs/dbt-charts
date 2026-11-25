@@ -1,0 +1,180 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Heatmap cell labels
+width: 900
+notes: Each chart turns on style.marks.rect.labels. Check that the numbers print in the cells, and that ink flips between light and dark with the cell fill.
+
+queries:
+  traffic:
+    columns: [day, block, visits]
+    values:
+      - [Mon, 6a, 8]
+      - [Tue, 6a, 92]
+      - [Wed, 6a, 78]
+      - [Thu, 6a, 64]
+      - [Fri, 6a, 50]
+      - [Sat, 6a, 26]
+      - [Sun, 6a, 12]
+      - [Mon, 9a, 31]
+      - [Tue, 9a, 17]
+      - [Wed, 9a, 101]
+      - [Thu, 9a, 87]
+      - [Fri, 9a, 73]
+      - [Sat, 9a, 49]
+      - [Sun, 9a, 35]
+      - [Mon, 12p, 54]
+      - [Tue, 12p, 40]
+      - [Wed, 12p, 26]
+      - [Thu, 12p, 110]
+      - [Fri, 12p, 96]
+      - [Sat, 12p, 72]
+      - [Sun, 12p, 58]
+      - [Mon, 3p, 77]
+      - [Tue, 3p, 63]
+      - [Wed, 3p, 49]
+      - [Thu, 3p, 35]
+      - [Fri, 3p, 119]
+      - [Sat, 3p, 95]
+      - [Sun, 3p, 81]
+      - [Mon, 6p, 100]
+      - [Tue, 6p, 86]
+      - [Wed, 6p, 72]
+      - [Thu, 6p, 58]
+      - [Fri, 6p, 44]
+      - [Sat, 6p, 118]
+      - [Sun, 6p, 104]
+      - [Mon, 9p, 123]
+      - [Tue, 9p, 109]
+      - [Wed, 9p, 95]
+      - [Thu, 9p, 81]
+      - [Fri, 9p, 67]
+      - [Sat, 9p, 43]
+      - [Sun, 9p, 127]
+  sales:
+    columns: [month, region, orders]
+    values:
+      - [Jan, North, 7]
+      - [Feb, North, 96]
+      - [Mar, North, 12480]
+      - [Apr, North, 1840]
+      - [May, North, 312]
+      - [Jun, North, 48]
+      - [Jul, North, 7]
+      - [Aug, North, 96]
+      - [Sep, North, 12480]
+      - [Oct, North, 1840]
+      - [Nov, North, 312]
+      - [Dec, North, 48]
+      - [Jan, South, 1840]
+      - [Feb, South, 312]
+      - [Mar, South, 48]
+      - [Apr, South, 7]
+      - [May, South, 96]
+      - [Jun, South, 12480]
+      - [Jul, South, 1840]
+      - [Aug, South, 312]
+      - [Sep, South, 48]
+      - [Oct, South, 7]
+      - [Nov, South, 96]
+      - [Dec, South, 12480]
+      - [Jan, East, 7]
+      - [Feb, East, 96]
+      - [Mar, East, 12480]
+      - [Apr, East, 1840]
+      - [May, East, 312]
+      - [Jun, East, 48]
+      - [Jul, East, 7]
+      - [Aug, East, 96]
+      - [Sep, East, 12480]
+      - [Oct, East, 1840]
+      - [Nov, East, 312]
+      - [Dec, East, 48]
+      - [Jan, West, 1840]
+      - [Feb, West, 312]
+      - [Mar, West, 48]
+      - [Apr, West, 7]
+      - [May, West, 96]
+      - [Jun, West, 12480]
+      - [Jul, West, 1840]
+      - [Aug, West, 312]
+      - [Sep, West, 48]
+      - [Oct, West, 7]
+      - [Nov, West, 96]
+      - [Dec, West, 12480]
+      - [Jan, Central, 7]
+      - [Feb, Central, 96]
+      - [Mar, Central, 12480]
+      - [Apr, Central, 1840]
+      - [May, Central, 312]
+      - [Jun, Central, 48]
+      - [Jul, Central, 7]
+      - [Aug, Central, 96]
+      - [Sep, Central, 12480]
+      - [Oct, Central, 1840]
+      - [Nov, Central, 312]
+      - [Dec, Central, 48]
+      - [Jan, Export, 1840]
+      - [Feb, Export, 312]
+      - [Mar, Export, 48]
+      - [Apr, Export, 7]
+      - [May, Export, 96]
+      - [Jun, Export, 12480]
+      - [Jul, Export, 1840]
+      - [Aug, Export, 312]
+      - [Sep, Export, 48]
+      - [Oct, Export, 7]
+      - [Nov, Export, 96]
+      - [Dec, Export, 12480]
+
+rows:
+  - c_labels
+  - cols: [c_small, c_bold]
+
+charts:
+  c_labels:
+    query: traffic
+    type: heatmap
+    x: day
+    y: block
+    color: visits
+    title: Dark ink on pale cells, light ink on dark cells
+    subtitle: Every cell prints its value, and every label reads against its own fill, from the palest cell to the darkest.
+    style:
+      marks:
+        rect:
+          labels:
+            visible: true
+  c_small:
+    query: sales
+    type: heatmap
+    x: month
+    y: region
+    color: orders
+    title: Labels that do not fit are left off
+    subtitle: Short values print; wide ones such as 12,480 are omitted from their narrow cells rather than shrunk or clipped.
+    style:
+      marks:
+        rect:
+          labels:
+            visible: true
+            format: ",.0f"
+  c_bold:
+    query: traffic
+    type: heatmap
+    x: day
+    y: block
+    color: visits
+    title: One cell's label in bold red
+    subtitle: Only the cells at or above 125 visits carry the conditional rule.
+    style:
+      marks:
+        rect:
+          labels:
+            visible: true
+      conditional:
+        visits:
+          - gte: 125
+            marks:
+              text:
+                font:
+                  color: "#c62828"
+                  weight: 700

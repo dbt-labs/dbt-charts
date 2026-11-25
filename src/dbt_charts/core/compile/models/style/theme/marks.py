@@ -849,6 +849,15 @@ class PointMarkStyle(BaseModel):
         default=None,
         description="Stroke width in pixels for hollow point rings; 'auto' uses VL default.",
     )
+    halo: Annotated[float | None, Absent("no ring")] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Width in pixels of a ring in the canvas color drawn around each point, "
+            "so overlapping points stay apart. Drawn by a point map and refused by "
+            "a scatter; unset draws none."
+        ),
+    )
     # SkipInheritSlots(cascade=True): leaf fields inside labels inherit individually
     # from the parent slot (no container-copy since labels is never None).
     labels: Annotated[PointLabelsStyle, SkipInheritSlots(cascade=True)] = Field(
@@ -927,7 +936,7 @@ class RuleMarkStyle(BaseModel):
 
 
 class RectMarkStyle(BaseModel):
-    """Rect mark opacity and stroke."""
+    """Rect mark opacity, stroke and value labels."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -957,6 +966,10 @@ class RectMarkStyle(BaseModel):
     ] = Field(
         default=None,
         description="Mark stroke style; None means not overridden at this level.",
+    )
+    labels: Annotated[MarkLabelsStyle, SkipInheritSlots(cascade=True)] = Field(
+        default_factory=MarkLabelsStyle,
+        description="Value label style for rect marks (heatmap cells).",
     )
 
 

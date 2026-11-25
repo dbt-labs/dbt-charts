@@ -62,7 +62,7 @@ def resolve_horizontal_bar_chart(make_chart, seed_with_bar_endpoint_labels):
         enabled: bool,
         color: str | None = "series",
         stack: Any = None,
-        stack_order: str | None = None,
+        series_order: str | None = None,
         author_asked: bool = False,
         width: float | None = None,
         axis_y: dict[str, Any] | None = None,
@@ -76,8 +76,8 @@ def resolve_horizontal_bar_chart(make_chart, seed_with_bar_endpoint_labels):
         if sort is not None:
             kwargs["sort"] = sort
         style: dict[str, Any] = {"orientation": "horizontal"}
-        if stack_order is not None:
-            style["stack_order"] = stack_order
+        if series_order is not None:
+            style["series_order"] = series_order
         if axis_y is not None:
             style["axis_y"] = axis_y
         if author_asked:
@@ -489,6 +489,8 @@ def test_categorical_axis_gutter_is_zero_when_labels_are_hidden() -> None:
         chart.y,
         has_quantitative_axis=True,
         temporal_band_axes=frozenset(),
+        x_type_defaulted=False,
+        y_type_defaulted=False,
         horizontal=None,
     )
     hidden_labels = plan.axes.x.style.labels.model_copy(update={"visible": False})

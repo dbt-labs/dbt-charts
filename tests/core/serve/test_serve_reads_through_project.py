@@ -130,7 +130,6 @@ class TestRenderBoardFileExistenceCheckViaProject:
                 project=project,
                 env=make_exec_env(project=project),
                 clock=utc_now,
-                carried_query="",
             )
 
         assert exc_info.value.status_code == 404

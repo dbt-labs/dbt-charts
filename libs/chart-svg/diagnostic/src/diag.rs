@@ -22,6 +22,10 @@ pub fn err_adapter_duckdb_config_invalid(field: impl Into<Value>, reason: impl I
     Diagnostic::new(&codes::ERR_ADAPTER_DUCKDB_CONFIG_INVALID, [("field", field.into()), ("reason", reason.into())])
 }
 
+pub fn err_adapter_duckdb_quack_read_only(path: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_ADAPTER_DUCKDB_QUACK_READ_ONLY, [("path", path.into())])
+}
+
 pub fn err_adapter_not_installed(package: impl Into<Value>, adapter_type: impl Into<Value>, install: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_ADAPTER_NOT_INSTALLED, [("package", package.into()), ("adapter_type", adapter_type.into()), ("install", install.into())])
 }
@@ -350,6 +354,18 @@ pub fn err_dbt_target_path_invalid(origin: impl Into<Value>, detail: impl Into<V
     Diagnostic::new(&codes::ERR_DBT_TARGET_PATH_INVALID, [("origin", origin.into()), ("detail", detail.into())])
 }
 
+pub fn err_domain_open_end_independent_scale(chart_id: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_DOMAIN_OPEN_END_INDEPENDENT_SCALE, [("chart_id", chart_id.into())])
+}
+
+pub fn err_domain_open_end_inverted(chart_id: impl Into<Value>, pinned_end: impl Into<Value>, pinned: impl Into<Value>, fitted: impl Into<Value>, direction: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_DOMAIN_OPEN_END_INVERTED, [("chart_id", chart_id.into()), ("pinned_end", pinned_end.into()), ("pinned", pinned.into()), ("fitted", fitted.into()), ("direction", direction.into())])
+}
+
+pub fn err_domain_open_end_unsupported(chart_id: impl Into<Value>, axis: impl Into<Value>, chart_type: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_DOMAIN_OPEN_END_UNSUPPORTED, [("chart_id", chart_id.into()), ("axis", axis.into()), ("chart_type", chart_type.into())])
+}
+
 pub fn err_driver_checksum_mismatch(subject: impl Into<Value>, actual: impl Into<Value>, expected: impl Into<Value>, outcome: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_DRIVER_CHECKSUM_MISMATCH, [("subject", subject.into()), ("actual", actual.into()), ("expected", expected.into()), ("outcome", outcome.into())])
 }
@@ -586,6 +602,10 @@ pub fn err_heatmap_sort_date_axes(sort_by: impl Into<Value>, x: impl Into<Value>
     Diagnostic::new(&codes::ERR_HEATMAP_SORT_DATE_AXES, [("sort_by", sort_by.into()), ("x", x.into()), ("y", y.into())])
 }
 
+pub fn err_histogram_axis_x_type(chart_id: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_HISTOGRAM_AXIS_X_TYPE, [("chart_id", chart_id.into())])
+}
+
 pub fn err_histogram_non_numeric(chart_id: impl Into<Value>, field: impl Into<Value>, vl_type: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_HISTOGRAM_NON_NUMERIC, [("chart_id", chart_id.into()), ("field", field.into()), ("vl_type", vl_type.into())])
 }
@@ -676,10 +696,6 @@ pub fn err_labels_anchor_unsupported(chart_id: impl Into<Value>, field_path: imp
 
 pub fn err_labels_field_not_found(chart_id: impl Into<Value>, field: impl Into<Value>, source: impl Into<Value>, available: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_LABELS_FIELD_NOT_FOUND, [("chart_id", chart_id.into()), ("field", field.into()), ("source", source.into()), ("available", available.into())])
-}
-
-pub fn err_layer_area_split_horizontal_base(chart_id: impl Into<Value>) -> Diagnostic {
-    Diagnostic::new(&codes::ERR_LAYER_AREA_SPLIT_HORIZONTAL_BASE, [("chart_id", chart_id.into())])
 }
 
 pub fn err_layer_axis_position_endpoint_labels(chart_id: impl Into<Value>) -> Diagnostic {
@@ -1218,6 +1234,10 @@ pub fn err_table_freeze_invalid(chart_id: impl Into<Value>, reason: impl Into<Va
     Diagnostic::new(&codes::ERR_TABLE_FREEZE_INVALID, [("chart_id", chart_id.into()), ("reason", reason.into())])
 }
 
+pub fn err_table_glyph_ink_without_glyph(chart_id: impl Into<Value>, tested: impl Into<Value>, ink: impl Into<Value>, target: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_TABLE_GLYPH_INK_WITHOUT_GLYPH, [("chart_id", chart_id.into()), ("tested", tested.into()), ("ink", ink.into()), ("target", target.into())])
+}
+
 pub fn err_table_link_filter_unknown(filter_name: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_TABLE_LINK_FILTER_UNKNOWN, [("filter_name", filter_name.into())])
 }
@@ -1520,6 +1540,10 @@ pub fn warn_annotation_note_moved(chart_id: impl Into<Value>, index: impl Into<V
 
 pub fn warn_annotation_nothing_drawn(chart_id: impl Into<Value>, index: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_ANNOTATION_NOTHING_DRAWN, [("chart_id", chart_id.into()), ("index", index.into()), ("reason", reason.into())])
+}
+
+pub fn warn_annotation_rule_labels_numbered(chart_id: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_ANNOTATION_RULE_LABELS_NUMBERED, [("chart_id", chart_id.into())])
 }
 
 pub fn warn_area_unstacked_reads_as_stacked(chart_id: impl Into<Value>, count: impl Into<Value>, field: impl Into<Value>) -> Diagnostic {

@@ -247,7 +247,7 @@ class TestRetiredTokensRespellOnDisk:
             "        static: category_dark[2]\n"
         )
 
-        result = migrate_board_yaml_text(text)
+        result = migrate_board_yaml_text(text).text
 
         assert (
             '      marks:\n        bar:\n          color: "category[2].dark"' in result

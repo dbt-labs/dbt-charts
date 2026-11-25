@@ -37,21 +37,27 @@ def _reset() -> Iterator[None]:
 
 
 def _resolved_torn(
-    theme: Style, slot: str, vl_type: str
+    theme: Style, slot: str, vl_type: str, chart_type: str = "line"
 ) -> ResolvedAxisGridTornBaselineStyle:
     return resolved_axis_style(
         resolve_chart_style_context(theme),
         slot,
         vl_type,
-        chart_type="line",
+        chart_type=chart_type,
         labeled=False,
     ).grid.torn_baseline
 
 
-def test_off_by_default_on_both_axes() -> None:
+@pytest.mark.parametrize("chart_type", ["line", "bar"])
+def test_on_by_default_for_lines_and_floating_bars(chart_type: str) -> None:
     theme = get_theme_style()
-    assert _resolved_torn(theme, "axis_y", "quantitative").enabled is False
-    assert _resolved_torn(theme, "axis_x", "ordinal").enabled is False
+    assert _resolved_torn(theme, "axis_y", "quantitative", chart_type).enabled is True
+
+
+def test_scatter_is_off_by_default_on_both_axes() -> None:
+    theme = get_theme_style()
+    assert _resolved_torn(theme, "axis_y", "quantitative", "scatter").enabled is False
+    assert _resolved_torn(theme, "axis_x", "quantitative", "scatter").enabled is False
 
 
 def test_theme_values_bake_field_for_field() -> None:
@@ -82,7 +88,9 @@ def test_an_axis_y_override_reaches_axis_y_only() -> None:
     assert _resolved_torn(theme, "axis_y", "quantitative") == (
         ResolvedAxisGridTornBaselineStyle(enabled=True, amplitude=6.5)
     )
-    assert _resolved_torn(theme, "axis_x", "ordinal").enabled is False
+    assert _resolved_torn(theme, "axis_x", "ordinal") == _resolved_torn(
+        base, "axis_x", "ordinal"
+    )
 
 
 def test_a_bite_of_zero_is_rejected() -> None:
@@ -119,3 +127,31 @@ def _line_svg(torn_enabled: bool) -> str:
 def test_enabled_torn_baseline_draws_the_wave() -> None:
     assert 'class="torn-baseline"' in _line_svg(True)
     assert 'class="torn-baseline"' not in _line_svg(False)
+
+
+def _scatter_svg(style: dict[str, Any]) -> str:
+    fields: dict[str, Any] = {
+        "id": "dots",
+        "type": "scatter",
+        "x": "spend",
+        "y": "price",
+        "query": SqlQuery(sql="SELECT 1", source="src"),
+        "query_name": "q",
+        "style": {
+            **style,
+            "axis_y": {
+                **style.get("axis_y", {}),
+                "scale": {"continuous": {"zero": False}},
+            },
+        },
+    }
+    data = [{"spend": 10.0 + m, "price": 52.0 + 3 * m} for m in range(6)]
+    return render_chart_svg(_CHART_ADAPTER.validate_python(fields), data)
+
+
+def test_scatter_tears_only_when_its_chart_asks() -> None:
+    assert 'class="torn-baseline"' not in _scatter_svg({})
+    chart_wide = {"axis": {"grid": {"torn_baseline": {"enabled": True}}}}
+    assert 'class="torn-baseline"' in _scatter_svg(chart_wide)
+    one_axis = {"axis_y": {"grid": {"torn_baseline": {"enabled": True}}}}
+    assert _scatter_svg(one_axis).count('class="torn-baseline"') == 1

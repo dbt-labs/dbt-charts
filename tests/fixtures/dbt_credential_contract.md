@@ -6,7 +6,7 @@ This snapshot is the review boundary for dbt-adapter upgrades. dbt charts' stric
 
 ## bigquery
 
-dbt-bigquery 1.11.1
+dbt-bigquery 1.12.3
 
 ### `dbt.adapters.bigquery.credentials.BigQueryCredentials`
 
@@ -19,11 +19,13 @@ dbt-bigquery 1.11.1
 - `api_endpoint`
 - `priority`
 - `maximum_bytes_billed`
+- `reservation`
 - `impersonate_service_account`
 - `job_retry_deadline_seconds`
 - `job_retries`
 - `job_creation_timeout_seconds`
 - `job_execution_timeout_seconds`
+- `job_link_info_level_log`
 - `keyfile`
 - `keyfile_json`
 - `token`

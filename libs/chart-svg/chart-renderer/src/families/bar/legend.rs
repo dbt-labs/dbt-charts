@@ -261,12 +261,12 @@ pub(super) struct LegendState {
 /// - `suppress`: `has_per_series` — a normal `support_table` per_series
 ///   entry suppresses an otherwise-shown legend at render time.
 /// - `reverse_stack_for_legend`: vertical's stacked legend reads
-///   `stack_order` reversed (`apply_legend_entry_order`'s own
-///   orientation split — horizontal keeps `stack_order` as-is).
+///   `series_order` reversed (`apply_legend_entry_order`'s own
+///   orientation split — horizontal keeps `series_order` as-is).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_legend_state(
     color_domain: &[String],
-    stack_order: &[String],
+    series_order: &[String],
     palette_domain: &[String],
     is_stacked: bool,
     legend: &LegendConfig,
@@ -285,9 +285,9 @@ pub(super) fn build_legend_state(
     let entries: Vec<(String, String)> = if shown && !color_domain.is_empty() && !numeric {
         if is_stacked {
             let order: Vec<String> = if reverse_stack_for_legend {
-                stack_order.iter().rev().cloned().collect()
+                series_order.iter().rev().cloned().collect()
             } else {
-                stack_order.to_vec()
+                series_order.to_vec()
             };
             stacked_legend_entries(&authored_legend_order(order, legend, wide_labels), palette_domain, palette, category_scale, wide_labels, patterns)?
         } else {
@@ -385,7 +385,7 @@ pub(super) fn grouped_legend_domain(
 /// Fill color keys off `palette_domain`; entries are sequenced independently
 /// by `legend_domain` — production's
 /// `apply_legend_entry_order` pins the legend to `order` (horizontal) or
-/// `reversed(order)` (vertical) for a stacked bar; see `bind::stack::sorted_series_by_stack_order`'s
+/// `reversed(order)` (vertical) for a stacked bar; see `bind::stack::sorted_by_series_order`'s
 /// doc comment. A grouped (`stack = "none"`) color bar has no stack order to
 /// pin to, so its caller passes `grouped_legend_domain` as `legend_domain` —
 /// alphabetical display order, the VL default, unless an authored

@@ -27,7 +27,7 @@
 //! default (and only supported) order is descending global series sum, index 0
 //! at the baseline (x=0 for horizontal, the value-axis zero for vertical) and
 //! subsequent series stacked outward. Matches production's
-//! `sorted_series_by_stack_order(..., stack_order=None)` +
+//! `sorted_by_series_order(..., series_order=None)` +
 //! `series_order_expression` / VL `order` channel (ascending sort on that
 //! computed index) — see `emitters/bar.py`. Segment fill color follows that
 //! same baseline-first order, so the baseline series receives palette slot 0.
@@ -348,11 +348,11 @@ struct BarStyle {
     single_series_fill: String,
     series_label: SeriesLabel,
     endpoint_labels: EndpointLabels,
-    /// Author-facing stack ordering: `value` (the default when `None`,
+    /// Author-facing stack or group order: `value` (the default when `None`,
     /// largest global sum first), `data`, or `alphabetical`. Any other
-    /// string is refused by `bind::stack::sorted_series_by_stack_order`.
+    /// string is refused by `bind::stack::sorted_by_series_order`.
     #[serde(default)]
-    stack_order: Option<String>,
+    series_order: Option<String>,
     #[serde(default)]
     overlap: Option<Overlap>,
     #[serde(default)]
@@ -1478,6 +1478,61 @@ mod tests {
             payload_json
         }
 
+        /// A blank `x_label` hides the axis title only: every hover row that
+        /// names the category (a layer's, a value label's, a support_table
+        /// cell's) reads as it does with no label authored.
+        #[test]
+        fn a_blank_x_label_changes_no_hover_row() {
+            let cats = [("Jan", 120.0, 130.0), ("Feb", 150.0, 140.0)];
+            let mut strip = super::bottom_strip_payload();
+            strip["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
+            let variants = [
+                ("line layer", payload_with_layer(&cats, line_layer_json("#dea628"))),
+                ("bar layer", {
+                    let mut layer = bar_layer_json(None);
+                    layer["x"] = serde_json::Value::Null;
+                    let mut p = payload_with_layer(&cats, layer);
+                    p["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
+                        "visible": true, "field": null, "format": ",.0f", "dx": null, "dy": null, "font": null, "position": null
+                    });
+                    p
+                }),
+                ("scatter layer", payload_with_layer(&cats, scatter_layer_json(true))),
+                ("support_table", strip),
+                ("quantitative-x layer", {
+                    let xs: Vec<(f64, f64)> = (0..6).map(|h| (h as f64, 100.0 + h as f64)).collect();
+                    let mut p = super::make_continuous_payload(&xs);
+                    for row in p["rows"].as_array_mut().unwrap() {
+                        row["target"] = serde_json::json!(150.0);
+                    }
+                    let mut layer = bar_layer_json(None);
+                    layer["x"] = serde_json::Value::Null;
+                    layer["bar_mark"].as_object_mut().unwrap().extend(
+                        [("gap", serde_json::json!(3.0)), ("min_size", serde_json::json!(4.0)), ("max_size", serde_json::json!(20.0)), ("size", serde_json::Value::Null)]
+                            .map(|(k, v)| (k.to_string(), v)),
+                    );
+                    p["resolved"]["layers"] = serde_json::json!([layer, scatter_layer_json(true)]);
+                    p["resolved"]["legend"]["visible"] = serde_json::json!(true);
+                    p
+                }),
+            ];
+            let mut changed = Vec::new();
+            for (name, mut p) in variants {
+                p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
+                let arias = |label: Option<&str>| -> Vec<String> {
+                    let mut p = p.clone();
+                    if let Some(label) = label {
+                        p["resolved"]["x_label"] = serde_json::json!(label);
+                    }
+                    let svg = render(&make_payload(p), &test_fonts()).unwrap_or_else(|err| panic!("{name}: {err}"));
+                    crate::contract::aria_labels(&svg)
+                };
+                let plain = arias(None);
+                changed.extend(arias(Some("")).into_iter().filter(|a| !plain.contains(a)).map(|a| format!("{name}: {a}")));
+            }
+            assert!(changed.is_empty(), "{changed:#?}");
+        }
+
         /// A layer's marks are not degenerate, so production renders the chart
         /// and the engine must not claim it paints no marks.
         #[test]
@@ -1662,6 +1717,29 @@ mod tests {
             // dedup-on-equal-label case is pinned by the sibling test below.
             assert!(svg.contains(">Revenue<"), "base legend label: {svg}");
             assert!(svg.contains(">Target<"), "layer legend label: {svg}");
+        }
+
+        /// A blank `y_label` hides the axis title only: the base series'
+        /// legend entry keeps the measure's own name beside the layer's.
+        #[test]
+        fn a_blank_y_label_keeps_the_base_layer_legend_entry() {
+            let legend_svg = |label: Option<&str>| {
+                let mut payload_json = make_vertical_payload(&[("1", 120.0), ("3", 150.0)], false);
+                payload_json["resolved"]["query_name"] = serde_json::json!("actual");
+                payload_json["resolved"]["layers"] = serde_json::json!([bar_layer_json(Some("projected"))]);
+                payload_json["resolved"]["legend"]["visible"] = serde_json::json!(true);
+                if let Some(label) = label {
+                    payload_json["resolved"]["y_label"] = serde_json::json!(label);
+                }
+                payload_json["datasets"] = serde_json::json!({
+                    "projected": [{"product": "2", "target": 140.0}, {"product": "4", "target": 170.0}]
+                });
+                render(&make_payload(payload_json), &test_fonts()).expect("renders")
+            };
+            assert!(legend_svg(None).contains(">Revenue<"));
+            let svg = legend_svg(Some(""));
+            assert!(svg.contains(">Revenue<"), "base legend entry: {svg}");
+            assert!(svg.contains(">Target<"), "layer legend entry: {svg}");
         }
 
         /// The probed fixture's own field-name coincidence: base y="tickets"
@@ -2192,6 +2270,36 @@ mod tests {
             assert_eq!(label_fill(&crossed, "1234"), "#313233", "{crossed}");
         }
 
+        /// A 1234 and a `feb` bar labeled above, a `grid` colored gridline at 1250 through the 1234 label.
+        fn labels_above_a_gridline_colored(grid: &str, feb: f64) -> String {
+            let mut bars = make_vertical_payload(&[("Jan", 1234.0), ("Feb", feb)], false);
+            bars["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
+                "visible": true, "position": "above", "field": null, "format": null, "dx": null, "dy": null, "font": null
+            });
+            let axis_y = &mut bars["resolved"]["style"]["axis_y"];
+            axis_y["grid"]["color"] = serde_json::json!(grid);
+            axis_y["tick_values"] = serde_json::json!([0.0, 625.0, 1250.0]);
+            axis_y["domain_min"] = serde_json::json!(0.0);
+            axis_y["domain_max"] = serde_json::json!(1250.0);
+            render(&make_payload(bars), &test_fonts()).expect("renders")
+        }
+
+        #[test]
+        fn a_bar_label_on_a_gridline_at_text_contrast_takes_the_other_side_of_the_bar_end() {
+            let faint = labels_above_a_gridline_colored("#D0D3D9", 1234.0);
+            let heavy = labels_above_a_gridline_colored("#313233", 1234.0);
+            assert_eq!(label_fill(&faint, "1234"), "#313233", "a faint gridline is painted over: {faint}");
+            assert!(label_y(&heavy, "1234") > label_y(&faint, "1234") + 10.0, "inside the bar, below the tip: {heavy}");
+            assert_eq!(label_fill(&heavy, "1234"), "#ffffff", "{heavy}");
+        }
+
+        #[test]
+        fn once_one_bar_label_crosses_its_bar_end_the_layers_other_labels_follow() {
+            let heavy = labels_above_a_gridline_colored("#313233", 1000.0);
+            assert_eq!(label_fill(&heavy, "1234"), "#ffffff", "{heavy}");
+            assert_eq!(label_fill(&heavy, "1000"), "#ffffff", "clear of the gridline, it still joins the other side: {heavy}");
+        }
+
         /// A 1234 bar and a bar of `short` with a `bottom` label each, and a layer line at `target`.
         fn short_bar_with_a_line_at(short: f64, target: f64) -> String {
             let mut layer = line_layer_json("#dea628");
@@ -2571,10 +2679,10 @@ mod tests {
             d.trim_end_matches('Z').rsplit(',').next().expect("a vertex").parse().expect("a number")
         }
 
-        /// An area layer's color groups stack where they share a category: the first
-        /// value on top, the rest closing down onto the one below instead of the zero.
+        /// An area layer's color groups never stack where they share a category: every
+        /// fill closes onto the zero line.
         #[test]
-        fn an_area_layer_with_its_own_color_stacks_its_groups() {
+        fn an_area_layer_with_its_own_color_never_stacks_its_groups() {
             let mut layer = area_layer_json(None);
             layer["color"] = serde_json::json!("region");
             layer["ink"] = serde_json::Value::Null;
@@ -2591,7 +2699,7 @@ mod tests {
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
             let zero = area_closing_y(&svg, "#ad9c7f");
             let on_b = area_closing_y(&svg, "#779bc9");
-            assert!(on_b < zero, "a closes onto b's top, above the zero line: {on_b} vs {zero}");
+            assert_eq!(on_b, zero, "a closes onto the zero line, not b's top");
         }
 
         /// `_layer_series_color`: a line layer's series color is its stroke only;
@@ -2667,7 +2775,7 @@ mod tests {
                 scatter["axis_y"][section] = serde_json::json!({ key: value });
                 render(&make_payload(payload_with_layer(&[("Jan", 1000.0, 3.1)], scatter)), &test_fonts())
             };
-            let domained = layer("scale", "domain", serde_json::json!([0, 200])).expect("an authored layer domain renders");
+            let domained = layer("scale", "domain", serde_json::json!({"min": 0, "max": 200})).expect("an authored layer domain renders");
             assert!(domained.contains(">200<"), "the layer ladder tops out at the authored 200: {domained}");
             let ticks = |count: u32| {
                 let svg = layer("ticks", "count", serde_json::json!(count)).expect("an authored tick count renders");
@@ -2686,7 +2794,7 @@ mod tests {
             let render_clip = |clip: Option<bool>| {
                 let mut scatter = scatter_layer_json(false);
                 scatter["axis_y"]["position"] = serde_json::json!("right");
-                scatter["axis_y"]["scale"] = serde_json::json!({"domain": [0, 2]});
+                scatter["axis_y"]["scale"] = serde_json::json!({"domain": {"min": 0, "max": 2}});
                 if let Some(clip) = clip {
                     scatter["axis_y"]["scale"]["clip"] = serde_json::json!(clip);
                 }
@@ -2698,7 +2806,7 @@ mod tests {
         }
 
         #[test]
-        fn an_area_layer_over_a_grouped_bar_stacks_its_rows_per_category() {
+        fn an_area_layer_over_a_grouped_bar_draws_each_row_from_zero() {
             let mut payload_json = make_vertical_payload(&[("Jan", 100.0)], true);
             payload_json["rows"] = serde_json::json!([
                 {"product": "Jan", "region": "North", "revenue": 100.0, "target": 90.0},
@@ -2706,12 +2814,11 @@ mod tests {
             ]);
             payload_json["resolved"]["layers"] = serde_json::json!([area_layer_json(None)]);
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
-            // Both rows of the category stack (90, then 90 on top of it): the second vertex of
-            // the fill's top edge sits above the first.
+            // Both rows of the category sit at 90: the fill's top edge stays flat.
             let area = &svg[svg.find("mark-area").expect("an area mark")..];
             let d = area.split("d=\"").nth(1).and_then(|r| r.split('"').next()).expect("the area path");
             let ys: Vec<f64> = d.split(['M', 'L']).skip(1).map(|pt| pt.split(',').nth(1).unwrap().trim_end_matches('Z').parse().unwrap()).collect();
-            assert!(ys[1] < ys[0], "{ys:?}");
+            assert_eq!(ys[1], ys[0], "{ys:?}");
         }
 
         /// A pinned area paints from its own zero, so its scale always nests a
@@ -8455,7 +8562,7 @@ mod tests {
     /// scan of the folded rows (`color_domain_of`'s own input). `mid` is
     /// null on every row (absent entirely, same fold outcome as an explicit
     /// null cell), so a row scan sees only `["alpha", "zeta"]` and shifts
-    /// `zeta` into slot 1; the sorted, complete domain is `["alpha", "mid",
+    /// `zeta` into slot 1; the complete domain, alphabetical here, is `["alpha", "mid",
     /// "zeta"]` and `zeta` must keep slot 2, with `mid` still a legend entry.
     #[test]
     fn wide_bar_null_measure_still_owns_its_sorted_legend_slot() {
@@ -8463,6 +8570,7 @@ mod tests {
         let mut p = make_wide_horizontal_payload();
         p["resolved"]["wide_measures"] = json!(["alpha", "mid", "zeta"]);
         p["resolved"]["palette"] = json!(["#111111", "#222222", "#333333"]);
+        p["resolved"]["style"]["series_order"] = json!("alphabetical");
         p["rows"] = json!([
             {"product": "Alpha", "alpha": 800.0, "zeta": 200.0},
             {"product": "Beta", "alpha": 600.0, "zeta": 150.0}
@@ -8488,7 +8596,7 @@ mod tests {
     }
 
     /// A wide (`revenue`, `profit`) horizontal stacked bar: the stack
-    /// accumulates in `sorted_series_by_stack_order`'s baseline order over
+    /// accumulates in `sorted_by_series_order`'s baseline order over
     /// the unfolded rows (`_emit_wide_bar`), and the palette follows it.
     fn make_wide_stacked_payload() -> serde_json::Value {
         use serde_json::json;
@@ -11672,13 +11780,13 @@ mod tests {
         ];
         for (name, cols, expected) in cases {
             let cat_domain: Vec<String> = (0..cols.len()).map(|i| format!("c{i}")).collect();
-            let stack_order = vec!["a".to_string(), "b".to_string()];
+            let series_order = vec!["a".to_string(), "b".to_string()];
             let data_map: HashMap<(String, String), f64> = cols
                 .iter()
                 .enumerate()
                 .flat_map(|(i, &(a, b))| [((format!("c{i}"), "a".to_string()), a), ((format!("c{i}"), "b".to_string()), b)])
                 .collect();
-            let anchors = stacked_rail_anchors(&cat_domain, &stack_order, &data_map, false, None).expect("anchors");
+            let anchors = stacked_rail_anchors(&cat_domain, &series_order, &data_map, false, None).expect("anchors");
             let (a, b) = cols[expected];
             assert_eq!(anchors, [("a".to_string(), a / 2.0), ("b".to_string(), a + b / 2.0)], "{name}");
         }
@@ -11690,10 +11798,10 @@ mod tests {
     fn a_stacked_rail_anchors_a_gappy_series_at_its_own_latest_column_before_the_anchor() {
         use super::domain::stacked_rail_anchors;
         let cat_domain: Vec<String> = (0..4).map(|i| format!("c{i}")).collect();
-        let stack_order = vec!["a".to_string(), "b".to_string()];
+        let series_order = vec!["a".to_string(), "b".to_string()];
         let data: [(usize, &str, f64); 7] = [(0, "a", 60.), (0, "b", 40.), (1, "a", 100.), (2, "a", 100.), (3, "a", 2.), (3, "b", 1.), (2, "a", 100.)];
         let data_map: HashMap<(String, String), f64> = data.iter().map(|&(i, series, v)| ((format!("c{i}"), series.to_string()), v)).collect();
-        let anchors = stacked_rail_anchors(&cat_domain, &stack_order, &data_map, false, None).expect("anchors");
+        let anchors = stacked_rail_anchors(&cat_domain, &series_order, &data_map, false, None).expect("anchors");
         assert_eq!(anchors, [("a".to_string(), 50.0), ("b".to_string(), 80.0)]);
     }
 
@@ -11937,7 +12045,7 @@ mod tests {
     /// `playground/support-table-attached/weekly_bar_grouped`'s shape: a
     /// stacked, colored bar's `per_series:` entry expands to one strip row
     /// per series, in the SAME order the endpoint rail's own labels take
-    /// (`stack_order` — baseline series "y" first, per
+    /// (`series_order` — baseline series "y" first, per
     /// `vertical_stacked_rail_places_series_labels_at_segment_midpoints`),
     /// each row's cell the SUM of `val` grouped by (cat, series), the label
     /// the series name painted in the rail's own companion ink. Mutation
@@ -12104,13 +12212,13 @@ mod tests {
     /// distinct single-column law (`_per_series_column_header`,
     /// support_table_attachment.py:998-1008 — "the series themselves are
     /// named by the chart's own legend"), which this renderer doesn't
-    /// model. `stack_order` (this file's `series_order` source) is only
+    /// model. `series_order` (this file's `series_order` source) is only
     /// ever built `if is_stacked`, so a grouped bar's `per_series_order` is
     /// always empty and `visual_row_count`'s own `series_count > 0` guard
     /// refuses by name before any strip row is built — never a
     /// silently-wrong one-row-per-series render. Mutation counterfactual:
     /// seeding `per_series_order` from `color_domain` instead of
-    /// `stack_order` would make this render (wrongly) instead of refusing.
+    /// `series_order` would make this render (wrongly) instead of refusing.
     #[test]
     fn bar_support_table_grouped_bar_per_series_entry_is_rejected() {
         use serde_json::json;
@@ -12559,8 +12667,9 @@ mod tests {
 
         let mut rects = parse_rects(&svg);
         assert_eq!(rects.len(), 4, "2 categories × 2 series: {rects:?}");
-        // "y" is the chart's larger series, so it is the left sub-band (si=0) within each category
-        // cluster and "x" the right one (si=1) — sorted by x this gives yA, xA, yB, xB.
+        // "y" is the chart's larger series and leads in every category, so it is the
+        // left sub-band within each category cluster and "x" the right one — sorted
+        // by x this gives yA, xA, yB, xB.
         rects.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         assert_eq!(
             rects.iter().map(|r| r.4.as_str()).collect::<Vec<_>>(),
@@ -12614,8 +12723,8 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         for orientation in ["horizontal", "vertical"] {
-            let stack_order = legend_labels(orientation, None);
-            let mut reversed = stack_order.clone();
+            let series_order = legend_labels(orientation, None);
+            let mut reversed = series_order.clone();
             reversed.reverse();
             assert_eq!(legend_labels(orientation, Some(json!(reversed))), reversed, "{orientation}: values reorder the legend");
             assert_eq!(legend_labels(orientation, Some(json!(["y"]))), ["y"], "{orientation}: values narrow the legend");
@@ -12755,7 +12864,7 @@ mod tests {
     }
 
     /// The board slot governs the FILL only — the legend's DISPLAY order
-    /// stays production's own `reversed(stack_order)` for a vertical stacked
+    /// stays production's own `reversed(series_order)` for a vertical stacked
     /// bar (`apply_legend_entry_order`), never the board's slot order.
     #[test]
     fn vertical_stacked_legend_display_order_ignores_the_board_slot() {
@@ -12772,13 +12881,13 @@ mod tests {
             let label = legend_label_text(snippet);
             entries.push((label.to_string(), fill.to_string()));
         }
-        // Display order is still reversed(stack_order) = ["x", "y"] (stack
+        // Display order is still reversed(series_order) = ["x", "y"] (stack
         // order is baseline-first: y, x — reversed puts x first), but each
         // swatch's fill follows its board slot, not its display position.
         assert_eq!(
             entries,
             vec![("x".to_string(), "#3164a3".to_string()), ("y".to_string(), "#779bc9".to_string())],
-            "display order stays production's reversed(stack_order); fills key off the board slot: {svg}"
+            "display order stays production's reversed(series_order); fills key off the board slot: {svg}"
         );
     }
 
@@ -12838,8 +12947,9 @@ mod tests {
 
         let mut rects = parse_rects(&svg);
         assert_eq!(rects.len(), 4, "2 categories × 2 series: {rects:?}");
-        // "y" is the chart's larger series, so it is the top sub-band (si=0) within each category
-        // cluster and "x" the bottom one (si=1) — sorted by y this gives yA, xA, yB, xB.
+        // "y" is the chart's larger series and leads in every category, so it is the
+        // top sub-band within each category cluster and "x" the bottom one — sorted
+        // by y this gives yA, xA, yB, xB.
         rects.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         assert_eq!(
             rects.iter().map(|r| r.4.as_str()).collect::<Vec<_>>(),
@@ -12953,7 +13063,7 @@ mod tests {
     }
 
     #[test]
-    fn horizontal_stacked_top_rail_shows_top_row_segments_in_stack_order() {
+    fn horizontal_stacked_top_rail_shows_top_row_segments_in_series_order() {
         use serde_json::json;
         // endpoint_labels.visible replaces the (already-suppressed) legend
         // with a rail above the plot, one label per series, centered on that
@@ -13621,6 +13731,128 @@ mod tests {
         assert!((bands[0].0 - (0.2 * step - 0.125 * 0.8 * step)).abs() < 0.02, "category-band offset: {bands:?}");
     }
 
+    /// Rows of a two-series chart: one `(x, y)` pair per category, `None` a missing bar.
+    fn pair_rows(pairs: &[(Option<f64>, Option<f64>)]) -> serde_json::Value {
+        let mut rows = Vec::new();
+        for (i, (x, y)) in pairs.iter().enumerate() {
+            let cat = format!("C{i}");
+            for (series, val) in [("x", x), ("y", y)] {
+                if let Some(val) = val {
+                    rows.push(serde_json::json!({"cat": cat, "series": series, "val": val}));
+                }
+            }
+        }
+        serde_json::Value::Array(rows)
+    }
+
+    fn both(pairs: &[(f64, f64)]) -> Vec<(Option<f64>, Option<f64>)> {
+        pairs.iter().map(|&(x, y)| (Some(x), Some(y))).collect()
+    }
+
+    /// Whether the two-series horizontal chart over `rows` draws overlapping bars
+    /// (1.25 × sub-step) rather than the gap (0.9 × sub-step).
+    fn overlaps(rows: serde_json::Value, overlap: Option<serde_json::Value>) -> bool {
+        let mut p = make_stacked_payload("horizontal", "none");
+        p["rows"] = rows;
+        if let Some(overlap) = overlap {
+            p["resolved"]["style"]["overlap"] = overlap;
+        }
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let bands = bar_bands(&svg, true);
+        let sub = bands[1].0 - bands[0].0;
+        bands[0].1 > sub
+    }
+
+    fn auto_overlaps(pairs: &[(f64, f64)]) -> bool {
+        overlaps(pair_rows(&both(pairs)), None)
+    }
+
+    /// With `auto`, two series overlap only when one is clearly the leader: it is
+    /// painted first and takes the first slot; each series keeps its color.
+    #[test]
+    fn the_leader_paints_first_in_the_first_slot_and_keeps_its_color() {
+        let mut p = make_stacked_payload("horizontal", "none");
+        p["resolved"]["legend"]["visible"] = serde_json::json!(true);
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let rects: Vec<_> = parse_rects(&svg).into_iter().filter(|r| r.2 != 10.0 && r.3 != 10.0).collect();
+        let fills: Vec<&str> = rects.iter().map(|r| r.4.as_str()).collect();
+        assert_eq!(fills, ["#3164a3", "#3164a3", "#779bc9", "#779bc9"], "y leads, so it paints first: {rects:?}");
+        assert!(rects[0].1 < rects[2].1, "y takes the first (top) slot of category C0/A: {rects:?}");
+        let legend: Vec<&str> = svg
+            .match_indices(&format!("width=\"{LEGEND_SWATCH}\""))
+            .map(|(pos, _)| legend_label_text(&svg[pos..(pos + 500).min(svg.len())]))
+            .collect();
+        assert_eq!(legend, ["y", "x"], "the legend lists the series in `series_order`, the larger first");
+    }
+
+    #[test]
+    fn two_series_cross_within_the_thirty_percent_cap_and_overlap() {
+        let mut pairs = vec![(10.0, 20.0); 7];
+        pairs[1] = (30.0, 20.0);
+        pairs[4] = (30.0, 20.0);
+        assert!(auto_overlaps(&pairs), "2 crossings in 7 groups");
+        pairs[6] = (30.0, 20.0);
+        assert!(!auto_overlaps(&pairs), "3 crossings in 7 groups");
+        let mut three = vec![(10.0, 20.0); 3];
+        three[0] = (30.0, 20.0);
+        assert!(!auto_overlaps(&three), "1 crossing in 3 groups");
+    }
+
+    #[test]
+    fn a_crossing_needs_more_than_five_percent_of_the_leader() {
+        let base = vec![(10.0, 20.0); 5];
+        for (front, crosses) in [(20.6, false), (20.0, false), (22.0, true)] {
+            let mut pairs = base.clone();
+            pairs[0] = (front, 20.0);
+            // One crossing in five groups is within the cap; two is not, and the leader still wins 3 of 5.
+            pairs[1] = (front, 20.0);
+            assert_eq!(!auto_overlaps(&pairs), crosses, "front {front} over a leader of 20");
+        }
+    }
+
+    #[test]
+    fn an_even_split_of_wins_has_no_leader() {
+        assert!(!auto_overlaps(&[(10.0, 20.0), (20.0, 10.0)]));
+    }
+
+    #[test]
+    fn missing_bars_and_opposite_signs_are_not_compared() {
+        let mut pairs = both(&[(10.0, 20.0); 3]);
+        pairs.push((Some(40.0), None));
+        pairs.push((None, Some(40.0)));
+        assert!(overlaps(pair_rows(&pairs), None), "unmatched categories leave the count");
+        let domain = ["x".to_string(), "y".to_string()];
+        let cell = |cat: &str, series: &str, v: f64| ((cat.to_string(), series.to_string()), v);
+        let opposite: std::collections::HashMap<_, _> =
+            [cell("A", "x", 10.0), cell("A", "y", -20.0), cell("B", "x", -5.0), cell("B", "y", 9.0)].into();
+        assert_eq!(super::marks::leading_series(&domain, &opposite), None, "nothing compared, no leader");
+        let negatives: std::collections::HashMap<_, _> = [cell("A", "x", -10.0), cell("A", "y", -20.0)].into();
+        assert_eq!(super::marks::leading_series(&domain, &negatives), Some(1), "magnitude leads");
+    }
+
+    #[test]
+    fn authored_overlap_ignores_the_leader_rule() {
+        let rows = pair_rows(&both(&[(10.0, 20.0), (20.0, 10.0)]));
+        assert!(overlaps(rows.clone(), Some(serde_json::json!("partial"))));
+        assert!(!overlaps(rows, Some(serde_json::json!("none"))));
+    }
+
+    /// An authored `series_order` keeps its slots: `auto` overlaps only when it already puts the leader first.
+    #[test]
+    fn an_authored_series_order_overlaps_only_with_the_leader_first() {
+        let rows = pair_rows(&both(&[(10.0, 20.0); 3]));
+        let overlaps_in = |order: &str| {
+            let mut p = make_stacked_payload("horizontal", "none");
+            p["rows"] = rows.clone();
+            p["resolved"]["style"]["series_order"] = serde_json::json!(order);
+            let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+            let bands = bar_bands(&svg, true);
+            bands[0].1 > bands[1].0 - bands[0].0
+        };
+        assert!(overlaps_in("value"), "value order puts the leader y first");
+        assert!(!overlaps_in("data"), "data order puts x first, ahead of the leader y");
+    }
+
     /// Rows of a two-series grouped bar over both signs: category A's
     /// first series rises and its second falls, category B's the reverse.
     fn mixed_sign_grouped_rows() -> serde_json::Value {
@@ -13643,6 +13875,7 @@ mod tests {
         use serde_json::json;
         let mut p = make_stacked_payload("vertical", "none");
         p["rows"] = mixed_sign_grouped_rows();
+        p["resolved"]["style"]["overlap"] = json!("partial");
         let axis_y = &mut p["resolved"]["style"]["axis_y"];
         axis_y["tick_values"] = json!([-30.0, -15.0, 0.0, 15.0, 30.0]);
         axis_y["domain_max"] = json!(30.0);
@@ -13673,6 +13906,7 @@ mod tests {
         use serde_json::json;
         let mut p = make_stacked_payload("horizontal", "none");
         p["rows"] = mixed_sign_grouped_rows();
+        p["resolved"]["style"]["overlap"] = json!("partial");
         let axis_y = &mut p["resolved"]["style"]["axis_y"];
         axis_y["tick_values"] = json!([-30.0, -15.0, 0.0, 15.0, 30.0]);
         axis_y["domain_max"] = json!(30.0);
@@ -14264,7 +14498,7 @@ mod tests {
     }
 
     #[test]
-    fn horizontal_stacked_legend_order_matches_stack_order() {
+    fn horizontal_stacked_legend_order_matches_series_order() {
         let payload = make_payload(make_three_series_stacked_payload("horizontal"));
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("renders");
@@ -14280,7 +14514,7 @@ mod tests {
     }
 
     #[test]
-    fn vertical_stacked_legend_order_is_reverse_of_stack_order() {
+    fn vertical_stacked_legend_order_is_reverse_of_series_order() {
         let payload = make_payload(make_three_series_stacked_payload("vertical"));
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("renders");
@@ -14499,10 +14733,10 @@ mod tests {
         production_errors(&make_payload(payload_json)).expect("one color per category");
     }
 
-    /// `stack_order: alphabetical` ranks by name where the default ranks by
+    /// `series_order: alphabetical` ranks by name where the default ranks by
     /// descending sum, so the two disagree when the later name is the bigger.
     #[test]
-    fn alphabetical_stack_order_differs_from_the_default() {
+    fn alphabetical_series_order_differs_from_the_default() {
         use serde_json::json;
         let svg_for = |order: Option<&str>| {
             let mut payload_json = make_stacked_payload("vertical", "zero");
@@ -14513,22 +14747,56 @@ mod tests {
                 {"cat": "B", "series": "y", "val": 15.0},
             ]);
             if let Some(order) = order {
-                payload_json["resolved"]["style"]["stack_order"] = json!(order);
+                payload_json["resolved"]["style"]["series_order"] = json!(order);
             }
             render(&make_payload(payload_json), &test_fonts()).expect("renders")
         };
         assert_ne!(svg_for(None), svg_for(Some("alphabetical")));
     }
 
+    /// Band `A`'s grouped bars in drawn order (left to right, or top to bottom when horizontal),
+    /// named by length: `y` (30) is the longest bar, `x` (10) the third longest.
+    fn grouped_series_in_band_a(svg: &str, horizontal: bool) -> Vec<String> {
+        let mut bars: Vec<(f64, f64)> = drawn(svg)
+            .into_iter()
+            .filter(|m| ["#3164a3", "#779bc9"].contains(&m.fill()))
+            .map(|m| if horizontal { (m.w, m.y1) } else { (m.h, m.x1) })
+            .collect();
+        assert_eq!(bars.len(), 4, "two bands of two series: {svg}");
+        bars.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let mut band_a = vec![("y", bars[0].1), ("x", bars[2].1)];
+        band_a.sort_by(|a, b| a.1.total_cmp(&b.1));
+        band_a.into_iter().map(|(s, _)| s.to_string()).collect()
+    }
+
+    /// A grouped bar orders its series within each band by `series_order`, as a stack does: the
+    /// default puts the largest series (`y`, sum 45) first, `alphabetical` puts `x` first.
     #[test]
-    fn stack_order_other_than_default_is_unsupported() {
+    fn grouped_bars_follow_series_order() {
+        use serde_json::json;
+        for orientation in ["vertical", "horizontal"] {
+            let order_for = |order: Option<&str>| {
+                let mut payload_json = make_stacked_payload(orientation, "none");
+                if let Some(order) = order {
+                    payload_json["resolved"]["style"]["series_order"] = json!(order);
+                }
+                let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+                grouped_series_in_band_a(&svg, orientation == "horizontal")
+            };
+            assert_eq!(order_for(None), ["y", "x"], "{orientation}: default ranks by value");
+            assert_eq!(order_for(Some("alphabetical")), ["x", "y"], "{orientation}");
+        }
+    }
+
+    #[test]
+    fn series_order_other_than_default_is_unsupported() {
         use serde_json::json;
         let mut payload_json = make_stacked_payload("vertical", "zero");
-        payload_json["resolved"]["style"]["stack_order"] = json!("reverse");
+        payload_json["resolved"]["style"]["series_order"] = json!("reverse");
         let payload = make_payload(payload_json);
         let fonts = test_fonts();
         let err = render(&payload, &fonts).unwrap_err();
-        assert!(err.contains("stack_order"), "error names stack_order: {err}");
+        assert!(err.contains("series_order"), "error names series_order: {err}");
     }
 
     // A stacked vertical bar with `legend.position: right` (the theme
@@ -16303,6 +16571,24 @@ mod tests {
             payload_json["height"] = json!(432.0);
             payload_json["padding"] = json!(null);
             payload_json
+        }
+
+        /// A blank `x_label` hides the axis title only: a facet panel's hover
+        /// keeps the category row under the field's own title.
+        #[test]
+        fn a_blank_x_label_keeps_the_facet_hover_category_row() {
+            let arias = |label: Option<&str>| -> Vec<String> {
+                let mut payload_json = make_facet_payload("shared");
+                payload_json["resolved"]["style"]["tooltip_format"] = json!(",.0f");
+                if let Some(label) = label {
+                    payload_json["resolved"]["x_label"] = json!(label);
+                }
+                let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+                crate::contract::aria_labels(&svg).into_iter().filter(|a| a.contains("Feb")).collect()
+            };
+            let plain = arias(None);
+            assert!(!plain.is_empty());
+            assert_eq!(arias(Some("")), plain);
         }
 
         /// A horizontal bar over two panels of the same three categories: the
@@ -18674,6 +18960,20 @@ mod tests {
             j["resolved"]["style"]["tooltip_format"] = slot;
             let svg = render(&make_payload(j), &test_fonts()).expect("renders");
             assert!(svg.contains(&format!("aria-label=\"\u{2061}Alpha; Revenue: {shown}\"")), "{svg}");
+        }
+    }
+
+    /// A blank `y_label` hides the axis title only: the hover's value row
+    /// keeps the field's own title, as it reads with no label authored.
+    #[test]
+    fn a_blank_y_label_keeps_the_hover_value_row() {
+        use serde_json::json;
+        for label in ["", " "] {
+            let mut j = make_vertical_payload(&[("Alpha", 1800.0)], false);
+            j["resolved"]["style"]["tooltip_format"] = json!(",.0f");
+            j["resolved"]["y_label"] = json!(label);
+            let svg = render(&make_payload(j), &test_fonts()).expect("renders");
+            assert!(svg.contains("aria-label=\"\u{2061}Alpha; Revenue: 1,800\""), "{label:?}: {svg}");
         }
     }
 

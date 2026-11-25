@@ -18,8 +18,12 @@ itself is never relaxed: when the backend is read_only, every ATTACH gets
 READ_ONLY forced onto it regardless of the authored `attach.read_only` flag,
 closing the gap where a `:memory:` main database (always opened read-write;
 there is no other way to populate it) would otherwise leave an attached
-database writable. `settings` applies unconditionally (plain SET, no
-external-access requirement).
+database writable. A Quack attach cannot be made read-only (Quack does not
+enforce READ_ONLY), so a read-only Quack attach is refused rather than
+attached writable. The one exception is a local opt-in: a Quack attach that
+authors `read_only: false` explicitly is attached writable when the host
+passes `allow_writable_quack_attach` (local `dct`, never Cloud). `settings`
+applies unconditionally (plain SET, no external-access requirement).
 """
 
 from __future__ import annotations
@@ -52,6 +56,7 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_ADAPTER_DUCKDB_CONFIG_APPLY_FAILED,
     ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+    ERR_ADAPTER_DUCKDB_QUACK_READ_ONLY,
     ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR,
     ERR_ADAPTER_UNSUPPORTED_DUCKDB_FIELD,
     ERR_BINDER_GROUP_BY,
@@ -395,7 +400,10 @@ def _attachment_path(attachment: dict[str, DuckDBAttachValue]) -> str:
 
 
 def _attachment_to_sql(
-    attachment: dict[str, DuckDBAttachValue], *, adapter_read_only: bool
+    attachment: dict[str, DuckDBAttachValue],
+    *,
+    adapter_read_only: bool,
+    allow_writable_quack_attach: bool,
 ) -> str:
     """Build an ATTACH statement, matching dbt-duckdb's Attachment.to_sql.
 
@@ -408,7 +416,8 @@ def _attachment_to_sql(
     attachment's authored ``read_only`` field: see the module docstring for
     why the two differ.
     """
-    base = f"ATTACH IF NOT EXISTS '{_duckdb_literal(_attachment_path(attachment))}'"
+    path = _attachment_path(attachment)
+    base = f"ATTACH IF NOT EXISTS '{_duckdb_literal(path)}'"
     alias = attachment.get("alias")
     if alias:
         if not isinstance(alias, str):
@@ -468,7 +477,19 @@ def _attachment_to_sql(
         )
     authored_read_only = bool(read_only or options.pop("read_only", None))
     if adapter_read_only or authored_read_only:
-        all_options.append("READ_ONLY")
+        # Quack cannot enforce READ_ONLY (DuckDB 2.0.0 ignored it, 2.0.1
+        # rejects it), so a read-only Quack attach is refused, never relaxed.
+        # The explicit `read_only: false` opt-in on an allowing host attaches
+        # it writable.
+        is_quack = path.lower().startswith("quack:") or (
+            str(atype or options_type).lower() == "quack"
+        )
+        if not is_quack:
+            all_options.append("READ_ONLY")
+        elif authored_read_only or not allow_writable_quack_attach:
+            raise DbtChartsError.from_code(
+                ERR_ADAPTER_DUCKDB_QUACK_READ_ONLY, path=path
+            )
 
     for key, value in options.items():
         if key in ("type", "secret"):
@@ -499,10 +520,15 @@ def _apply_duckdb_attach(
     attachments: list[dict[str, DuckDBAttachValue]],
     *,
     adapter_read_only: bool,
+    allow_writable_quack_attach: bool,
 ) -> None:
     for attachment in attachments:
         conn.execute(
-            _attachment_to_sql(attachment, adapter_read_only=adapter_read_only)
+            _attachment_to_sql(
+                attachment,
+                adapter_read_only=adapter_read_only,
+                allow_writable_quack_attach=allow_writable_quack_attach,
+            )
         )
 
 
@@ -610,6 +636,7 @@ class DuckDBBackend:
         read_only: bool = True,
         duckdb_config: dict[str, Any] | None = None,
         allow_external_access_in_readonly: bool = False,
+        allow_writable_quack_attach: bool = False,
     ) -> None:
         """Initialize the backend.
 
@@ -638,10 +665,18 @@ class DuckDBBackend:
                 the backend passes enable_external_access=True through to DuckDB for every
                 connection. Default False preserves the existing defense: read_only=True
                 always implies enable_external_access=False for caller SQL.
+            allow_writable_quack_attach: Local-host opt-in. When True, a Quack
+                attach that authors `read_only: false` is attached writable
+                (Quack cannot enforce READ_ONLY, so the server becomes
+                writable by board SQL). Default False refuses every Quack
+                attach on a read-only backend. Only trusted local callers
+                (build_exec_env for a FilesystemProject) pass True; never
+                derive it from board content.
         """
         self._data_dir = data_dir
         self.read_only = read_only
         self.allow_external_access_in_readonly = allow_external_access_in_readonly
+        self.allow_writable_quack_attach = allow_writable_quack_attach
         self._duckdb_config = duckdb_config
         self._tls = threading.local()
         self._all_conns: list[duckdb.DuckDBPyConnection] = []
@@ -863,11 +898,13 @@ class DuckDBBackend:
                     "secrets", lambda: _apply_duckdb_secrets(conn, secrets)
                 )
             if attach:
-                adapter_read_only = self.read_only
                 _apply_duckdb_config_section(
                     "attach",
                     lambda: _apply_duckdb_attach(
-                        conn, attach, adapter_read_only=adapter_read_only
+                        conn,
+                        attach,
+                        adapter_read_only=self.read_only,
+                        allow_writable_quack_attach=self.allow_writable_quack_attach,
                     ),
                 )
             if needs_external_access and not caller_external_access:

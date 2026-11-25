@@ -146,8 +146,8 @@ pub struct Plan {
     value_x: f64,
     label_xs: Vec<f64>,
     support_x: f64,
-    /// The label as drawn (`wrap_label_lines`): at most two lines, and whether the overflow mode cut
-    /// text off, which the host reports as a warning.
+    /// The label as drawn (`wrap_label_lines`): every line under `wrap`, at most two otherwise, and
+    /// whether the overflow mode cut text off, which the host reports as a warning.
     label_lines: Vec<String>,
     pub label_truncated: bool,
     /// An inline card whose row overflowed stacked instead, which the host reports as a warning.
@@ -204,7 +204,7 @@ pub fn plan(card: &KpiCard, book: &FontBook, width: f64) -> Result<Plan, Diagnos
     let aligned = matches!(style.align, Some(KpiAlign::Center | KpiAlign::Right));
     // kpi.rs:`wrap_label_lines`, which `layout` runs for every arrangement and warns from:
     // `compute_title_limit` is `int(width - left - right)`, none at or below zero. The label wraps
-    // by the overflow mode's line budget, and no more than two lines are drawn.
+    // by the overflow mode's line budget: `wrap` draws every line, the others at most two.
     let limit = (width - pad.left - pad.right) as i64;
     let stacked = variant == KpiVariant::Stacked;
     let (mut label_lines, mut label_truncated) = (Vec::new(), false);
@@ -218,7 +218,7 @@ pub fn plan(card: &KpiCard, book: &FontBook, width: f64) -> Result<Plan, Diagnos
         // `wrap_label` measures at the label's weight in the upright face, whether or not it paints italic.
         let measurer = book.file(family_file(&label.family)).map_err(diag::err_internal)?.measurer(0, css_weight_axis(&slot_weight(label))?);
         let (lines, truncated) = measure::fonts::wrap_text_precise(text, limit as f64, label.size, &measurer, max_lines, ellipsis, true);
-        label_lines = lines.into_iter().take(2).collect();
+        label_lines = lines;
         label_truncated = truncated;
     }
     if label_lines.is_empty() {
@@ -230,9 +230,13 @@ pub fn plan(card: &KpiCard, book: &FontBook, width: f64) -> Result<Plan, Diagnos
     let prefix_baseline = value_baseline - (faces.value.size - faces.affix.size) * AFFIX_ELEVATION;
     let glyph_baseline = value_baseline - (faces.value.size - glyph_face(card).size) * AFFIX_ELEVATION;
     let label_baseline = value_baseline + MINIMUM_TITLE_VALUE_GAP + label.size * CAP_HEIGHT_RATIO;
-    // A single-line overflow mode reserves one label line, the others two; the slot is reserved
-    // whether or not there is a label.
-    let reserved_lines = if matches!(style.label.overflow, OverflowMode::Clip | OverflowMode::Truncate) { 1.0 } else { 2.0 };
+    // A single-line overflow mode reserves one label line, the others two, and `wrap` as many more as
+    // its label draws; the slot is reserved whether or not there is a label.
+    let reserved_lines = match style.label.overflow {
+        OverflowMode::Clip | OverflowMode::Truncate => 1.0,
+        OverflowMode::WrapTwo => 2.0,
+        OverflowMode::Wrap => label_lines.len().max(2) as f64,
+    };
     let support_baseline = label_baseline + reserved_lines * (label.size + LABEL_LEADING);
     let natural_height = match card.kpi.support {
         Some(_) => support_baseline + faces.support.size * DESCENDER_RATIO + pad.bottom,
@@ -310,7 +314,9 @@ pub fn plan(card: &KpiCard, book: &FontBook, width: f64) -> Result<Plan, Diagnos
             }
         }
     }
-    let natural_height = if stacked { natural_height } else { 0.0 };
+    // The board snaps every box edge to a whole pixel (`svg_utils.px`); a card whose slots end
+    // mid-pixel would stop short of the box drawn around it.
+    let natural_height = if stacked { natural_height.ceil() } else { 0.0 };
     Ok(Plan { width, variant, value_run_width, value_baseline, prefix_baseline, glyph_baseline, label_baseline, support_baseline, value_x, label_xs, support_x, label_lines, label_truncated, inline_fell_back, support_cut, align_overflowed, natural_height })
 }
 

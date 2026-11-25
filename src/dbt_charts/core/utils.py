@@ -605,15 +605,15 @@ def series_means(data: Rows, series_field: str, y_field: str) -> dict[str, float
     return {key: total / counts[key] for key, total in sums.items()}
 
 
-def sorted_series_by_stack_order(
+def sorted_by_series_order(
     series: list[str],
     data: Rows,
     series_field: str,
-    stack_order: str | None,
+    series_order: str | None,
     *,
     y_field: str = "",
 ) -> list[str]:
-    """Return *series* sorted for stacked chart rendering by stack_order.
+    """Return *series* in stack or group order by series_order.
 
     Baseline = cumulative zero (the series placed first paints at the bottom).
     - None / "value": largest global sum at baseline (matches VL's joinaggregate default).
@@ -621,9 +621,9 @@ def sorted_series_by_stack_order(
     - "alphabetical": alphabetically first series at baseline.
     - "data": globally first-encountered series at baseline (first-encounter in *data*).
     """
-    if stack_order == "alphabetical":
+    if series_order == "alphabetical":
         return sorted(series)
-    if stack_order == "data":
+    if series_order == "data":
         encounter: dict[str, int] = {}
         for row in data:
             s = row.get(series_field)
@@ -665,13 +665,13 @@ def cumulative_stack_midpoints(
     sort_by: str,
     descending: bool,
     stack_mode: str = "zero",
-    stack_order: str | None = None,
+    series_order: str | None = None,
 ) -> list[tuple[str, float]]:
     """Return (series, x_midpoint) for the top categorical row (un-nudged).
 
     The "top row" is the first categorical value — first in query order, or
     first under an authored ``sort:``. Midpoint is the cumulative x
-    at the series segment's center, ordered through the same ``stack_order``
+    at the series segment's center, ordered through the same ``series_order``
     authority as the emitted segments. These are the exact positions the
     horizontal rail renders at — no vertical dodge/nudge pass exists for this
     layout; a colliding rail is disqualified wholesale at resolve time
@@ -710,14 +710,14 @@ def cumulative_stack_midpoints(
     if not series_y:
         return []
 
-    series_order = sorted_series_by_stack_order(
-        series_names, data, series_field, stack_order, y_field=y_field
+    ordered = sorted_by_series_order(
+        series_names, data, series_field, series_order, y_field=y_field
     )
 
-    total = sum(series_y[s] for s in series_order)
+    total = sum(series_y[s] for s in ordered)
     result: list[tuple[str, float]] = []
     cumulative = 0.0
-    for s in series_order:
+    for s in ordered:
         y = series_y[s]
         mid = cumulative + y / 2.0
         if stack_mode == "normalize" and total > 0:

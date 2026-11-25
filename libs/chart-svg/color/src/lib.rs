@@ -617,6 +617,26 @@ pub fn ensure_readable_ink(
     oklch_to_hex(best_l, c, h)
 }
 
+/// Ink for text over a mark painted `fill`: `ink` itself when it keeps `min_ratio`
+/// against `fill`, else `ink`'s hue at the nearest lightness that does, else (a
+/// mid-luminance fill no lightness of any hue clears) whichever of black and white
+/// contrasts more. `ink` and `fill` may be any CSS color; a kept `ink` comes back as given.
+pub fn readable_ink_on_fill(ink: &str, fill: &str, min_ratio: f64) -> Result<String, String> {
+    let as_hex = |color: &str| {
+        let (r, g, b, _) = parse_css_color(color)?;
+        Ok::<_, String>(rgb01_to_hex(r, g, b))
+    };
+    let (ink_hex, fill_hex) = (as_hex(ink)?, as_hex(fill)?);
+    if wcag_contrast(&ink_hex, &fill_hex)? >= min_ratio {
+        return Ok(ink.to_string());
+    }
+    if let Ok(adjusted) = ensure_readable_ink(&ink_hex, &fill_hex, min_ratio) {
+        return Ok(adjusted);
+    }
+    let pole = if is_light_canvas(&fill_hex)? { "#000000" } else { "#ffffff" };
+    Ok(pole.to_string())
+}
+
 /// `label_ink`: ink for text painted on `canvas` about a mark of `color` —
 /// the dark step away from the canvas (toward `dark_pole` on a light
 /// canvas, clamped to darkening only; toward white on a dark one), then
@@ -718,6 +738,32 @@ pub fn mark_ink(color: &str, canvas: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn readable_ink_on_fill_keeps_ink_that_already_reads() {
+        assert_eq!(super::readable_ink_on_fill("#ffffff", "#1a1a1a", 4.5).unwrap(), "#ffffff");
+    }
+
+    #[test]
+    fn readable_ink_on_fill_moves_unreadable_ink_to_a_readable_lightness_of_its_hue() {
+        let ink = super::readable_ink_on_fill("#ffffff", "#f0f0f0", 4.5).unwrap();
+        assert_ne!(ink, "#ffffff");
+        assert!(super::wcag_contrast(&ink, "#f0f0f0").unwrap() >= 4.5);
+    }
+
+    #[test]
+    fn readable_ink_on_fill_takes_the_better_pole_when_no_ink_reaches_the_floor() {
+        // Mid-gray: neither black nor white reaches 6:1.
+        let ink = super::readable_ink_on_fill("#808080", "#777777", 6.0).unwrap();
+        let (black, white) = (super::wcag_contrast("#000000", "#777777").unwrap(), super::wcag_contrast("#ffffff", "#777777").unwrap());
+        assert!(black.max(white) < 6.0);
+        assert_eq!(ink, if black >= white { "#000000" } else { "#ffffff" });
+    }
+
+    #[test]
+    fn readable_ink_on_fill_reads_any_css_color() {
+        assert_eq!(super::readable_ink_on_fill("white", "rgb(10, 10, 10)", 4.5).unwrap(), "white");
+    }
     #[test]
     fn a_bare_word_naming_no_color_is_unknown() {
         for known in ["white", "RebeccaPurple", "transparent", "none", "currentColor", "by_tone", "_column"] {

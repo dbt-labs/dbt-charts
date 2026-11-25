@@ -5,7 +5,10 @@ from typing import cast
 import pytest
 
 from dbt_charts.core.compile.migrations import (
+    MigrationError,
     SchemaMigrationWarning,
+    migrate_board_yaml_text,
+    migration_notice_file,
     prepare_board_mapping,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
@@ -145,3 +148,97 @@ def test_prepare_mapping_refuses_two_keys_that_are_one_key_in_json_text() -> Non
         prepare_board_mapping({"title": "t", "options": {1: "a", "1": "b"}})
 
     assert caught.value.code is ERR_ENGINE_REFUSED
+
+
+_AXIS_FORMAT_BOARD = """\
+title: t
+queries:
+  q:
+    type: values
+    columns: [n]
+    values:
+      - [1]
+charts:
+  a:
+    type: bar
+    query: q
+    x: n
+    y: n
+    style:
+      axis_y: &axis
+        format: currency_whole
+  b:
+    type: bar
+    query: q
+    x: n
+    y: n
+    style:
+      axis_y: *axis
+rows:
+  - a
+  - b
+"""
+
+
+def test_dct_migrate_names_each_changed_key() -> None:
+    board = _AXIS_FORMAT_BOARD.replace(" &axis", "").replace(
+        "      axis_y: *axis\n", "      axis_y:\n        format: currency_whole\n"
+    )
+
+    migrated = migrate_board_yaml_text(board)
+
+    assert migrated.changes[:2] == [
+        "charts.a.style.axis_y.format → charts.a.style.axis_y.labels.format",
+        "charts.b.style.axis_y.format → charts.b.style.axis_y.labels.format",
+    ]
+    assert migrated.changes[-1].startswith("_schema_version set to ")
+
+
+def test_dct_migrate_refuses_a_key_inside_a_yaml_anchor_by_file_and_line() -> None:
+    """The text rewrite cannot edit through an anchor or its aliases; the
+    refusal names each blocked key where the author must expand it."""
+    with (
+        migration_notice_file("charts/board.yml"),
+        pytest.raises(MigrationError) as refused,
+    ):
+        migrate_board_yaml_text(_AXIS_FORMAT_BOARD)
+
+    message = str(refused.value)
+    assert "manual edit" in message
+    assert (
+        "charts/board.yml:15: charts.a.style.axis_y.format → "
+        "charts.a.style.axis_y.labels.format" in message
+    )
+    assert (
+        "charts/board.yml:23: charts.b.style.axis_y.format → "
+        "charts.b.style.axis_y.labels.format" in message
+    )
+
+
+def test_dct_migrate_names_a_merge_key_anchor_and_keeps_the_cause() -> None:
+    board = _AXIS_FORMAT_BOARD.replace(
+        "      axis_y: *axis\n", "      axis_y:\n        <<: *axis\n"
+    )
+
+    with pytest.raises(MigrationError) as refused:
+        migrate_board_yaml_text(board)
+
+    message = str(refused.value)
+    assert "line 24: charts.b.style.axis_y.format → " in message
+    assert f"dct migrate stopped at: {refused.value.__cause__}" in message
+
+
+def test_dct_migrate_blames_no_anchor_an_edit_does_not_touch() -> None:
+    board = (
+        _AXIS_FORMAT_BOARD.replace(
+            "      axis_y: &axis\n        format: currency_whole\n",
+            "      axis_y: {format: currency_whole}\n",
+        )
+        .replace("      axis_y: *axis\n", "      axis_y: {}\n")
+        .replace("title: t\n", "title: &t t\n")
+    )
+
+    with pytest.raises(ValueError, match="flow-style mapping") as refused:
+        migrate_board_yaml_text(board)
+
+    assert "manual edit" not in str(refused.value)

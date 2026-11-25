@@ -225,9 +225,9 @@ _NOT_DESIGN_PATHS = ("style.charts", "style.color.gradient")
 # out gets one of the two wrong.
 # GATED — the render sweep walks every Variable control in full. `histogram`'s
 # entry is a field one `type:` of a shared model refuses outright: `BarChart`
-# declares `y_start`, `pattern` and `style.outliers` for both tags, and the
-# histogram rules refuse them, since its bars count from zero and bin rows, so no
-# value a text box can produce compiles there. The key type is the exception: only `direct` is
+# declares `y_start`, `pattern`, `style.outliers` and `style.axis_x.type` for both
+# tags, and the histogram rules refuse them, since its bars count from zero, bin
+# rows and bin a numeric x, so no value a text box can produce compiles there. The key type is the exception: only `direct` is
 # refused (a histogram has one series to name), but this table drops a key, not
 # one value, so `legend` and `auto` go with it.
 # GATED (histogram) — the parse sweep (`histogram-no-x`, `histogram-multi-metric`).
@@ -252,6 +252,7 @@ _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("style.outliers.cap.band", None),
         ("style.outliers.cap.length", None),
         ("style.key.type", None),
+        ("style.axis_x.type", None),
     ),
 }
 

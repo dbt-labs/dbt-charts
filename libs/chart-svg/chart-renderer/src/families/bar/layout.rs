@@ -36,6 +36,17 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     if bound.r.multiples.is_some() {
         return Err("bar: layout draws one plot; a multiples chart is composed by render".into());
     }
+    crate::annotation::reserve_key(
+        || layout_once(bound, cell, measure),
+        || {
+            crate::annotation::force_numbers(&bound.r.annotations);
+            layout_once(bound, cell, measure)
+        },
+        |laid| &laid.diagnostics,
+    )
+}
+
+fn layout_once(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Diagnostic> {
     let Some(unviewed) = &bound.r.unviewed else { return laid_out(bound, cell, measure, None) };
     let whole = super::bind::bind(unviewed)?;
     let whole_box = laid_out(&whole, cell, measure, None)?.data_box;

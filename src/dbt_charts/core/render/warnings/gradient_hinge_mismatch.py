@@ -109,8 +109,17 @@ def _problem(
     if scale.hinge != "auto":
         return None
     values = numeric_column_values(rows, field)
-    lo = scale.min if scale.min is not None else min(values, default=None)
-    hi = scale.max if scale.max is not None else max(values, default=None)
+    pinned = scale.domain
+    lo = (
+        pinned.min
+        if pinned is not None and pinned.min is not None
+        else min(values, default=None)
+    )
+    hi = (
+        pinned.max
+        if pinned is not None and pinned.max is not None
+        else max(values, default=None)
+    )
     if lo is None or hi is None or lo == hi:
         return None
     if auto_hinge_pivot(lo, hi, col_format) is not None:

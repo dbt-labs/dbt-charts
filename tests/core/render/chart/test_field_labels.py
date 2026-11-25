@@ -106,6 +106,73 @@ def test_endpoint_rail_names_base_and_layer_by_field_label() -> None:
     assert ">revenue<" not in svg
 
 
+_CATEGORY_LAYER_ROWS = [
+    {"x": "Jan", "revenue": 5, "target": 6},
+    {"x": "Feb", "revenue": 7, "target": 6},
+    {"x": "Mar", "revenue": 8, "target": 7},
+]
+_NUMERIC_LAYER_ROWS = [
+    {"x": 1, "revenue": 5, "target": 6},
+    {"x": 2, "revenue": 7, "target": 6},
+    {"x": 3, "revenue": 8, "target": 7},
+]
+
+
+@pytest.mark.parametrize(
+    ("chart", "rows"),
+    [
+        ({"type": "line", "x": "d"}, _DATE_LAYER_ROWS),
+        ({"type": "area", "x": "d"}, _DATE_LAYER_ROWS),
+        (
+            {"type": "line", "x": "d", "style": {"key": {"type": "direct"}}},
+            _DATE_LAYER_ROWS,
+        ),
+        ({"type": "scatter", "x": "x"}, _NUMERIC_LAYER_ROWS),
+        ({"type": "bar", "x": "x"}, _CATEGORY_LAYER_ROWS),
+        ({"type": "bar", "x": "x"}, _NUMERIC_LAYER_ROWS),
+        (
+            {"type": "bar", "x": "x", "style": {"orientation": "horizontal"}},
+            _CATEGORY_LAYER_ROWS,
+        ),
+    ],
+    ids=["line", "area", "line-direct", "scatter", "bar", "bar-numeric-x", "barh"],
+)
+def test_y_label_titles_the_axis_and_the_field_label_names_the_base_series(
+    chart: dict[str, Any], rows: Rows
+) -> None:
+    svg = _render(
+        {
+            **chart,
+            "y": "revenue",
+            "y_label": "Amount",
+            "field_labels": {"revenue": "Rev LBL"},
+            "layers": [{"type": "line", "y": "target", "label": "Goal"}],
+        },
+        rows,
+    ).output
+    assert ">Rev LBL<" in svg
+    assert svg.count(">Amount<") == 1
+
+
+def test_legend_values_name_a_layered_base_by_its_field_label_not_y_label() -> None:
+    def codes(legend_values: list[str]) -> set[str]:
+        chart = {
+            **_DATE_LAYERED,
+            "y_label": "Amount",
+            "style": {
+                "key": {
+                    "visible": True,
+                    "type": "legend",
+                    "legend": {"values": legend_values},
+                }
+            },
+        }
+        return {w.code for w in _render(chart, _DATE_LAYER_ROWS).warnings}
+
+    assert "WARN-LEGEND-VALUES-UNRESOLVED" not in codes(["Revenue", "Target"])
+    assert "WARN-LEGEND-VALUES-UNRESOLVED" in codes(["Amount", "Target"])
+
+
 _TICKETS = [
     {"month": "2026-01-01", "on_hold": 3, "closed": 10, "in_progress": 5},
     {"month": "2026-02-01", "on_hold": 4, "closed": 12, "in_progress": 6},
@@ -151,7 +218,7 @@ def test_bar_endpoint_rail_names_wide_measures_as_the_legend_does(
 def test_legend_values_resolve_against_field_labels(
     chart: dict[str, Any], labels: dict[str, str], values: list[str]
 ) -> None:
-    rows = _DATE_LAYER_ROWS if chart is _DATE_LAYERED else _WIDE_ROWS
+    rows = _DATE_LAYER_ROWS if "layers" in chart else _WIDE_ROWS
 
     def codes(legend_values: list[str]) -> set[str]:
         result = _render(

@@ -35,7 +35,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
 import sqlglot
 import yaml
@@ -144,9 +144,13 @@ from dbt_charts.core.compile.validate.board_warnings import detect_board_warning
 from dbt_charts.core.compile.validate.dispatch import validate_board
 from dbt_charts.core.compile.validate.formats import validate_board_format_specs
 from dbt_charts.core.compile.validate.label_anchors import validate_board_label_anchors
+from dbt_charts.core.compile.validate.layer_axes import validate_board_layer_axes
 from dbt_charts.core.compile.validate.links import validate_board_links
 from dbt_charts.core.compile.validate.palettes import validate_board_palette_specs
 from dbt_charts.core.compile.validate.roles import validate_board_roles
+from dbt_charts.core.compile.validate.table_glyphs import (
+    validate_table_row_rule_glyphs,
+)
 from dbt_charts.core.compile.validate.values import validate_values_queries
 from dbt_charts.core.compile.validate.zero_baseline import (
     validate_board_zero_baselines,
@@ -569,6 +573,12 @@ def compile_authored_board(
 
     try:
         validate_board_label_anchors(compiled)
+        validate_board_layer_axes(compiled)
+    except CompilationError as e:
+        return CompileResult(errors=[e.to_diagnostic(file=file)])
+
+    try:
+        validate_table_row_rule_glyphs(chart_styles)
     except CompilationError as e:
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 
@@ -1723,6 +1733,26 @@ def _resolve_ref_item(
     return section[item_name], item_name, resolved_path, content
 
 
+def _refuse_imported_query(
+    name: str,
+    raw_def: dict[str, YamlValue],
+    path: ProjectPath,
+) -> NoReturn:
+    """Raise the ref grammar's error for the imported query *name*, at its board-
+    rooted `queries.<name>.ref`, as an imported chart's own errors are."""
+    from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
+
+    try:
+        BOARD_PATCH_ADAPTER.validate_python(
+            {"queries": {name: raw_def}}, context=AUTHORED_INPUT
+        )
+    except PydanticValidationError as e:
+        raise FileValidationError.from_pydantic(
+            f"schema error in {path.relpath}", e, path.read_text(), path.relpath
+        ) from e
+    raise AssertionError(f"{raw_def['ref']!r} passed the query ref grammar")
+
+
 def _board_level_default_source(
     content: dict[str, YamlValue], file_path: ProjectPath
 ) -> str | None:
@@ -1966,6 +1996,8 @@ def _resolve_cross_board_query(
         raw_def = normalize_query_value(raw_def)
 
     if isinstance(raw_def, dict) and "ref" in raw_def:
+        if ".queries." not in raw_def["ref"]:
+            _refuse_imported_query(name, raw_def, file_dir.project.path(file_relpath))
         target_name = raw_def["ref"].rsplit(".queries.", 1)[1]
         target_path = resolve_ref(
             raw_def["ref"], file_dir, "queries", ref_path=yaml_path

@@ -97,8 +97,9 @@ def is_removed_http_query(
 def normalize_query_value(query_def: Any) -> Any:
     """Normalize a single query value to a full dict with a 'type' field.
 
-    Cross-file refs become {"ref": "..."} so Pydantic coerces them to QueryRef.
-    Bare SQL strings become {"sql": ..., "type": "sql"}.
+    Cross-file refs, and any other single dotted token, become {"ref": "..."} so
+    Pydantic coerces them to QueryRef and its grammar judges them.
+    Other strings are SQL and become {"sql": ..., "type": "sql"}.
     Dict definitions get a type field inferred when absent.
     Already-typed model instances (QueryRef, AuthoredQuery) pass through unchanged.
 
@@ -113,8 +114,10 @@ def normalize_query_value(query_def: Any) -> Any:
         return query_def
 
     if isinstance(query_def, str):
-        if QUERY_REF_RE.fullmatch(query_def.strip()):
-            return {"ref": query_def.strip()}
+        text = query_def.strip()
+        # One dotted token is never SQL, so the ref grammar judges it.
+        if "." in text and len(text.split()) == 1:
+            return {"ref": text}
         return {"sql": query_def, "type": "sql"}
 
     # dict path

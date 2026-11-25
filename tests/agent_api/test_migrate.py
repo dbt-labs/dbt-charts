@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from dbt_charts.agent_api.migrate import (
+    MigratedFile,
     MigrateError,
     MigrateSummary,
     migrate_paths,
@@ -16,7 +17,11 @@ from dbt_charts.core.project import Project
 
 
 def test_migrate_summary_exposes_a_machine_readable_success_flag() -> None:
-    summary = MigrateSummary(updated=[PurePosixPath("charts/new.yaml")])
+    summary = MigrateSummary(
+        updated=[
+            MigratedFile(path=PurePosixPath("charts/new.yaml"), changes=[], diff="")
+        ]
+    )
 
     assert summary.success is True
 
@@ -61,7 +66,7 @@ def test_migrate_paths_does_not_leak_a_warning_for_a_pending_boundary_construct(
         )
 
     assert caught == []
-    assert summary.updated == [PurePosixPath("charts/a.yaml")]
+    assert [f.path for f in summary.updated] == [PurePosixPath("charts/a.yaml")]
     assert summary.notes == []
 
 
@@ -91,7 +96,8 @@ def test_migrate_paths_with_no_explicit_paths_touches_host_boards_only(
         warnings.simplefilter("ignore")
         summary = migrate_paths(None, project=project, dry_run=True)
 
-    touched = {str(p) for p in summary.updated + summary.current}
+    touched = {str(f.path) for f in summary.updated}
+    touched.update(str(p) for p in summary.current)
     touched.update(str(e.path) for e in summary.errors)
     assert touched == {"charts/a.yaml"}
 
@@ -105,8 +111,10 @@ def test_migrates_a_project_backed_board_without_a_filesystem_path(
 
     from dbt_charts.core.compile import migrations
 
-    def migrate_text(text: str, *, locked_schema_version: str | None) -> str:
-        return text + "# migrated\n"
+    def migrate_text(
+        text: str, *, locked_schema_version: str | None
+    ) -> migrations.TextMigration:
+        return migrations.TextMigration(text=text + "# migrated\n", changes=[])
 
     monkeypatch.setattr(
         migrations,
@@ -118,7 +126,7 @@ def test_migrates_a_project_backed_board_without_a_filesystem_path(
         [PurePosixPath("remote.yaml")], project=project, dry_run=False
     )
 
-    assert summary.updated == [PurePosixPath("charts/remote.yaml")]
+    assert [f.path for f in summary.updated] == [PurePosixPath("charts/remote.yaml")]
     assert project.read_text("charts/remote.yaml").endswith("# migrated\n")
 
 
@@ -156,7 +164,7 @@ def test_migrate_paths_surfaces_deletion_reason_for_a_real_board(
 
     summary = migrate_paths([PurePosixPath("bar.yaml")], project=project, dry_run=False)
 
-    assert summary.updated == [PurePosixPath("charts/bar.yaml")]
+    assert [f.path for f in summary.updated] == [PurePosixPath("charts/bar.yaml")]
     assert [n.path for n in summary.notes] == [PurePosixPath("charts/bar.yaml")]
     assert summary.notes[0].message.startswith(
         "`charts.bar.font` was removed: bar has no"
@@ -167,6 +175,69 @@ def test_migrate_paths_surfaces_deletion_reason_for_a_real_board(
     # fired before the walk reached the latest released grammar.
     latest = package_schemas().latest_released.version
     assert f'_schema_version: "{latest}"' in rewritten
+
+
+def test_migrate_paths_dry_run_lists_each_change_and_the_diff(
+    tmp_path: Path,
+    in_memory_project: Callable[[Path, dict[str, str]], Project],
+) -> None:
+    from dbt_charts.core.compile.migrations.migrations import package_schemas
+
+    project = in_memory_project(tmp_path, {"charts/bar.yaml": _BAR_FONT_BOARD})
+
+    summary = migrate_paths([PurePosixPath("bar.yaml")], project=project, dry_run=True)
+
+    latest = package_schemas().latest_released.version
+    [migrated] = summary.updated
+    assert migrated.path == PurePosixPath("charts/bar.yaml")
+    assert migrated.changes == [
+        "style.charts removed",
+        "style removed",
+        f"_schema_version set to {latest}",
+    ]
+    assert migrated.diff.startswith(
+        "--- charts/bar.yaml\n+++ charts/bar.yaml (migrated)\n"
+    )
+    assert "\n-      font:\n-        size: 12\n" in migrated.diff
+    assert project.read_text("charts/bar.yaml") == _BAR_FONT_BOARD
+
+
+def test_migrate_paths_diff_marks_a_missing_final_newline(
+    tmp_path: Path,
+    in_memory_project: Callable[[Path, dict[str, str]], Project],
+) -> None:
+    board = _BAR_FONT_BOARD.rstrip("\n")
+    project = in_memory_project(tmp_path, {"charts/bar.yaml": board})
+
+    summary = migrate_paths([PurePosixPath("bar.yaml")], project=project, dry_run=True)
+
+    [migrated] = summary.updated
+    assert migrated.diff.endswith("\n")
+    assert "\\ No newline at end of file\n" in migrated.diff
+
+
+def test_migrate_paths_names_the_file_and_line_of_an_anchored_key(
+    tmp_path: Path,
+    in_memory_project: Callable[[Path, dict[str, str]], Project],
+) -> None:
+    board = (
+        "title: T\ncharts:\n  a:\n    type: line\n    query: q\n"
+        "    style:\n      axis_y: &axis\n        format: currency_whole\n"
+        "  b:\n    type: line\n    query: q\n    style:\n      axis_y: *axis\n"
+    )
+    project = in_memory_project(tmp_path, {"charts/a.yaml": board})
+
+    summary = migrate_paths([PurePosixPath("a.yaml")], project=project, dry_run=True)
+
+    [error] = summary.errors
+    assert "manual edit" in error.message
+    assert (
+        "charts/a.yaml:7: charts.a.style.axis_y.format → "
+        "charts.a.style.axis_y.labels.format" in error.message
+    )
+    assert "charts/a.yaml:13: charts.b.style.axis_y.format" in error.message
+    assert not summary.updated
+    assert project.read_text("charts/a.yaml") == board
 
 
 def test_migrate_paths_records_parse_error_as_migrate_error(
@@ -184,7 +255,9 @@ def test_migrate_paths_records_parse_error_as_migrate_error(
 
     from dbt_charts.core.compile import migrations
 
-    def migrate_text(text: str, *, locked_schema_version: str | None) -> str:
+    def migrate_text(
+        text: str, *, locked_schema_version: str | None
+    ) -> migrations.TextMigration:
         raise ParseError("Empty YAML document")
 
     monkeypatch.setattr(migrations, "migrate_board_yaml_text", migrate_text)

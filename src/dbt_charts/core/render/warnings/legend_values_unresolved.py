@@ -219,7 +219,7 @@ def _color_field_and_domain(
             # nothing too, not just skip layer contributions -- base_label
             # alone is not a domain the emitter ever shows.
             base_label, base_alias_set = layer_label_and_aliases(
-                chart.y_label, chart.y, chart.field_labels
+                None, chart.y, chart.field_labels
             )
             base_aliases = {base_label: base_alias_set}
             domain, aliases = _layered_domain_and_aliases(

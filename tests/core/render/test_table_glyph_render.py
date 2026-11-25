@@ -351,13 +351,14 @@ class TestGlyphWidthIsReserved:
                 "was not reserved when the column was measured"
             )
 
-    def test_a_column_too_narrow_for_the_glyph_still_wraps(self, make_chart) -> None:
-        """The glyph subtraction must not push a cell out of the wrap cache.
+    def test_a_column_too_narrow_for_the_glyph_is_cut_not_spilled(
+        self, make_chart
+    ) -> None:
+        """Under `fit`, a column squeezed under its widest word is cut on one line.
 
-        A missing cache entry is painted as one unwrapped, untruncated line —
-        a spill across several neighbors. Nothing fits inside a column this
-        narrow, so the guarantee here is the cache entry (one character per
-        line, the same shape a glyph-free column of this width produces), not
+        It never wraps mid-word, and it never paints the whole value as one
+        untruncated line spilling across its neighbors. The glyph alone is
+        wider than a column this narrow, so the guarantee is the cut, not
         containment.
         """
         from .._engine_render import render_table_svg
@@ -391,11 +392,8 @@ class TestGlyphWidthIsReserved:
         cells = _glyph_cells(svg)
         assert len(cells) == 1, f"Expected one glyph cell, found {len(cells)}"
         cell = cells[0]
-        assert len(cell.lines) > 1, (
-            f"{cell.lines} was painted as one unwrapped line — the glyph "
-            "subtraction dropped the cell out of the wrap cache, whose "
-            "missing-entry path neither wraps nor truncates"
-        )
+        assert len(cell.lines) == 1, f"{cell.lines} wrapped mid-word"
+        assert "ACT NOW" not in cell.lines[0], f"{cell.lines[0]!r} was not cut"
 
     def test_truncation_reserves_the_glyph_run(self, make_chart) -> None:
         """With wrap off, the ellipsis budget is what the glyph leaves behind."""

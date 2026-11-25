@@ -8,6 +8,8 @@ use indexmap::IndexMap;
 pub enum SchemaError {
     /// Two different models share a name.
     NameClash(&'static str),
+    /// A `shorthand_items` type holds something other than scalars, unions, null and a tuple.
+    ShorthandItems,
     /// An enum with data variants used where no `keys` field or `tag` reads it.
     UntaggedVariants {
         model: &'static str,
@@ -247,6 +249,7 @@ fn lower_model(
             constraints: info.constraints,
             shorthand: info.shorthand,
             string_pattern: info.string_pattern,
+            shorthand_items: info.shorthand_items.map(lower_items).transpose()?,
             complete: info.complete,
             read_under: info.read_under,
         },
@@ -317,6 +320,17 @@ fn field(f: &'static Field, ty: Ty) -> SchemaField {
         merge: f.merge,
         attrs: &f.attrs,
     }
+}
+
+/// A shorthand list's items: scalars, unions of them, null and the tuple around them.
+fn lower_items(e: &'static TypeExpr) -> Result<Ty, SchemaError> {
+    Ok(match e {
+        TypeExpr::Scalar(s) => Ty::Scalar(*s),
+        TypeExpr::Either(a, b) => Ty::Accept(Box::new(lower_items(a)?), Box::new(lower_items(b)?)),
+        TypeExpr::Option(i) => Ty::Option(Box::new(lower_items(i)?), ""),
+        TypeExpr::Tuple(items) => Ty::Tuple(items.iter().map(|t| lower_items(t)).collect::<Result<_, _>>()?),
+        _ => return Err(SchemaError::ShorthandItems),
+    })
 }
 
 fn lower(

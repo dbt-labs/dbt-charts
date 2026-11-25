@@ -660,6 +660,39 @@
   summary: Fired when a line, area, bar or histogram sets a pow, sqrt or symlog axis scale,
     which only a scatter draws.
   docs_topic: charts
+- code: ERR-DOMAIN-OPEN-END-INVERTED
+  level: error
+  title: A one-sided domain leaves no room between its ends
+  template: 'Chart {chart_id!r}: axis_y.scale.continuous.domain pins the {pinned_end} end at {pinned}, but the data fits the open end at {fitted}, which is not {direction} it, so the domain would be empty or reversed. Pin a bound that clears the data, or pin both ends.'
+  doc: 'Fired when an `axis_y.scale.continuous.domain` with one null end is fitted to the data and the fitted end lands on the wrong side of the pinned one: for example `[null, 1]` on a chart whose values are all above 1. The pinned end is exact, so the open end cannot cross it. Move the pinned bound past the data, or pin both ends.'
+  summary: Fired when a one-sided y domain pins an end the data already lies past.
+  docs_topic: charts
+- code: ERR-DOMAIN-OPEN-END-INDEPENDENT-SCALE
+  level: error
+  title: A one-sided domain cannot span independent panels
+  template: 'Chart {chart_id!r}: axis_y.scale.continuous.domain has a null end, which is fitted to the data and would be one shared value, but multiples.scale: independent gives every panel its own scale. Pin both ends, omit the domain, or use multiples.scale: shared.'
+  doc: 'Fired when `axis_y.scale.continuous.domain` has a null end on a chart whose `multiples.scale` is `independent`. A null end fits the data, and under independent panels there is no single fit to apply to all of them. Pin both ends, omit the domain so each panel fits itself, or share the scale.'
+  summary: Fired when a y domain with a null end is combined with independent small-multiples scales.
+  docs_topic: charts
+- code: ERR-DOMAIN-OPEN-END-UNSUPPORTED
+  level: error
+  title: A one-sided domain is supported on a fitted y-axis only
+  template: 'Chart {chart_id!r}: {axis}.scale.continuous.domain has a null end, but a {chart_type} chart has no data fit for that axis to fill it from. A one-sided domain is supported on the y-axis of a line, area, bar or scatter chart. Pin both bounds or omit the domain.'
+  doc: 'Fired when `scale.continuous.domain` has a null end on an axis dbt Charts does not fit to the data: any `axis_x`, or the `axis_y` of a heatmap or histogram. Only the measure y-axis of a line, area, bar or scatter chart fills a null end from the data; elsewhere pin both bounds, or omit `domain` to fit both.'
+  summary: Fired when a null domain end sits on an axis that does not fit one, such as axis_x or a histogram's y-axis.
+  docs_topic: charts
+- code: ERR-HISTOGRAM-AXIS-X-TYPE
+  level: error
+  title: A histogram takes no x axis type
+  template: 'Chart {chart_id!r} (histogram): style.charts.histogram.axis_x.type is not supported:
+    a histogram bins a numeric x, so its x scale is always continuous. Remove the key.'
+  doc: 'Fired when a board or theme sets `axis_x.type` under `style.charts.histogram`. A histogram
+    bins a numeric x, so its x scale is always continuous and the type would be ignored.
+    Remove the key. A `charts.axis_x.type` set for every chart on the board does not fire:
+    it styles the board''s other charts, and a histogram keeps its continuous x.'
+  summary: Fired when a board or theme sets an x axis type for histograms, whose x is always
+    continuous.
+  docs_topic: charts
 - code: ERR-TORN-OUTLIER-UNSUPPORTED
   level: error
   title: Torn outlier caps are not supported here
@@ -1372,6 +1405,16 @@
     the zero baseline, or use `type: line` for a zoomed range. A floating bar (`y_start:`)
     has no zero baseline and is exempt.'
   summary: '`zero: false` on a bar chart without `y_start`.'
+  docs_topic: charts
+- code: ERR-TABLE-GLYPH-INK-WITHOUT-GLYPH
+  level: error
+  title: A table row rule colors a glyph the cell does not have
+  template: 'Chart {chart_id!r}: style.row.conditional.{tested} sets {ink} on columns.{target}
+    with no glyph to color. Set glyph in the rule''s columns.{target} or in style.columns.{target}.'
+  doc: '`tone` and `glyph_color` color a cell''s glyph, so a row rule that sets either on
+    `columns.<col>` needs a glyph there: in the rule''s own `columns.<col>.glyph`, or on the
+    column itself as `style.columns.<col>.glyph`.'
+  summary: '`tone` or `glyph_color` in a row rule''s `columns.<col>` with no glyph for that cell.'
   docs_topic: charts
 - code: ERR-PIE-TOTAL-WITHOUT-HOLE
   level: error

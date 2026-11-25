@@ -20,7 +20,7 @@ pub const UNSCALED_COLOR: &str = "none";
 /// reaches a layer, so Vega-Lite's stack sorts its color field descending (the
 /// first value ends on top); rows with no color value sort lowest and so end on
 /// top of every series.
-pub fn layer_stack_order(domain: &[String], any_null: bool) -> Vec<Option<String>> {
+pub fn layer_series_order(domain: &[String], any_null: bool) -> Vec<Option<String>> {
     domain.iter().rev().cloned().map(Some).chain(any_null.then_some(None)).collect()
 }
 
@@ -85,11 +85,15 @@ pub fn layer_rows_scope(
     }
 }
 
-/// The title of an axis a layered chart's marks share. Vega-Lite joins the titles
-/// of the encodings the axis holds, each distinct one once, in layer order.
-pub fn merged_axis_title(titles: impl IntoIterator<Item = String>) -> String {
+/// The title of an axis a layered chart's marks share: an authored `y_label` as
+/// written, else the derived titles of the encodings the axis holds joined as
+/// Vega-Lite joins them, each distinct one once, in layer order.
+pub fn merged_axis_title(base: String, y_label_authored: bool, layer_titles: impl IntoIterator<Item = String>) -> String {
+    if y_label_authored {
+        return base;
+    }
     let mut distinct: Vec<String> = Vec::new();
-    for title in titles {
+    for title in std::iter::once(base).chain(layer_titles) {
         if !distinct.contains(&title) {
             distinct.push(title);
         }
@@ -106,14 +110,20 @@ mod tests {
     #[test]
     fn a_layer_stacks_its_color_descending_from_the_baseline_with_no_color_last() {
         let domain = ["a".to_string(), "b".to_string()];
-        assert_eq!(layer_stack_order(&domain, false), [Some("b".to_string()), Some("a".to_string())]);
-        assert_eq!(layer_stack_order(&domain, true), [Some("b".to_string()), Some("a".to_string()), None]);
+        assert_eq!(layer_series_order(&domain, false), [Some("b".to_string()), Some("a".to_string())]);
+        assert_eq!(layer_series_order(&domain, true), [Some("b".to_string()), Some("a".to_string()), None]);
     }
 
     #[test]
     fn merged_axis_title_joins_each_distinct_title_once_in_layer_order() {
-        let titles = ["y", "z", "y", "w"].map(String::from);
-        assert_eq!(merged_axis_title(titles), "y, z, w");
-        assert_eq!(merged_axis_title(["y".to_string()]), "y");
+        let layers = ["z", "y", "w"].map(String::from);
+        assert_eq!(merged_axis_title("y".to_string(), false, layers), "y, z, w");
+        assert_eq!(merged_axis_title("y".to_string(), false, []), "y");
+    }
+
+    #[test]
+    fn an_authored_y_label_is_the_whole_shared_axis_title() {
+        let layers = ["Fitted".to_string()];
+        assert_eq!(merged_axis_title("My Y title".to_string(), true, layers), "My Y title");
     }
 }

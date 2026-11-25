@@ -395,7 +395,7 @@ pub(crate) fn layer_bar_labels(
     plot_h: f64,
     aria: impl Fn(&BarLayerMark) -> Option<String>,
     link: Option<&crate::href::DatumLink>,
-    (board_style, canvas, under): (Option<&crate::BoardStyle>, &str, &[crate::annotation::DataMark]),
+    (board_style, canvas, under, strikes): (Option<&crate::BoardStyle>, &str, &[crate::annotation::DataMark], &[crate::placement::Obstacle]),
     (crowd, bar_widths): (crate::families::layers::LabelCrowd, &[f64]),
 ) -> Result<Vec<Node>, String> {
     let Some(ml) = bl.bar_mark.labels.as_ref().filter(|ml| ml.visible) else { return Ok(Vec::new()) };
@@ -434,7 +434,7 @@ pub(crate) fn layer_bar_labels(
         Some(crowd.layer),
         boxes.into_iter().zip(bar_widths).map(|((ink, over_bar), &bar_width)| (ink, over_bar.then_some(bar_width))),
     );
-    mark_labels(ml, false, false, true, &points, 0, board_style, 0.0, 0.0, canvas, under, &mut LayerCaptions::default(), link.map(|link| link.open).unwrap_or_default())
+    mark_labels(ml, false, false, true, &points, 0, board_style, 0.0, 0.0, canvas, under, strikes, &mut LayerCaptions::default(), link.map(|link| link.open).unwrap_or_default())
 }
 
 /// A bar layer's label anchor and side: `plain_label_place` on the layer's own
@@ -897,13 +897,79 @@ pub(super) fn overlap_fraction(overlap: Option<&Overlap>, auto: f64) -> Result<f
     })
 }
 
-/// Production's grouped-bar overlap fraction (`_resolve_overlap_fraction`):
-/// unauthored (or `auto`) is −0.1 — a gap — for any series count but
-/// two, and +0.25 for exactly two; keywords map through its table and a
-/// number passes through. A positive overlap off two series and a full overlap
-/// are raised ahead of `render` by `production_errors`.
-pub(super) fn grouped_overlap_fraction(overlap: Option<&Overlap>, n_series: usize) -> Result<f64, String> {
-    overlap_fraction(overlap, if n_series == 2 { 0.25 } else { -0.1 })
+/// A front bar this far past the leader's value (as a share of it) is a crossing.
+const CROSSING_MARGIN: f64 = 0.05;
+/// The share of compared categories that may hold a crossing before the leader stops being clear.
+const CROSSING_CAP: f64 = 0.30;
+
+/// The one series of a two-series chart that is clearly the bigger one, as its
+/// index in `color_domain`. Categories where both series hold a value of one
+/// sign are compared; the leader is larger in magnitude in more of them (an even
+/// split has none), and stays clear while the front series exceeds it by more
+/// than `CROSSING_MARGIN` in at most `CROSSING_CAP` of them.
+pub(super) fn leading_series(color_domain: &[String], data_map: &HashMap<(String, String), f64>) -> Option<usize> {
+    let [first, second] = color_domain else { return None };
+    let (mut wins, mut compared) = ([0usize; 2], 0usize);
+    let mut cells: Vec<(f64, f64)> = Vec::new();
+    for ((cat, series), a) in data_map {
+        if series != first {
+            continue;
+        }
+        let Some(b) = data_map.get(&(cat.clone(), second.clone())) else { continue };
+        if a * b <= 0.0 {
+            continue;
+        }
+        cells.push((a.abs(), b.abs()));
+        compared += 1;
+        match a.abs().total_cmp(&b.abs()) {
+            std::cmp::Ordering::Greater => wins[0] += 1,
+            std::cmp::Ordering::Less => wins[1] += 1,
+            std::cmp::Ordering::Equal => {}
+        }
+    }
+    let leader = match wins[0].cmp(&wins[1]) {
+        std::cmp::Ordering::Greater => 0,
+        std::cmp::Ordering::Less => 1,
+        std::cmp::Ordering::Equal => return None,
+    };
+    let crossings = cells
+        .iter()
+        .filter(|&&(a, b)| {
+            let (lead, front) = if leader == 0 { (a, b) } else { (b, a) };
+            front > lead * (1.0 + CROSSING_MARGIN)
+        })
+        .count();
+    (crossings <= (CROSSING_CAP * compared as f64).floor() as usize).then_some(leader)
+}
+
+/// The leader that `auto` overlap acts on: none when the chart authors its own overlap.
+/// An authored `series_order` keeps its slots, so it overlaps only when it already puts the leader first.
+pub(super) fn auto_leader(
+    overlap: Option<&Overlap>,
+    series_order: Option<&str>,
+    color_domain: &[String],
+    data_map: &HashMap<(String, String), f64>,
+) -> Option<usize> {
+    let auto = overlap.is_none() || matches!(overlap, Some(Overlap::Keyword(k)) if k == "auto");
+    let leader = auto.then(|| leading_series(color_domain, data_map)).flatten();
+    leader.filter(|&l| series_order.is_none() || l == 0)
+}
+
+/// The series that take a grouped band's slots and paint order: the leader first, so it sits
+/// behind the other in the first slot. Colors and legend keep `color_domain`'s order.
+pub(super) fn leader_first(mut slots: Vec<String>, color_domain: &[String], leader: Option<usize>) -> Vec<String> {
+    if let Some(leader) = leader {
+        slots.sort_by_key(|series| *series != color_domain[leader]);
+    }
+    slots
+}
+
+/// The grouped-bar overlap fraction: unauthored (or `auto`) is +0.25 where one series clearly leads the other and
+/// −0.1 — a gap — otherwise; keywords map through its table and a number passes
+/// through. A positive overlap off two series and a full overlap are raised
+/// ahead of `render` by `production_errors`.
+pub(super) fn grouped_overlap_fraction(overlap: Option<&Overlap>, leader: Option<usize>) -> Result<f64, String> {
+    overlap_fraction(overlap, if leader.is_some() { 0.25 } else { -0.1 })
 }
 
 /// A color split that lays a band's columns side by side: `width_steps` is

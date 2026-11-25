@@ -1,0 +1,5 @@
+kind: Fixes
+body: Hiding the y axis title with an empty `y_label` no longer blanks the values in the chart's hover card.
+time: 2026-11-23T19:42:29.728180061Z
+custom:
+    DbtChartsIssue: "134"

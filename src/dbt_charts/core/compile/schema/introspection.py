@@ -513,21 +513,38 @@ def _tuple_item_bounds(
 ) -> tuple[dict[str, int | float], ...]:
     """Numeric bounds per position of a FIXED-length tuple field, parallel to
     `_tuple_item_reprs`; empty for every other shape."""
+    arm = _fixed_tuple_arm(annotation)
+    if arm is None:
+        return ()
+    return tuple(
+        _value_bounds(a.__metadata__) if get_origin(a) is Annotated else {}
+        for a in get_args(arm)
+    )
+
+
+def _fixed_tuple_arm(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _tuple_item_reprs
+) -> Any:  # type-state: explicit_any — the tuple arm, or None
+    """The one fixed-length tuple arm of ``annotation``, or None.
+
+    The tuple is the whole type (``tuple[A, B] | None``) or one arm beside
+    authored models (a ``[min, max]`` shorthand beside its ``{min, max}`` model).
+    """
     annotation = _unwrap_annotated(annotation)
     origin = get_origin(annotation)
     args = get_args(annotation)
     if origin is tuple:
         if not args or (len(args) == 2 and args[1] is Ellipsis):
-            return ()
-        return tuple(
-            _value_bounds(a.__metadata__) if get_origin(a) is Annotated else {}
-            for a in args
-        )
-    if args:
-        non_none = [a for a in args if a is not type(None)]
-        if len(non_none) == 1:
-            return _tuple_item_bounds(non_none[0])
-    return ()
+            return None
+        return annotation
+    if origin not in (Union, types.UnionType):
+        return None
+    arms = [
+        arm
+        for arm in (_fixed_tuple_arm(a) for a in args if a is not type(None))
+        if arm is not None
+    ]
+    return arms[0] if len(arms) == 1 else None
 
 
 def _tuple_item_reprs(
@@ -538,18 +555,8 @@ def _tuple_item_reprs(
     None for every other shape, including a variadic tuple[X, ...] (that's
     list-shaped: one item type repeated, not one type per position).
     """
-    annotation = _unwrap_annotated(annotation)
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if origin is tuple:
-        if not args or (len(args) == 2 and args[1] is Ellipsis):
-            return None
-        return tuple(_type_repr(a) for a in args)
-    if args:
-        non_none = [a for a in args if a is not type(None)]
-        if len(non_none) == 1:
-            return _tuple_item_reprs(non_none[0])
-    return None
+    arm = _fixed_tuple_arm(annotation)
+    return None if arm is None else tuple(_type_repr(a) for a in get_args(arm))
 
 
 _PRIMITIVE_NAMES = frozenset({"str", "int", "float", "bool", "date", "datetime"})
@@ -673,7 +680,7 @@ def _extra_union_type_keywords(
     VariableOrRef/ChartOrRef's cross-file-ref string arm pattern
     (`VAR_REF_PATTERN_STR`/`CHART_REF_PATTERN_STR`, board/authored.py). A
     plain `str` arm (queries: has one on purpose, since
-    normalize_query_value treats any string failing QUERY_REF_RE as SQL)
+    normalize_query_value reads any string but one dotted token as SQL)
     contributes nothing here.
     """
     annotation = _unwrap_annotated(annotation)

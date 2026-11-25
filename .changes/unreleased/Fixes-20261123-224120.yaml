@@ -1,0 +1,5 @@
+kind: Fixes
+body: 'Under overflow: fit, as in every PNG and PDF export, a table''s pinned column widths now give way before other columns break words mid-letter, and text that still cannot fit is cut with an ellipsis.'
+time: 2026-11-23T22:41:20.075136675Z
+custom:
+    DbtChartsIssue: "143"

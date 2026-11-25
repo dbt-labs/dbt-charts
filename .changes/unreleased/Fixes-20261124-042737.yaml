@@ -1,0 +1,3 @@
+kind: Fixes
+body: A histogram now rejects `style.axis_x.type`, which it used to ignore silently; remove the key, since a histogram's x scale is always continuous.
+time: 2026-11-24T04:27:37.651984177Z

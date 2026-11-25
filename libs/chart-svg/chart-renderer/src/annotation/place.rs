@@ -42,6 +42,14 @@ pub(crate) struct Placed<'a> {
     pub spot: Option<Spot>,
     /// A note's text left its edge for another side and has no connector.
     pub strayed: bool,
+    /// A rule label placed by `crowd`: later passes keep it where it is.
+    pub settled: bool,
+    /// A rule's solid run from its end to its own label, which the plot clip does not cut.
+    pub stem: Option<[(f64, f64); 2]>,
+    /// The circled rule number, then its entry in the key, when crowded labels were numbered.
+    pub badges: Vec<(f64, f64)>,
+    /// The rule's number, one-based, when crowded labels were numbered.
+    pub number: Option<usize>,
 }
 
 /// A text's placement inputs: its geometry, the position it took there, its
@@ -288,7 +296,10 @@ fn note_point(ann: &Annotation, ctx: &AnnotationCtx, b_map: &AxisMap, site: &Sit
     Ok(Some(screen(ctx.orientation, a, b)))
 }
 
-fn trend_shape(ann: &Annotation, ctx: &AnnotationCtx, b_map: &AxisMap, site: &Site) -> Result<Option<(Mark, Option<Mark>, (f64, f64))>, Diagnostic> {
+/// A trend's line, its interval area, and where its text sits (the curve's end).
+type TrendShape = (Mark, Option<Mark>, (f64, f64));
+
+fn trend_shape(ann: &Annotation, ctx: &AnnotationCtx, b_map: &AxisMap, site: &Site) -> Result<Option<TrendShape>, Diagnostic> {
     let trend = ann.trend.as_ref().expect("validate guarantees trend samples");
     // On bars the authored range cuts the curve at the outer edges of the
     // bands it covers; the family hands over samples past both edges.
@@ -447,14 +458,25 @@ fn relink(p: &mut Placed) {
 }
 
 /// How far a text keeps others off its box: its enclosing rect's padding, else its halo, never under `GAP`.
-fn text_gap(p: &Placed) -> f64 {
+pub(crate) fn text_gap(p: &Placed) -> f64 {
     p.inset.unwrap_or(p.style.text.halo).max(GAP)
 }
 
 /// The text's own box.
-fn text_box(p: &Placed) -> Option<(f64, f64, f64, f64)> {
+pub(crate) fn text_box(p: &Placed) -> Option<(f64, f64, f64, f64)> {
     let b = p.text.as_ref()?;
     Some((b.x, b.y, b.x + b.w, b.y + b.h))
+}
+
+/// What others keep off: an item's text, and the circles and run a settled rule label drew with it.
+fn keep_off(p: &Placed) -> Vec<(f64, f64, f64, f64)> {
+    let mut boxes: Vec<_> = text_box(p).into_iter().collect();
+    if p.settled {
+        let r = super::crowd::BADGE_R;
+        boxes.extend(p.badges.iter().map(|&(x, y)| (x - r, y - r, x + r, y + r)));
+        boxes.extend(p.stem.iter().map(|[a, b]| (a.0.min(b.0) - 0.5, a.1.min(b.1) - 0.5, a.0.max(b.0) + 0.5, a.1.max(b.1) + 0.5)));
+    }
+    boxes
 }
 
 /// Slides each text, in list order, the least distance along its free axis
@@ -464,7 +486,7 @@ fn text_box(p: &Placed) -> Option<(f64, f64, f64, f64)> {
 /// the first text it overlaps. Connectors and enclosing rects follow.
 pub(crate) fn separate(items: &mut [Placed], ctx: &AnnotationCtx) {
     for i in 0..items.len() {
-        let Some(me) = text_box(&items[i]) else { continue };
+        let Some(me) = text_box(&items[i]).filter(|_| !items[i].settled) else { continue };
         let slide = items[i].slide;
         // (lo, hi) along the slide axis, (lo, hi) across it.
         let split = |(x0, y0, x1, y1): (f64, f64, f64, f64)| match slide {
@@ -475,9 +497,12 @@ pub(crate) fn separate(items: &mut [Placed], ctx: &AnnotationCtx) {
         let size = hi - lo;
         let mine = text_gap(&items[i]);
         // Leading coordinates `lo` may not take: one open interval per text in the way.
-        let blocked: Vec<(f64, f64)> = items[..i]
+        let blocked: Vec<(f64, f64)> = items
             .iter()
-            .filter_map(|o| Some((text_box(o)?, mine.max(text_gap(o)))))
+            .enumerate()
+            .filter(|&(j, o)| j < i || (j != i && o.settled))
+            .map(|(_, o)| o)
+            .flat_map(|o| keep_off(o).into_iter().map(move |b| (b, mine.max(text_gap(o)))))
             .map(|(b, gap)| (split(b), gap))
             .filter(|&((_, (o0, o1)), gap)| o0 - gap < c1 && c0 < o1 + gap)
             .map(|(((o0, o1), _), gap)| (o0 - gap - size, o1 + gap))
@@ -517,7 +542,7 @@ pub(crate) fn separate(items: &mut [Placed], ctx: &AnnotationCtx) {
 /// The box origin and text-anchor for `spot`'s text at `pos`, `extra` further
 /// off its edge (into the geometry when overlaid), nudged, then clear of the
 /// chart's ink past the plot.
-fn put(spot: &Spot, pos: Position, extra: f64, ctx: &AnnotationCtx) -> (f64, f64, TextAnchor) {
+pub(crate) fn put(spot: &Spot, pos: Position, extra: f64, ctx: &AnnotationCtx) -> (f64, f64, TextAnchor) {
     let (x, y, anchor) = place_box(spot.geom, spot.size, pos);
     let x = if spot.in_plot && pos.overlay && matches!(pos.edge, Edge::Top | Edge::Bottom) { x.min(ctx.plot.w - spot.size.0).max(0.0) } else { x };
     let out = if pos.overlay { -extra } else { extra };
@@ -532,7 +557,7 @@ fn put(spot: &Spot, pos: Position, extra: f64, ctx: &AnnotationCtx) -> (f64, f64
 }
 
 /// A `(w, h)` box at `(x, y)` moved clear of the chart's ink past the plot.
-fn settle(x: f64, y: f64, (w, h): (f64, f64), ctx: &AnnotationCtx) -> (f64, f64) {
+pub(crate) fn settle(x: f64, y: f64, (w, h): (f64, f64), ctx: &AnnotationCtx) -> (f64, f64) {
     let r = ctx.reach;
     let y = clear(y, h, ctx.plot.h, r.top, r.bottom, GAP);
     // Past a side edge, the axis ink there spans the plot's rows; a box
@@ -556,6 +581,9 @@ const COMPASS: [(Edge, Align); 8] = [
     (Edge::Top, Align::Start),
 ];
 
+/// A spot `arrange` may take: its group, its box, and the anchor and edge it brings, if any.
+type Candidate = (u8, Bounds, Option<(TextAnchor, Edge)>);
+
 /// Moves each text, in list order, off `occupied` (the chart's ink as boxes)
 /// and every other text. Candidates: where it is; the compass spots at `GAP`
 /// and `2 * GAP` off its geometry that its `auto` edge and align allow; then
@@ -566,7 +594,7 @@ const COMPASS: [(Edge, Align); 8] = [
 /// anchor is what it annotates and never pushes it.
 pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bounds]) {
     for i in 0..items.len() {
-        let Some((x0, y0, x1, y1)) = text_box(&items[i]) else { continue };
+        let Some((x0, y0, x1, y1)) = text_box(&items[i]).filter(|_| !items[i].settled) else { continue };
         let start = Bounds::new(x0, y0, x1, y1);
         let mine = text_gap(&items[i]);
         let point = match items[i].spot.map(|s| s.geom) {
@@ -581,10 +609,7 @@ pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bou
             .iter()
             .enumerate()
             .filter(|&(j, _)| j != i)
-            .filter_map(|(_, o)| {
-                let (a0, b0, a1, b1) = text_box(o)?;
-                Some((Bounds::new(a0, b0, a1, b1), mine.max(text_gap(o))))
-            })
+            .flat_map(|(_, o)| keep_off(o).into_iter().map(move |(a0, b0, a1, b1)| (Bounds::new(a0, b0, a1, b1), mine.max(text_gap(o)))))
             .collect();
         let marks: Vec<Bounds> = marks.copied().collect();
         let obstacles: Vec<Bounds> = marks.iter().copied().chain(texts.iter().map(|(b, g)| grow(b, *g))).collect();
@@ -602,7 +627,7 @@ pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bou
         let room = Bounds::new(start.x1.min(r0.0), start.y1.min(r0.1), start.x2.max(r1.0), start.y2.max(r1.1));
         let at = |x: f64, y: f64| Bounds::new(x, y, x + w, y + h);
         // (group, box, anchor and edge) per candidate; `None` keeps the text's own.
-        let mut candidates: Vec<(u8, Bounds, Option<(TextAnchor, Edge)>)> = vec![(0, start, None)];
+        let mut candidates: Vec<Candidate> = vec![(0, start, None)];
         // Text inside a band keeps its place across the band and moves only along its long
         // side, down a column or across a row: a column's label stays centered, never pinned to
         // a side. Its first move is to the band's middle, where it cannot be read as the label
@@ -729,6 +754,10 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
         tether: None,
         spot: None,
         strayed: false,
+        settled: false,
+        stem: None,
+        badges: Vec::new(),
+        number: None,
     };
     let mut anchor_point = None;
     let pad = if style.text.frame.visible { style.text.frame.padding } else { 0.0 };
@@ -1457,7 +1486,7 @@ mod tests {
     }
 
     #[test]
-    fn close_x_rules_slide_their_texts_apart_across_the_rules() {
+    fn close_x_rules_with_fixed_aligns_take_two_lines_and_the_rule_runs_to_the_upper_label() {
         let items = resolved(
             copies(1, &[&|a| a.x = date("2024-02-01"), &|a| {
                 a.x = date("2024-02-03");
@@ -1465,25 +1494,18 @@ mod tests {
             }]),
             Reach::default(),
         );
-        let alone = resolved(copies(1, &[&|a| {
-            a.x = date("2024-02-03");
-            a.text = Some("x avg".into());
-        }]), Reach::default());
-        let (first, second, own) = (text_of(&items[0]), text_of(&items[1]), text_of(&alone[0]));
+        let (first, second) = (text_of(&items[0]), text_of(&items[1]));
         assert!(!overlap(&items[0], &items[1]), "{first:?} {second:?}");
-        // The first keeps its place; the second moves along x only, past the first.
-        assert!(close(first.x, (day("2024-02-01") - day("2024-01-01")) / (day("2024-12-31") - day("2024-01-01")) * 200.0));
-        assert!(close(second.y, own.y) && second.x > own.x);
+        // An explicit align keeps its side: both start at their rules, one a line up.
+        assert!(close(first.x, rule_x(&items[0])) && close(second.x, rule_x(&items[1])));
+        assert_eq!(items.iter().filter(|p| p.stem.is_some()).count(), 1);
     }
 
     #[test]
-    fn near_the_plot_edge_text_slides_back_into_the_plot() {
-        let items = resolved(
-            copies(1, &[&|a| a.x = date("2024-12-01"), &|a| a.x = date("2024-12-02")]),
-            Reach::default(),
-        );
-        assert!(!overlap(&items[0], &items[1]));
-        assert!(text_of(&items[1]).x < text_of(&items[0]).x);
+    fn crowded_labels_near_the_plot_edge_stay_inside_it() {
+        let items = resolved(auto_rules(&[("2024-12-01", "Pricing change"), ("2024-12-04", "Pricing change")], false), Reach::default());
+        assert_the_law(&items);
+        assert!(items.iter().all(|p| text_of(p).x >= 0.0 && text_of(p).x + text_of(p).w <= 200.0));
     }
 
     #[test]
@@ -1985,10 +2007,12 @@ mod tests {
 
     /// Four monthly bars over 200px (step 50, centers 25..175), with a trend
     /// whose y is the day count since 2024-01-01 at the given sample days.
-    fn monthly_trend(samples: &[&str], range: Option<(&str, &str)>) -> (Vec<(f64, f64)>, Vec<(f64, f64)>) {
+    type Curve2 = Vec<(f64, f64)>;
+
+    fn monthly_trend(samples: &[&str], range: Option<(&str, &str)>) -> (Curve2, Curve2) {
         use super::super::model::{Scalar, Trend};
         let days = ["2024-01-01", "2024-02-01", "2024-03-01", "2024-04-01"];
-        let fit = |d: &str| (Scalar::Date(d.into()).days().unwrap() - Scalar::Date(days[0].into()).days().unwrap());
+        let fit = |d: &str| Scalar::Date(d.into()).days().unwrap() - Scalar::Date(days[0].into()).days().unwrap();
         let mut anns = contract();
         anns[11].x = range.map(|(f, t)| Anchor::Range { from: date_value(f), to: date_value(t) });
         anns[11].trend = Some(Trend {
@@ -2039,5 +2063,360 @@ mod tests {
         let mut c = ctx(&anns, &fonts, Orientation::Vertical);
         c.layer_y.clear();
         assert_eq!(place(&anns[11], &c).unwrap_err().code, "ERR-ANNOTATION-PAYLOAD");
+    }
+
+    /// Rules at `date`s, labeled, whose position leaves edge and align to placement.
+    fn auto_rules(rules: &[(&str, &str)], overlay: bool) -> Vec<Annotation> {
+        rules
+            .iter()
+            .enumerate()
+            .map(|(n, (d, text))| {
+                let mut a = contract()[1].clone();
+                a.index = n;
+                a.x = date(d);
+                a.text = Some((*text).into());
+                a.style.text.position = Position { edge: Edge::Top, align: Align::End, overlay, auto_edge: true, auto_align: true };
+                a
+            })
+            .collect()
+    }
+
+    /// `resolved` over a plot `w` wide (the dates span it).
+    fn resolved_wide(anns: Vec<Annotation>, w: f64) -> Vec<Placed<'static>> {
+        resolved_wide_over(anns, w, Vec::new())
+    }
+
+    /// `resolved_wide` with `occupied` data marks under the annotations.
+    fn resolved_wide_over(anns: Vec<Annotation>, w: f64, occupied: Vec<DataMark>) -> Vec<Placed<'static>> {
+        let anns: &'static [Annotation] = Box::leak(anns.into_boxed_slice());
+        let fonts: &'static FontBook = Box::leak(Box::new(fonts()));
+        let mut c = ctx(anns, fonts, Orientation::Vertical);
+        c.plot.w = w;
+        c.x = AxisMap::Time { extent: (day("2024-01-01"), day("2024-12-31")), range: (0.0, w), grain: None };
+        c.occupied = occupied;
+        let c: &'static AnnotationCtx = Box::leak(Box::new(c));
+        super::super::resolve(c).unwrap()
+    }
+
+    fn rule_x(p: &Placed) -> f64 {
+        let Some(Mark::Segment { a, .. }) = p.mark else { panic!("not a rule") };
+        a.0
+    }
+
+    /// Where a vertical rule's line stops at the top: its extension's end, else its own end.
+    fn rule_top(p: &Placed) -> f64 {
+        let Some(Mark::Segment { a, b }) = p.mark else { panic!("not a rule") };
+        p.stem.map_or(a.1.min(b.1), |s| s[0].1.min(s[1].1))
+    }
+
+    /// The law: each label touches its own rule, no two labels overlap, and a label covers
+    /// another rule's x only where that rule stops below it.
+    fn assert_the_law(items: &[Placed]) {
+        for (i, p) in items.iter().enumerate() {
+            let t = text_of(p);
+            let at = rule_x(p);
+            assert!(close(t.x, at) || close(t.x + t.w, at), "label {i} does not touch its rule: {t:?} at {at}");
+            for (j, q) in items.iter().enumerate().filter(|&(j, _)| j != i) {
+                assert!(!overlap(p, q), "labels {i} and {j} overlap");
+                let covers = t.x - 1.0 < rule_x(q) && rule_x(q) < t.x + t.w + 1.0;
+                assert!(!covers || rule_top(q) >= t.y + t.h - 0.5, "label {i} covers rule {j}, which reaches it");
+            }
+        }
+    }
+
+    const LAUNCHES: [(&str, &str); 3] =
+        [("2024-07-27", "Removed registration gating"), ("2024-08-03", "Binary auto-install"), ("2024-08-17", "v1 Compatibility Mode")];
+
+    #[test]
+    fn crowded_rule_labels_stay_at_their_rules_and_in_order() {
+        let items = resolved_wide(auto_rules(&LAUNCHES, false), 800.0);
+        assert_the_law(&items);
+        // Extra lines go up into the top margin, each rule running on to its label.
+        assert!(items.iter().any(|p| p.stem.is_some()));
+        assert!(items.iter().all(|p| text_of(p).y < 0.0));
+    }
+
+    #[test]
+    fn crowded_overlay_labels_step_down_inside_the_plot_and_no_label_covers_a_rule() {
+        let items = resolved_wide(auto_rules(&LAUNCHES, true), 800.0);
+        assert_the_law(&items);
+        assert!(items.iter().all(|p| text_of(p).y >= 0.0 && p.stem.is_none()));
+        // A rule in the crowd stops at its own label.
+        assert!(items.iter().all(|p| rule_top(p) >= text_of(p).y + text_of(p).h));
+    }
+
+    /// The items that carry a group's circle and key entry.
+    fn keyed<'a>(items: &'a [Placed<'static>]) -> Vec<&'a Placed<'static>> {
+        items.iter().filter(|p| !p.badges.is_empty()).collect()
+    }
+
+    #[test]
+    fn four_crowded_labels_number_every_rule_and_key_them_below_the_plot() {
+        let mut rules = LAUNCHES.to_vec();
+        rules.push(("2024-08-10", "Pricing page test"));
+        rules.push(("2024-01-15", "Docs relaunch"));
+        let items = resolved_wide(auto_rules(&rules, false), 800.0);
+        let mut by_x: Vec<&Placed> = items.iter().collect();
+        by_x.sort_by(|a, b| rule_x(a).total_cmp(&rule_x(b)));
+        // Rules a week apart seat as one circle each, numbered in rule order, each keyed under the plot.
+        assert!(by_x.iter().enumerate().all(|(k, p)| p.number == Some(k + 1) && p.stem.is_some()));
+        assert!(items.iter().all(|p| p.badges.len() == 2 && text_of(p).y >= 100.0));
+    }
+
+    #[test]
+    fn crowded_y_rule_labels_step_out_into_columns_beside_their_rules() {
+        let anns: Vec<Annotation> = [(25_000_000.0, "Q3 target"), (23_800_000.0, "Plan"), (22_600_000.0, "Last year avg")]
+            .iter()
+            .enumerate()
+            .map(|(n, (v, text))| {
+                let mut a = contract()[0].clone();
+                a.index = n;
+                a.y = Some(Anchor::Value { value: super::super::model::Scalar::Number(*v) });
+                a.text = Some((*text).into());
+                a.style.text.position = Position { edge: Edge::Top, align: Align::End, overlay: false, auto_edge: true, auto_align: true };
+                a
+            })
+            .collect();
+        let items = resolved(anns, Reach::default());
+        for (i, p) in items.iter().enumerate() {
+            let t = text_of(p);
+            let Some(Mark::Segment { a, .. }) = p.mark else { panic!() };
+            assert!(close(t.y + t.h, a.1) || close(t.y, a.1), "label {i} is not on top of or beneath its rule: {t:?}");
+            assert!(t.x >= 200.0, "label {i} is not out in the margin: {t:?}");
+            let stem = p.stem.expect("every crowded y rule runs on to its label");
+            for (j, q) in items.iter().enumerate().filter(|&(j, _)| j != i) {
+                assert!(!overlap(p, q), "labels {i} and {j} overlap");
+                let Some(Mark::Segment { a: qa, .. }) = q.mark else { panic!() };
+                let covered = t.y - 1.0 < qa.1 && qa.1 < t.y + t.h + 1.0;
+                let reaches = q.stem.unwrap()[1].0.max(q.stem.unwrap()[0].0) > t.x;
+                assert!(!(covered && reaches), "label {i} covers rule {j}");
+            }
+            assert!(stem[0].0 <= 200.0 && stem[1].1 == a.1);
+        }
+        // Three rules this close need two columns: the labels do not all share one.
+        let columns: std::collections::BTreeSet<i64> = items.iter().map(|p| text_of(p).x.round() as i64).collect();
+        assert_eq!(columns.len(), 2, "{columns:?}");
+    }
+
+    #[test]
+    fn a_label_that_would_cross_the_plot_edge_ends_at_its_rule_instead() {
+        let long = "Hide compare for non-customers";
+        let items = resolved(auto_rules(&[("2024-12-24", long)], false), Reach::default());
+        let t = text_of(&items[0]);
+        assert!(close(t.x + t.w, rule_x(&items[0])) && t.x >= 0.0 && t.anchor == TextAnchor::End, "{t:?}");
+        // Nothing reaches past the plot sideways, so the fit reserves no margin there.
+        let anns: &'static [Annotation] = Box::leak(auto_rules(&[("2024-12-24", long)], false).into_boxed_slice());
+        let fonts: &'static FontBook = Box::leak(Box::new(fonts()));
+        let c = ctx(anns, fonts, Orientation::Vertical);
+        assert!(super::super::bounds(&c).unwrap().x2 <= 200.0);
+        // An explicit align keeps its side, and the margin grows.
+        let mut anns = auto_rules(&[("2024-12-24", long)], false);
+        anns[0].style.text.position.auto_align = false;
+        anns[0].style.text.position.align = Align::End;
+        let t = text_of(&resolved(anns, Reach::default())[0]).clone();
+        assert!(t.x + t.w > 200.0);
+    }
+
+    fn y_rules(values: &[(f64, &str)]) -> Vec<Annotation> {
+        values
+            .iter()
+            .enumerate()
+            .map(|(n, (v, text))| {
+                let mut a = contract()[0].clone();
+                a.index = n;
+                a.y = Some(Anchor::Value { value: super::super::model::Scalar::Number(*v) });
+                a.text = Some((*text).into());
+                a.style.text.position = Position { edge: Edge::Top, align: Align::End, overlay: false, auto_edge: true, auto_align: true };
+                a
+            })
+            .collect()
+    }
+
+    fn box_of(p: &Placed) -> Bounds {
+        let t = text_of(p);
+        Bounds::new(t.x, t.y, t.x + t.w, t.y + t.h)
+    }
+
+    fn boxes_meet(a: &Bounds, b: &Bounds) -> bool {
+        a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1
+    }
+
+    #[test]
+    fn an_overlay_crowd_keeps_its_labels_off_the_data_under_the_top_band() {
+        // The data fills the band over the first two rules' labels, so those rows are no seat.
+        let data = Bounds::new(300.0, 0.0, 520.0, 20.0);
+        let items = resolved_wide_over(auto_rules(&LAUNCHES, true), 800.0, vec![DataMark::Box(data)]);
+        for (i, p) in items.iter().enumerate() {
+            assert!(!boxes_meet(&box_of(p), &data), "label {i} sits on the data: {:?}", text_of(p));
+            assert!(p.badges.iter().all(|&(x, y)| !boxes_meet(&Bounds::new(x - 7.0, y - 7.0, x + 7.0, y + 7.0), &data)) || p.number.is_none());
+        }
+        assert_the_law(&items);
+        // Without the data the labels take the top row, so the data did move them.
+        let free = resolved_wide(auto_rules(&LAUNCHES, true), 800.0);
+        assert!(free.iter().any(|p| boxes_meet(&box_of(p), &data)));
+    }
+
+    #[test]
+    fn y_rule_columns_start_past_the_axis_ink_beside_the_plot() {
+        let reach = Reach { left: 0.0, top: 0.0, right: 30.0, bottom: 0.0 };
+        let rules = [(25_000_000.0, "Q3 target"), (23_800_000.0, "Plan"), (22_600_000.0, "Last year avg")];
+        let items = resolved(y_rules(&rules), reach);
+        for p in &items {
+            // The tick-label column spans the plot's right edge to `reach.right`.
+            assert!(text_of(p).x >= 200.0 + 30.0, "{:?}", text_of(p));
+            // The rule's run starts past the labels too, so it breaks around them.
+            assert!(p.stem.unwrap()[0].0 >= 230.0, "{:?}", p.stem);
+        }
+    }
+
+    fn wide_ctx(anns: &'static [Annotation], w: f64, occupied: Vec<DataMark>) -> &'static AnnotationCtx<'static> {
+        let fonts: &'static FontBook = Box::leak(Box::new(fonts()));
+        let mut c = ctx(anns, fonts, Orientation::Vertical);
+        c.plot.w = w;
+        c.x = AxisMap::Time { extent: (day("2024-01-01"), day("2024-12-31")), range: (0.0, w), grain: None };
+        c.occupied = occupied;
+        Box::leak(Box::new(c))
+    }
+
+    #[test]
+    fn numbers_forced_by_the_data_alone_reach_the_fit_through_a_second_layout() {
+        // The data leaves a gap only a circle fits through, so only paint (which sees the data) numbers the rules.
+        let data = vec![DataMark::Box(Bounds::new(150.0, 0.0, 449.0, 60.0)), DataMark::Box(Bounds::new(520.0, 0.0, 800.0, 60.0))];
+        let anns: &'static [Annotation] = Box::leak(auto_rules(&LAUNCHES, true).into_boxed_slice());
+        let layout = || {
+            let fit = super::super::resolve(wide_ctx(anns, 800.0, Vec::new()))?;
+            let painted = wide_ctx(anns, 800.0, data.clone());
+            super::super::nodes(painted, Plane::Foreground)?;
+            Ok((fit, super::super::resolve(painted)?))
+        };
+        let (once_fit, _) = layout().unwrap();
+        assert!(once_fit.iter().all(|p| p.number.is_none()), "the fit alone seats the labels");
+        let (fit, paint) = super::super::reserve_key(layout, || {
+            super::super::force_numbers(anns);
+            layout()
+        }, |_| &[])
+        .unwrap();
+        // The fit reserves the key under the plot, and paint draws it there, off the data.
+        assert!(fit.iter().all(|p| p.number.is_some()) && keyed(&fit).iter().all(|p| text_of(p).y >= 100.0));
+        assert!(paint.iter().all(|p| p.number.is_some()) && keyed(&paint).iter().all(|p| text_of(p).y >= 100.0 && p.badges[0].1 < 100.0));
+    }
+
+    #[test]
+    fn rules_at_one_position_each_keep_a_label_or_a_circle() {
+        for gap in [0.0, 1.0] {
+            let day2 = if gap == 0.0 { "2024-07-01" } else { "2024-07-02" };
+            // A day is 2.2px on an 800px plot: a pixel apart needs a plot where a day is about one.
+            let w = if gap == 0.0 { 800.0 } else { 365.0 };
+            let items = resolved_wide(auto_rules(&[("2024-07-01", "Removed registration gating"), (day2, "Binary auto-install")], false), w);
+            assert_eq!(items.len(), 2);
+            for p in &items {
+                assert!(p.text.is_some() && p.number.is_none(), "two rules draw as labels");
+            }
+            assert!(!overlap(&items[0], &items[1]));
+            // Both reach their own labels; the shared line is each one's own.
+            assert!(items.iter().all(|p| close(text_of(p).x, rule_x(p)) || close(text_of(p).x + text_of(p).w, rule_x(p))));
+        }
+    }
+
+    const SHARED: [&str; 4] = ["Removed registration gating", "Binary auto-install", "v1 Compatibility Mode", "Pricing page test"];
+
+    fn shared_rules(days: [&'static str; 4]) -> Vec<(&'static str, &'static str)> {
+        days.into_iter().zip(SHARED).collect()
+    }
+
+    /// One circle and one key entry for the whole group, listing its labels in rule order.
+    fn assert_one_shared_circle(items: &[Placed<'static>]) {
+        assert!(items.iter().all(|p| p.number == Some(1)), "{:?}", items.iter().map(|p| p.number).collect::<Vec<_>>());
+        let keys = keyed(items);
+        assert_eq!(keys.len(), 1, "one circle for the group");
+        assert_eq!(text_of(keys[0]).lines.join(" "), SHARED.join("; "));
+        assert!(items.iter().filter(|p| p.text.is_none()).count() == 3 && items.iter().all(|p| p.stem.is_some()));
+    }
+
+    #[test]
+    fn four_rules_on_one_date_share_one_circle_and_the_key_lists_all_four() {
+        let items = resolved_wide(auto_rules(&shared_rules(["2024-07-01"; 4]), false), 800.0);
+        assert_one_shared_circle(&items);
+    }
+
+    #[test]
+    fn rules_a_pixel_and_a_half_apart_that_cannot_all_seat_merge_until_they_do() {
+        // A day is 0.74px on a 270px plot: two days is 1.5px. Eight rules cannot seat as eight circles.
+        let days = ["2024-07-01", "2024-07-03", "2024-07-05", "2024-07-07", "2024-07-09", "2024-07-11", "2024-07-13", "2024-07-15"];
+        let rules: Vec<(&str, &str)> = days.into_iter().zip(SHARED.into_iter().cycle()).collect();
+        let items = resolved_wide(auto_rules(&rules, false), 270.0);
+        assert!(items.iter().all(|p| p.number.is_some() && p.stem.is_some()));
+        let keys = keyed(&items);
+        assert!(!keys.is_empty() && keys.len() < 8, "{} circles", keys.len());
+        for (i, a) in keys.iter().enumerate() {
+            let c = a.badges[0];
+            for b in &keys[i + 1..] {
+                let d = b.badges[0];
+                assert!((c.0 - d.0).hypot(c.1 - d.1) >= 14.0 - 1e-6, "circles overlap: {c:?} {d:?}");
+            }
+        }
+        // Every label still appears in some key entry.
+        let key_text: String = keys.iter().map(|p| text_of(p).lines.join(" ")).collect::<Vec<_>>().join("; ");
+        assert!(SHARED.iter().all(|l| key_text.contains(l)));
+    }
+
+    #[test]
+    fn four_rules_a_pixel_and_a_half_apart_seat_as_four_circles() {
+        let items = resolved_wide(auto_rules(&shared_rules(["2024-07-01", "2024-07-03", "2024-07-05", "2024-07-07"]), false), 270.0);
+        assert_eq!(keyed(&items).len(), 4);
+        assert!(items.iter().enumerate().all(|(i, p)| p.number == Some(i + 1)));
+    }
+
+    #[test]
+    fn two_groups_far_apart_keep_two_circles() {
+        let rules: Vec<(&str, &str)> = ["2024-02-01"; 4].into_iter().chain(["2024-09-01"; 4]).zip(SHARED.into_iter().cycle()).collect();
+        let items = resolved_wide(auto_rules(&rules, false), 800.0);
+        let mut numbers: Vec<usize> = keyed(&items).iter().map(|p| p.number.unwrap()).collect();
+        numbers.sort_unstable();
+        assert_eq!(numbers, [1, 2]);
+    }
+
+    #[test]
+    fn circles_sit_over_the_data_when_every_seat_is_on_it() {
+        // The data fills the whole plot, so no seat clears it; a circle over a line still names its rule.
+        let data = vec![DataMark::Box(Bounds::new(0.0, 0.0, 800.0, 100.0))];
+        let items = resolved_wide_over(auto_rules(&shared_rules(["2024-07-01"; 4]), true), 800.0, data);
+        let keys = keyed(&items);
+        assert_eq!(keys.len(), 1);
+        assert!(keys[0].badges[0].1 < 100.0, "the circle sits in the plot");
+    }
+
+    #[test]
+    fn a_label_flipped_off_the_plot_edge_is_seated_with_the_crowd_it_joins() {
+        // 120 and 130 crowd as authored; 190's label crosses the edge and flips back over them.
+        let rules = [("2024-08-07", "Pricing change"), ("2024-08-25", "Binary auto-install"), ("2024-12-10", "Pricing change")];
+        let items = resolved(auto_rules(&rules, false), Reach::default());
+        assert_the_law(&items);
+        assert!(items.iter().all(|p| text_of(p).x >= 0.0 && text_of(p).x + text_of(p).w <= 200.0));
+    }
+
+    #[test]
+    fn a_note_keeps_off_a_settled_circle_and_its_extension() {
+        let mut anns = auto_rules(&shared_rules(["2024-07-01"; 4]), false);
+        let mut note = contract()[7].clone();
+        note.index = 4;
+        note.x = date("2024-07-01");
+        note.y = Some(Anchor::Value { value: super::super::model::Scalar::Number(40_000_000.0) });
+        note.connector = ConnectorKind::None;
+        note.enclose = None;
+        note.style.text.dx = 0.0;
+        note.style.text.dy = 0.0;
+        anns.push(note);
+        let items = resolved_wide(anns, 800.0);
+        let note = box_of(&items[4]);
+        for p in &items[..4] {
+            for &(x, y) in &p.badges {
+                assert!(!boxes_meet(&note, &Bounds::new(x - 7.0, y - 7.0, x + 7.0, y + 7.0)), "the note sits on a circle: {note:?}");
+            }
+            if let Some([a, b]) = p.stem {
+                let run = Bounds::new(a.0.min(b.0) - 0.5, a.1.min(b.1) - 0.5, a.0.max(b.0) + 0.5, a.1.max(b.1) + 0.5);
+                assert!(!boxes_meet(&note, &run), "the note sits on an extension: {note:?}");
+            }
+        }
     }
 }

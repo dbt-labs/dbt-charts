@@ -10,6 +10,7 @@ record_text_truncation call from the source makes its surface's test fail.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from dbt_charts.core.compile.models.source import (
@@ -112,6 +113,50 @@ rows:
     )
     clean_codes = {w.code for w in clean.warnings}
     assert WARN_KPI_LABEL_TRUNCATED.code not in clean_codes
+
+
+def test_kpi_label_wrap_draws_every_line(tmp_path, local_project) -> None:
+    """`overflow: wrap` draws the whole label, so nothing is cut and nothing warns."""
+    from dbt_charts.core.board import render_dashboard
+    from dbt_charts.core.diagnostics import WARN_KPI_LABEL_TRUNCATED
+    from dbt_charts.core.project import InMemoryBoard
+
+    project = local_project(tmp_path)
+    words = " ".join(f"word{n}" for n in range(30))
+    board = InMemoryBoard(
+        f"""
+width: 200
+source: examples_db
+queries:
+  q: SELECT value FROM t
+charts:
+  k:
+    query: q
+    type: kpi
+    value: value
+    label: "{words} LASTWORD"
+    style:
+      label:
+        overflow: wrap
+rows:
+  - k
+""",
+        path=project.path("charts/_t.yml"),
+    )
+    result = render_dashboard(
+        board=board,
+        env=_mock_adapter([{"value": 42}]),
+        format="svg",
+        project=project,
+        result_cache=None,
+    )
+    assert isinstance(result.data, str)
+    label = re.search(r'data-dct-role="kpi-label"[^>]*>(.*?)</text>', result.data, re.S)
+    assert label, result.data[:400]
+    drawn = re.findall(r"<tspan[^>]*>([^<]*)</tspan>", label.group(1))
+    assert len(drawn) > 2
+    assert " ".join(drawn) == f"{words} LASTWORD"
+    assert WARN_KPI_LABEL_TRUNCATED.code not in {w.code for w in result.warnings}
 
 
 # ── KPI inline fallback ──────────────────────────────────────────────────────

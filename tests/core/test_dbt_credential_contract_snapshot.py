@@ -48,7 +48,12 @@ def test_every_snapshotted_dbt_field_has_a_closed_source_model_field() -> None:
         "snowflake": SnowflakeSourceConfig,
     }
     field_renames = {
-        "bigquery": {"database": "project", "schema": "dataset", "method": None},
+        "bigquery": {
+            "database": "project",
+            "schema": "dataset",
+            "method": None,
+            "job_link_info_level_log": None,
+        },
         "duckdb": {"config_options": "duckdb_config", "database": "path"},
         "postgres": {"database": "dbname"},
         "redshift": {"database": "dbname", "autocommit": None},
@@ -62,9 +67,9 @@ def test_every_snapshotted_dbt_field_has_a_closed_source_model_field() -> None:
                     field, "schema_" if field == "schema" else field
                 )
                 if source_field is None:
-                    # build_adapter derives or forces these rather than exposing
-                    # them to authors: BigQuery's credential method, Redshift's
-                    # always-on autocommit.
+                    # Not exposed to authors: build_adapter derives BigQuery's
+                    # credential method and forces Redshift's autocommit;
+                    # BigQuery's job_link_info_level_log only changes dbt logging.
                     continue
                 if adapter == "duckdb" and field in UNSUPPORTED_DUCKDB_FIELDS:
                     # Rejected at parse with a field-naming error instead.

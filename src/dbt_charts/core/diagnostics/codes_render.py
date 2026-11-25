@@ -738,18 +738,6 @@ ERR_LAYER_STEP_ORIENTATION = REGISTRY.register(
     )
 )
 
-ERR_LAYER_AREA_SPLIT_HORIZONTAL_BASE = REGISTRY.register(
-    ErrorCode(
-        code="ERR-LAYER-AREA-SPLIT-HORIZONTAL-BASE",
-        domain="render",
-        title="an area layer needs a single-series or vertical base chart",
-        message_template="Chart {chart_id!r}: an area layer over a horizontal bar that is split by color or stacked has no meaningful shape: the area's stack runs along the bar's category axis. Use a line layer, or set `style.orientation: vertical`.",
-        doc="Fired when a chart with `style.orientation: horizontal` and a color-split or stacked base authors an `area` layer. The layer's stack groups by the color the base shares, along the axis the horizontal base uses for its categories, so the area paints as a skewed ribbon over the wrong axis.",
-        summary="Fired when an area layer sits on a split horizontal bar.",
-        docs_topic="charts",
-    )
-)
-
 ERR_MIRROR_LAYERS = REGISTRY.register(
     ErrorCode(
         code="ERR-MIRROR-LAYERS",
@@ -936,8 +924,8 @@ WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH = REGISTRY.register(
         domain="render",
         title="Layered chart y series have a large scale mismatch",
         message_template="Chart {chart_id!r}: y columns {col_a!r} and {col_b!r} share a y-axis, and {col_b!r} reaches only {reach:.1%} of it: the smaller series will be visually crushed to a flat line.",
-        fix_template="Index the series to a common scale in the query (e.g. percent change, or 100 = first period), or show them as two charts stacked so they share the x-axis.",
-        doc="Fires on a layered chart where the base chart's own y series and/or its layers share the y-axis and one series' drawn band is under 6% of the axis (from zero when the axis includes it, else its own variation): the smaller series is visually crushed to a flat line. Classic example: revenue (millions) overlaid with conversion rate ([0, 1]). A layer that pins its own y-axis position opts out.",
+        fix_template="Put the series in the same units (e.g. index to percent change, or 100 = first period in the query), or split them into two charts stacked so they share the x-axis.",
+        doc="Fires on a layered chart where the base chart's own y series and/or its layers share the y-axis and one series' band, running from zero to its values, is under 6% of the axis: the series sits hugging the floor of the other and is visually crushed to a flat line. A series that sits beside the other on a zoomed axis (a goal line tracking its bars) does not fire: the axis is measured from zero, so only a series tiny against the other fires, not one near a zoomed floor. Classic example: revenue (millions) overlaid with conversion rate ([0, 1]). A layer that pins its own y-axis position opts out.",
         docs_topic="charts",
     )
 )
@@ -2214,6 +2202,19 @@ WARN_ANNOTATION_NOTE_MOVED = REGISTRY.register(
         fix_template="Set `connector: line` so the note points at its anchor, or set `style.marks.text.position.edge` to keep the text on one side.",
         doc="Fired when a note's `auto` text edge could not stay on its preferred side without covering the data or other annotation text, so the text moved to another side of its point, and the note draws no connector to say which point it names.",
         summary="Fired when a note's text moves off its point without a connector.",
+        docs_topic="charts",
+    )
+)
+
+WARN_ANNOTATION_RULE_LABELS_NUMBERED = REGISTRY.register(
+    WarningCode(
+        code="WARN-ANNOTATION-RULE-LABELS-NUMBERED",
+        domain="render",
+        title="Crowded rule labels replaced by numbers",
+        message_template="Chart {chart_id!r}: the rule labels are too crowded to write out, so every rule shows a circled number and a key under the plot lists the labels.",
+        fix_template="Shorten the labels, move the rules apart, or drop the ones the chart can do without.",
+        doc="Fired when four or more rule labels crowd one another, or three lines or columns cannot hold them. Every rule label in the chart is replaced by an outlined circled number, in the order of the rules, and a key under the plot lists each number beside its label.",
+        summary="Fired when crowded rule labels are replaced by circled numbers and a key.",
         docs_topic="charts",
     )
 )

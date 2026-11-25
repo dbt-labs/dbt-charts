@@ -344,7 +344,7 @@ charts:
       # urgent → high → normal here), not the query's urgent → low sequence.
       # "data" stacks in SQL row order instead, matching the title's claim
       # and the ORDER BY priority_order in queue_age_by_priority.
-      stack_order: data
+      series_order: data
       axis_y:
         # Tick ladder is derived, not pinned, so it tracks the data.
         labels:

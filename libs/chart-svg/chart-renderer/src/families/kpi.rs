@@ -510,8 +510,9 @@ fn scale_color(
     let Some(numeric) = row.get(field).and_then(coerce_numeric_cell) else {
         return Ok(scale.null_color.clone().filter(|c| !c.is_empty()));
     };
-    let raw = compute_scale_domain(&[row], &[field], scale.min, scale.max);
-    let (lo, hi) = nice_domain(scale.min, scale.max, scale.nice.unwrap_or(false), raw);
+    let bounds = scale.domain.unwrap_or_default();
+    let raw = compute_scale_domain(&[row], &[field], bounds.min, bounds.max);
+    let (lo, hi) = nice_domain(bounds.min, bounds.max, scale.nice.unwrap_or(false), raw);
     let hinge = resolve_hinge(scale.hinge.as_ref(), raw.0, raw.1, col_format);
     let stops = resolve_palette_stops(scale)?;
     interpolate_scale_color(numeric, lo, hi, &stops, hinge, &scale.arm_mode).map(Some)

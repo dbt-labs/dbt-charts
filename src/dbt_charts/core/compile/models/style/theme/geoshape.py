@@ -12,10 +12,12 @@ from dbt_charts.core.compile.models.conditional_predicate import (
 )
 from dbt_charts.core.compile.models.factories import build_conditional_model
 from dbt_charts.core.compile.models.markers import (
+    Absent,
     ChartLocal,
     InheritSlot,
     SkipInheritSlots,  # noqa: F401  # pyright: ignore[reportUnusedImport] — required in module globals for model_rebuild() to resolve inherited base-class annotations
 )
+from dbt_charts.core.compile.models.primitives import PatternStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _GeoChartStyle,
 )
@@ -45,6 +47,29 @@ class _GeoshapeChartStyleBase(_GeoChartStyle):
     ] = Field(
         default_factory=GeoshapeChartMarksStyle,
         description="Geoshape-family mark overrides.",
+    )
+    tints: Annotated[PatternStyle | None, Absent("the color scale's own fills")] = (
+        Field(
+            default=None,
+            description=(
+                "Draw in flat tints of one ink: each step of this sequential pattern "
+                "ramp is one tint, and a region takes the tint of the step its value falls in."
+            ),
+        )
+    )
+    strip_key: Annotated[bool | None, Absent("the side key")] = Field(
+        default=None,
+        description=(
+            "Draw the `tints` key as one strip of square swatches in place of the "
+            "side key, labeled at its two ends in the value-label format."
+        ),
+    )
+    no_data_dash: Annotated[list[float] | None, Absent("no outline")] = Field(
+        default=None,
+        description=(
+            "Dash pattern in pixels, such as `[2, 2]`, of the outline a region with no "
+            "value draws in the `tints` ink, with no fill. Needs `tints`."
+        ),
     )
 
 

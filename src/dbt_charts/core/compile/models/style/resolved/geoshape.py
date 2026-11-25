@@ -63,6 +63,12 @@ class ResolvedGeoshapeStyle(BaseModel):
     tooltip_format: ResolvedFormat = Field(
         description="Resolved tooltip format; an affix composes on the hover card.",
     )
+    strip_key_format: ResolvedFormat | None = Field(
+        default=None, description="The strip's two end values print in this format."
+    )
+    strip_key_is_house: bool = Field(
+        default=False, description="The strip's format paints the narrative register."
+    )
     title_font: ResolvedFontStyle | None = Field(
         default=None,
         description="Baked title font (size/weight/family/…) from the width tier.",

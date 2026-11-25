@@ -550,7 +550,7 @@ pub(super) struct LabelBuild<'a> {
     pub(super) spans: &'a SegmentSpans,
     /// Where a centered stack's labels sit, which is not where its bars are.
     pub(super) label_spans: Option<&'a SegmentSpans>,
-    pub(super) stack_order: &'a [String],
+    pub(super) series_order: &'a [String],
     pub(super) totals: &'a HashMap<String, f64>,
     /// The genuine-zero label's slot, used when no value label is authored.
     pub(super) zero_text: Option<&'a MarkLabels>,
@@ -614,7 +614,7 @@ fn anchored_total_layer(ml: &MarkLabels, b: &LabelBuild) -> Result<LabelLayer, S
     let total = MarkLabels { position: Some("above".into()), anchors: Vec::new(), template: None, ..ml.clone() };
     let spec = LabelSpec::new(&total, false, b.r.style.label_is_house, b.rows, b.val_field);
     let color = b.color_field.expect("is_stacked implies color");
-    let sites = total_sites(b.spans, b.totals, b.rows, (b.cat_field, b.val_field), b.link, color, b.stack_order, &spec)?;
+    let sites = total_sites(b.spans, b.totals, b.rows, (b.cat_field, b.val_field), b.link, color, b.series_order, &spec)?;
     let sites = anchored_categories(sites, b.totals.iter().map(|(c, t)| (c.clone(), *t)), &ml.anchors, b)?;
     LabelLayer::new(spec, sites, b.horizontal, false, false, false, true, b.fonts, b.board_style)
 }
@@ -648,7 +648,7 @@ pub(super) fn value_label_layers(b: &LabelBuild) -> Result<Vec<LabelLayer>, Stri
                 b.link,
                 color,
                 &spec,
-                (b.is_stacked && spec.position == "middle").then_some(b.stack_order),
+                (b.is_stacked && spec.position == "middle").then_some(b.series_order),
                 b.span.is_some(),
             )?,
             None => plain_sites(
@@ -693,7 +693,7 @@ pub(super) fn value_label_layers(b: &LabelBuild) -> Result<Vec<LabelLayer>, Stri
             (b.cat_field, b.val_field),
             b.link,
             b.color_field.expect("is_stacked implies color"),
-            b.stack_order,
+            b.series_order,
             &spec,
         )?;
         layers.push(LabelLayer::new(spec, sites, b.horizontal, false, false, false, true, b.fonts, b.board_style)?);
@@ -1315,6 +1315,7 @@ pub(super) fn mark_labels(
     plot_top: f64,
     canvas: &str,
     under: &[crate::annotation::DataMark],
+    strikes: &[Obstacle],
     captions: &mut LayerCaptions,
     link_open: crate::href::LinkOpen,
 ) -> Result<Vec<Node>, String> {
@@ -1323,22 +1324,33 @@ pub(super) fn mark_labels(
     let mut labels = Vec::new();
     // A label outside its bar with no series color to take reads as the neutral ink, kept readable on the canvas.
     let neutral_outside = dbt_charts_color::ensure_readable_ink(&style.font.ink, canvas, crate::common::OUTSIDE_INK_CONTRAST)?;
-    let lines: Vec<Obstacle> = under.iter().filter(|m| matches!(m, DataMark::Line { .. })).flat_map(Obstacle::of_mark).collect();
+    let lines: Vec<Obstacle> = under.iter().filter(|m| matches!(m, DataMark::Line { .. })).flat_map(Obstacle::of_mark).chain(strikes.iter().cloned()).collect();
     let bars: Vec<vega_fit::Bounds> = under
         .iter()
         .filter(|m| matches!(m, DataMark::Tinted(inner, ..) if matches!(**inner, DataMark::Box(_))))
         .flat_map(DataMark::boxes)
         .collect();
-    for point in points {
-        let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, ends, inner_segment, span, ref text, ref href, recede, ink, ref font_color, ref font_weight, ref on, rect } = *point;
+    let placed = |point: &LabelPoint| {
+        let spot = label_spot(ml, &style.position, style.horizontal_offset, point.center, point.extent, point.span, point.side);
+        (spot, style.inside_bar && !matches!(point.side, Some(LabelSide::Out(_) | LabelSide::Bare)))
+    };
+    let swaps = |point: &LabelPoint, follow: bool| match (point.ink, point.span, point.blank, point.inner_segment) {
+        (Some(at), None, false, false) => {
+            let (spot, over_bar) = placed(point);
+            other_side_of_the_bar_end(ml, &style, &spot, over_bar, point.center, (point.extent, point.ends), at, (&lines, follow), &bars)
+        }
+        _ => None,
+    };
+    // Once one label crosses its bar end, the layer's others follow where they fit: one side reads as one layer.
+    let own: Vec<_> = points.iter().map(|p| swaps(p, false)).collect();
+    let follow = own.iter().any(|s| s.as_ref().is_some_and(|&(.., across)| across));
+    for (point, own) in points.iter().zip(own) {
+        let LabelPoint { center, extent: _, ref aria, ref series_fill, blank, side: _, ends, inner_segment, span, ref text, ref href, recede, ink, ref font_color, ref font_weight, ref on, rect } = *point;
         let anchor = link_open.anchor(href.as_deref()).map(|anchor| crate::href::Anchor { recede, ..anchor });
-        let mut spot = label_spot(ml, &style.position, style.horizontal_offset, center, extent, span, side);
-        let mut over_bar = style.inside_bar && !matches!(side, Some(LabelSide::Out(_) | LabelSide::Bare));
+        let (mut spot, mut over_bar) = placed(point);
         let mut ink = ink;
-        if let (Some(at), None, false, false) = (ink, span, blank, inner_segment) {
-            if let Some((swapped, swapped_ink, now_over_bar)) = other_side_of_the_bar_end(ml, &style, &spot, over_bar, center, (extent, ends), at, &lines, &bars) {
-                (spot, ink, over_bar) = (swapped, Some(swapped_ink), now_over_bar);
-            }
+        if let Some((swapped, swapped_ink, now_over_bar, _)) = own.or_else(|| swaps(point, follow).filter(|_| follow)) {
+            (spot, ink, over_bar) = (swapped, Some(swapped_ink), now_over_bar);
         }
         if let (Some(at), Some(ends), None, false) = (ink, ends, span, blank) {
             if let Some((stacked_spot, stacked_ink)) = captions.stack(ml, &style, center, ends, inner_segment, at) {
@@ -1418,11 +1430,12 @@ pub(super) fn mark_labels(
     }])
 }
 
-/// Where a label that sits on a layer line (`lines`) can go instead, with its ink and whether it
-/// is then over the bar. First the far side of the bar end it anchors at: inside the bar when the
+/// Where a label that sits on a layer line or a gridline at text contrast (`lines`) can go instead, with its ink, whether it
+/// is then over the bar, and whether it crossed the bar end it anchors at. First the far side of that bar end: inside the bar when the
 /// label is outside and fits wholly in a bar of `bars`, outside when it is inside and clear of
 /// every bar. Then outside just past the bar's other end (`ends`, `extent`'s end first), clear of
-/// every bar. `None` keeps the label where it is.
+/// every bar. A label that `follow`s a crossing in its layer takes only the far side of its bar end,
+/// whether or not a line meets it. `None` keeps the label where it is.
 #[allow(clippy::too_many_arguments)]
 fn other_side_of_the_bar_end(
     ml: &MarkLabels,
@@ -1432,11 +1445,11 @@ fn other_side_of_the_bar_end(
     center: f64,
     (extent, ends): (f64, Option<(f64, f64)>),
     ink: vega_fit::Bounds,
-    lines: &[Obstacle],
+    (lines, follow): (&[Obstacle], bool),
     bars: &[vega_fit::Bounds],
-) -> Option<(LabelSpot, vega_fit::Bounds, bool)> {
+) -> Option<(LabelSpot, vega_fit::Bounds, bool, bool)> {
     let blocked = |b: &vega_fit::Bounds| lines.iter().any(|o| o.slack(b) < -EPS);
-    if !blocked(&ink) {
+    if !follow && !blocked(&ink) {
         return None;
     }
     // The way the text runs from its anchor; a centered label has no side to leave.
@@ -1449,9 +1462,9 @@ fn other_side_of_the_bar_end(
         let (near, far) = if (base - extent).abs() <= (tip - extent).abs() { (base, tip) } else { (tip, base) };
         (far != near).then(|| (far, LabelSide::Out((far - near).signum())))
     });
-    let across = (extent, if over_bar { LabelSide::Out(-run) } else { LabelSide::In(run) }, !over_bar);
-    let candidates = std::iter::once(across).chain(far_end.map(|(far, side)| (far, side, false)));
-    for (anchor, side, over) in candidates {
+    let across = (extent, if over_bar { LabelSide::Out(-run) } else { LabelSide::In(run) }, !over_bar, true);
+    let candidates = std::iter::once(across).chain(far_end.filter(|_| !follow).map(|(far, side)| (far, side, false, false)));
+    for (anchor, side, over, crossed) in candidates {
         let swapped = label_spot(ml, &style.position, style.horizontal_offset, center, anchor, None, Some(side));
         let at = vega_fit::text_ink(swapped.x, swapped.y, ink.x2 - ink.x1, style.font.size, swapped.align(), swapped.baseline);
         let settles = if over {
@@ -1460,7 +1473,7 @@ fn other_side_of_the_bar_end(
             !bars.iter().any(|b| crate::placement::intersection(&at, b) > 0.0)
         };
         if settles && !blocked(&at) {
-            return Some((swapped, at, over));
+            return Some((swapped, at, over, crossed));
         }
     }
     None

@@ -27,8 +27,8 @@ string_enum!(
     StackMode { None = "none", Zero = "zero", Normalize = "normalize", Center = "center" }
 );
 string_enum!(
-    /// Z-order of stacked segments.
-    StackOrder { Value = "value", Data = "data", Alphabetical = "alphabetical" }
+    /// The order of a chart's series in a stack or group.
+    SeriesOrder { Value = "value", Data = "data", Alphabetical = "alphabetical" }
 );
 string_enum!(
     /// A keyword for the spacing within a group of bars, beside a number.
@@ -167,12 +167,12 @@ pub struct BarChartStyle {
     pub orientation: Option<Engine<Orientation, Auto>>,
     /// Default stack mode for bar charts; none renders side-by-side columns.
     pub stack: StackMode,
-    /// Within-group spacing for grouped bars. Keywords: 'auto' (2 series → partial, 3+ → none), 'none' (small gap), 'flush' (bars touch), 'partial' (25% overlap), 'full' (bars coincide; an error unless each category holds one color). Or a number as a fraction of bar width: >0 overlaps, 0 touches, <0 gaps; 1 or more is 'full'. Unset uses the renderer default ('auto'). Only applies to grouped bars; setting it together with an active stack mode is an error.
+    /// Within-group spacing for grouped bars. Keywords: 'auto' (2 series where one is clearly the bigger → partial, the bigger series behind; otherwise none), 'none' (small gap), 'flush' (bars touch), 'partial' (25% overlap), 'full' (bars coincide; an error unless each category holds one color). Or a number as a fraction of bar width: >0 overlaps, 0 touches, <0 gaps; 1 or more is 'full'. Unset uses the renderer default ('auto'). Only applies to grouped bars; setting it together with an active stack mode is an error.
     #[model(absent = "the renderer default, 'auto'")]
     pub overlap: Option<Engine<f64, Overlap>>,
-    /// Z-order of stacked segments. Unset or 'value' puts the largest aggregate at baseline. 'data' stacks series in first-appearance order: SQL row order for color:, the listed order for y: [a, b, ...] (a measure null in the first rows appears later). 'alphabetical' sorts by series name. Ignored when stacking is off or there is only one series.
+    /// Order of the series in a stack or group. Unset or 'value' puts the largest aggregate first: at the baseline when stacked, leftmost (topmost when horizontal) when grouped. 'data' orders series by first appearance: SQL row order for color:, the listed order for y: [a, b, ...] (a measure null in the first rows appears later). 'alphabetical' sorts by series name. Ignored when there is only one series.
     #[model(absent = "ranks by value")]
-    pub stack_order: Option<StackOrder>,
+    pub series_order: Option<SeriesOrder>,
     /// Band-scale padding for grouped bars.
     pub grouped: BarGroupedStyle,
     /// Tear bars far longer than the rest.

@@ -246,9 +246,11 @@ pub enum ConstraintKind {
     Forbids,
     /// The value at the one field is one of `values` (under `when`).
     ValueIn,
-    /// Each item of the list at the one field fully matches `pattern` (under `when`).
+    /// The text at the one field, or each item of the list or value of the mapping at it, fully
+    /// matches `pattern` (under `when`).
     ItemsMatch,
-    /// The number at the one field, or each number of the list at it, lies within `bounds`.
+    /// The number at the one field, or each number of the list or mapping at it, lies within
+    /// `bounds`.
     Range,
     /// No value repeats across the union of the named lists.
     Unique,
@@ -356,6 +358,8 @@ pub struct ModelInfo {
     pub shorthand: Option<&'static str>,
     /// The pattern of the bare string a `shorthand_with` struct also reads from.
     pub string_pattern: Option<&'static str>,
+    /// The fixed-length list a `shorthand_with` struct also reads from (`[min, max]`).
+    pub shorthand_items: Option<&'static TypeExpr>,
     /// Every key is required of an authored layer even where a slot mirrors the model.
     pub complete: bool,
     /// The tag a tagged enum reads this model under, when a rule of the model depends on it (a

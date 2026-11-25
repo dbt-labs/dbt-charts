@@ -158,14 +158,6 @@ macro_rules! number_list {
 }
 
 number_list!(
-    /// A list of exactly two numbers.
-    NumberPair, 2, "List",
-    ::model_core::TypeExpr::Keyed(
-        &::model_core::Keywords::exactly_items(2),
-        &::model_core::TypeExpr::List(&::model_core::TypeExpr::Scalar(::model_core::Scalar::Float)),
-    )
-);
-number_list!(
     /// A `[longitude, latitude]` or `[x, y]` tuple.
     LonLat, 2, "Tuple",
     ::model_core::TypeExpr::Tuple(&[

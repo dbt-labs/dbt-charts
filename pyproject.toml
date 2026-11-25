@@ -23,7 +23,7 @@ dev = [
     "dbt-adapters==1.24.5",  # Match the monorepo adapter API surface
     "dbt-duckdb==1.10.0",  # Match the monorepo DuckDB adapter
     "dbt-databricks==1.12.6",  # Databricks credential-isolation tests
-    "dbt-bigquery==1.11.1",  # BigQuery profile and adapter tests
+    "dbt-bigquery==1.12.3",  # BigQuery profile and adapter tests
     "dbt-postgres==1.10.0",  # PostgreSQL adapter tests
     "dbt-redshift==1.11.2",  # Redshift adapter tests
     "dbt-snowflake==1.12.5",  # Snowflake adapter tests

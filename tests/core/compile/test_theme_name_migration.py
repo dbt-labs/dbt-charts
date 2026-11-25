@@ -82,8 +82,8 @@ class TestRetiredThemeNamesMigrateInMemory:
             d.message for d in result.warnings if d.code == "WARN-SCHEMA-MIGRATED"
         ]
         assert messages == [
-            "dbt charts migrated this YAML in memory; `dct migrate` may be "
-            "able to update the file."
+            "dbt charts migrated this YAML in memory (theme: solid → clarity); "
+            "`dct migrate` may be able to update the file."
         ]
 
 

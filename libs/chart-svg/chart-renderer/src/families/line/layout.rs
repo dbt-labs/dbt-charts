@@ -27,7 +27,7 @@ use crate::common::{axis_title_band, axis_title_text, format_y_label, symbol_rad
 use ::bind::rows::{dimension_sort_domain, is_year_shaped, row_num, row_str, SortAggregate};
 use crate::families::cartesian::{band_edge, vl_default_tick_count};
 use d3rs::scale::{Band, Continuous, Transform};
-use crate::families::layers::{bar_layer_marks, placed_bar_layer_marks, layer_axis, layer_stroked, line_layer_marks, merged_legend_title, scope_group_top, LayerStack, panel_layer_rows, scatter_layer_marks, resolve_layer_rows, AreaFrame, PointColor, DomainCut, DualAxisTitles, LayerAxis, LayerAxisFrame, LayerAxisInk, LayerSide, OverlayBarLayer, OverlayLayer, StepBand, YSides, MOVED_BASE_LABEL_PAD};
+use crate::families::layers::{bar_layer_marks, placed_bar_layer_marks, layer_axis, layer_stroked, line_layer_marks, merged_legend_title, scope_group_top, panel_layer_rows, scatter_layer_marks, resolve_layer_rows, AreaFrame, PointColor, DomainCut, DualAxisTitles, LayerAxis, LayerAxisFrame, LayerAxisInk, LayerSide, OverlayBarLayer, OverlayLayer, StepBand, YSides, MOVED_BASE_LABEL_PAD};
 use ::bind::layers::{layer_color_text, layer_color_groups, NULL_COLOR_TEXT};
 use crate::families::support_table_strip;
 use crate::families::legend::{
@@ -68,6 +68,17 @@ pub(super) fn layout_with_plot(bound: &Bound, cell: Rect, measure: &Measure) -> 
     if bound.r.multiples.is_some() {
         return Err("line: layout draws one plot; a multiples chart is composed by render".into());
     }
+    crate::annotation::reserve_key(
+        || layout_once(bound, cell, measure),
+        || {
+            crate::annotation::force_numbers(&bound.r.annotations);
+            layout_once(bound, cell, measure)
+        },
+        |(laid, _)| &laid.diagnostics,
+    )
+}
+
+fn layout_once(bound: &Bound, cell: Rect, measure: &Measure) -> Result<(Layout, PlotRect), Diagnostic> {
     let Some(unviewed) = &bound.r.unviewed else { return laid_out(bound, cell, measure, None) };
     let whole = super::bind::bind(unviewed, bound.draw_areas)?;
     let whole_box = laid_out(&whole, cell, measure, None)?.0.data_box;
@@ -745,7 +756,7 @@ pub(super) fn fit(
     };
 
     // Stacked-area accumulation order: production's
-    // `sorted_series_by_stack_order` (`style.stack_order`; unauthored is the
+    // `sorted_by_series_order` (`style.series_order`; unauthored is the
     // "value" default — descending global sum, largest first, alphabetical
     // tie-break) — a THIRD list beside
     // `spatial_domain` (paint order, first-appearance, unaffected by
@@ -764,12 +775,12 @@ pub(super) fn fit(
     if is_stacked {
         let cf = color_field.unwrap_or_default();
         let ranked: &[String] = if r.wide_measures.is_empty() { &spatial_domain } else { &wide_series };
-        baseline_order = ::bind::stack::sorted_series_by_stack_order(
+        baseline_order = ::bind::stack::sorted_by_series_order(
             ranked,
             series_rows,
             cf,
             y_field,
-            r.style.stack_order.as_deref(),
+            r.style.series_order.as_deref(),
         )?;
     }
 
@@ -1240,7 +1251,6 @@ pub(super) fn fit(
             ax_y.ticks.count,
             headroom,
             ax_y.is_zero_false(),
-            shape == Shape::RailConcat,
         )
     };
     // A layer merges the base's y encoding into a second `layer[]` entry
@@ -1523,23 +1533,24 @@ pub(super) fn fit(
     // temporal cadence choice below: title bands are a function of title
     // text/style alone, never of x-axis label content.
     let x_title_text = axis_title_text(x_field, r.x_label.as_deref(), &r.field_labels)?;
+    let hover_x_title = axis_title_text(x_field, crate::common::hover_label(r.x_label.as_deref()), &r.field_labels)?;
     // A folded y has no single measure field to title from — fall back to
     // the joined measure names (`wide_measures_title`), same as an authored
     // `y_label` always would override either fallback.
-    let y_title_text = if r.wide_measures.is_empty() {
-        axis_title_text(y_field, r.y_label.as_deref(), &r.field_labels)?
-    } else {
-        match r.y_label.as_deref() { Some(l) => display_text::collapse_title_newlines(l), None => crate::common::wide_measures_title(&r.wide_measures, &r.field_labels)? }
-    };
+    let y_title_text = crate::common::measure_title(y_field, r.y_label.as_deref(), &r.wide_measures, &r.field_labels)?;
+    let hover_y_title = crate::common::measure_title(y_field, crate::common::hover_label(r.y_label.as_deref()), &r.wide_measures, &r.field_labels)?;
     let y_axis_title = if y_sides.is_none() {
         let layer_titles = overlays
             .iter()
             .map(|o| axis_title_text(o.y(), o.label(), &r.field_labels))
             .collect::<Result<Vec<_>, _>>()?;
-        ::bind::layers::merged_axis_title(std::iter::once(y_title_text.clone()).chain(layer_titles))
+        ::bind::layers::merged_axis_title(y_title_text.clone(), r.y_label.is_some(), layer_titles)
     } else {
         y_title_text.clone()
     };
+    // A single-series base is named by its field label wherever it is named as a
+    // series (legend, rail, tooltip); `y_label` titles only the axis.
+    let base_series = if r.wide_measures.is_empty() { axis_title_text(y_field, None, &r.field_labels)? } else { y_title_text.clone() };
     let facet_grid = ::bind::multiples::grid_counts(r.multiples.as_ref(), &r.panel_axes);
     let ((x_extent, x_panels), (y_extent, y_panels)) = if facet.is_some() {
         multiples::facet_title_boxes((payload.width, payload.height), (facet_grid.1, facet_grid.0), ax_y.mirror_requested("line")?, 0.0)
@@ -1612,7 +1623,7 @@ pub(super) fn fit(
         // first) at its own most recent non-null value; a repeated label keeps
         // its first place and its last value.
         let mut entries: Vec<(String, &[serde_json::Map<String, Value>], &str, &str)> =
-            vec![(y_title_text.clone(), domain_rows, x_field.as_str(), y_field.as_str())];
+            vec![(base_series.clone(), domain_rows, x_field.as_str(), y_field.as_str())];
         for overlay in named_layers() {
             let label = axis_title_text(overlay.y(), overlay.label(), &r.field_labels)?;
             let layer_rows = resolve_layer_rows(payload, overlay.query_name(), r.query_name.as_deref(), "line")?;
@@ -1782,7 +1793,7 @@ pub(super) fn fit(
     let layer_base_entries: Vec<(String, String)> = if is_multi {
         legend_display_labels.iter().cloned().zip(legend_fills.iter().cloned()).collect()
     } else {
-        vec![(y_title_text.clone(), drawn_ink.map_or_else(|| single_fill.clone(), str::to_string))]
+        vec![(base_series.clone(), drawn_ink.map_or_else(|| single_fill.clone(), str::to_string))]
     };
     // The layers' shared `color:{datum}` scale: each overlay claims its label
     // (or, grouped by color, its values) after the base's own entries. A label
@@ -2380,7 +2391,7 @@ pub(super) fn fit(
                             .map_err(|e| format!("line: support_table cell description: {e}"))?,
                         None => x.clone(),
                     };
-                    Ok(format!("{x_title_text}: {text}"))
+                    Ok(format!("{hover_x_title}: {text}"))
                 })
                 .collect::<Result<_, String>>()?
         } else {
@@ -3890,7 +3901,7 @@ pub(super) fn fit(
                             b.union(&vega_fit::Bounds::new(0.0, y, pw, y).expand(*width));
                         }
                     }
-                    // An unclipped area's pile past the plot paints there, so the fit grows to hold it.
+                    // An unclipped area's fill past the plot paints there, so the fit grows to hold it.
                     if y_sides.is_none() && !(y_min.min(y_max) > 0.0 || y_min.max(y_max) < 0.0) {
                         for overlay in overlays {
                             let OverlayLayer::Line(l) = overlay else { continue };
@@ -3900,10 +3911,12 @@ pub(super) fn fit(
                             let layer_rows =
                                 panel_layer_rows(rows, facet.is_some(), x_is_band && l.curve_name() == Some("step"), payload, l.query_name.as_deref(), r.query_name.as_deref(), "line")
                                     .expect("validate_line_layers already confirmed this dataset exists");
-                            for (cat, start, end) in crate::families::layers::row_order_stack(layer_rows.iter(), l.x.as_deref().unwrap_or(x_field), &l.y, &crate::families::layers::never_nan) {
+                            for row in layer_rows {
+                                let Some(val) = row_num(row, &l.y) else { continue };
+                                let cat = row_str(row, l.x.as_deref().unwrap_or(x_field));
                                 let Some(i) = x_domain.iter().position(|d| *d == cat) else { continue };
                                 let cx = if use_band_positions { band_center(i) } else { pos_at(i, false) };
-                                b.union(&vega_fit::Bounds::new(cx, y_px(ph, end), cx, y_px(ph, start)));
+                                b.union(&vega_fit::Bounds::new(cx, y_px(ph, val), cx, y_px(ph, 0.0)));
                             }
                         }
                     }
@@ -4079,11 +4092,12 @@ pub(super) fn fit(
                                     x_bounds = (x_bounds.0.min(cx - w), x_bounds.1.max(cx + w));
                                 }
                             }
-                            scope_top = scope_top.min(scope_group_top(l, layer_rows, x_field, band_step, |v| layer_y_at(layer, v, ph)));
+                            scope_top = scope_top.min(scope_group_top(l, layer_rows, band_step, |v| layer_y_at(layer, v, ph)));
                         }
                         let max_rows = labels_meta.iter().map(|&(_, _, rows)| rows).max().unwrap_or(1);
                         let x_axis_y2 = row_y + x_font_size + (max_rows - 1) as f64 * (x_font_size + 2.0) + x_title_extra;
                         let x_bounds = (x_bounds.0, x_bounds.1.max(crate::annotation::text_x2(&annotation_ctx(pw, ph))));
+                        let scope_top = scope_top.min(crate::annotation::text_y1(&annotation_ctx(pw, ph)));
                         // The legend clears the strip's rows too, ink beside the plot like an axis.
                         let mut bounds = vega_fit::Bounds::new(x_bounds.0, scope_top, x_bounds.1, x_axis_y2);
                         if let Some(ink) = &strip_ink {
@@ -5482,18 +5496,18 @@ pub(super) fn fit(
     let impute_groups = (!hrefs.is_empty()).then(|| {
         let datum_cells = rows.iter().filter_map(|row| {
             let key = (row_str(row, x_field), color_field.map(|cf| row_str(row, cf)).unwrap_or_default());
-            matches!(data.get(&key), Some(Some(_))).then(|| Some((key.0.clone(), Some(key.1.clone()), hrefs.get(&key)?.clone())))
+            matches!(data.get(&key), Some(Some(_))).then(|| Some((Some(key.1.clone()), hrefs.get(&key)?.clone())))
         });
-        let datum_cells: Vec<(String, Option<String>, String)> = datum_cells.flatten().collect();
-        let mut filled_cells: Vec<(String, Option<String>, String)> = Vec::new();
+        let datum_cells: Vec<(Option<String>, String)> = datum_cells.flatten().collect();
+        let mut filled_cells: Vec<(Option<String>, String)> = Vec::new();
         for series in &paint_order {
             for x in &x_domain {
                 if !matches!(data.get(&(x.clone(), series.clone())), Some(Some(_))) {
-                    filled_cells.push((x.clone(), Some(series.clone()), crate::href::UNDEFINED_HREF.to_string()));
+                    filled_cells.push((Some(series.clone()), crate::href::UNDEFINED_HREF.to_string()));
                 }
             }
         }
-        crate::families::layers::ImputeGroups::new(datum_cells.into_iter().chain(filled_cells), false)
+        crate::families::layers::ImputeGroups::new(datum_cells.into_iter().chain(filled_cells))
     });
     let href_groups = |series: &str| -> Vec<&str> { impute_groups.as_ref().map_or_else(Vec::new, |groups| groups.hrefs_of(series)) };
     let datum_href = |i: usize, series: &str| match data.get(&(x_domain[i].clone(), series.to_string())) {
@@ -6159,8 +6173,8 @@ pub(super) fn fit(
                 quant_x_text(&x_domain[i])?.unwrap_or_else(|| x_domain[i].clone())
             };
             let mut rows = vec![
-                (x_title_text.as_str(), x_text),
-                (y_title_text.as_str(), r.style.tooltip_format.paint(yv)?),
+                (hover_x_title.as_str(), x_text),
+                (hover_y_title.as_str(), r.style.tooltip_format.paint(yv)?),
             ];
             if is_multi && spatial_domain.len() > 1 {
                 rows.push((color_title.as_str(), data_key.to_string()));
@@ -6181,7 +6195,7 @@ pub(super) fn fit(
         let series_opt = if is_multi && spatial_domain.len() > 1 {
             Some(series_label.as_str())
         } else if has_layers {
-            Some(y_title_text.as_str())
+            Some(base_series.as_str())
         } else {
             None
         };
@@ -6213,7 +6227,7 @@ pub(super) fn fit(
             header: &header,
             series: series_opt,
             order,
-            value_title: &y_title_text,
+            value_title: &hover_y_title,
             value_format: &r.style.tooltip_format,
             percent,
             total,
@@ -6610,14 +6624,6 @@ pub(super) fn fit(
                             .expect("validate_line_layers already confirmed this dataset exists");
                     let layer_x = l.x.as_deref().unwrap_or(x_field);
                     let color_promoted = domain.len() > 1;
-                    let stack = match (&l.area_mark, l.color.as_deref()) {
-                        (Some(_), Some(cf)) => Some(
-                            LayerStack::descending(layer_rows, x_field, cf, &l.y)
-                                .imputing(layer_rows, crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())))
-                                .map_err(|e| format!("line: {e}"))?,
-                        ),
-                        _ => None,
-                    };
                     let subset_marks = |rows: &[serde_json::Map<String, Value>],
                                         series_color: &str,
                                         color_value: Option<&str>|
@@ -6649,7 +6655,7 @@ pub(super) fn fit(
                             |row, val| {
                                 Ok(tooltip_labels.then(|| {
                                     crate::contract::native_label(&[
-                                        (l.x.as_deref().unwrap_or(x_title_text.as_str()), row_str(row, layer_x)),
+                                        (l.x.as_deref().unwrap_or(hover_x_title.as_str()), row_str(row, layer_x)),
                                         (label.as_str(), val.to_string()),
                                     ])
                                 }))
@@ -6659,7 +6665,6 @@ pub(super) fn fit(
                                 first: fit_x_at(0),
                                 last: fit_x_at(x_domain.len() - 1),
                             }),
-                            stack.as_ref(),
                             crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
                             crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
                             &under,
@@ -6729,13 +6734,13 @@ pub(super) fn fit(
                             |mark| {
                                 tooltip_labels.then(|| {
                                     crate::contract::native_label(&[
-                                        (bl.x.as_deref().unwrap_or(x_title_text.as_str()), row_str(mark.row, layer_x)),
+                                        (bl.x.as_deref().unwrap_or(hover_x_title.as_str()), row_str(mark.row, layer_x)),
                                         (label.as_str(), mark.value.to_string()),
                                     ])
                                 })
                             },
                             crate::families::layers::layer_link(link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())),
-                            (label_board_style, canvas, &under),
+                            (label_board_style, canvas, &under, &crate::placement::strikes(&plot, canvas)?),
                             (crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts }, &bar_widths),
                         )
                         .map_err(|e| format!("line: {e}"))?,
@@ -7118,7 +7123,7 @@ pub(super) fn fit(
         let under = crate::annotation::DataMark::plot_marks(&plot);
         // The rail sits in the tail's frame: the plot's origin is `(group_x, group_y)` there.
         let beside: Vec<crate::placement::Frame> = std::iter::once((axis.as_slice(), (0.0, 0.0))).chain(rail_group.as_ref().map(|group| (std::slice::from_ref(group), (-group_x, -group_y)))).collect();
-        let obstacles = crate::placement::obstacles(&plot, &beside);
+        let obstacles = crate::placement::obstacles(&plot, &beside, canvas)?;
         let mut field = crate::placement::Field { plot: (plot_w, plot_h), obstacles, paths };
         let series_ix: Vec<usize> = reqs.iter().map(|r| r.owner).collect();
         let values: Vec<f64> = value_label_marks.iter().map(|m| m.1).collect();

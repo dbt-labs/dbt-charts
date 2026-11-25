@@ -18,6 +18,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedBarChart,
 )
 from dbt_charts.core.compile.models.primitives import resolved_as
+from dbt_charts.core.compile.models.style.authored import AxisXStylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedBarLabels,
@@ -63,6 +64,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _bar_orientation,
+    _classifier_defaults,
     _classify_to_channel_type,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
@@ -70,9 +72,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     ChartRows,
     LayerDatasets,
     PanelRows,
-    fold_panels,
     partition,
-    restamp,
 )
 from dbt_charts.core.compile.resolve.chart._conditional import (
     resolve_mark_conditional,
@@ -91,6 +91,8 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _shared_layer_y_values,
     _shared_y_values,
     _unit_cap,
+    close_open_y_domain,
+    stacked_total_max,
 )
 from dbt_charts.core.compile.resolve.chart._header_inks import series_header_inks
 from dbt_charts.core.compile.resolve.chart._kwargs import (
@@ -156,6 +158,7 @@ from dbt_charts.core.compile.resolve.chart.tick_values import (
     numeric_domain_bounds,
     stacked_totals_max,
 )
+from dbt_charts.core.compile.resolve.style.axis_cascade import _family_axis_slot
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
@@ -177,6 +180,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_Y_NOT_NUMERIC,
     ERR_FUNNEL_BAND_WIDTH_TOO_THIN,
     ERR_FUNNEL_VERTICAL,
+    ERR_HISTOGRAM_AXIS_X_TYPE,
     ERR_LABEL_TEMPLATE_ACCOUNTING_PARENS,
     ERR_LABELS_ANCHOR_UNSUPPORTED,
     ERR_RIBBON_LABELS_FUNNEL_ONLY,
@@ -210,7 +214,7 @@ def _bar_rail_for_stack(
     width: float,
     ax_merged: AxisXStyle,
     ay_merged: AxisYStyle,
-    stack_order: str | None,
+    series_order: str | None,
     font_family: str,
     font_size: float,
 ) -> RailRequest:
@@ -278,7 +282,7 @@ def _bar_rail_for_stack(
         width,
         ax_merged,
         ay_merged,
-        stack_order,
+        series_order,
         font_family,
         font_size,
     ):
@@ -451,7 +455,7 @@ def _horizontal_rail_labels_would_collide(
     width: float,
     ax_merged: AxisXStyle,
     ay_merged: AxisYStyle,
-    stack_order: str | None,
+    series_order: str | None,
     font_family: str,
     font_size: float,
 ) -> bool:
@@ -542,7 +546,7 @@ def _horizontal_rail_labels_would_collide(
         sort.by if sort else "",
         bool(sort and sort.order == "desc"),
         stack_mode=stack_mode,
-        stack_order=stack_order,
+        series_order=series_order,
     )
     measurer = get_font_measurer(font_family)
     gap = TOP_RAIL_LABEL_GAP_SPACES * measurer.measure(" ", font_size)
@@ -701,7 +705,9 @@ def _resolve_bar(
     multiples_scale = (
         normalized.multiples.scale if normalized.multiples is not None else "shared"
     )
-    x_ch_type = x_channel_type(normalized, data, chart_style_context, "bar")
+    x_ch_type, x_type_defaulted = x_channel_type(
+        normalized, data, chart_style_context, "bar"
+    )
     # Bar semantics fix x=category, y=measure regardless of orientation (see
     # the _bake_cartesian_axes docstring above) — the axis cascade hardcodes y
     # to "quantitative" and downstream stack-totals math assumes numeric y. A
@@ -748,6 +754,8 @@ def _resolve_bar(
         None,
         has_quantitative_axis=True,
         temporal_band_axes=frozenset(),
+        x_type_defaulted=x_type_defaulted,
+        y_type_defaulted=False,
         horizontal=None,
     )
     bar = chart_local_style_context.bar
@@ -928,7 +936,6 @@ def _resolve_bar(
     )
     legend_entries = cartesian_top_legend_entries(
         normalized.y if isinstance(normalized.y, str) else None,
-        normalized.y_label,
         normalized.layers,
         color_domain_values=color_domain_values,
         has_color=normalized.color is not None,
@@ -987,7 +994,7 @@ def _resolve_bar(
             width,
             ax_merged,
             ay_merged,
-            bar.stack_order,
+            bar.series_order,
             series_label.font_family,
             series_label.font_size,
         )
@@ -1230,7 +1237,7 @@ def _resolve_bar(
         else None
     )
     if off_chart is not None and off_chart.domain is not None:
-        ay_merged = _bake_measure_domain(ay_merged, off_chart.domain)
+        ay_merged = _bake_measure_domain(normalized.id, ay_merged, off_chart.domain)
     torn_break = torn.break_value if torn is not None else None
     # The break a bar tears at, whichever variant draws it; the cap's own axis
     # work below reads `torn`, and `torn_break` stays the cap's.
@@ -1250,8 +1257,24 @@ def _resolve_bar(
         # normalize-stack domain is always [0,1]; no y_field means no ticks.
         tick_values = ()
         if resolved_stack == "normalize":
-            ay_merged = _bake_measure_domain(ay_merged, (0.0, 1.0))
+            ay_merged = _bake_measure_domain(normalized.id, ay_merged, (0.0, 1.0))
+        else:
+            ay_merged = close_open_y_domain(
+                normalized.id, ay_merged, [], bar_zero, multiples_scale
+            )
     elif is_stacked and x_field:
+        stacked_max = stacked_total_max(
+            dataset, x_field, y_fields, multiples_scale, annotations.y_values
+        )
+        ay_merged = close_open_y_domain(
+            normalized.id,
+            ay_merged,
+            []
+            if stacked_max is None
+            else [*_numeric_y_values(data, tuple(y_fields)), stacked_max],
+            True,
+            multiples_scale,
+        )
         tick_values = _resolve_stacked_bar_ticks(
             ay_merged,
             dataset,
@@ -1274,6 +1297,9 @@ def _resolve_bar(
             # from zero, so zero anchors the axis only when a bar already
             # reaches it (a waterfall's totals); otherwise the axis fits.
             bar_zero = min(bar_y_values) <= 0 <= max(bar_y_values)
+        ay_merged = close_open_y_domain(
+            normalized.id, ay_merged, bar_y_values, bar_zero, multiples_scale
+        )
         _bar_ticks = _resolve_cartesian_ticks(
             normalized.id,
             ay_merged,
@@ -1307,17 +1333,9 @@ def _resolve_bar(
         and y_fields
         and x_field
     ):
-        # x_field can itself be the multiples field — partition() strips a
-        # panel's own partition column from its rows, so restamp it back
-        # before grouping, or every row's x_field reads as absent and the
-        # stacked total silently folds to None (nothing to sum).
-        _raw_stacked_max = fold_panels(
-            restamp(dataset, x_field),
-            multiples_scale,
-            lambda rows: stacked_totals_max(rows, x_field, y_fields),
+        _raw_stacked_max = stacked_total_max(
+            dataset, x_field, y_fields, multiples_scale, annotations.y_values
         )
-        if _raw_stacked_max is not None:
-            _raw_stacked_max = max([_raw_stacked_max, *annotations.y_values])
         if _raw_stacked_max is not None and _raw_stacked_max > 0:
             stacked_domain_max = apply_headroom(
                 _raw_stacked_max,
@@ -1508,7 +1526,7 @@ def _resolve_bar(
         annotation_bar_trends=annotations.bar_trends,
         style=ResolvedBarStyle(
             series_label=series_label,
-            stack_order=bar.stack_order,
+            series_order=bar.series_order,
             mark=bar_mark,
             conditional=bar_conditional,
             overlap=bar.overlap,
@@ -1565,6 +1583,16 @@ def _resolve_histogram(
     axes from chart_style_context.histogram.* so histogram.axis_y.title.visible and
     histogram.marks.bar.border apply correctly.
     """
+    # The shared `charts.axis_x` styles the board's other families too, so only
+    # the slot addressed to histograms is refused.
+    family_x = _family_axis_slot(chart_style_context, "histogram", "axis_x")
+    assert family_x is None or isinstance(family_x, AxisXStylePatch), family_x
+    if family_x is not None and family_x.type is not None:
+        raise CompilationError.from_code(
+            ERR_HISTOGRAM_AXIS_X_TYPE,
+            field_path="style.charts.histogram.axis_x.type",
+            chart_id=normalized.id,
+        )
     data = dataset.all_rows()
     x_ch_type = _classify_to_channel_type(normalized.x, data, is_dimension=True)
     chart_local_style_context = build_chart_style_context(
@@ -1581,6 +1609,8 @@ def _resolve_histogram(
         None,
         has_quantitative_axis=True,
         temporal_band_axes=frozenset(),
+        x_type_defaulted=_classifier_defaults(normalized.x, data),
+        y_type_defaulted=False,
         horizontal=False,
     )
     primary = plan.primary

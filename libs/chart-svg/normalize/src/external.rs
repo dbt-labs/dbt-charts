@@ -533,8 +533,10 @@ impl External<'_> {
         walk.resolving.insert(key.clone());
         let query = match query_ref_of(&entry.value) {
             Some(target) => {
-                let (target_file, target_name) =
-                    RefKind::Query.parse(&target).map_err(HoistError::Message)?;
+                // Python's raw chain follows a ref the grammar refuses; the engine names it.
+                let (target_file, target_name) = RefKind::Query
+                    .parse(&target)
+                    .map_err(|why| grammar_refused(&format!("queries.{name}.ref"), &why))?;
                 let (target_path, file) =
                     self.open(&target, dir_of(path), &with_suffix(target_file))?;
                 let section = Self::section("queries", walk.chart_ref, &target_path, &file)?;
@@ -666,13 +668,13 @@ fn with_suffix(file: String) -> String {
     }
 }
 
-/// The ref a `queries:` entry of an imported file is, when it is one: a ref-shaped string (read
-/// after trimming, as `normalize_query_value` does) or a mapping with a `ref:` key.
+/// The ref a `queries:` entry of an imported file is, when it is one: a string that is one dotted
+/// token (read after trimming, as `normalize_query_value` does) or a mapping with a `ref:` key.
 fn query_ref_of(node: &yaml::Node) -> Option<String> {
     match &node.kind {
-        yaml::Kind::Scalar(yaml::Value::Str(s)) => QueryRef::try_from(s.trim())
-            .ok()
-            .map(|_| s.trim().to_string()),
+        yaml::Kind::Scalar(yaml::Value::Str(s)) => {
+            migrate::is_ref_shaped(s).then(|| s.trim().to_string())
+        }
         yaml::Kind::Map(m) => match m.get("ref").map(|e| &e.value.kind) {
             Some(yaml::Kind::Scalar(yaml::Value::Str(s))) => Some(s.clone()),
             _ => None,
@@ -748,12 +750,12 @@ fn ref_of(node: &yaml::Node, kind: RefKind) -> Option<String> {
 }
 
 /// [`ref_of`], refusing a value that is a ref by its form but not by the grammar, as Python's
-/// discriminator routes it: any variable or chart string, or a mapping holding only `ref:`. A query
-/// string the grammar refuses is SQL, not a ref.
+/// discriminator routes it: any variable or chart string, a query string that is one dotted token
+/// (never SQL), or a mapping holding only `ref:`. Any other query string is SQL, not a ref.
 fn authored_ref(node: &yaml::Node, kind: RefKind) -> Result<Option<String>, String> {
     let (text, by_form) = match &node.kind {
         yaml::Kind::Scalar(yaml::Value::Str(s)) => match kind {
-            RefKind::Query => (s.trim(), false),
+            RefKind::Query => (s.trim(), migrate::is_ref_shaped(s)),
             RefKind::Variable | RefKind::Chart => (s.as_str(), true),
         },
         yaml::Kind::Map(m) if m.len() == 1 => match m.get("ref").map(|e| &e.value.kind) {

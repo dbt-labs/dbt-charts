@@ -22,12 +22,20 @@
 //!   `style.charts.<type>` and every nested board. `chart` redraws every torn bar on
 //!   hover and `bar` only the hovered one. The move is live, so a board at any version
 //!   that still says `none` migrates with a notice.
+//! - **`style.stack_order` becomes `style.series_order`** on bar and area, at every
+//!   cascade level: it now orders a grouped bar's series too, so the name no longer
+//!   says stack.
 //! - **`tabs` maps each tab's label to its board.** The `items` list becomes the
 //!   mapping itself, keyed by each item's `title`; the rest of the item is the
 //!   board. `icon`, never drawn, goes. `position` moves to
 //!   `style.layout.tabs.position`; `id` and `default` go with a notice, so the
 //!   first tab opens. Two tabs with one title refuse. One `Move` of every
 //!   board's `tabs.items` to `tabs`, run last, flattening the tabs in its panes too.
+//! - **A color scale's bounds move under `domain`**: a gradient or table-column scale's
+//!   `min` and `max` become `domain.min` and `domain.max` (`[min, max]` is the
+//!   shorthand), one tail rename per scale target. Its old `domain` only ever said
+//!   `data`, which an unset `domain` means: a live identity move strikes `data`, or a
+//!   null beside `min`/`max`, with a notice; a lone null still clears an inherited range.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -283,6 +291,54 @@ fn reveal_none_moves(g: &Grammars) -> Vec<Move> {
         .collect()
 }
 
+/// A scale target's retired `domain: data`, struck; so is a `domain: null` beside the
+/// 0.12.0 `min`/`max` the boundary moves under it. Any other domain stays: a lone null is
+/// current grammar, clearing an inherited range.
+fn data_domain(doc: &Json, source: &[String], value: &Json) -> Result<Rewrote, String> {
+    let scale = holder(source, 1);
+    let beside_bounds = || ["min", "max"].iter().any(|k| text_at(doc, &scale, &[k]).is_some());
+    let said = match value.as_str() {
+        Some("data") => "data",
+        _ if value.is_null() && beside_bounds() => "null",
+        _ => {
+            return Ok(Rewrote {
+                leave: true,
+                ..Rewrote::default()
+            })
+        }
+    };
+    Ok(Rewrote {
+        notice: Some(format!(
+            "`{}: {said}` is gone: a scale with no `domain` already fits the data.",
+            source.join(".")
+        )),
+        ..Rewrote::default()
+    })
+}
+
+/// One live identity move per place a scale target (the model with `hinge` beside
+/// `domain`) holds `domain`.
+fn data_domain_moves(g: &Grammars) -> Vec<Move> {
+    let tail = path(&["domain"]);
+    let nesting = g.nesting_prefixes();
+    Fields::new(g.source_schema)
+        .paths(&BTreeSet::from([tail.clone()]))
+        .into_iter()
+        .filter(|p| p.ends_with(&tail) && g.target_schema.path_exists(p, false))
+        .filter(|p| {
+            let hinge = [&holder(p, 1)[..], &path(&["hinge"])[..]].concat();
+            g.source_schema.path_exists(&hinge, false)
+        })
+        .map(|p| {
+            let mut m = Move::new(g.source, g.target, p.clone(), p);
+            m.rewrite_in_document = Some(Arc::new(data_domain));
+            m.live = true;
+            m.sub_board_prefixes = nesting.clone();
+            m
+        })
+        .collect()
+}
+
 pub fn declarations(g: &Grammars) -> Declarations {
     let moves: Vec<Move> = g
         .suffix_rename_moves(
@@ -297,6 +353,16 @@ pub fn declarations(g: &Grammars) -> Declarations {
             m
         })
         .chain(reveal_none_moves(g))
+        .chain(data_domain_moves(g))
+        .chain(g.suffix_rename_moves(
+            &[
+                (&["domain", "min"], &["min"]),
+                (&["domain", "max"], &["max"]),
+            ],
+            None,
+            None,
+        ))
+        .chain(g.suffix_rename_moves(&[(&["series_order"], &["stack_order"])], None, None))
         .chain(tab_moves(g))
         .collect();
     let deletion = |parts: &[&str], reason: &str, chart_type: Option<&str>| {

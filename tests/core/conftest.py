@@ -123,7 +123,8 @@ def _bake_axes(chart_type: str, x_type: str, y_type: str):
         x_type,
         y_type,
         AxisOverrides(),
-        True,
+        False,
+        False,
     )
     return tuple(
         build_resolved_axis(
@@ -263,13 +264,13 @@ def scatter_style() -> ResolvedScatterStyle:
 @pytest.fixture
 def heatmap_style() -> ResolvedHeatmapStyle:
     """Minimal valid ResolvedHeatmapStyle for test injection."""
-    from dbt_charts.core.compile.models.style.theme import RectMarkStyle
+    from dbt_charts.core.compile.models.style.resolved.heatmap import ResolvedRectMark
 
     ax, ay = _bake_axes("heatmap", "nominal", "nominal")
     return ResolvedHeatmapStyle(
         single_series_fill="#40639c",
         color_gradient=None,
-        rect_mark=RectMarkStyle(),
+        rect_mark=ResolvedRectMark(),
         tooltip_format=ResolvedFormat(spec=""),
         label_usable_ratio=0.8,
         axis_x=ax,

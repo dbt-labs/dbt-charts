@@ -127,6 +127,11 @@ struct Style {
     point_map: PointMapSlot,
     single_series_fill: String,
     tooltip_format: FormatSlot,
+    /// A named point prints its size in this value-label format, not the tooltip's.
+    #[serde(default)]
+    named_format: Option<FormatSlot>,
+    #[serde(default)]
+    named_is_house: bool,
     title_font: Option<Font>,
 }
 
@@ -137,12 +142,20 @@ struct PointMapSlot {
     size: SizeScale,
     #[serde(default)]
     conditional: Option<std::collections::BTreeMap<String, Vec<crate::point_conditional::PointRule>>>,
+    #[serde(default)]
+    tints: Option<Value>,
+    #[serde(default)]
+    named: Option<usize>,
+    #[serde(default)]
+    size_key: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct PointMark {
     size: f64,
     opacity: f64,
+    #[serde(default)]
+    halo: Option<f64>,
 }
 
 /// How the color channel paints the circles and what its legend lists.
@@ -165,6 +178,8 @@ struct Point {
     /// Longitude and latitude; `None` for a map with no coordinate fields, drawn at the view's center.
     at: Option<(f64, f64)>,
     area: f64,
+    /// The `size:` value (a collapsed pile's count), which a named point prints.
+    value: Option<f64>,
     fill: Option<String>,
     label: String,
     href: Option<String>,
@@ -203,6 +218,8 @@ pub struct Bound {
     /// The board's muted ink, the size legend's scale footnote.
     secondary_color: Option<String>,
     fit: bool,
+    /// The basemap's fill under `style.tints`: the ramp's lightest flat tint.
+    basemap_tint: Option<String>,
 }
 
 /// A cell as a number; text is none, however it reads.
@@ -397,7 +414,17 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let Marks { coloring, size_entries, points, fit_points } = bind_marks(payload, &r, &rows)?;
     let basemap = bind_basemap(payload, &r)?;
     let fit = projection::is_fit(r.geo_projection_params.as_ref());
-    Ok(Bound { resolved: r, points, fit_points, basemap, coloring, size_entries, secondary_color: payload.board_style.as_ref().and_then(|b| b.secondary_color.clone()), fit })
+    let basemap_tint = match (&r.style.point_map.tints, &basemap) {
+        (None, _) => None,
+        (Some(_), None) => return Err("point_map: `tints` color the basemap, and the map has none".into()),
+        (Some(_), Some(_)) => {
+            let plan = crate::pattern::PatternPlan::from_resolved(&payload.resolved)?.tinted();
+            plan.refuse_unsequential_tints()?;
+            let ink = plan.spec().and_then(|spec| spec.color.clone()).ok_or("point_map: `tints` resolve a pattern ink (resolver required)")?;
+            Some(plan.step(0, &ink)?.color().to_string())
+        }
+    };
+    Ok(Bound { resolved: r, points, fit_points, basemap, coloring, size_entries, secondary_color: payload.board_style.as_ref().and_then(|b| b.secondary_color.clone()), fit, basemap_tint })
 }
 
 fn bind_basemap(payload: &Payload, r: &Resolved) -> Result<Option<Vec<GeoJson>>, Diagnostic> {
@@ -587,6 +614,7 @@ fn bind_marks(
             points.push(Point {
                 at: *at,
                 area: size_scale.area(size_domain, *count as f64),
+                value: Some(*count as f64),
                 fill: Some(r.style.single_series_fill.clone()),
                 label: describe(described),
                 href,
@@ -664,7 +692,7 @@ fn bind_marks(
             let label = rows_described.into_iter().map(|(title, value)| format!("{title}: {value}")).collect::<Vec<_>>().join("; ");
             let href = if layered { None } else { href_of(payload, r, Some(row), color_field)? };
             let area = if r.size.is_some() { size_scale.area(size_domain, size_values[i]) } else { default_area };
-            points.push(Point { at, area, fill: fills[i].clone(), label, href, patch: patch_of(row)? });
+            points.push(Point { at, area, value: r.size.is_some().then(|| size_values[i]), fill: fills[i].clone(), label, href, patch: patch_of(row)? });
             continue;
         }
         // Vega-Lite's description: each described channel, then the tooltip list.
@@ -693,7 +721,7 @@ fn bind_marks(
         }
         let href = if layered { None } else { href_of(payload, r, Some(row), color_field)? };
         let area = if r.size.is_some() { size_scale.area(size_domain, size_values[i]) } else { default_area };
-        points.push(Point { at, area, fill: fills[i].clone(), label: describe(rows_described), href, patch: patch_of(row)? });
+        points.push(Point { at, area, value: r.size.is_some().then(|| size_values[i]), fill: fills[i].clone(), label: describe(rows_described), href, patch: patch_of(row)? });
     }
     let fit_points = match fields {
         Some((lat_field, lon_field)) => all_rows
@@ -888,9 +916,15 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         Some(Coloring::Categories { title, .. }) => Some(vega_legend(&symbol_entries, false, title, &legend_cfg, fonts)?),
         _ => None,
     };
+    let baseline_key = match r.style.point_map.size_key.as_deref() {
+        None => None,
+        Some("baseline") => Some(baseline_key(bound.size_entries.as_ref().ok_or("point_map: `size_key: baseline` keys a `size:` field")?, &legend_cfg.label.font, fonts)?.fits(frame.avail_w())?),
+        Some(other) => return Err(format!("point_map: unknown size_key {other:?} (resolver required)").into()),
+    };
     let size_legend = bound
         .size_entries
         .as_ref()
+        .filter(|_| baseline_key.is_none())
         .map(|s| -> Result<SizeLegend, String> {
             let label_ws = crate::families::legend::size_label_widths(&s.labels, &legend_cfg, fonts)?;
             let glyphs = s
@@ -928,7 +962,9 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     let stroke_reach = if r.basemap_stroke.is_some() { 1.0 } else { 0.0 };
     let mut stack_xy = (0.0, 0.0);
     let mut failure: Option<Diagnostic> = None;
+    let key_h = baseline_key.as_ref().map_or(0.0, |key| key.height);
     let mut ink = |pw: f64, ph: f64, b: &mut Bounds| -> Result<(), Diagnostic> {
+        b.union(&Bounds::new(0.0, -key_h, 0.0, 0.0));
         if fit && has_basemap {
             let [[x0, y0], [x1, y1]] = fitter.layer_bounds((pw, ph))?;
             b.union(&Bounds::new(x0, y0, x1, y1).expand(stroke_reach));
@@ -998,7 +1034,8 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             .enumerate()
             .filter_map(|(i, d)| d.as_ref().map(|d| (i, d)))
             .map(|(i, d)| {
-                let mut attrs = Attrs::new().set("fill", r.basemap_fill.as_deref().expect("checked in bind"));
+                let fill = bound.basemap_tint.as_deref().or(r.basemap_fill.as_deref()).expect("checked in bind");
+                let mut attrs = Attrs::new().set("fill", fill);
                 if let Some(stroke) = &r.basemap_stroke {
                     attrs = attrs.set("stroke", stroke.as_str());
                 }
@@ -1008,8 +1045,23 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         // Vega-Lite clips a basemap whose projection the author placed.
         layers.push(group("layer_0_marks", "shape", (!fit).then_some(clip_ids[0].as_str()), "graphics-symbol", shapes)?);
     }
+    let halo = r.style.point_mark.halo;
+    // Ringed circles draw largest first, so a small one sits on top with its whole ring showing.
+    let mut order: Vec<usize> = (0..bound.points.len()).collect();
+    if halo.is_some() {
+        order.sort_by(|&a, &b| bound.points[b].area.total_cmp(&bound.points[a].area));
+    }
     let mut circles = Vec::new();
-    for (i, (p, xy)) in bound.points.iter().zip(&placed).enumerate() {
+    let mut names = Vec::new();
+    let named = r.style.point_map.named.unwrap_or(0);
+    let mut ranked: Vec<usize> = (0..bound.points.len()).filter(|&i| bound.points[i].value.is_some()).collect();
+    ranked.sort_by(|&a, &b| bound.points[b].area.total_cmp(&bound.points[a].area));
+    if named > 0 && ranked.is_empty() {
+        return Err("point_map: `named` names points by `size:`, and the map has none".into());
+    }
+    ranked.truncate(named);
+    for i in order {
+        let (p, xy) = (&bound.points[i], &placed[i]);
         // A pole projects to an infinite position, which Vega writes as `translate(x,Infinity)` and draws
         // nowhere; a coordinate cannot print it, so that circle is left out.
         if !xy.iter().all(|c| c.is_finite()) {
@@ -1051,6 +1103,10 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         if reach.is_some_and(|(x1, y1, x2, y2)| x2 < 0.0 || y2 < 0.0 || x1 > plot_w || y1 > plot_h) {
             continue;
         }
+        if let Some(halo) = halo {
+            let ring = Attrs::new().set("fill", r.canvas.as_str()).set("stroke", r.canvas.as_str()).num("stroke-width", 2.0 * halo).set("pointer-events", "none");
+            circles.push(Node::path(Role::Chrome, glyph.clone(), ring).translate(xy[0], xy[1]));
+        }
         let path = Node::path(role, glyph, attrs).translate(xy[0], xy[1]);
         circles.push(match &p.href {
             Some(url) => {
@@ -1062,6 +1118,45 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             _ => path,
         });
     }
+    // Each named label sits right of its dot, else left; a spot past the card or on another dot or
+    // label is taken. When neither side is free the label is dropped, as an auto value label is.
+    let font = &legend_cfg.label.font;
+    let size = font.size_or(11.0);
+    let dot_at = |i: usize| (plot_left + placed[i][0], plot_top + placed[i][1], crate::common::symbol_radius(bound.points[i].patch.size.unwrap_or(bound.points[i].area)));
+    let drawn: Vec<usize> = (0..bound.points.len()).filter(|&i| placed[i].iter().all(|c| c.is_finite())).collect();
+    let mut taken: Vec<Bounds> = Vec::new();
+    let named_points: Vec<usize> = ranked.iter().copied().filter(|i| drawn.contains(i)).collect();
+    let mut dropped = 0;
+    for &i in &named_points {
+        let value = bound.points[i].value.expect("ranked points carry a value");
+        let format = r.style.named_format.as_ref().ok_or("point_map: `named` labels values in `named_format` (resolver required)")?;
+        let text = crate::common::format_mark_label(Some(format), value, r.style.named_is_house)?;
+        let width = font.measure_weighted(fonts, &text, size)?;
+        let (cx, cy, radius) = dot_at(i);
+        let baseline = cy + size * 0.35;
+        let spots = [(cx + radius + NAME_GAP, false), (cx - radius - NAME_GAP, true)].map(|(edge, to_the_left)| {
+            let (x0, x1) = if to_the_left { (edge - width, edge) } else { (edge, edge + width) };
+            (edge, to_the_left, Bounds::new(x0, baseline - size * 0.8, x1, baseline + size * 0.25))
+        });
+        let in_card = |b: &Bounds| b.x1 >= 0.0 && b.x2 <= frame.w;
+        if !spots.iter().any(|(_, _, b)| in_card(b)) {
+            return Err(diagnostic::refuse!("a named point's label past its card ({width:.0} px of {:.0}) is not supported", frame.w).into());
+        }
+        let on_a_dot = |b: &Bounds| {
+            drawn.iter().filter(|&&j| j != i).any(|&j| {
+                let (x, y, dot) = dot_at(j);
+                (x - x.clamp(b.x1, b.x2)).hypot(y - y.clamp(b.y1, b.y2)) < dot + crate::placement::LABEL_PAD
+            })
+        };
+        let free = spots.iter().find(|(_, _, b)| in_card(b) && !on_a_dot(b) && crate::placement::overlap(b, &taken) == 0.0);
+        if let Some((edge, to_the_left, b)) = free {
+            names.push(name_node((*edge, baseline), font, &text, *to_the_left));
+            taken.push(b.expand(crate::placement::LABEL_GAP));
+        } else {
+            dropped += 1;
+        }
+    }
+    crate::placement::warn_value_labels_thinned(&r.id, dropped, named_points.len());
     let points_clip = &clip_ids[usize::from(layered)];
     layers.push(group(
         if layered { "layer_1_marks" } else { "marks" },
@@ -1071,6 +1166,10 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         circles,
     )?);
     let mut nodes = vec![Node::group(Role::Chrome, Attrs::new(), layers).translate(plot_left, plot_top)];
+    nodes.extend(names);
+    if let Some(key) = &baseline_key {
+        nodes.extend(key.nodes((frame.pad.0, plot_top - key_h + key.height - KEY_GAP), r.style.single_series_fill.as_str(), &legend_cfg.label.font));
+    }
 
     // Legends: color, then size, stacked a margin apart at the right.
     let blocks = blocks_at(plot_w, plot_h)?;
@@ -1254,5 +1353,68 @@ mod tests {
         assert_eq!(quantitative_text(Some(&json!("x"))).unwrap(), "NaN");
         assert_eq!(quantitative_text(Some(&json!([1]))).unwrap(), "1");
         assert_eq!(quantitative_text(Some(&json!([1, 2]))).unwrap(), "NaN");
+    }
+}
+
+/// The gap between a named point's dot and its name, and between a baseline key and the map.
+const NAME_GAP: f64 = 4.0;
+const KEY_GAP: f64 = 8.0;
+/// The space after a baseline key entry's label before the next circle.
+const KEY_ENTRY_GAP: f64 = 16.0;
+
+fn name_node(at: (f64, f64), font: &Font, body: &str, end_anchored: bool) -> Node {
+    let attrs = Attrs::new()
+        .vega("font-family", font.family_or("sans-serif"))
+        .num("font-size", font.size_or(11.0))
+        .set("font-weight", font.weight_str())
+        .set("fill", font.color.as_deref().unwrap_or("#000"));
+    let attrs = if end_anchored { attrs.set("text-anchor", "end") } else { attrs };
+    Node::text(Role::Label, at, attrs, body)
+}
+
+/// The size key as open circles standing on one baseline: the smallest, middle and largest rungs
+/// of the size ladder, each labeled to its right.
+struct BaselineKey {
+    entries: Vec<(f64, String, f64)>,
+    width: f64,
+    height: f64,
+}
+
+fn baseline_key(sizes: &SizeEntries, font: &Font, fonts: &FontBook) -> Result<BaselineKey, String> {
+    let n = sizes.areas.len();
+    if n == 0 {
+        return Err("point_map: a baseline size key needs a size ladder".into());
+    }
+    let mut picks = vec![0, n / 2, n - 1];
+    picks.dedup();
+    let entries = picks
+        .into_iter()
+        .map(|i| Ok((crate::common::symbol_radius(sizes.areas[i]), sizes.labels[i].clone(), font.measure_weighted(fonts, &sizes.labels[i], font.size_or(11.0))?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let tallest = entries.iter().map(|(r, ..)| 2.0 * r).fold(font.size_or(11.0), f64::max);
+    let width = entries.iter().map(|(r, _, w)| 2.0 * r + NAME_GAP + w).sum::<f64>() + KEY_ENTRY_GAP * (entries.len() - 1) as f64;
+    Ok(BaselineKey { entries, width, height: tallest + KEY_GAP })
+}
+
+impl BaselineKey {
+    /// Refuses a key wider than the `avail` px its card gives it.
+    fn fits(self, avail: f64) -> Result<Self, String> {
+        if self.width > avail {
+            return Err(diagnostic::refuse!("a baseline size key wider than its card ({:.0} px of {avail:.0}) is not supported", self.width));
+        }
+        Ok(self)
+    }
+
+    /// The key with its baseline at `y` and its left edge at `x`: circles in `ink`, open.
+    fn nodes(&self, (x, y): (f64, f64), ink: &str, font: &Font) -> Vec<Node> {
+        let mut at = x;
+        let mut nodes = Vec::new();
+        for (r, label, w) in &self.entries {
+            let ring = Attrs::new().set("fill", "none").set("stroke", ink).num("stroke-width", 1.0);
+            nodes.push(Node::circle(Role::Legend, (at + r, y - r), *r, ring));
+            nodes.push(name_node((at + 2.0 * r + NAME_GAP, y), font, label, false));
+            at += 2.0 * r + NAME_GAP + w + KEY_ENTRY_GAP;
+        }
+        nodes
     }
 }

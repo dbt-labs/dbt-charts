@@ -53,6 +53,53 @@ pub enum Edit {
     },
 }
 
+impl Edit {
+    /// The change as an author reads it: `old.key → new.key` for a move,
+    /// `key: old → new` for a value respelled in place, `key removed` for a
+    /// strike, `key set to value` for a write. One line per edit.
+    pub fn change(&self) -> String {
+        match self {
+            Edit::Move {
+                from, after: None, ..
+            } => format!("{} removed", dotted(from)),
+            Edit::Move {
+                from,
+                to,
+                before,
+                after: Some(after),
+                ..
+            } if from == to => {
+                format!("{}: {} → {}", dotted(from), shown(before), shown(after))
+            }
+            Edit::Move { from, to, .. } => format!("{} → {}", dotted(from), dotted(to)),
+            Edit::Write {
+                path,
+                value: Some(value),
+            } => format!("{} set to {}", dotted(path), shown(value)),
+            Edit::Write { path, value: None } | Edit::Delete { path, .. } => {
+                format!("{} removed", dotted(path))
+            }
+        }
+    }
+}
+
+fn dotted(path: &[Seg]) -> String {
+    path.iter()
+        .map(|s| match s {
+            Seg::Key(k) => k.clone(),
+            Seg::Index(i) => i.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn shown(value: &Json) -> String {
+    match value {
+        Json::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
 pub const SYNTHETIC: Span = Span {
     start: 0,
     end: 0,

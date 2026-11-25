@@ -7,6 +7,7 @@ fills its cell either way.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -197,3 +198,49 @@ cols:
         return _only_chart_item(chart_cell.board).height
 
     assert chart_height("\n    height: 900") == pytest.approx(chart_height(""))
+
+
+def test_kpi_beside_a_taller_chart_draws_at_its_own_height(
+    tmp_path: Path, local_project: _ProjectFactory
+) -> None:
+    """A KPI keeps its own height in a cols row, as a table does; the row keeps its."""
+    from dbt_charts.core.board import render_dashboard
+    from dbt_charts.core.project import InMemoryBoard
+
+    project = local_project(tmp_path)
+    kpi = """
+  total:
+    query: total_revenue
+    type: kpi
+    value: revenue
+    label: Revenue
+"""
+
+    def drawn(layout_yaml: str) -> dict[str, float]:
+        board = InMemoryBoard(
+            _QUERIES
+            + _CHARTS.format(chart_type="line", channels=_LINE)
+            + kpi
+            + layout_yaml,
+            path=project.path("charts/_k.yml"),
+        )
+        svg = render_dashboard(
+            board=board,
+            env=build_exec_env(project),
+            format="svg",
+            project=project,
+            result_cache=None,
+        ).data
+        assert isinstance(svg, str)
+        return {
+            chart: float(height)
+            for chart, height in re.findall(
+                r'data-chart-id="([a-z_]+)"[^>]*data-chart-height="([0-9.]+)"', svg
+            )
+        }
+
+    alone = drawn("rows:\n  - total\n")["total"]
+    beside = drawn("cols:\n  - total\n  - weekly\n")
+
+    assert beside["weekly"] > alone
+    assert beside["total"] == pytest.approx(alone)

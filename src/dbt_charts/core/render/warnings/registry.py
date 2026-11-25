@@ -36,6 +36,7 @@ from types import ModuleType
 
 import dbt_charts.core.render.warnings.annotation_note_moved as annotation_note_moved
 import dbt_charts.core.render.warnings.annotation_nothing_drawn as annotation_nothing_drawn
+import dbt_charts.core.render.warnings.annotation_rule_labels_numbered as annotation_rule_labels_numbered
 import dbt_charts.core.render.warnings.area_unstacked_reads_as_stacked as area_unstacked_reads_as_stacked
 import dbt_charts.core.render.warnings.axis_label_collision as axis_label_collision
 import dbt_charts.core.render.warnings.axis_position_not_applied as axis_position_not_applied
@@ -113,6 +114,7 @@ logger = logging.getLogger(__name__)
 # field; silent for a chart that never laid out (see module docstring).
 _GEOMETRY_DETECTORS: list[ModuleType] = [
     annotation_note_moved,
+    annotation_rule_labels_numbered,
     axis_label_collision,
     axis_title_truncated,
     title_unit_mismatch,

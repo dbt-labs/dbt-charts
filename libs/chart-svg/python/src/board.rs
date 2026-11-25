@@ -241,6 +241,7 @@ fn seg_text(seg: &migrate::Seg) -> String {
 
 fn edit_to_py<'py>(py: Python<'py>, edit: &migrate::Edit) -> PyResult<Bound<'py, PyDict>> {
     let out = PyDict::new(py);
+    out.set_item("change", edit.change())?;
     match edit {
         migrate::Edit::Move { from, to, before, after, rewrite, value_map, expansion, declared, merged_into, .. } => {
             out.set_item("kind", "move")?;
@@ -286,7 +287,8 @@ fn edit_to_py<'py>(py: Python<'py>, edit: &migrate::Edit) -> PyResult<Bound<'py,
 /// `plan_text_migration(document, stop_target, caller)` -> `("current",)`,
 /// `("planned", staged, edits, notices)` or `(error_kind, message)` with
 /// `error_kind` one of `unsupported`, `incomplete`, `conflict`, `migration`.
-/// What a `dct migrate` text writer replays: each edit a dict (`kind` `move`
+/// What a `dct migrate` text writer replays: each edit a dict with `change`
+/// (the line an author reads, `Edit::change`) and `kind`: `move`
 /// with `from`, `to`, `before`, `after` (absent when `dropped`), `rewrite`,
 /// `value_map`, `expansion`, `item` (the value sat in a list), `declared`,
 /// `merged_into` (present when the move merged into a mapping the destination held: that mapping);

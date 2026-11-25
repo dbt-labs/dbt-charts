@@ -125,6 +125,12 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     )?;
     let (w, h) = (frame.w, frame.h);
     let (x_domain, y_domain) = (&bound.x.domain, &bound.y.domain);
+    // A label on a divide sits at its column's start; otherwise at its middle.
+    let divides = r.style.label_divides;
+    if divides && bound.x.grain.is_some() {
+        return Err(diagnostic::refuse!("heatmap: `label_divides` on a date x is not supported").into());
+    }
+    let label_at = |bandwidth: f64| if divides { 0.0 } else { bandwidth / 2.0 };
     let mut diagnostics = Vec::new();
 
     // ── X axis ────────────────────────────────────────────────────────────
@@ -304,7 +310,10 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     };
 
     // ── Legend ────────────────────────────────────────────────────────────
-    let has_legend = r.legend.visible;
+    let strip_on = r.style.strip_key;
+    let has_legend = r.legend.visible && !strip_on;
+    let strip = if strip_on { Some(strip_key(bound, fonts)?.fits(frame.avail_w())?) } else { None };
+    let strip_h = strip.as_ref().map_or(0.0, |s| s.height);
     let legend_edge = r.legend.position.edge.as_str();
     let legend_floats = r.legend.position.overlay;
     let grad_id = bound.gradient_id.as_str();
@@ -446,6 +455,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
 
     // ── Plot rect: Vega's autosize-fit negotiation ────────────────────────
     let m = frame.fit(&title, |pw, ph, b| {
+        b.union(&Bounds::new(0.0, -strip_h, 0.0, 0.0));
         // The y axis's own bounds join `xBounds`, the x axis's `yBounds`
         // (`ViewLayout.js:62-65`); the cells are bare rect marks.
         let mut y_axis = Bounds::new(0.0, 0.0, pw, ph);
@@ -498,7 +508,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         }
         for (cat, lw) in x_domain.iter().zip(&x_label_ws).filter(|_| x_dates.is_none()) {
             let Some(bx) = xs.position(cat) else { continue };
-            let cx = bx + xs.bandwidth() / 2.0;
+            let cx = bx + label_at(xs.bandwidth());
             let mut ink =
                 vega_fit::text_ink(cx, row_y, *lw, x_label_fs, x_align, x_baseline);
             if x_angle != 0.0 {
@@ -556,13 +566,16 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
 
     // ── Nodes ─────────────────────────────────────────────────────────────
     let mut body = title.nodes(m.title_pos, (plot_left, plot_top));
+    if let Some(strip) = &strip {
+        body.extend(strip.nodes((frame.pad.0, plot_top - strip_h)));
+    }
 
     if let (true, Coloring::DateGradient { min, max, aware }) = (vertical_gradient, &bound.coloring) {
         body.push(date_gradient_def(grad_id, *min, *max, *aware)?);
     }
 
     // ── Cells ─────────────────────────────────────────────────────────────
-    body.push(Node::group(Role::Chrome, Attrs::new(), cell_nodes(&bound.cells, &x_scale, &y_scale, &bound.marks)?).translate(plot_left, plot_top));
+    body.push(Node::group(Role::Chrome, Attrs::new(), cell_nodes(&bound.cells, &x_scale, &y_scale, &bound.marks, measure.fonts)?).translate(plot_left, plot_top));
 
     // ── X axis ────────────────────────────────────────────────────────────
     // The axis group sits at (0.5, plot_h + offset + 0.5); a label keeps its
@@ -585,11 +598,11 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         let caption = category_axis_caption(&x_title_text, ax_x, x_domain)?;
         let mut items = Vec::new();
         if x_tick_visible {
-            let xs = (0..x_texts.len()).map(|i| plot_left + (x_scale.position_at(i) + cell_w / 2.0).floor() + AXIS_TRANSLATE);
+            let xs = (0..x_texts.len()).map(|i| plot_left + (x_scale.position_at(i) + label_at(cell_w)).floor() + AXIS_TRANSLATE);
             items.extend(crate::common::x_tick_marks(&ax_x.ticks, None, &[], xs, (plot_top + x_edge.edge_y(plot_h), x_axis_top + x_sign * x_tick_len))?);
         }
         for (i, band_text) in x_texts.iter().enumerate() {
-            let center = x_scale.position_at(i) + cell_w / 2.0;
+            let center = x_scale.position_at(i) + label_at(cell_w);
             let label_x = plot_left + center;
             let dy = measure::baseline_shift(x_baseline, x_label_fs);
             let face = LabelFace {
@@ -747,4 +760,19 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         diagnostics,
         title_pos: m.title_pos,
     })
+}
+
+/// The stepped strip key of a ramp-patterned numeric color: each step's paint, and the scale's
+/// two ends in the value-label format.
+fn strip_key(bound: &Bound, fonts: &FontBook) -> Result<crate::families::strip_key::StripKey, String> {
+    let r = &bound.r;
+    let Coloring::Gradient { min, max, .. } = &bound.coloring else {
+        return Err(diagnostic::refuse!("heatmap: a `strip_key` on a non-numeric color is not supported"));
+    };
+    let spec = r.patterns.spec().filter(|spec| spec.scale == crate::pattern::Scale::Sequential).ok_or_else(|| diagnostic::refuse!("heatmap: a `strip_key` without a sequential pattern ramp (`tints`) is not supported"))?;
+    let (steps, ink) = (spec.steps.ok_or("heatmap: a ramp carries its step count (resolver required)")?, spec.color.clone().ok_or("heatmap: a strip key's ramp carries its ink (resolver required)")?);
+    let fills = (0..steps).map(|i| r.patterns.step(i, &ink).map(|p| p.color().to_string())).collect::<Result<Vec<_>, _>>()?;
+    let format = r.style.strip_key_format.as_ref().ok_or("heatmap: a strip key labels values in `strip_key_format` (resolver required)")?;
+    let end = |v: f64| crate::common::format_mark_label(Some(format), v, r.style.strip_key_is_house);
+    crate::families::strip_key::StripKey::new(&fills, [end(*min)?, end(*max)?], &bound.legend_title, &r.legend.label.font, fonts)
 }

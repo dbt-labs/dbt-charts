@@ -176,6 +176,7 @@ def build_exec_env(
                     read_only=read_only,
                     duckdb_config=duckdb_config,
                     allow_external_access_in_readonly=allow_external_access_in_readonly,
+                    allow_writable_quack_attach=isinstance(project, FilesystemProject),
                 ),
                 "sqlite": SqliteBackend(data_dir=data_dir),
                 **(extra_routes if extra_routes is not None else {}),

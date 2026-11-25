@@ -10,7 +10,6 @@ from dbt_charts.core.diagnostics import codes_render
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
 from ...._results import rows_result
-from ..._engine_render import render_chart_svg
 
 _LAYER_X = {
     "chart_id": "c",
@@ -47,7 +46,6 @@ CASES: list[tuple[str, dict[str, Any], str]] = [
     ("ERR_LAYER_X_DOMAIN_MISMATCH", _LAYER_X, "same discrete-label domain"),
     ("ERR_LAYER_LABEL_COLLISION", {"label": "L", "chart_id": "c"}, "label 'L'"),
     ("ERR_HEATMAP_COLOR_NO_VALUES", {"field": "x"}, "color field 'x' holds no numeric"),
-    ("ERR_LAYER_AREA_SPLIT_HORIZONTAL_BASE", {"chart_id": "c"}, "Chart 'c'"),
     (
         "ERR_SUPPORT_TABLE_FORMAT_NOT_NUMERIC",
         {"source": "grp", "format_spec": ",d", "value": "store"},
@@ -95,34 +93,3 @@ def test_a_heatmap_color_without_a_number_draws_no_results_instead_of_painting_n
     resolved = resolve(chart, data, chart_style_context=context)
     artifact = render_resolved_chart(resolved, rows_result(data), board_style)
     assert ">No results</text>" in str(artifact.payload)
-
-
-@pytest.mark.parametrize("stack", ["none", "zero"])
-def test_an_area_layer_over_a_split_horizontal_bar_raises_instead_of_painting_garbage(
-    stack: str,
-) -> None:
-    from dbt_charts.core.compile.models.chart.normalized import BarChart
-    from dbt_charts.core.compile.models.query.normalized import SqlQuery
-    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
-
-    chart = BarChart(
-        id="c",
-        type="bar",
-        x="region",
-        y="revenue",
-        color="channel",
-        layers=[{"type": "area", "y": "cost"}],
-        query=SqlQuery(sql="SELECT 1", source="test"),
-        query_name="q",
-        style=BarChartStylePatch.model_validate(
-            {"orientation": "horizontal", "stack": stack}
-        ),
-    )
-    data = [
-        {"region": "North", "channel": "store", "revenue": 100, "cost": 40},
-        {"region": "North", "channel": "web", "revenue": 60, "cost": 30},
-    ]
-    with pytest.raises(ChartDataError) as exc:
-        render_chart_svg(chart, data, width=400)
-    assert _code(exc) == "ERR-LAYER-AREA-SPLIT-HORIZONTAL-BASE"
-    assert exc.value.fields == {"chart_id": "c"}

@@ -169,22 +169,22 @@ def test_ay_position_never_auto_after_resolve(
 
 
 # ---------------------------------------------------------------------------
-# Change 5: sorted_series_by_stack_order shared helper
+# Change 5: sorted_by_series_order shared helper
 # ---------------------------------------------------------------------------
 
 
 def test_sorted_series_alphabetical() -> None:
-    """stack_order='alphabetical' → sorted alphabetically."""
-    from dbt_charts.core.utils import sorted_series_by_stack_order
+    """series_order='alphabetical' → sorted alphabetically."""
+    from dbt_charts.core.utils import sorted_by_series_order
 
     candidates = ["Zebra", "Apple", "Mango"]
-    result = sorted_series_by_stack_order(candidates, [], "series", "alphabetical")
+    result = sorted_by_series_order(candidates, [], "series", "alphabetical")
     assert result == ["Apple", "Mango", "Zebra"]
 
 
 def test_sorted_series_data_order() -> None:
-    """stack_order='data' → first-encounter order."""
-    from dbt_charts.core.utils import sorted_series_by_stack_order
+    """series_order='data' → first-encounter order."""
+    from dbt_charts.core.utils import sorted_by_series_order
 
     data = [
         {"series": "C"},
@@ -193,13 +193,13 @@ def test_sorted_series_data_order() -> None:
         {"series": "C"},
     ]
     candidates = ["A", "B", "C"]
-    result = sorted_series_by_stack_order(candidates, data, "series", "data")
+    result = sorted_by_series_order(candidates, data, "series", "data")
     assert result == ["C", "A", "B"]
 
 
 def test_sorted_series_value_order() -> None:
-    """stack_order=None/'value' → largest global sum at baseline (descending)."""
-    from dbt_charts.core.utils import sorted_series_by_stack_order
+    """series_order=None/'value' → largest global sum at baseline (descending)."""
+    from dbt_charts.core.utils import sorted_by_series_order
 
     data = [
         {"series": "A", "y": 10.0},
@@ -207,7 +207,7 @@ def test_sorted_series_value_order() -> None:
         {"series": "A", "y": 20.0},
     ]
     candidates = ["A", "B"]
-    result = sorted_series_by_stack_order(candidates, data, "series", None, y_field="y")
+    result = sorted_by_series_order(candidates, data, "series", None, y_field="y")
     # B has sum 50; A has sum 30 → B at baseline (descending)
     assert result == ["B", "A"]
 

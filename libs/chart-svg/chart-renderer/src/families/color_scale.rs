@@ -127,8 +127,9 @@ impl ContinuousColor {
                 }
             }
         }
-        let kept = nice_domain(scale.min, scale.max, nice, kept);
-        let (lo, hi) = (scale.min.unwrap_or(kept.0), scale.max.unwrap_or(kept.1));
+        let bounds = scale.domain.unwrap_or_default();
+        let kept = nice_domain(bounds.min, bounds.max, nice, kept);
+        let (lo, hi) = (bounds.min.unwrap_or(kept.0), bounds.max.unwrap_or(kept.1));
         let ramp = match palette {
             Palette::Stops(stops) => Ramp::Stops(stops.into_iter().map(|stop| stop.vega).collect()),
             Palette::Ramp(ramp) => Ramp::Rgb(ramp),
@@ -374,21 +375,23 @@ pub(crate) fn nice_domain(min: Option<f64>, max: Option<f64>, nice: bool, (lo, h
 /// The data extent a diverging pivot is decided from, never nice-widened: an
 /// authored bound wins per edge (`_raw_diverging_bounds`).
 fn raw_bounds(scale: &ScaleTarget, all: Option<(f64, f64)>) -> Option<(f64, f64)> {
-    if let (Some(lo), Some(hi)) = (scale.min, scale.max) {
+    let bounds = scale.domain.unwrap_or_default();
+    if let (Some(lo), Some(hi)) = (bounds.min, bounds.max) {
         return Some((lo, hi));
     }
     let (lo, hi) = all?;
-    Some((scale.min.unwrap_or(lo), scale.max.unwrap_or(hi)))
+    Some((bounds.min.unwrap_or(lo), bounds.max.unwrap_or(hi)))
 }
 
 /// The bounds a diverging scale renders within (`_diverging_bounds`): both
 /// authored, else the nice-widened data extent when neither is, else the raw
 /// bounds.
 fn diverging_bounds(scale: &ScaleTarget, all: Option<(f64, f64)>, nice: bool) -> Option<(f64, f64)> {
-    if let (Some(lo), Some(hi)) = (scale.min, scale.max) {
+    let bounds = scale.domain.unwrap_or_default();
+    if let (Some(lo), Some(hi)) = (bounds.min, bounds.max) {
         return Some((lo, hi));
     }
-    if scale.min.is_none() && scale.max.is_none() && nice {
+    if bounds.min.is_none() && bounds.max.is_none() && nice {
         return all.map(|extent| nice_domain(None, None, true, extent));
     }
     raw_bounds(scale, all)
@@ -993,7 +996,7 @@ mod tests {
     /// 75000 sits at 0.7500000000000001 and rounds the blue tie down where dividing rounds it up.
     #[test]
     fn a_sequential_scale_multiplies_by_the_reciprocal_of_its_domain() {
-        let scale = gradient(serde_json::json!("viridis"), serde_json::json!({"min": 0.0, "max": 100000.0}));
+        let scale = gradient(serde_json::json!("viridis"), serde_json::json!({"domain": {"min": 0.0, "max": 100000.0}}));
         assert_eq!(scale.fill(75000.0), "rgb(93, 201, 98)");
         assert_eq!(scale.fill(74999.99999999999), "rgb(93, 200, 99)");
     }
@@ -1045,7 +1048,7 @@ mod tests {
     /// Oracle: `ladder/histogram/47`: authored bounds replace the data extent.
     #[test]
     fn authored_bounds_replace_the_data_extent() {
-        let scale = gradient(serde_json::json!(["#ffffcc", "#800026"]), serde_json::json!({"min": 0.0, "max": 20.0}));
+        let scale = gradient(serde_json::json!(["#ffffcc", "#800026"]), serde_json::json!({"domain": {"min": 0.0, "max": 20.0}}));
         assert_eq!(fills(&scale, &[2.5, 10.0]), ["rgb(239, 226, 171)", "rgb(195, 139, 91)"]);
     }
 
@@ -1066,9 +1069,9 @@ mod tests {
     #[test]
     fn inverted_bounds_beside_a_hinge_follow_d3() {
         let palette = serde_json::json!(["#ffffcc", "#41b6c4", "#0c2c84"]);
-        let above_data = gradient(palette.clone(), serde_json::json!({"min": 30.0, "hinge": 7.5}));
+        let above_data = gradient(palette.clone(), serde_json::json!({"domain": {"min": 30.0}, "hinge": 7.5}));
         assert_eq!(fills(&above_data, &[2.5, 7.5, 20.0]), ["rgb(65, 182, 196)", "rgb(65, 182, 196)", "rgb(12, 44, 132)"]);
-        let above_max = gradient(palette, serde_json::json!({"min": 20.0, "max": 0.0, "hinge": 7.5}));
+        let above_max = gradient(palette, serde_json::json!({"domain": {"min": 20.0, "max": 0.0}, "hinge": 7.5}));
         assert_eq!(fills(&above_max, &[2.5, 7.5, 20.0]), ["rgb(65, 182, 196)"; 3]);
         assert_eq!(above_max.fill_at(0.0), above_max.fill_at(1.0));
     }
@@ -1079,7 +1082,7 @@ mod tests {
         for arm_mode in ["asymmetric", "symmetric"] {
             let scale = gradient(
                 serde_json::json!("viridis"),
-                serde_json::json!({"min": 20.0, "max": 0.0, "hinge": 7.5, "arm_mode": arm_mode}),
+                serde_json::json!({"domain": {"min": 20.0, "max": 0.0}, "hinge": 7.5, "arm_mode": arm_mode}),
             );
             let at = |t| scale.fill_at(t);
             assert_eq!((at(0.0), at(0.5)), (at(1.0), at(1.0)), "{arm_mode}");
@@ -1089,7 +1092,7 @@ mod tests {
 
     #[test]
     fn a_hingeless_inverted_gradient_runs_the_ramp_backwards() {
-        let scale = gradient(serde_json::json!(["#ffffcc", "#800026"]), serde_json::json!({"min": 20.0, "max": 0.0}));
+        let scale = gradient(serde_json::json!(["#ffffcc", "#800026"]), serde_json::json!({"domain": {"min": 20.0, "max": 0.0}}));
         assert_eq!(scale.fill(20.0), "rgb(255, 255, 204)");
         assert_eq!(scale.fill(0.0), "rgb(128, 0, 38)");
     }
@@ -1123,8 +1126,7 @@ mod tests {
         assert_eq!(diverging_bounds(&target(true), Some((2.5, 17.0)), true), Some((0.0, 20.0)));
         assert_eq!(diverging_bounds(&target(false), Some((2.5, 17.0)), false), Some((2.5, 17.0)));
         let mut bounded = target(true);
-        bounded.min = Some(1.0);
-        bounded.max = Some(9.0);
+        bounded.domain = Some(crate::common::DomainBounds { min: Some(1.0), max: Some(9.0) });
         assert_eq!(diverging_bounds(&bounded, Some((2.5, 17.0)), true), Some((1.0, 9.0)));
         assert_eq!(diverging_bounds(&target(true), None, true), None);
     }
@@ -1134,7 +1136,7 @@ mod tests {
             serde_json::json!({"palette": ["#000000", "#ffffff"], "nice": nice, "arm_mode": "asymmetric"}),
         )
         .unwrap();
-        (target.min, target.max) = (min, max);
+        target.domain = Some(crate::common::DomainBounds { min, max });
         target
     }
 

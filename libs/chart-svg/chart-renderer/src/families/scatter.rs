@@ -118,11 +118,37 @@ pub(crate) struct LinearX {
     case: Option<String>,
     /// The `datum` of each threshold rule that fires.
     rule_datums: [Option<f64>; 2],
+    /// The torn baseline is on: the domain's end nearest zero, when it leaves zero out, tears.
+    torn: bool,
+    /// Under an engine-chosen domain, the px the tear sits past that end so it draws as a rung of
+    /// its own; 0 for an authored domain, which tears on its own end.
+    tear_pad: f64,
 }
 
 impl LinearX {
-    /// The scale's domain on a plot `pw` wide.
+    /// This scale under `ax_x`'s torn baseline.
+    pub(crate) fn torn_by(mut self, ax_x: &AxisStyle) -> Self {
+        if let Some(tear) = ax_x.grid.torn_baseline.as_ref().filter(|t| t.enabled) {
+            self.torn = true;
+            self.tear_pad = if ax_x.coerced_continuous_domain().is_some() { 0.0 } else { tear.pad() };
+        }
+        self
+    }
+
+    /// The domain end that tears on a plot `pw` wide.
+    pub(crate) fn torn_edge(&self, pw: f64) -> Option<f64> {
+        let (lo, hi) = self.fitted_domain_at(pw);
+        crate::torn::torn_edge_value(lo.min(hi), lo.max(hi)).filter(|_| self.torn)
+    }
+
+    /// The scale's domain on a plot `pw` wide: the fitted one, widened past a torn end.
     pub(crate) fn domain_at(&self, pw: f64) -> (f64, f64) {
+        let (lo, hi) = self.fitted_domain_at(pw);
+        let Some(edge) = self.torn_edge(pw).filter(|_| self.tear_pad > 0.0) else { return (lo, hi) };
+        crate::torn::widen_past(self.transform, (lo, hi), edge, self.tear_pad / pw)
+    }
+
+    fn fitted_domain_at(&self, pw: f64) -> (f64, f64) {
         let (lo, hi) = self.raw;
         let (lo, hi) = if self.zero { (lo.min(0.0), hi.max(0.0)) } else { (lo, hi) };
         let (lo, hi) = vega_fit::pad_domain((lo, hi), pw, self.pad, self.transform);
@@ -155,11 +181,13 @@ impl LinearX {
         labeling: impl FnOnce(&[f64]) -> Result<Labeling, String>,
     ) -> Result<(Vec<f64>, Vec<String>, [Option<f64>; 2], (f64, f64)), String> {
         let domain = self.domain_at(pw);
-        if domain.0.is_nan() || domain.1.is_nan() {
+        // The ladder is the fitted domain's: a tear's pad adds room, not rungs.
+        let fitted = self.fitted_domain_at(pw);
+        if fitted.0.is_nan() || fitted.1.is_nan() {
             return Ok((Vec::new(), Vec::new(), self.rule_datums.map(|_| None), domain));
         }
-        let count = d3rs::ticks::vega_tick_count(domain.0, domain.1, self.tick_count, self.min_step);
-        let values = d3rs::ticks::d3_ticks(domain.0, domain.1, count);
+        let count = d3rs::ticks::vega_tick_count(fitted.0, fitted.1, self.tick_count, self.min_step);
+        let values = d3rs::ticks::d3_ticks(fitted.0, fitted.1, count);
         let labeling = labeling(&values)?;
         let labels: Vec<String> = match &self.format {
             Some(slot) => values
@@ -173,7 +201,7 @@ impl LinearX {
             // d3's `tickFormat` default: comma-grouped fixed point at the
             // precision the tick step implies.
             None => {
-                let step = d3rs::ticks::d3_tick_step(domain.0, domain.1, count);
+                let step = d3rs::ticks::d3_tick_step(fitted.0, fitted.1, count);
                 let spec = ::bind::formats::locale::vega_tick_spec(step);
                 values
                     .iter()
@@ -200,7 +228,14 @@ impl LinearX {
             None => labels,
         };
         let labels = labels.iter().map(|label| crate::common::label_case(self.case.as_deref(), label)).collect::<Result<Vec<_>, _>>()?;
-        let ticks = values.iter().map(|&tv| self.frac(domain, tv)).collect();
+        let mut ticks: Vec<f64> = values.iter().map(|&tv| self.frac(domain, tv)).collect();
+        let mut labels = labels;
+        // A tear on the domain's own end is no floor: the rung on it has no gridline, tick or label.
+        let torn_rung = self.torn_edge(pw).filter(|_| self.tear_pad == 0.0);
+        if let Some(at) = torn_rung.and_then(|edge| values.iter().position(|&tv| crate::torn::same_value(tv, edge))) {
+            ticks.remove(at);
+            labels.remove(at);
+        }
         Ok((ticks, labels, self.rule_datums.map(|d| d.map(|datum| self.frac(domain, datum))), domain))
     }
 }
@@ -360,6 +395,9 @@ struct PointMark {
     /// The fill of an unfilled point.
     #[serde(default)]
     fill: Option<String>,
+    /// The canvas ring a point map draws around each dot; a scatter refuses it in `bind`.
+    #[serde(default)]
+    halo: Option<f64>,
 }
 
 /// Vega-Lite's default mark color, the stroke of an unfilled point no color
@@ -1023,6 +1061,8 @@ impl LinearX {
             expr: ax_x.labels.expr.clone(),
             case: ax_x.labels.font.case.clone(),
             rule_datums: [(0.0, rules.0), (1.0, rules.1)].map(|(datum, fires)| fires.then_some(datum)),
+            torn: false,
+            tear_pad: 0.0,
         }
     }
 }
@@ -1107,6 +1147,8 @@ struct PlainXPaint<'a> {
     title: &'a str,
     caption: &'a AxisCaption,
     title_key: Option<crate::contract::LabelKey>,
+    /// A torn bottom edge is no floor: it has no tick stubs.
+    torn_floor: bool,
 }
 
 /// A categorical or numeric x axis: ticks, labels and title, placed in a
@@ -1140,7 +1182,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
         register_axis("x", spec);
     }
     let mut items = Vec::new();
-    if x_ticks_visible {
+    if x_ticks_visible && !p.torn_floor {
         let xs = p.ticks.iter().map(|&frac| plot_left + crate::common::tick_round(x_pos(frac)));
         let end_y = plot_bottom + x_axis_drop + sign * x_tick_len;
         let rules: Vec<_> = p.x_rules.iter().map(|rule| crate::common::ThresholdRule { at: plot_left + rule.at, tick_at: plot_left + rule.tick_at, ..*rule }).collect();
@@ -1322,6 +1364,8 @@ impl PlainXAxis {
                 expr: None,
                 case: None,
                 rule_datums: [None, None],
+                torn: false,
+                tear_pad: 0.0,
             }),
             angle: 0.0,
             align: "center",
@@ -1391,7 +1435,7 @@ impl PlainXAxis {
         axis.scale = if ax_x.is_quantitative && ax_x.is_log_scale() {
             PlainXScale::Log { ax: Box::new(ax_x.clone()), extent: (x_min, x_max) }
         } else {
-            PlainXScale::Linear(linear_x_scale(r, x_min, x_max, (fires.x_zero, fires.x_unity), edge_pad)?)
+            PlainXScale::Linear(linear_x_scale(r, x_min, x_max, (fires.x_zero, fires.x_unity), edge_pad)?.torn_by(ax_x))
         };
         Ok(axis)
     }
@@ -1601,6 +1645,7 @@ impl PlainXAxis {
                 title: &self.title,
                 caption: &caption,
                 title_key: None,
+                torn_floor: false,
             },
             fonts,
         )
@@ -2090,7 +2135,6 @@ impl LayeredLegend {
         overlays: &[OverlayLayer],
         color_domain: &[String],
         category_scale: Option<&crate::common::CategoryColorScale>,
-        base_y_title: &str,
         y_nominal: bool,
     ) -> Result<Self, Diagnostic> {
         let colorless_dot_plot = y_nominal && r.color.is_none();
@@ -2105,7 +2149,8 @@ impl LayeredLegend {
                 })
                 .collect::<Result<_, String>>()?
         } else {
-            vec![(base_y_title.to_string(), r.style.single_series_fill.clone())]
+            // The series is named by its field label; `y_label` titles only the axis.
+            vec![(crate::common::axis_title_text(&r.y, None, &r.field_labels)?, r.style.single_series_fill.clone())]
         };
         let mut scale = crate::families::layers::LayerScale::new(&base, r.color.is_some());
         let layer_rows = overlays
@@ -2422,7 +2467,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
         None => String::new(),
     };
     let base_y_title = crate::common::axis_title_text(&r.y, r.y_label.as_deref(), &r.field_labels)?;
-    let layered_legend = LayeredLegend::new(r, payload, overlays, &color_domain, category_scale, &base_y_title, shape.y_nominal)?;
+    let layered_legend = LayeredLegend::new(r, payload, overlays, &color_domain, category_scale, shape.y_nominal)?;
     let layered_entries = layered_legend.entries(&r.legend);
     let numeric_legends = crate::families::bar::legend::numeric_legends_of(
         None,
@@ -2742,6 +2787,201 @@ mod tests {
         let (y150, y200, y250) = (label_y("150"), label_y("200"), label_y("250"));
         let centered = y200 + (y200 - y250);
         assert!(y150 < centered - 3.0, "the bottom label rises off its tick (centered would be {centered}): {y150}");
+    }
+
+    /// A scatter whose y domain (131.5..254.5) leaves out zero, with the tear on for the axes named.
+    fn torn_scatter(y: bool, x: bool) -> serde_json::Value {
+        let mut json = make_scatter_payload(false);
+        for (axis, on) in [("axis_y", y), ("axis_x", x)] {
+            json["resolved"]["style"][axis]["grid"]["torn_baseline"] = serde_json::json!({"enabled": on, "amplitude": 4.0});
+        }
+        json
+    }
+
+    /// The x tick labels of a scatter whose x leaves out zero, in drawing order.
+    fn x_labels(x_domain: Option<[f64; 2]>, torn: bool) -> Vec<String> {
+        let mut json = torn_scatter(false, torn);
+        json["resolved"]["style"]["axis_x"]["scale"] = match x_domain {
+            Some(d) => serde_json::json!({"continuous": {"domain": d}}),
+            None => serde_json::json!({"continuous": {"zero": false}}),
+        };
+        let svg = render_json(json);
+        let axis = &svg[svg.find("data-dct-role=\"x-axis\"").unwrap()..svg.find("data-dct-role=\"y-axis\"").unwrap()];
+        axis.split("</text>").filter_map(|t| t.rsplit('>').next().filter(|s| !s.is_empty() && !s.contains('<')).map(str::to_string)).collect()
+    }
+
+    #[test]
+    fn an_engine_chosen_x_domain_keeps_its_end_label_when_torn() {
+        let plain = x_labels(None, false);
+        assert!(plain.len() > 2, "{plain:?}");
+        assert_eq!(x_labels(None, true), plain);
+        let torn_svg = |torn: bool| {
+            let mut json = torn_scatter(false, torn);
+            json["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({"continuous": {"zero": false}});
+            render_json(json)
+        };
+        let (plain_svg, torn_svg) = (torn_svg(false), torn_svg(true));
+        assert_eq!(tears(&torn_svg), 1);
+        assert!(point_centers(&torn_svg)[0].0 - point_centers(&plain_svg)[0].0 > 3.0, "the tear pads the plot");
+    }
+
+    #[test]
+    fn a_torn_x_labels_its_ticks_at_the_fitted_domains_precision() {
+        let labels = |torn: bool| {
+            let mut json = torn_scatter(false, torn);
+            json["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({"continuous": {"zero": false}});
+            for (row, x) in json["rows"].as_array_mut().unwrap().iter_mut().zip([10.2, 13.0, 16.9]) {
+                row["spend"] = serde_json::json!(x);
+            }
+            let svg = render_json(json);
+            let axis = &svg[svg.find("data-dct-role=\"x-axis\"").unwrap()..svg.find("data-dct-role=\"y-axis\"").unwrap()];
+            axis.split("</text>").filter_map(|t| t.rsplit('>').next().filter(|s| !s.is_empty() && !s.contains('<')).map(str::to_string)).collect::<Vec<_>>()
+        };
+        assert_eq!(labels(true), labels(false));
+    }
+
+    #[test]
+    fn a_faceted_scatter_tears_x_in_each_panel() {
+        let panels = |torn: bool| {
+            let mut p = torn_scatter(false, torn);
+            p["resolved"]["multiples"] = serde_json::json!({"rows": null, "columns": "panel", "scale": "shared"});
+            p["resolved"]["panel_axes"] = serde_json::json!([{"field": "panel", "values": ["\"P0\"", "\"P1\""]}]);
+            p["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({"continuous": {"zero": false}});
+            for (row, panel) in p["rows"].as_array_mut().unwrap().iter_mut().zip(["P0", "P0", "P1"]) {
+                row["panel"] = serde_json::json!(panel);
+            }
+            render_json(p)
+        };
+        assert_eq!(tears(&panels(false)), 0);
+        assert_eq!(tears(&panels(true)), 2);
+    }
+
+    #[test]
+    fn an_authored_x_domain_drops_its_torn_end_label() {
+        let plain = x_labels(Some([15.0, 40.0]), false);
+        let torn = x_labels(Some([15.0, 40.0]), true);
+        assert_eq!(torn, plain[1..], "{plain:?}");
+    }
+
+    /// Every `<line>` as (x1, y1, x2, y2), in document order.
+    fn lines(svg: &str) -> Vec<(f64, f64, f64, f64)> {
+        svg.split("<line").skip(1).map(|t| (attr(t, " x1"), attr(t, " y1"), attr(t, " x2"), attr(t, " y2"))).collect()
+    }
+
+    fn rungs(svg: &str) -> usize {
+        lines(svg).iter().filter(|l| l.1 == l.3 && l.2 - l.0 > 100.0).count()
+    }
+
+    fn tear_paths(svg: &str) -> Vec<Vec<f64>> {
+        svg.split("<path").filter(|t| t.contains("class=\"torn-baseline\"")).map(|t| {
+            let d = t.split(" d=\"").nth(1).unwrap().split('"').next().unwrap();
+            d.split(['M', 'C', ',', ' ']).filter(|n| !n.is_empty()).map(|n| n.parse().unwrap()).collect()
+        }).collect()
+    }
+
+    fn authored_y(mut json: serde_json::Value) -> serde_json::Value {
+        json["resolved"]["style"]["axis_y"]["scale"] = serde_json::json!({"continuous": {"domain": [150.0, 250.0]}});
+        json
+    }
+
+    #[test]
+    fn an_engine_chosen_y_domain_pads_the_plot_past_the_torn_end() {
+        let plain = point_centers(&render_json(torn_scatter(false, false)));
+        let torn = point_centers(&render_json(torn_scatter(true, false)));
+        assert!(plain[0].1 - torn[0].1 > 3.0, "the lowest point rises off the tear: {plain:?} {torn:?}");
+    }
+
+    #[test]
+    fn an_authored_torn_y_end_loses_its_gridline_and_tick_but_an_engine_chosen_one_keeps_them() {
+        let mut ticked = authored_y(torn_scatter(false, false));
+        ticked["resolved"]["style"]["axis_y"]["ticks"]["visible"] = serde_json::json!(true);
+        let mut torn = authored_y(torn_scatter(true, false));
+        torn["resolved"]["style"]["axis_y"]["ticks"]["visible"] = serde_json::json!(true);
+        let (plain, torn) = (render_json(ticked), render_json(torn));
+        assert_eq!(rungs(&plain) - rungs(&torn), 1, "the torn rung's gridline goes");
+        assert_eq!(lines(&plain).len() - lines(&torn).len(), 2, "its gridline and tick go");
+        let mut padded = torn_scatter(true, false);
+        padded["resolved"]["style"]["axis_y"]["ticks"]["visible"] = serde_json::json!(true);
+        assert_eq!(lines(&render_json(padded)).len(), lines(&plain).len());
+    }
+
+    #[test]
+    fn gridlines_end_on_the_tear() {
+        let plain = lines(&render_json(torn_scatter(false, false)));
+        let svg = render_json(torn_scatter(true, false));
+        let torn = lines(&svg);
+        let ends = |ls: &[(f64, f64, f64, f64)]| ls.iter().filter(|l| l.0 == l.2).map(|l| l.3).collect::<Vec<_>>();
+        assert!(ends(&torn).iter().zip(ends(&plain)).all(|(t, p)| *t <= p), "no gridline runs past the tear");
+        assert!(ends(&torn).iter().zip(ends(&plain)).any(|(t, p)| *t < p), "the vertical gridlines stop on the paper");
+    }
+
+    #[test]
+    fn a_y_annotation_lands_where_its_point_does_under_a_padded_tear() {
+        let rule = |torn: bool| {
+            let mut json = torn_scatter(torn, false);
+            json["resolved"]["annotations"] = serde_json::json!([annotation(0, serde_json::Value::Null, value(140.0))]);
+            let svg = render_json(json);
+            let at = svg.find("annotations-foreground").unwrap();
+            let y = lines(&svg[at..])[0].1;
+            (y, point_centers(&svg)[0].1)
+        };
+        for torn in [false, true] {
+            let (rule_y, point_y) = rule(torn);
+            assert!((rule_y - point_y).abs() < 1.0, "torn {torn}: rule {rule_y}, point {point_y}");
+        }
+    }
+
+    #[test]
+    fn the_two_tears_stop_at_each_others_edge_where_they_meet() {
+        let mut json = torn_scatter(true, true);
+        json["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({"continuous": {"zero": false}});
+        let svg = render_json(json);
+        let paths = tear_paths(&svg);
+        assert_eq!(paths.len(), 2);
+        let (y_tear, x_tear) = (&paths[0], &paths[1]);
+        let y_start = y_tear[0];
+        let x_end = x_tear[x_tear.len() - 1];
+        let y_floor = y_tear.iter().skip(1).step_by(2).fold(f64::MIN, |m, &y| m.max(y));
+        assert!(y_start > 0.5, "the y tear starts where the x tear's paper ends: {y_start}");
+        assert!(x_end < y_floor, "the x tear stops where the y tear's paper starts: {x_end} vs {y_floor}");
+    }
+
+    fn tears(svg: &str) -> usize {
+        svg.matches("class=\"torn-baseline\"").count()
+    }
+
+    #[test]
+    fn a_y_domain_without_zero_tears_its_edge_when_enabled() {
+        let svg = render_json(torn_scatter(true, false));
+        assert_eq!(tears(&svg), 1, "{svg}");
+        assert_eq!(tears(&render_json(torn_scatter(false, false))), 0);
+    }
+
+    #[test]
+    fn a_y_domain_holding_zero_draws_no_tear() {
+        let mut json = torn_scatter(true, false);
+        json["resolved"]["style"]["axis_y"]["domain_min"] = serde_json::json!(0.0);
+        assert_eq!(tears(&render_json(json)), 0);
+    }
+
+    #[test]
+    fn a_torn_y_edge_has_no_rung_and_no_label_of_its_own() {
+        let mut json = torn_scatter(true, false);
+        json["resolved"]["style"]["axis_y"]["scale"] = serde_json::json!({"continuous": {"domain": [150.0, 250.0]}});
+        let plain = render_json(make_scatter_payload(false));
+        let svg = render_json(json);
+        assert!(plain.contains(">150</text>") && !svg.contains(">150</text>"), "the torn edge's rung goes unlabeled: {svg}");
+        assert!(svg.contains(">200</text>") && svg.contains(">250</text>"));
+    }
+
+    #[test]
+    fn a_torn_scatter_tears_only_the_axis_that_asks() {
+        let mut json = torn_scatter(true, true);
+        json["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({"continuous": {"zero": false}});
+        assert_eq!(tears(&render_json(json)), 2, "each value axis without zero tears its own edge");
+        let mut y_only = torn_scatter(true, false);
+        y_only["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({"continuous": {"zero": false}});
+        assert_eq!(tears(&render_json(y_only)), 1);
     }
 
     fn render_json(json: serde_json::Value) -> String {
@@ -3173,6 +3413,18 @@ mod tests {
         let plain = render_json(make_scatter_payload(true));
         assert!(!plain.contains("role-mark"));
         assert!(crate::contract::has_no_mark_labels(&plain));
+    }
+
+    /// Blank `x_label`/`y_label` hide the axis titles only: each hover row
+    /// keeps its field's own title, as it reads with no label authored.
+    #[test]
+    fn blank_axis_labels_keep_the_hover_rows() {
+        let mut p = make_scatter_payload(true);
+        p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.2~f");
+        p["resolved"]["x_label"] = serde_json::json!("");
+        p["resolved"]["y_label"] = serde_json::json!(" ");
+        let svg = render_json(p);
+        assert!(svg.contains("aria-label=\"⁤SMB; Pipeline: 140; Spend: 18\""), "{svg}");
     }
 
     /// Every labeled point is a `point` item, and the baseline rules are
@@ -4626,6 +4878,8 @@ mod tests {
             expr: None,
             case: None,
             rule_datums: [None, None],
+            torn: false,
+            tear_pad: 0.0,
         };
         let (ticks, labels, _, domain) = lin.at(120.0, |_| Ok(crate::common::Labeling::default())).unwrap();
         assert_eq!(domain, (-1.0, 11.0), "10 of 120 px each side widens by 120 / 100");
@@ -4639,10 +4893,10 @@ mod tests {
     /// fixed point at the precision the tick step implies.
     #[test]
     fn an_x_without_a_label_format_reads_d3s_default_tick_format() {
-        let lin = LinearX { raw: (0.0, 3000.0), zero: false, nice: true, fit: false, pad: 0.0, transform: d3rs::scale::Transform::Identity, tick_count: 3, min_step: None, format: None, expr: None, case: None, rule_datums: [None, None] };
+        let lin = LinearX { raw: (0.0, 3000.0), zero: false, nice: true, fit: false, pad: 0.0, transform: d3rs::scale::Transform::Identity, tick_count: 3, min_step: None, format: None, expr: None, case: None, rule_datums: [None, None], torn: false, tear_pad: 0.0 };
         let (_, labels, _, _) = lin.at(400.0, |_| Ok(crate::common::Labeling::default())).unwrap();
         assert_eq!(labels, ["0", "1,000", "2,000", "3,000"]);
-        let lin = LinearX { raw: (0.0, 1.0), zero: false, nice: true, fit: false, pad: 0.0, transform: d3rs::scale::Transform::Identity, tick_count: 2, min_step: None, format: None, expr: None, case: None, rule_datums: [None, None] };
+        let lin = LinearX { raw: (0.0, 1.0), zero: false, nice: true, fit: false, pad: 0.0, transform: d3rs::scale::Transform::Identity, tick_count: 2, min_step: None, format: None, expr: None, case: None, rule_datums: [None, None], torn: false, tear_pad: 0.0 };
         let (_, labels, _, _) = lin.at(400.0, |_| Ok(crate::common::Labeling::default())).unwrap();
         assert_eq!(labels, ["0.0", "0.5", "1.0"]);
     }
@@ -6422,6 +6676,8 @@ mod tests {
             expr: None,
             case: None,
             rule_datums: [None, None],
+            torn: false,
+            tear_pad: 0.0,
         };
         assert_eq!(lin(None).at(400.0, |_| Ok(crate::common::Labeling::default())).unwrap().0.len(), 6);
         let (ticks, labels, _, _) = lin(Some(20.0)).at(400.0, |_| Ok(crate::common::Labeling::default())).unwrap();

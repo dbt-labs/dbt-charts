@@ -138,7 +138,7 @@
                 entries.push({
                     role: 'header',
                     swatch: marker === ROLE_HEADER_SWATCHED,
-                    value: pair.slice(1),
+                    value: pair.slice(1).split(SEMICOLON_ESCAPE).join(';'),
                 });
                 continue;
             }
@@ -2239,6 +2239,57 @@
         });
     }
 
+    /*{# Annotation rules. The engine emits an invisible wide hit line along each #}*/
+    /*{# rule and its extension, and stamps every piece of a rule (line, stem, #}*/
+    /*{# circles, label, key entry) with `data-dbt-annotation-rule`. A piece that answers #}*/
+    /*{# hover carries `data-dbt-annotation-rule-tip`, a tooltip in the same wire a mark's #}*/
+    /*{# aria-label speaks. Hover lifts the whole rule to the theme's text ink; #}*/
+    /*{# widths never change. #}*/
+    const RULE_TIP = '[data-dbt-annotation-rule-tip]';
+
+    function ruleInkPlan(svg, id) {
+        const next = new Map();
+        if (!active.hoverEmphasis.visible) return next;
+        const ink = active.hoverEmphasis.textInk;
+        svg.querySelectorAll('[data-dbt-annotation-rule="' + CSS.escape(id) + '"]').forEach(function (piece) {
+            piece.querySelectorAll('line, path, circle, text').forEach(function (el) {
+                if (el.tagName.toLowerCase() === 'text') {
+                    if (!el.hasAttribute('stroke')) next.set(el, { fill: ink });
+                } else if (el.hasAttribute('stroke') && el.getAttribute('stroke') !== 'none') {
+                    next.set(el, { stroke: ink });
+                }
+            });
+        });
+        return next;
+    }
+
+    /*{# The rule answering at a point: the first thing under the cursor that #}*/
+    /*{# carries a tooltip, unless a datum comes first. The drawn line is above #}*/
+    /*{# the data in the foreground and has none of its own, so the stack is #}*/
+    /*{# walked for the hit line beneath it. #}*/
+    function ruleAt(x, y) {
+        const stack = document.elementsFromPoint(x, y);
+        for (let i = 0; i < stack.length; i++) {
+            const tip = stack[i].closest(RULE_TIP);
+            if (tip) return tip;
+            const labeled = stack[i].closest('[aria-label]');
+            if (labeled && isDataMark(labeled)) return null;
+        }
+        return null;
+    }
+
+    function showRuleTooltip(state, target, event, svg) {
+        const owner = target.closest('[data-dbt-annotation-rule]');
+        const ts = active.tooltipStyle;
+        state.activeMark = target;
+        tooltipTemplate.innerHTML = singleMarkHtml(parseAriaLabel(target.getAttribute('data-dbt-annotation-rule-tip')), null, ts);
+        syncChildren(state.tooltip, tooltipTemplate.content);
+        state.tooltip.style.display = 'block';
+        positionTooltip(state, event.clientX, event.clientY);
+        clearDrawn(state);
+        repaint(state, ruleInkPlan(svg, owner.getAttribute('data-dbt-annotation-rule')));
+    }
+
     function showTooltip(state, mark, event, svg) {
         const entries = parseAriaLabel(mark.getAttribute('aria-label'));
         if (!entries.length) {
@@ -2719,6 +2770,21 @@
                         ? markAtCursorX(panelScope(target, chart), event.clientX, event.clientY)
                         : nearestDataMark(chart, event.clientX, event.clientY);
                 }
+            }
+
+            /*{# An annotation rule, its label, circle or key entry. It answers only #}*/
+            /*{# where no datum does: its hit lines sit under the marks, and the #}*/
+            /*{# proximity snap below never takes the cursor off a rule. #}*/
+            const ruleTarget = !mark && target && target.closest && target.closest('[data-dbt-annotation-rule]')
+                ? ruleAt(event.clientX, event.clientY)
+                : null;
+            if (ruleTarget && svg.contains(ruleTarget)) {
+                if (state.activeMark !== ruleTarget || state.tooltip.style.display === 'none') {
+                    showRuleTooltip(state, ruleTarget, event, svg);
+                } else {
+                    positionTooltip(state, event.clientX, event.clientY);
+                }
+                return;
             }
 
             if (!mark && target && target.closest) {

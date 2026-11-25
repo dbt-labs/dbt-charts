@@ -4,6 +4,7 @@
 //! `resolve`, so what the fit reserves is what paint draws.
 
 pub mod axis_map;
+mod crowd;
 mod emit;
 pub(crate) mod rule_gray;
 pub mod model;
@@ -19,6 +20,7 @@ use diagnostic::Diagnostic;
 use ::layout::labels_expr::colors::{contrast, Color};
 use measure::FontBook;
 use crate::vega_fit::Bounds;
+pub(crate) use crowd::{force_numbers, reserve_key};
 use place::{Mark, Placed};
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -365,9 +367,10 @@ pub(crate) fn resolve<'a>(ctx: &'a AnnotationCtx) -> Result<Vec<Placed<'a>>, Dia
         }
     }
     items.sort_by_key(|p| p.index);
+    let occupied: Vec<Bounds> = ctx.occupied.iter().flat_map(DataMark::boxes).collect();
+    crowd::arrange_rules(&mut items, ctx, &occupied)?;
     place::separate(&mut items, ctx);
     if !ctx.occupied.is_empty() {
-        let occupied: Vec<Bounds> = ctx.occupied.iter().flat_map(DataMark::boxes).collect();
         place::arrange(&mut items, ctx, &occupied);
     }
     Ok(items)
@@ -416,6 +419,9 @@ pub fn bounds(ctx: &AnnotationCtx) -> Option<Bounds> {
         if let Some(t) = &p.text {
             add(Bounds::new(t.x, t.y, t.x + t.w, t.y + t.h));
         }
+        for &(x, y) in &p.badges {
+            add(Bounds::new(x - crowd::BADGE_R, y - crowd::BADGE_R, x + crowd::BADGE_R, y + crowd::BADGE_R));
+        }
     }
     union
 }
@@ -424,6 +430,13 @@ pub fn bounds(ctx: &AnnotationCtx) -> Option<Bounds> {
 /// anchors beyond it.
 pub fn text_x2(ctx: &AnnotationCtx) -> f64 {
     bounds(ctx).map_or(0.0, |b| b.x2)
+}
+
+/// Where a top legend's bounds begin, as a coordinate at or above `0.0`: past annotation text that
+/// reaches above the plot, as Vega puts a legend past every mark in `yBounds`. A line of text fits in
+/// the gap the legend already keeps from the plot, so only what reaches beyond that moves the legend.
+pub fn text_y1(ctx: &AnnotationCtx) -> f64 {
+    bounds(ctx).map_or(0.0, |b| (b.y1 + crate::families::legend::VEGA_LEGEND_OFFSET).min(0.0))
 }
 
 /// One plane as nodes. Call with `Background` after the grid and before any
@@ -752,9 +765,79 @@ mod tests {
     }
 
     #[test]
-    fn a_foreground_only_chart_still_gets_its_clip_from_background() {
+    fn a_foreground_only_chart_still_gets_its_clip_and_rule_hit_areas_from_background() {
         let anns: Vec<Annotation> = contract().into_iter().filter(|a| a.index == 0).collect();
-        assert_eq!(painted(&anns, Plane::Background), "<clipPath id=\"rev-ann0\"><rect x=\"-0.75\" y=\"-0.75\" width=\"201.5\" height=\"101.5\"/></clipPath>");
+        let svg = painted(&anns, Plane::Background);
+        assert!(svg.starts_with("<clipPath id=\"rev-ann0\"><rect x=\"-0.75\" y=\"-0.75\" width=\"201.5\" height=\"101.5\"/></clipPath>"), "{svg}");
+        assert!(svg.contains("class=\"annotations-hits\""), "{svg}");
+    }
+
+    /// Four labeled x rules a few days apart: crowded enough that every rule is numbered.
+    fn crowded_rules() -> Vec<Annotation> {
+        ["2024-06-01", "2024-06-05", "2024-06-09", "2024-06-13"]
+            .iter()
+            .enumerate()
+            .map(|(i, day)| {
+                let mut a = rule_x(Scalar::Date((*day).into()));
+                a.index = i;
+                a.y = None;
+                a.text = Some(format!("Launch {i}; beta"));
+                a
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_rule_has_an_invisible_wide_hit_area_that_answers_with_its_label_and_anchor() {
+        let anns = dated();
+        let hits = painted(&anns, Plane::Background);
+        let hits = &hits[hits.find("class=\"annotations-hits\"").expect("a hits group")..];
+        let rules = anns.iter().filter(|a| a.kind == model::Kind::Rule).count();
+        assert_eq!(hits.matches("opacity=\"0\"").count(), rules, "{hits}");
+        assert!(hits.contains("stroke-width=\"12\""), "{hits}");
+        // The tip is the front-end tooltip wire: the full label as the header, the anchor value beneath it.
+        assert!(hits.contains("data-dbt-annotation-rule-tip=\"\u{2061}FY24 goal;\u{2060}: 25000000\""), "{hits}");
+        assert!(hits.contains("data-dbt-annotation-rule=\"rev-ann0-0\""), "{hits}");
+    }
+
+    #[test]
+    fn hit_areas_are_painted_before_every_annotation_layer_and_run_along_the_extension_too() {
+        let anns = crowded_rules();
+        let bg = painted(&anns, Plane::Background);
+        assert!(bg.find("annotations-hits").unwrap() < bg.find("annotations annotations-background").unwrap_or(usize::MAX));
+        // A numbered rule's stem is a second hit line, so each rule has at least two.
+        assert!(bg.matches("data-dbt-annotation-rule-tip").count() >= 2 * anns.len(), "{bg}");
+    }
+
+    #[test]
+    fn labels_circles_and_key_entries_carry_the_link_to_their_rule() {
+        let anns = crowded_rules();
+        let fore = painted(&anns, Plane::Foreground);
+        assert!(fore.contains("class=\"mark-text\"") || fore.contains("annotations-text"));
+        for i in 0..anns.len() {
+            let id = format!("data-dbt-annotation-rule=\"rev-ann0-{i}\"");
+            // The visible line, the stem with its circles, and the key text all name their rule.
+            assert!(fore.matches(&id).count() >= 3, "rule {i}: {fore}");
+        }
+        // Each circle (at the rule, and in the key) and each key text answers on hover.
+        assert_eq!(fore.matches("data-dbt-annotation-rule-tip").count(), anns.len() * 3, "{fore}");
+        assert!(!fore.contains("Launch 0; beta\"") || fore.contains("\u{E000}"), "a `;` in a label is escaped in the tip");
+    }
+
+    #[test]
+    fn rules_sharing_a_circle_each_keep_their_own_line_and_hover() {
+        let anns: Vec<Annotation> = crowded_rules().into_iter().enumerate().map(|(i, mut a)| {
+            a.x = Some(Anchor::Value { value: Scalar::Date("2024-06-01".into()) });
+            a.text = Some(format!("Launch {i}"));
+            a
+        }).collect();
+        let fore = painted(&anns, Plane::Foreground);
+        // One circle and one key entry (two circles drawn); every rule still has its stem and a hit line.
+        assert_eq!(fore.matches("<circle").count(), 2, "{fore}");
+        for i in 0..anns.len() {
+            assert!(fore.contains(&format!("data-dbt-annotation-rule=\"rev-ann0-{i}\"")), "rule {i}");
+        }
+        assert!(fore.contains("Launch 0; Launch 1; Launch 2;"), "{fore}");
     }
 
     #[test]
@@ -938,6 +1021,31 @@ mod tests {
         let c = AnnotationCtx { occupied: vec![DataMark::rect(0.0, 0.0, 200.0, 50.0)], ..ctx(&anns, &fonts) };
         let (_, warnings) = collect(|| nodes(&c, Plane::Foreground).unwrap());
         assert_eq!(warnings.iter().map(|w| w.code).collect::<Vec<_>>(), ["WARN-ANNOTATION-NOTE-MOVED"]);
+    }
+
+    fn dated_rules(days: &[&str]) -> Vec<Annotation> {
+        days.iter()
+            .enumerate()
+            .map(|(n, day)| {
+                let mut rule = contract()[1].clone();
+                rule.index = n;
+                rule.x = Some(Anchor::Value { value: Scalar::Date((*day).into()) });
+                rule.style.text.position = model::Position { edge: model::Edge::Top, align: model::Align::End, overlay: false, auto_edge: true, auto_align: true };
+                rule
+            })
+            .collect()
+    }
+
+    #[test]
+    fn paint_warns_once_when_crowded_rule_labels_are_numbered() {
+        let fonts = fonts();
+        let crowded = dated_rules(&["2024-07-01", "2024-07-04", "2024-07-07", "2024-07-10", "2024-07-13"]);
+        let (_, warnings) = collect(|| nodes(&ctx(&crowded, &fonts), Plane::Foreground).unwrap());
+        assert_eq!(warnings.iter().map(|w| w.code).collect::<Vec<_>>(), ["WARN-ANNOTATION-RULE-LABELS-NUMBERED"]);
+        assert_eq!(warnings[0].params["chart_id"], "rev");
+        let apart = dated_rules(&["2024-02-01", "2024-07-01"]);
+        let (_, warnings) = collect(|| nodes(&ctx(&apart, &fonts), Plane::Foreground).unwrap());
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]

@@ -684,13 +684,13 @@ def _get(project: Path, url: str) -> str:
     return response.text
 
 
-def test_sidebar_links_carry_variables_but_not_internal_keys(tmp_path: Path) -> None:
-    project = _two_board_project(tmp_path)
-    html = _get(project, "/a/?year=2024&_foo=1&format=html")
-    assert 'class="dbt-sidebar"' in html
-    assert 'href="/b?year=2024"' in html
-    assert "_foo" not in html.split('class="dbt-sidebar"')[1].split("</nav>")[0]
-    assert "Beta" in _get(project, "/b?year=2024")
+def test_sidebar_links_carry_no_query(tmp_path: Path) -> None:
+    """A sibling board may not declare this board's variables, so its link is
+    the plain board URL."""
+    html = _get(_two_board_project(tmp_path), "/a/?year=2024&_foo=1")
+    sidebar = html.split('class="dbt-sidebar"')[1].split("</nav>")[0]
+    assert 'href="/b"' in sidebar
+    assert "?" not in sidebar
 
 
 def test_embed_has_no_sidebar(tmp_path: Path) -> None:
@@ -702,8 +702,8 @@ def test_folder_listing_shows_the_parent_with_the_folder_current(
     tmp_path: Path,
 ) -> None:
     html = _get(_two_board_project(tmp_path), "/regions/?year=2024")
-    assert 'href="/a?year=2024"' in html
-    assert 'href="/regions/?year=2024" aria-current="page"' in html
+    assert 'href="/a"' in html
+    assert 'href="/regions/" aria-current="page"' in html
 
 
 def test_parent_row_goes_back_one_level(tmp_path: Path) -> None:
@@ -713,7 +713,7 @@ def test_parent_row_goes_back_one_level(tmp_path: Path) -> None:
     (project / "charts" / "regions" / "west" / "w.yml").write_text(_BOARD)
     board = _get(project, "/regions/x?year=2024")
     sidebar = board.split('class="dbt-sidebar"')[1].split("</nav>")[0]
-    assert 'href="/regions/?year=2024"' in sidebar
+    assert 'href="/regions/"' in sidebar
     folder = _get(project, "/regions/west/")
     sidebar = folder.split('class="dbt-sidebar"')[1].split("</nav>")[0]
     assert 'href="/regions/"' in sidebar

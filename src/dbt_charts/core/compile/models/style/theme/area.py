@@ -127,11 +127,11 @@ class _AreaChartStyleBase(
         description="Default stack mode for area charts: 'none', 'zero', 'normalize', or 'center'."
     )
     # None is the unset sentinel: render ranks by value, and no theme sets it.
-    stack_order: Literal["value", "data", "alphabetical"] | None = Field(
+    series_order: Literal["value", "data", "alphabetical"] | None = Field(
         default=None,
         description=(
-            "Z-order of stacked segments. None/'value' puts the largest aggregate at baseline. "
-            "'data' stacks series in first-appearance order: SQL row order for color:, "
+            "Order of the stacked bands. Unset or 'value' puts the largest aggregate at baseline. "
+            "'data' orders series by first appearance: SQL row order for color:, "
             "the listed order for y: [a, b, ...] (a measure null in the first rows "
             "appears later). "
             "'alphabetical' sorts by series name. Ignored when stacking is off or "

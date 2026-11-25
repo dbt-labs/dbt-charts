@@ -380,6 +380,8 @@ pub fn bars(
         datums.sort_by_key(|datum| datum.y1 < 0.0);
     }
 
+    // The single series is named by its field label; `y_label` titles only the axis.
+    let base_name = display_text::field_title(y_field, &labels).map_err(diag::err_internal)?;
     // Bars grow from a zero-anchored axis, so the rule at zero draws whenever the grid's does.
     let baselines = Baselines { zero: threshold_rules(&p.y_ladder)?, unity: false, x_threshold: false };
     let (mut series, mut legend) = match colors {
@@ -389,14 +391,14 @@ pub fn bars(
             (colors.series, Some(legend))
         }
         None => {
-            (vec![single_series(placed, y_field, &p.y_title, &derived)?], None)
+            (vec![single_series(placed, y_field, &base_name, &derived)?], None)
         }
     };
     let mut lines = Vec::new();
     if !layers.is_empty() {
         let canvas = hex(derived.frame.canvas);
         let mut painted = vec![hex(placed.single_series_fill()?)];
-        let mut names = vec![p.y_title.clone()];
+        let mut names = vec![base_name.clone()];
         for (layer, (field, values)) in layers.iter().zip(layer_fields.iter().zip(&layer_values)) {
             let name = match &layer.base.label {
                 Some(label) => label.clone(),

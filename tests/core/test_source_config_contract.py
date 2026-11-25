@@ -86,6 +86,7 @@ class TestDatabaseSourceConfigContracts:
             api_endpoint="https://bigquery.googleapis.com",
             priority="interactive",
             maximum_bytes_billed=1_000_000,
+            reservation="projects/p/locations/US/reservations/r",
             impersonate_service_account="reader@example.iam.gserviceaccount.com",
             job_retry_deadline_seconds=30,
             job_retries=3,
@@ -107,6 +108,7 @@ class TestDatabaseSourceConfigContracts:
             scopes=["https://www.googleapis.com/auth/bigquery"],
         )
         assert config.execution_project == "billing-project"
+        assert config.reservation == "projects/p/locations/US/reservations/r"
 
     def test_redshift_documents_every_dbt_credential_option(self) -> None:
         """Redshift options round-trip through the typed source model."""

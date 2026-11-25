@@ -329,7 +329,7 @@ def test_reverted_example_board_migrates_to_the_current_shape() -> None:
         "rows: [arr_line]\n"
     )
 
-    migrated = migrate_board_yaml_text(old_yaml_text)
+    migrated = migrate_board_yaml_text(old_yaml_text).text
 
     doc = load_yaml_mapping(migrated)
     assert doc["charts"]["arr_line"]["style"]["axis_y"] == {

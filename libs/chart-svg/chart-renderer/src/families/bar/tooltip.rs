@@ -27,7 +27,7 @@ use super::legend::grouped_legend_domain;
 /// `scale["domain"]` (`spatial_color_scale`'s third argument) --
 /// `_series_order_role` (structured_tooltip.py:126-136) ranks over
 /// `scale["domain"]`, so a vertical stacked bar ranks over the REVERSED
-/// baseline-first `stack_order`. `_emit_horizontal` (bar.py:1522-1524)
+/// baseline-first `series_order`. `_emit_horizontal` (bar.py:1522-1524)
 /// bakes `order` itself with no reversal ("the 'left-first' convention IS
 /// baseline-first, no reversal needed") -- `reverse_for_vertical` is that
 /// one orientation switch, set by each render fn's own caller.
@@ -35,13 +35,13 @@ pub(super) fn tooltip_order_domain(
     is_stacked: bool,
     is_grouped: bool,
     reverse_for_vertical: bool,
-    stack_order: &[String],
+    series_order: &[String],
     color_domain: &[String],
     legend: &LegendConfig,
     category_scale: Option<&crate::common::CategoryColorScale>,
 ) -> Option<Vec<String>> {
     if is_stacked {
-        let mut domain = stack_order.to_vec();
+        let mut domain = series_order.to_vec();
         if reverse_for_vertical {
             domain.reverse();
         }
@@ -155,13 +155,13 @@ mod tooltip_order_domain_tests {
     use super::*;
 
     /// `charts/bar-charts_7/region_revenue_by_category_vertical` (vertical,
-    /// stack: zero): `stack_order` is the descending-global-sum baseline
+    /// stack: zero): `series_order` is the descending-global-sum baseline
     /// order `[Electronics(197199), Accessories(152504), Tools(93320)]`;
     /// the reference ranks `Tools`=0, `Accessories`=1, `Electronics`=2 --
     /// the REVERSED domain.
     #[test]
     fn vertical_stacked_bar_ranks_over_the_reversed_domain() {
-        let stack_order =
+        let series_order =
             vec!["Electronics".to_string(), "Accessories".to_string(), "Tools".to_string()];
         let legend: LegendConfig = serde_json::from_value(serde_json::json!({
             "visible": true, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
@@ -169,18 +169,18 @@ mod tooltip_order_domain_tests {
         }))
         .unwrap();
         let domain =
-            tooltip_order_domain(true, true, true, &stack_order, &[], &legend, None).unwrap();
+            tooltip_order_domain(true, true, true, &series_order, &[], &legend, None).unwrap();
         assert_eq!(crate::contract::tooltip_order_rank(&domain, "Electronics"), 2);
         assert_eq!(crate::contract::tooltip_order_rank(&domain, "Accessories"), 1);
         assert_eq!(crate::contract::tooltip_order_rank(&domain, "Tools"), 0);
     }
 
     /// `charts/bar-charts_8/region_revenue_by_category` (horizontal, stack:
-    /// zero): same `stack_order`, but the reference ranks `Electronics`=0,
+    /// zero): same `series_order`, but the reference ranks `Electronics`=0,
     /// `Tools`=2 -- the UNREVERSED domain ("left-first IS baseline-first").
     #[test]
     fn horizontal_stacked_bar_ranks_over_the_unreversed_domain() {
-        let stack_order =
+        let series_order =
             vec!["Electronics".to_string(), "Accessories".to_string(), "Tools".to_string()];
         let legend: LegendConfig = serde_json::from_value(serde_json::json!({
             "visible": true, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
@@ -188,7 +188,7 @@ mod tooltip_order_domain_tests {
         }))
         .unwrap();
         let domain =
-            tooltip_order_domain(true, true, false, &stack_order, &[], &legend, None).unwrap();
+            tooltip_order_domain(true, true, false, &series_order, &[], &legend, None).unwrap();
         assert_eq!(crate::contract::tooltip_order_rank(&domain, "Electronics"), 0);
         assert_eq!(crate::contract::tooltip_order_rank(&domain, "Accessories"), 1);
         assert_eq!(crate::contract::tooltip_order_rank(&domain, "Tools"), 2);

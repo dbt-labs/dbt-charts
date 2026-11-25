@@ -571,7 +571,7 @@ const RAIL_MEATY_TOTAL: f64 = 0.25;
 /// stays at that column and the cascade nudges it. When no column qualifies (all empty), the last column.
 pub(super) fn stacked_rail_anchors(
     cat_domain: &[String],
-    stack_order: &[String],
+    series_order: &[String],
     data_map: &HashMap<(String, String), f64>,
     normalize: bool,
     // The tallest total of a `center` stack, which floats every category to its middle.
@@ -585,23 +585,23 @@ pub(super) fn stacked_rail_anchors(
     // A series with no datum in a column stacks as a zero there.
     let filled: HashMap<(String, String), f64> = cat_domain
         .iter()
-        .flat_map(|cat| stack_order.iter().map(move |series| (cat.clone(), series.clone())))
+        .flat_map(|cat| series_order.iter().map(move |series| (cat.clone(), series.clone())))
         .map(|key| {
             let value = data_map.get(&key).copied().unwrap_or(0.0);
             (key, value)
         })
         .collect();
-    let spans = stack_spans(cat_domain, stack_order, &filled, normalize, center)?;
+    let spans = stack_spans(cat_domain, series_order, &filled, normalize, center)?;
     let carries = |cat: &String, series: &String| data_map.contains_key(&(cat.clone(), series.clone()));
     let totals: Vec<f64> = cat_domain
         .iter()
-        .map(|cat| stack_order.iter().filter_map(|series| data_map.get(&(cat.clone(), series.clone()))).sum())
+        .map(|cat| series_order.iter().filter_map(|series| data_map.get(&(cat.clone(), series.clone()))).sum())
         .collect();
     let mut sorted = totals.clone();
     sorted.sort_by(f64::total_cmp);
     let median = sorted[sorted.len() / 2];
     let anchor_limit = totals.iter().rposition(|&total| total > 0.0 && total >= RAIL_MEATY_TOTAL * median).unwrap_or(cat_domain.len() - 1);
-    stack_order
+    series_order
         .iter()
         .map(|series| {
             let anchor = cat_domain[..=anchor_limit]
@@ -745,13 +745,13 @@ pub(super) fn stack_label_spans(
     // The both-signs stack of every row a `middle` label centers on.
     label_stack: Option<&CenterStack>,
     cat_domain: &[String],
-    stack_order: &[String],
+    series_order: &[String],
     data_map: &HashMap<(String, String), f64>,
 ) -> Result<Option<SegmentSpans>, String> {
     if r.stack != "center" || !r.style.mark.labels.as_ref().is_some_and(|l| l.visible) {
         return Ok(None);
     }
-    let order = if stack_order.is_empty() { &[String::new()][..] } else { stack_order };
+    let order = if series_order.is_empty() { &[String::new()][..] } else { series_order };
     stack_spans(cat_domain, order, data_map, false, label_stack).map(Some)
 }
 
@@ -940,7 +940,7 @@ pub(super) fn bar_value_extent(
     is_grouped: bool,
     data_map: &HashMap<(String, String), f64>,
     cat_domain: &[String],
-    stack_order: &[String],
+    series_order: &[String],
     color_domain: &[String],
     tier_depth: &HashMap<String, usize>,
     center: Option<&CenterStack>,
@@ -955,7 +955,7 @@ pub(super) fn bar_value_extent(
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)))
     } else if is_stacked {
         cat_domain.iter().fold((0.0, 0.0), |(lo, hi), cat| {
-            let (neg, pos) = stack_order
+            let (neg, pos) = series_order
                 .iter()
                 .map(|s| data_map.get(&(cat.clone(), s.clone())).copied().unwrap_or(0.0))
                 .fold((0.0, 0.0), |(n, p), v| if v < 0.0 { (n + v, p) } else { (n, p + v) });
@@ -995,11 +995,11 @@ pub(super) fn bar_value_extent(
 pub(super) struct BarChartState {
     pub(super) cat_domain: Vec<String>,
     pub(super) color_domain: Vec<String>,
-    pub(super) stack_order: Vec<String>,
+    pub(super) series_order: Vec<String>,
     pub(super) is_grouped: bool,
     pub(super) is_stacked: bool,
     pub(super) normalize: bool,
-    /// Palette slot domain: `stack_order` unless the chart is a stacked bar
+    /// Palette slot domain: `series_order` unless the chart is a stacked bar
     /// whose color IS 1:1 with its category, in which case `color_domain`
     /// (#8118's own alphabetical-vs-baseline-first split — `color_1to1_
     /// with_cat`). `one_to_one`/grouped-band-padding (a SEPARATE, mutually
@@ -1008,6 +1008,28 @@ pub(super) struct BarChartState {
     /// section, same as before this struct — nothing downstream reads it
     /// off chart-global state yet.
     pub(super) palette_domain: Vec<String>,
+}
+
+/// A grouped bar's series in slot order: `series_order` decides it, as it decides a stack's.
+/// `fixed` keeps the color domain as given: a stack (ordered by its own law) or a linked
+/// legend's options (the order the author listed). A chart colored 1:1 by its category draws
+/// one bar per band, so it keeps its color domain too.
+pub(super) fn grouped_series_order(
+    color_domain: Vec<String>,
+    fixed: bool,
+    rows: &[serde_json::Map<String, Value>],
+    cat_field: &str,
+    color_field: Option<&str>,
+    val_field: &str,
+    series_order_mode: Option<&str>,
+    color_one_to_one: Option<bool>,
+) -> Result<Vec<String>, String> {
+    match color_field.filter(|_| !fixed) {
+        Some(cf) if !color_one_to_one.unwrap_or_else(|| color_1to1_with_cat(rows, cat_field, cf)) => {
+            ::bind::stack::sorted_by_series_order(&color_domain, rows, cf, val_field, series_order_mode)
+        }
+        _ => Ok(color_domain),
+    }
 }
 
 /// Build `BarChartState` — same domain helpers `render_vertical`/
@@ -1027,7 +1049,7 @@ pub(super) fn build_chart_domains(
     sort: Option<&ChartSort>,
     sorts_by_value_by_default: bool,
     stack: &str,
-    stack_order_mode: Option<&str>,
+    series_order_mode: Option<&str>,
     wide_measures: &[String],
     wide_series: &[String],
     chart_palette_unset: bool,
@@ -1052,13 +1074,15 @@ pub(super) fn build_chart_domains(
             own_order.map_or_else(|| seen.clone(), |by| ::bind::stack::ranked_series(&seen, rows, cf, val_field, by))
         })
     };
-    let stack_order: Vec<String> = if is_stacked {
-        ::bind::stack::sorted_series_by_stack_order(
+    let color_domain =
+        grouped_series_order(color_domain, is_stacked || options.is_some(), rows, cat_field, color_field, val_field, series_order_mode, color_one_to_one)?;
+    let series_order: Vec<String> = if is_stacked {
+        ::bind::stack::sorted_by_series_order(
             &color_domain,
             rows,
             color_field.expect("is_stacked implies color"),
             val_field,
-            stack_order_mode,
+            series_order_mode,
         )?
     } else {
         Vec::new()
@@ -1076,9 +1100,9 @@ pub(super) fn build_chart_domains(
     {
         color_domain.clone()
     } else {
-        stack_order.clone()
+        series_order.clone()
     };
-    Ok(BarChartState { cat_domain, color_domain, stack_order, is_grouped, is_stacked, normalize, palette_domain })
+    Ok(BarChartState { cat_domain, color_domain, series_order, is_grouped, is_stacked, normalize, palette_domain })
 }
 
 /// The shortest card that gives each of `n_categories` bands room for its label
@@ -1111,12 +1135,12 @@ pub(super) type SegmentSpans = HashMap<(String, String), SegmentSpan>;
 /// datum. A row with no datum draws nothing and owns no span.
 pub(super) fn stack_spans(
     cat_domain: &[String],
-    stack_order: &[String],
+    series_order: &[String],
     data_map: &HashMap<(String, String), f64>,
     normalize: bool,
     center: Option<&CenterStack>,
 ) -> Result<SegmentSpans, String> {
-    let values: Vec<Vec<f64>> = stack_order
+    let values: Vec<Vec<f64>> = series_order
         .iter()
         .map(|series| {
             cat_domain
@@ -1139,7 +1163,7 @@ pub(super) fn stack_spans(
         None => vec![::bind::stack::grammar_stack(if normalize { "normalize" } else { "zero" }, &values)?],
     };
     let mut spans = SegmentSpans::new();
-    for (si, series) in stack_order.iter().enumerate() {
+    for (si, series) in series_order.iter().enumerate() {
         for (ci, cat) in cat_domain.iter().enumerate() {
             let Some(&value) = data_map.get(&(cat.clone(), series.clone())) else { continue };
             let [start, end] = layers[center.map_or(0, |center| center.layer(value))][si][ci];

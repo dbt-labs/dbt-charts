@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart whose axis column holds only nulls now renders when the axis format is compact, such as `currency_compact`, instead of failing the board.
+time: 2026-11-23T20:51:43.713595269Z

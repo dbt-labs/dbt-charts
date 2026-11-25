@@ -425,7 +425,7 @@ class TestEdgeToEdgeFills:
 
         # Render with a scale fill on a single column (x=None, y=None avoids
         # auto-injected x_field/y_field columns shifting offsets).
-        # Use the explicit scale syntax: {"background": {"palette": [...], "min": ..., "max": ...}}
+        # Use the explicit scale syntax: {"background": {"palette": [...], "domain": [min, max]}}
         chart_scale = make_chart(
             "table",
             x=None,
@@ -436,8 +436,7 @@ class TestEdgeToEdgeFills:
                         "scale": {
                             "background": {
                                 "palette": ["#ffffff", "#ff0000"],
-                                "min": 0,
-                                "max": 100,
+                                "domain": [0, 100],
                             }
                         },
                     },

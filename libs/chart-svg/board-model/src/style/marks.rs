@@ -693,6 +693,7 @@ pub struct AreaMarkStyle {
 
 /// Point mark style (data-point markers on scatter, point, line and area charts).
 #[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(range(halo, ge = 0)))]
 pub struct PointMarkStyle {
     /// Point size in square pixels; 0 disables points on line charts.
     pub size: Engine<f64, Auto>,
@@ -713,6 +714,9 @@ pub struct PointMarkStyle {
     pub fill: Color,
     /// Stroke width in pixels for hollow point rings; 'auto' uses VL default.
     pub stroke_width: Engine<f64, Auto>,
+    /// Width in pixels of a ring in the canvas color drawn around each point, so overlapping points stay apart. Drawn by a point map and refused by a scatter; unset draws none.
+    #[model(absent = "no ring")]
+    pub halo: Option<f64>,
     /// Value label style for point marks.
     pub labels: PointLabelsStyle,
 }
@@ -749,7 +753,7 @@ pub struct RuleMarkStyle {
     pub stroke: FontColorStrokeStyle,
 }
 
-/// Rect mark opacity and stroke.
+/// Rect mark opacity, stroke and value labels.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct RectMarkStyle {
     /// Rect fill color when the chart has no `color:` channel; over `single_series_palette` and the palette. 'auto' takes the palette color.
@@ -766,6 +770,9 @@ pub struct RectMarkStyle {
         fill_at(to = "width", value = "auto")
     )]
     pub stroke: Option<StrokeStyle>,
+    /// Value label style for rect marks (heatmap cells).
+    #[model(default_empty)]
+    pub labels: MarkLabelsStyle,
 }
 
 /// Circle mark opacity and stroke.

@@ -13,6 +13,7 @@ pub mod empty;
 pub mod empty_cartesian;
 pub mod geo;
 pub mod heatmap;
+pub mod strip_key;
 pub mod histogram;
 pub mod kpi;
 pub mod no_results;

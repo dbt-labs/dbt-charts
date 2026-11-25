@@ -1,0 +1,3 @@
+kind: Fixes
+body: An area layer over a horizontal bar that is split by color, stacked, or plots a list of measures now renders instead of failing the chart.
+time: 2026-11-23T22:27:35.535293714Z

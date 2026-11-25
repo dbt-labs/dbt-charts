@@ -65,7 +65,8 @@ _EXPECTED = {
     "bar_stacked": ["alpha", "gamma", "beta"],
     "area_stacked": ["alpha", "gamma", "beta"],
     "wide_line": ["Gamma", "Alpha", "Beta"],
-    "wide_bar": ["Gamma", "Alpha", "Beta"],
+    # Totals: beta 61, gamma 60, alpha 45.
+    "wide_bar": ["Beta", "Gamma", "Alpha"],
 }
 
 

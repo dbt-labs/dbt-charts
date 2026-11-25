@@ -430,13 +430,66 @@ union_leaf!(
 );
 
 string_enum!(
-    /// The only domain source a scale names: the data extent.
-    DataDomain { Data = "data" }
-);
-string_enum!(
     /// How diverging scale arms are stretched.
     ArmMode { Asymmetric = "asymmetric", Symmetric = "symmetric" }
 );
+
+const DOMAIN_END: TypeExpr = TypeExpr::Option(&TypeExpr::Either(
+    &TypeExpr::Scalar(Scalar::Int),
+    &TypeExpr::Scalar(Scalar::Float),
+));
+const DOMAIN_ITEMS: TypeExpr = TypeExpr::Tuple(&[&DOMAIN_END, &DOMAIN_END]);
+
+/// The values a color scale's ends map to; `[min, max]` is its shorthand.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(
+    shorthand_with = domain_list,
+    shorthand_items = DOMAIN_ITEMS,
+    constraint(at_least_one_of(min, max,
+        message = "domain pins neither end: omit `domain` to fit both ends to the data."
+    ))
+)]
+pub struct ScaleDomain {
+    /// Value the scale's low end maps to; unset fits the data.
+    #[model(absent = "the data minimum")]
+    pub min: Option<crate::unit::Number>,
+    /// Value the scale's high end maps to; unset fits the data.
+    #[model(absent = "the data maximum")]
+    pub max: Option<crate::unit::Number>,
+}
+
+/// `domain: [min, max]`: Python's `domain_shorthand`, which widens a two-item list into the
+/// `{min, max}` mapping it stands for and leaves a null end unset.
+pub fn domain_list(node: &model_core::Node, cx: &mut model_core::Cx) -> model_core::Shorthand {
+    use model_core::{map_node, Kind, Shorthand};
+    let Kind::Seq(items) = &node.kind else {
+        return Shorthand::Keep;
+    };
+    let [min, max] = items.as_slice() else {
+        cx.invalid(
+            node.span,
+            format!(
+                "Value error, domain shorthand is [min, max], got {} values. Write null for an end that fits the data.",
+                items.len()
+            ),
+        );
+        return Shorthand::Refused;
+    };
+    let ends: Vec<_> = [("min", min), ("max", max)]
+        .into_iter()
+        .filter(|(_, end)| !end.to_json().is_null())
+        .map(|(key, end)| (key, end.clone()))
+        .collect();
+    if ends.is_empty() {
+        cx.invalid(
+            node.span,
+            "Value error, domain pins neither end: omit `domain` to fit both ends to the data."
+                .to_string(),
+        );
+        return Shorthand::Refused;
+    }
+    Shorthand::Widened(map_node(node.span, ends))
+}
 
 /// Everything a scale target says beside its palette; no Python counterpart.
 ///
@@ -444,22 +497,16 @@ string_enum!(
 /// fields through a `#[flatten]` instead of repeating them.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct ScaleTargetRest {
-    /// Scale domain source. Unset is 'data': the data extent, widened to nice round bounds when nice is true. An explicit null uses the min and max below instead.
-    #[model(absent = "an authored null: explicit min/max", fill = "data")]
-    pub domain: Option<DataDomain>,
-    /// Minimum scale domain value (overrides data minimum).
-    #[model(absent = "the data minimum")]
-    pub min: Option<crate::unit::Limit>,
-    /// Maximum scale domain value (overrides data maximum).
-    #[model(absent = "the data maximum")]
-    pub max: Option<crate::unit::Limit>,
+    /// Values the scale's ends map to, as [min, max]; unset fits the data.
+    #[model(absent = "fits the data")]
+    pub domain: Option<ScaleDomain>,
     /// Widen a data-derived color domain to round ('nice') bounds, e.g. 12-88 to
     /// 0-100, and label every nice tick on a heatmap legend. Unset follows the
     /// legend: it widens where the scale draws a legend (heatmap, map, a chart
     /// color gradient whose legend is shown) and uses the exact extent where none
     /// is drawn (table columns, a hidden legend); true or false always wins.
-    /// Ignored once min or max is set; a single-sided bound already fixes that
-    /// edge exactly.
+    /// Ignored once either end of domain is set; a one-sided bound already fixes
+    /// that edge exactly.
     #[model(absent = "follows the legend")]
     pub nice: Option<bool>,
     /// Color assigned to null values.

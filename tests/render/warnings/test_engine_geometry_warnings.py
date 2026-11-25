@@ -15,6 +15,7 @@ from dbt_charts.core.compile.models.chart.authored._layer import AreaLayer, Line
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.diagnostics import (
     WARN_ANNOTATION_NOTE_MOVED,
+    WARN_ANNOTATION_RULE_LABELS_NUMBERED,
     WARN_BAR_BAND_WIDTH_TOO_NARROW,
     WARN_BAR_GROUPED_SERIES_COINCIDE,
     WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM,
@@ -30,6 +31,7 @@ from dbt_charts.core.diagnostics.registry import WarningCode
 from dbt_charts.core.render.warnings import (
     WarningContext,
     annotation_note_moved,
+    annotation_rule_labels_numbered,
     bar_band_width_too_narrow,
     bar_grouped_series_coincide,
     facet_panel_width_below_minimum,
@@ -82,6 +84,7 @@ def test_a_chart_the_engine_raised_nothing_for_has_no_diagnostic() -> None:
     )
     for detector in (
         annotation_note_moved,
+        annotation_rule_labels_numbered,
         bar_band_width_too_narrow,
         bar_grouped_series_coincide,
         facet_panel_width_below_minimum,
@@ -247,6 +250,16 @@ def test_a_moved_note_anchors_on_its_annotation() -> None:
     assert diagnostic.path == "charts.c1.annotations.2"
     assert split_path(diagnostic.path) == ["charts", "c1", "annotations", "2"]
     assert "annotation 2" in diagnostic.message
+
+
+def test_numbered_rule_labels_anchor_on_the_chart_annotations() -> None:
+    diagnostic = _only(
+        annotation_rule_labels_numbered.detect(
+            _ctx(WARN_ANNOTATION_RULE_LABELS_NUMBERED, {})
+        )
+    )
+    assert diagnostic.path == "charts.c1.annotations"
+    assert "circled number" in diagnostic.message
 
 
 def test_thinned_value_labels_say_how_many_were_dropped() -> None:

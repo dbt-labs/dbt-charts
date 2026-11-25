@@ -192,14 +192,14 @@ def test_style_unwrapped_per_family() -> None:
             "x": "x",
             "y": "y",
             "query": "q",
-            "style": {"stack_order": "alphabetical"},
+            "style": {"series_order": "alphabetical"},
         },
         qr,
         sources={},
     )
     assert isinstance(compiled, BarChart)
     assert compiled.style is not None
-    assert compiled.style.stack_order == "alphabetical"
+    assert compiled.style.series_order == "alphabetical"
 
 
 def test_kpi_style_unwrapped() -> None:

@@ -29,6 +29,11 @@ class _Inner(ConstrainedModel):
     c: str | None = None
 
 
+class _Ends(ConstrainedModel):
+    min: str | None = None
+    max: str | None = None
+
+
 def _parse_call(value: Any) -> Any:
     if isinstance(value, str) and value.endswith("()"):
         return {"fn": value[:-2].strip()}
@@ -55,6 +60,7 @@ class _Probe(ConstrainedModel):
         ItemsMatch(
             "items", "^[0-9]+$", "{item!r} is not digits", when=(IsList("items"),)
         ),
+        ItemsMatch("ends", "^[0-9]+$", "{item!r} is not digits"),
         NotNull(("n",), "n is null: omit it"),
         Requires(("b",), "min or max needs b", when=(IsCall("call", ("min", "max")),)),
         Requires(
@@ -73,6 +79,7 @@ class _Probe(ConstrainedModel):
     n: str | None = None
     m: str | None = None
     call: Annotated[_Call, BeforeValidator(_parse_call)] | None = None
+    ends: _Ends | None = None
 
 
 _VALIDATOR = Draft202012Validator(
@@ -112,6 +119,9 @@ _CASES: list[dict[str, Any]] = [
     {"call": {"fn": "max"}, "b": "y"},
     {"call": "avg()"},
     {"call": "avg()", "a": "x"},
+    {"a": "x", "ends": {"min": "1", "max": "2"}},
+    {"a": "x", "ends": {"max": "2"}},
+    {"a": "x", "ends": {"min": "1", "max": "z"}},
 ]
 
 
@@ -130,6 +140,8 @@ def test_messages_fill_placeholders() -> None:
         _Probe.model_validate({"a": "x", "b": "y"})
     with pytest.raises(ValidationError, match="'z' is not digits"):
         _Probe.model_validate({"items": ["1", "z"]})
+    with pytest.raises(ValidationError, match="'z' is not digits"):
+        _Probe.model_validate({"a": "x", "ends": {"min": "z"}})
 
 
 def test_unconstrained_model_renders_nothing() -> None:

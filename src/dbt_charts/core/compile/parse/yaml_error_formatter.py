@@ -1768,7 +1768,7 @@ _CHART_SHAPE_RECIPES = {
         "fixed-pixel mode and does not thin the bar)"
     ),
     "bullet": (
-        "type: bar with style.stack: zero, style.stack_order: data and color: "
+        "type: bar with style.stack: zero, style.series_order: data and color: "
         "on the qualitative range column — one row per (category, band) — plus "
         "a layers: bar on the value and a layers: line on the target, both "
         "reading their own one-row-per-category source via layers[].query "

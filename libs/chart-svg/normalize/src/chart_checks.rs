@@ -229,6 +229,52 @@ fn zero_baseline(id: &str, chart: &ChartAuthored) -> Option<Diagnostic> {
     }
 }
 
+/// `validate_table_row_rule_glyphs`: a row rule's `columns.<col>` that sets `tone` or
+/// `glyph_color` needs a glyph, from the same cell or from the chart's `style.columns.<col>`.
+fn row_rule_glyph(id: &str, chart: &ChartAuthored) -> Option<Diagnostic> {
+    let ChartAuthored::Table(c) = chart else {
+        return None;
+    };
+    let style = &c.style;
+    for (tested, rules) in &style.row.conditional {
+        for rule in rules.iter().flatten() {
+            for (target, cell) in &rule.columns {
+                let ink = if matches!(cell.tone, Tri::Value(_)) {
+                    "tone"
+                } else if matches!(cell.glyph_color, Tri::Value(_)) {
+                    "glyph_color"
+                } else {
+                    continue;
+                };
+                let column_glyph = style
+                    .columns
+                    .get(target)
+                    .is_some_and(|col| matches!(col.glyph, Tri::Value(_)));
+                if !matches!(cell.glyph, Tri::Value(_)) && !column_glyph {
+                    let at = crate::board_warnings::path(&[
+                        "charts",
+                        id,
+                        "style",
+                        "row",
+                        "conditional",
+                        tested,
+                    ]);
+                    return Some(
+                        diag::err_table_glyph_ink_without_glyph(
+                            id,
+                            tested.clone(),
+                            ink,
+                            target.clone(),
+                        )
+                        .at_path(at),
+                    );
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Every finding, each list in Python's order. `public` names a chart as users see it.
 pub fn chart_checks(
     patch: &Patch,
@@ -262,6 +308,25 @@ pub fn chart_checks(
         for (key, chart) in &patch.body.charts {
             let Some(chart) = chart else { continue };
             if let Some(d) = label_anchor_error(&public(key)?, chart) {
+                out.errors.push(d);
+                break;
+            }
+        }
+    }
+    if out.errors.is_empty() {
+        for (key, chart) in &patch.body.charts {
+            let Some(chart) = chart else { continue };
+            if let Some(d) = crate::layer_axes::layer_axis_error(&public(key)?, chart) {
+                out.errors.push(d);
+                break;
+            }
+        }
+    }
+    // Python raises at the first row rule glyph ink without a glyph, after the labels.
+    if out.errors.is_empty() {
+        for (key, chart) in &patch.body.charts {
+            let Some(chart) = chart else { continue };
+            if let Some(d) = row_rule_glyph(&public(key)?, chart) {
                 out.errors.push(d);
                 break;
             }

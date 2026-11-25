@@ -57,8 +57,11 @@ rows:
 """
 
 
-# Its line draws x tick stubs, which the bar does not.
-TICKED_BOARD = FURNITURE_BOARD.replace("type: bar", "type: line")
+# Its line draws x tick stubs, which the bar does not. A torn floor has none, so the tear is off.
+TICKED_BOARD = FURNITURE_BOARD.replace(
+    "type: bar",
+    "type: line\n    style:\n      axis_y:\n        grid:\n          torn_baseline:\n            enabled: false",
+)
 
 FURNITURE = ("role-axis", "role-axis-grid", "role-axis-tick", "role-legend")
 

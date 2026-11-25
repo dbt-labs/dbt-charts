@@ -132,21 +132,21 @@ def test_a_chart_on_another_measure_weighs_by_share_not_magnitude() -> None:
     assert _plan(_compiled(text))["series"].slots == {"alpha": 0, "gamma": 1, "beta": 2}
 
 
-def test_an_authored_stack_order_data_follows_the_rows() -> None:
+def test_an_authored_series_order_data_follows_the_rows() -> None:
     text = (
         f"{_QUERIES}charts:\n"
         "  a:\n    type: area\n    query: long\n    x: month\n    y: n\n"
-        "    color: series\n    style:\n      stack_order: data\n"
+        "    color: series\n    style:\n      series_order: data\n"
         "rows:\n  - a\n"
     )
     assert _plan(_compiled(text))["series"].slots == {"beta": 0, "gamma": 1, "alpha": 2}
 
 
-def test_an_authored_stack_order_alphabetical_follows_the_names() -> None:
+def test_an_authored_series_order_alphabetical_follows_the_names() -> None:
     text = (
         f"{_QUERIES}charts:\n"
         "  a:\n    type: area\n    query: long\n    x: month\n    y: n\n"
-        "    color: series\n    style:\n      stack_order: alphabetical\n"
+        "    color: series\n    style:\n      series_order: alphabetical\n"
         "rows:\n  - a\n"
     )
     assert _plan(_compiled(text))["series"].slots == {"alpha": 0, "beta": 1, "gamma": 2}

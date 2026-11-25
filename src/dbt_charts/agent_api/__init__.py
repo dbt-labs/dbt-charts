@@ -89,6 +89,7 @@ if TYPE_CHECKING:
     )
     from dbt_charts.agent_api.looker import import_looker as import_looker
     from dbt_charts.agent_api.migrate import (
+        MigratedFile as MigratedFile,
         MigrateError as MigrateError,
         MigrateNote as MigrateNote,
         MigrateSummary as MigrateSummary,
@@ -184,6 +185,7 @@ __all__ = [
     "InMemoryBoard",
     "InitResult",
     "LinkContext",
+    "MigratedFile",
     "MigrateError",
     "MigrateNote",
     "MigrateSummary",
@@ -295,6 +297,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "run_doctor": ("dbt_charts.agent_api.doctor", "run_doctor"),
     "InitResult": ("dbt_charts.agent_api.init", "InitResult"),
     "init_project": ("dbt_charts.agent_api.init", "init_project"),
+    "MigratedFile": ("dbt_charts.agent_api.migrate", "MigratedFile"),
     "MigrateError": ("dbt_charts.agent_api.migrate", "MigrateError"),
     "MigrateNote": ("dbt_charts.agent_api.migrate", "MigrateNote"),
     "MigrateSummary": ("dbt_charts.agent_api.migrate", "MigrateSummary"),

@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date
 from functools import cache
-from typing import TYPE_CHECKING, ParamSpec, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeAlias, TypeVar
 
 import yaml
 
@@ -39,6 +39,8 @@ if TYPE_CHECKING:
 # dotted string, which would let `charts.a.style.color` also name a chart
 # called `a.style.color`.
 DocumentPath: TypeAlias = tuple[str | int, ...]
+# One applied edit as `plan_text_migration` returns it; its stub types it Any.
+EngineEdit: TypeAlias = Mapping[str, Any]  # type-state: explicit_any — engine dict
 
 _YAML_BLANK_OR_COMMENT_RE = re.compile(r"^\s*(#.*)?$")
 _STAMP_LINE_COMMENT = "  # written automatically by dct migrate"
@@ -102,6 +104,15 @@ class SchemaMigrationWarning(UserWarning):
 class MigrationNotice:
     message: str
     file: str | None
+
+
+@dataclasses.dataclass(frozen=True)
+class TextMigration:
+    """What ``dct migrate`` writes to one file: the rewritten text, and each
+    change as an author reads it (``old.key → new.key``), in applied order."""
+
+    text: str
+    changes: list[str]
 
 
 # ContextVars, not `warnings.catch_warnings`: the latter swaps process-global
@@ -221,7 +232,7 @@ def prepare_board_mapping(
 
 def migrate_board_yaml_text(
     yaml_text: str, *, locked_schema_version: str | None = None
-) -> str:
+) -> TextMigration:
     """Rewrite one retained board grammar to the project's target grammar.
 
     The target is the project's ``locked_schema_version``, else the latest
@@ -235,10 +246,18 @@ def migrate_board_yaml_text(
         if locked_schema_version is None
         else locked_schema_version
     )
-    return migrate_yaml_text(yaml_text, stop_target=target)
+    return _rewrite_yaml_text(yaml_text, target)
 
 
 def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
+    """Rewrite declared moves while preserving unrelated YAML text.
+
+    See ``_rewrite_yaml_text``; this returns its text alone.
+    """
+    return _rewrite_yaml_text(yaml_text, stop_target).text
+
+
+def _rewrite_yaml_text(yaml_text: str, stop_target: str | None) -> TextMigration:
     """Rewrite declared moves while preserving unrelated YAML text.
 
     The Rust engine plans the migration (``plan_text_migration``: recognition,
@@ -263,13 +282,13 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
     rewrite an otherwise-untouched file. A written or corrected stamp lands on
     the file's first line with a trailing comment naming ``dct migrate``.
 
+    A rewrite the line writer cannot make where an edit touches a YAML anchor
+    or alias is refused naming the file and line of each such key, for a
+    manual edit: it never edits one spelling of a value every alias shares.
+
     Reports a migration notice per ``Deletion.reason`` whose tail fired.
     """
     from dbt_charts import _engine
-    from dbt_charts.core.compile.authoring.yaml_patch import (
-        rename_key_at_path,
-        set_board_values,
-    )
     from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 
     raw = load_yaml_mapping(yaml_text)
@@ -277,7 +296,7 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
         _engine.plan_text_migration, raw, stop_target, "migrate_yaml_text"
     )
     if plan[0] == "current":
-        return yaml_text
+        return TextMigration(text=yaml_text, changes=[])
     if plan[0] != "planned":
         kind, message = plan
         raise {
@@ -287,6 +306,58 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
             "migration": MigrationError,
         }[kind](message)
     _, staged, edits, notices = plan
+    # staged != raw: only stamp a file this call actually changed something
+    # in; a structurally-current file must never be rewritten for the stamp
+    # alone, and a file is never touched solely to add a key the frozen
+    # grammar it names does not itself declare.
+    stamp = (
+        stop_target
+        if stop_target is not None
+        and staged != raw
+        and _should_stamp_schema_version(staged.get("_schema_version"), stop_target)
+        else None
+    )
+    if stamp is not None:
+        staged["_schema_version"] = stamp
+    try:
+        final_text = _replay_edits(yaml_text, edits, stamp)
+        # Verify the text-level rewrite produced the same result as the
+        # engine's. The text editor cannot handle flow-style mappings (the
+        # regex only matches block-mapping key lines) or block-scalar content
+        # (which can contain lines that look like YAML keys). Either case
+        # silently no-ops or silently corrupts content without the check.
+        if dict(load_yaml_mapping(final_text)) != staged:
+            raise MigrationError(
+                "YAML text rewrite diverged from in-memory migration; "
+                "the file may use YAML constructs the text editor cannot handle "
+                "(flow-style mappings, block scalars, YAML anchors, quoted keys), "
+                "or a deleted key may sit where the text editor matches its name "
+                "but the schema does not declare it — migrate this file manually."
+            )
+    except ValueError as refused:
+        _refuse_anchored_edits(yaml_text, edits, refused)
+        raise
+    changes = list(dict.fromkeys(edit["change"] for edit in edits))
+    if stamp is not None:
+        changes.append(f"_schema_version set to {stamp}")
+    # Held until here: the file is only actually written by this text once the
+    # caller sees a clean return, so a reason attached to a rewrite that raised
+    # above would describe damage that was never committed to disk.
+    for msg in notices:
+        warn_migration(msg, stacklevel=3)
+    return TextMigration(text=final_text, changes=changes)
+
+
+def _replay_edits(
+    yaml_text: str,
+    edits: Sequence[EngineEdit],
+    stamp: str | None,
+) -> str:
+    """Replay the engine's applied *edits* on *yaml_text*, stamping *stamp*."""
+    from dbt_charts.core.compile.authoring.yaml_patch import (
+        rename_key_at_path,
+        set_board_values,
+    )
 
     updates: dict[str, ScalarLeaf | None] = {}
     removals: set[str] = set()
@@ -360,41 +431,87 @@ def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
         if source != destination:
             removals.add(join_path(source))
 
-    # staged != raw: only stamp a file this call actually changed something
-    # in; a structurally-current file must never be rewritten for the stamp
-    # alone, and a file is never touched solely to add a key the frozen
-    # grammar it names does not itself declare.
-    if (
-        stop_target is not None
-        and staged != raw
-        and _should_stamp_schema_version(staged.get("_schema_version"), stop_target)
-    ):
-        staged["_schema_version"] = stop_target
-        updates["_schema_version"] = stop_target
-
+    if stamp is not None:
+        updates["_schema_version"] = stamp
     final_text = set_board_values(yaml_text, {**updates, **dict.fromkeys(removals)})
-    if "_schema_version" in updates:
+    if stamp is not None:
         final_text = _mark_stamp_line_auto_written(final_text)
-    # Verify the text-level rewrite produced the same result as the engine's.
-    # The text editor cannot handle flow-style mappings (the regex only matches
-    # block-mapping key lines) or block-scalar content (which can contain lines
-    # that look like YAML keys). Either case silently no-ops or silently
-    # corrupts content without the equality check.
-    reparsed = load_yaml_mapping(final_text)
-    if dict(reparsed) != staged:
-        raise MigrationError(
-            "YAML text rewrite diverged from in-memory migration; "
-            "the file may use YAML constructs the text editor cannot handle "
-            "(flow-style mappings, block scalars, YAML anchors, quoted keys), "
-            "or a deleted key may sit where the text editor matches its name "
-            "but the schema does not declare it — migrate this file manually."
-        )
-    # Held until here: the file is only actually written by this text once the
-    # caller sees a clean return, so a reason attached to a rewrite that raised
-    # above would describe damage that was never committed to disk.
-    for msg in notices:
-        warn_migration(msg, stacklevel=2)
     return final_text
+
+
+def _refuse_anchored_edits(
+    yaml_text: str,
+    edits: Sequence[EngineEdit],
+    refused: ValueError,
+) -> None:
+    """Re-raise *refused* naming each edit that touches an anchored value.
+
+    An anchored node is touched by an edit at, above or beneath it. Each such
+    edit is named by file and line of the key holding the anchor or alias,
+    where the author expands it, and *refused* is kept in the message. A
+    refusal no edit explains is left to the caller to raise as it came.
+    """
+    anchored = _anchored_key_lines(yaml_text)
+    if not anchored:
+        return
+    file = _NOTICE_FILE.get()
+    blocked: dict[str, None] = {}
+    for edit in edits:
+        paths = (
+            (edit["from"], edit["to"]) if edit["kind"] == "move" else (edit["path"],)
+        )
+        for path in paths:
+            touched = tuple(str(part) for part in path)
+            line = next(
+                (
+                    line
+                    for at, line in anchored.items()
+                    if touched[: len(at)] == at or at[: len(touched)] == touched
+                ),
+                None,
+            )
+            if line is not None:
+                where = f"line {line}" if file is None else f"{file}:{line}"
+                blocked[f"{where}: {edit['change']}"] = None
+                break
+    if blocked:
+        raise MigrationError(
+            "dct migrate does not rewrite keys inside a YAML anchor or its "
+            "aliases, so nothing in this file was changed. Expand each anchor "
+            "or alias below and make the change as a manual edit:\n  "
+            + "\n  ".join(blocked)
+            + f"\n(dct migrate stopped at: {refused})"
+        ) from refused
+
+
+def _anchored_key_lines(yaml_text: str) -> dict[tuple[str, ...], int]:
+    """Document path (list positions as digit strings) -> the 1-based line of
+    the key whose value is an anchored node, at its anchor and every alias.
+
+    An alias composes to the anchored node itself, so the anchored set is the
+    nodes whose source text opens with ``&``, reached by every path through
+    them; only the shallowest path into one is kept.
+    """
+    from dbt_charts.core.compile.parse.parser import compose_yaml
+
+    out: dict[tuple[str, ...], int] = {}
+
+    def walk(node: yaml.Node, prefix: tuple[str, ...], line: int) -> None:
+        if yaml_text.startswith("&", node.start_mark.index):
+            out[prefix] = line + 1
+            return
+        if isinstance(node, yaml.MappingNode):
+            for key_node, value_node in node.value:
+                key = str(key_node.value)
+                # A merge key's entries land in its own mapping.
+                path = prefix if key == "<<" else (*prefix, key)
+                walk(value_node, path, key_node.start_mark.line)
+        elif isinstance(node, yaml.SequenceNode):
+            for index, item in enumerate(node.value):
+                walk(item, (*prefix, str(index)), item.start_mark.line)
+
+    walk(compose_yaml(yaml_text), (), 0)
+    return out
 
 
 def _replay_rewrite(

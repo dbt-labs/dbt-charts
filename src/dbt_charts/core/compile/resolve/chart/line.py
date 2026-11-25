@@ -61,6 +61,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _resolve_cartesian_ticks,
     _shared_y_values,
     _zero_anchor_floats,
+    close_open_y_domain,
     resolve_y_zero,
 )
 from dbt_charts.core.compile.resolve.chart._header_inks import series_header_inks
@@ -180,7 +181,9 @@ def _resolve_line(
     multiples_scale = (
         normalized.multiples.scale if normalized.multiples is not None else "shared"
     )
-    x_ch_type = x_channel_type(normalized, data, chart_style_context, "line")
+    x_ch_type, x_type_defaulted = x_channel_type(
+        normalized, data, chart_style_context, "line"
+    )
     # Line semantics fix x=dimension, y=value — the axis cascade hardcodes y
     # to "quantitative" regardless of the real column type. A categorical y
     # silently bakes a NaN axis with zero marks; refuse instead. Checked
@@ -216,6 +219,8 @@ def _resolve_line(
         normalized.y,
         has_quantitative_axis=True,
         temporal_band_axes=frozenset(),
+        x_type_defaulted=x_type_defaulted,
+        y_type_defaulted=False,
         horizontal=False,
     )
     line = chart_local_style_context.line
@@ -280,7 +285,6 @@ def _resolve_line(
     )
     legend_entries = cartesian_top_legend_entries(
         normalized.y if isinstance(normalized.y, str) else None,
-        normalized.y_label,
         normalized.layers,
         color_domain_values=color_domain_values,
         has_color=normalized.color is not None,
@@ -415,6 +419,14 @@ def _resolve_line(
         + list(annotations.y_values)
         if y_field_line
         else _zero_floats
+    )
+    ay_merged = close_open_y_domain(
+        normalized.id, ay_merged, line_y_values, zero_anchored_line, multiples_scale
+    )
+    authored_y_domain = (
+        ay_merged.scale.continuous.domain
+        if ay_merged.scale is not None and ay_merged.scale.continuous is not None
+        else None
     )
     line_ticks = _resolve_cartesian_ticks(
         normalized.id,

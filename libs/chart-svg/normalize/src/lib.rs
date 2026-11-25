@@ -36,6 +36,7 @@ pub mod host_facts;
 pub mod ids;
 pub mod index;
 pub mod label_anchors;
+pub mod layer_axes;
 pub mod links;
 pub mod lint;
 pub mod locate;

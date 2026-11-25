@@ -6,6 +6,8 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from dbt_charts.core.compile import compile
 from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.project import Project
@@ -86,3 +88,72 @@ def test_a_base_query_layer_over_bar_multiples_is_refused(
     )
     svg = _svg(tmp_path, local_project, board)
     assert "multiples over a y list with a layer on the base query" in svg
+
+
+_BANDS = """
+title: t
+queries:
+  curve:
+    type: values
+    columns: [amount, total, part_a]
+    values:
+      - [{x0}, 0, 0]
+      - [{x1}, 150, 90]
+      - [{x2}, 220, 120]
+      - [{x3}, 260, 140]
+  bands:
+    type: values
+    columns: [band, amount, band_top]
+    values:
+{bands}
+charts:
+  c:
+    query: curve
+    type: {base}
+    x: amount
+    y: [total, part_a]
+    layers:
+      - type: area
+        query: bands
+        y: band_top
+        color: band
+rows:
+  - c
+"""
+
+
+def _bands(base: str, xs: list[str], *spans: tuple[str, int, int]) -> str:
+    rows = "".join(
+        f"      - [{band}, {xs[i]}, 280]\n" for band, lo, hi in spans for i in (lo, hi)
+    )
+    return _BANDS.format(
+        base=base,
+        bands=rows.rstrip("\n"),
+        **{f"x{i}": x for i, x in enumerate(xs)},
+    )
+
+
+def _gridline_ys(svg: str) -> list[str]:
+    return [
+        y1
+        for y1, y2 in re.findall(r'<line [^>]*y1="([^"]*)"[^>]*y2="([^"]*)"', svg)
+        if y1 == y2
+    ]
+
+
+@pytest.mark.parametrize(
+    ("base", "xs"),
+    [("line", ["0", "100", "200", "300"]), ("bar", ["a", "b", "c", "d"])],
+)
+def test_area_layer_bands_sharing_an_edge_fit_the_plot_like_one_band(
+    tmp_path: Path, local_project: Callable[..., Project], base: str, xs: list[str]
+) -> None:
+    """Area-layer rows sharing an x fill from zero, so they claim no extra height."""
+    shared = _svg(
+        tmp_path,
+        local_project,
+        _bands(base, xs, ("Low", 0, 1), ("Mid", 1, 2), ("High", 2, 3)),
+    )
+    alone = _svg(tmp_path, local_project, _bands(base, xs, ("High", 2, 3)))
+    assert _gridline_ys(alone)
+    assert _gridline_ys(shared) == _gridline_ys(alone)

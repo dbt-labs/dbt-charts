@@ -19,8 +19,8 @@
 //!
 //! Dissolved validators: `AxisXStyle._yaml_null_is_null_fill_mode` (`fill: null`
 //! reads as the `null` mode) is a parse error on the spine (D-07; the built-in
-//! themes quote `"null"`); the `_coerce_list_to_tuple` before-validator of
-//! `domain` is a fixed-arity read. `NullHint` on the axis title is a message
+//! themes quote `"null"`); `domain`'s `[min, max]` shorthand is
+//! `AxisDomain`'s `shorthand_with`. `NullHint` on the axis title is a message
 //! template (spec § 6), not an attribute.
 
 use crate::facet::{Color, FormatName};
@@ -254,79 +254,122 @@ non_empty_list!(
     TickValue
 );
 
-/// One bound of a scale domain: a number, or an ISO-8601 date text. A switch
-/// is refused, where a lax reader would read `true` as `1`.
+/// One bound of an axis domain: a number, or text (an ISO-8601 date on a temporal axis, which
+/// must name a real day). A switch is refused, where a lax reader would read `true` as `1`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DomainBound {
     Number(f64),
     Text(String),
 }
 
-/// An explicit `[low, high]` scale domain: exactly two bounds, in order.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ScaleDomain {
-    pub low: DomainBound,
-    pub high: DomainBound,
+const ISO_DATE: &str = r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])([T ]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]+)?)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])?)?$";
+
+/// Whether the `YYYY-MM-DD` the ISO pattern admitted names a day the calendar has: the
+/// pattern bounds month and day but cannot know month lengths.
+fn real_date(text: &str) -> bool {
+    let part = |r: std::ops::Range<usize>| text.get(r).and_then(|p| p.parse::<u32>().ok());
+    let (Some(y), Some(m), Some(d)) = (part(0..4), part(5..7), part(8..10)) else {
+        return false;
+    };
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let days = match m {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    (1..=days).contains(&d)
 }
 
-fn bound(v: &Value) -> Option<DomainBound> {
-    match v {
-        Value::Number(n) => n.as_f64().map(DomainBound::Number),
-        Value::String(s) => Some(DomainBound::Text(s.clone())),
-        _ => None,
-    }
-}
-
-impl ReadScalar for ScaleDomain {
+impl ReadScalar for DomainBound {
     fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
-        let Value::Array(items) = node.to_json() else {
-            cx.mismatch(node, "a list of two bounds");
-            return None;
-        };
-        let [low, high] = items.as_slice() else {
-            let side = if items.len() < 2 {
-                "at least"
-            } else {
-                "at most"
-            };
-            cx.invalid(
-                node.span,
-                format!(
-                    "Tuple should have {side} 2 items after validation, not {}",
-                    items.len()
-                ),
-            );
-            return None;
-        };
-        match (bound(low), bound(high)) {
-            (Some(low), Some(high)) => Some(Self { low, high }),
+        match node.to_json() {
+            Value::Number(n) => n.as_f64().map(Self::Number),
+            Value::String(text) => {
+                let iso = regex::Regex::new(ISO_DATE).is_ok_and(|re| re.is_match(&text));
+                if iso && !real_date(&text) {
+                    cx.invalid(
+                        node.span,
+                        format!("Value error, scale.domain bound '{text}' is not a real date."),
+                    );
+                    return None;
+                }
+                Some(Self::Text(text))
+            }
             _ => {
-                cx.mismatch(node, "two numbers or date strings");
+                cx.mismatch(node, "a number or a string");
                 None
             }
         }
     }
 }
-impl Spell for ScaleDomain {
+impl Spell for DomainBound {
     fn spell(&self) -> Value {
-        let bound = |b: &DomainBound| match b {
-            DomainBound::Number(n) => n.spell(),
-            DomainBound::Text(t) => t.spell(),
-        };
-        Value::Array(vec![bound(&self.low), bound(&self.high)])
+        match self {
+            Self::Number(n) => n.spell(),
+            Self::Text(t) => t.spell(),
+        }
     }
 }
-const DOMAIN_BOUND: TypeExpr = TypeExpr::Either(
-    &TypeExpr::Either(
-        &TypeExpr::Scalar(Scalar::Int),
-        &TypeExpr::Scalar(Scalar::Float),
-    ),
-    &TypeExpr::Scalar(Scalar::Str),
+const DOMAIN_NUMBER: TypeExpr = TypeExpr::Either(
+    &TypeExpr::Scalar(Scalar::Int),
+    &TypeExpr::Scalar(Scalar::Float),
 );
 scalar_leaf!(
-    ScaleDomain,
-    TypeExpr::Tuple(&[&DOMAIN_BOUND, &DOMAIN_BOUND])
+    DomainBound,
+    TypeExpr::Either(&DOMAIN_NUMBER, &TypeExpr::Scalar(Scalar::Str))
 );
+const OPEN_DOMAIN_END: TypeExpr =
+    TypeExpr::Option(&TypeExpr::Either(&DOMAIN_NUMBER, &TypeExpr::Scalar(Scalar::Str)));
+const AXIS_DOMAIN_ITEMS: TypeExpr = TypeExpr::Tuple(&[&OPEN_DOMAIN_END, &OPEN_DOMAIN_END]);
+
+/// Where an axis scale's ends sit; `[min, max]` is its shorthand. An unset end
+/// fits the data, and only a number may stand beside one.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(
+    shorthand_with = axis_domain,
+    shorthand_items = AXIS_DOMAIN_ITEMS,
+    constraint(at_least_one_of(min, max,
+        message = "domain pins neither end: omit `domain` to fit both ends to the data."
+    ))
+)]
+pub struct AxisDomain {
+    /// Where the scale's low end sits; unset fits the data.
+    #[model(absent = "the data's low end")]
+    pub min: Option<DomainBound>,
+    /// Where the scale's high end sits; unset fits the data.
+    #[model(absent = "the data's high end")]
+    pub max: Option<DomainBound>,
+}
+
+/// `[min, max]` widened as [`crate::primitives::domain_list`] widens it, and a date beside an
+/// open end refused (Python's `AxisDomain._reject_open_date_end`): only a number is fitted against.
+fn axis_domain(node: &Node, cx: &mut Cx) -> model_core::Shorthand {
+    use model_core::{Kind, Shorthand};
+    let widened = crate::primitives::domain_list(node, cx);
+    let map = match &widened {
+        Shorthand::Refused => return widened,
+        Shorthand::Widened(n) => n,
+        Shorthand::Keep => node,
+    };
+    if let Kind::Map(m) = &map.kind {
+        let text = |k: &str| m.get(k).and_then(|e| e.value.to_json().as_str().map(str::to_string));
+        let set = |k: &str| m.get(k).is_some_and(|e| !e.value.to_json().is_null());
+        let lone = match (set("min"), set("max")) {
+            (true, false) => text("min"),
+            (false, true) => text("max"),
+            _ => None,
+        };
+        if let Some(t) = lone {
+            cx.invalid(
+                node.span,
+                format!("Value error, scale.domain with an open end pins a number, got '{t}'. Use a numeric bound, or pin both ends."),
+            );
+            return Shorthand::Refused;
+        }
+    }
+    widened
+}
 
 /// The y-axis `mirror`: `false` (as good as unset), the primary axis's label drawn on both edges, or
 /// the mirrored edge relabeled by `format` or `expr`.
@@ -427,13 +470,13 @@ pub struct AxisGridThresholdStyle {
 ///
 /// When a value axis excludes zero, the plot edge nearest zero is torn like
 /// paper, in the gridline ink, so it cannot be read as a floor at zero. Line
-/// charts tear the y-axis and ranged bars their value axis; other chart types
-/// ignore it.
+/// charts tear the y-axis and ranged bars their value axis by default; scatter
+/// plots tear each value axis on request; other chart types ignore it.
 #[derive(Debug, Clone, PartialEq, Model)]
 #[model(constraint(range(amplitude, gt = 0)))]
 pub struct AxisGridTornBaselineStyle {
     /// Draw the torn baseline.
-    #[model(fill = false)]
+    #[model(fill = true)]
     pub enabled: bool,
     /// Deepest bite of the tear into the plot, in pixels.
     #[model(fill = 8.0)]
@@ -682,11 +725,10 @@ pub struct ScaleSymlogStyle {
 // One `range` or `forbids` names one field, so several are several constraints.
 #[allow(clippy::duplicated_attributes)]
 #[model(
-    constraint(items_match(
-        domain,
+    constraint(items_match(domain,
         pattern = r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])([T ]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]+)?)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])?)?$",
         when(is_in(type, "temporal")),
-        message = "scale.domain element {item!r} is not an ISO-8601 date/datetime string, but scale.type: temporal requires both domain bounds to be dates (e.g. '1955-01-01')."
+        message = "scale.domain bound {item!r} is not an ISO-8601 date/datetime string, but scale.type: temporal requires both domain bounds to be dates (e.g. '1955-01-01')."
     )),
     constraint(forbids("log.base", when(not_in(type, "log")),
         message = "scale.continuous.log.base is only meaningful with type: log — set axis_y.scale.continuous.type: log, or remove log.base."
@@ -701,7 +743,7 @@ pub struct ScaleSymlogStyle {
         message = "scale.continuous.type: log is incompatible with zero: true — a log domain cannot include 0. Remove zero or drop the log scale."
     )),
     constraint(range(domain, gt = 0, when(is_in(type, "log")),
-        message = "scale.continuous.type: log requires a positive domain — a log scale is undefined at and below 0, got domain {domain}. Use positive bounds or drop the log scale."
+        message = "scale.continuous.type: log requires a positive domain — a log scale is undefined at and below 0, got domain [{domain.min}, {domain.max}]. Use positive bounds or drop the log scale."
     )),
     constraint(range("log.base", gt = 1,
         message = "scale.continuous.log.base must be greater than 1, got {log.base}. A base at or below 1 flips or flattens the scale's decades, so the nice domain no longer covers the data."
@@ -718,10 +760,12 @@ pub struct ScaleContinuousStyle {
     /// `domain` of ISO dates needs before it can extend past the data.
     #[model(absent = "inferred from the field type")]
     pub r#type: Option<ScaleType>,
-    /// Explicit [low, high] scale domain, both bounds pinned. With
-    /// `type: temporal` both are ISO-8601 date or datetime strings.
-    #[model(absent = "Vega-Lite determines it from the data")]
-    pub domain: Option<ScaleDomain>,
+    /// Where the scale's ends sit, as [min, max]; unset fits the data. On the
+    /// y-axis one end may be left out (or null): the pinned end is exact and the
+    /// open end fits the data, with its usual headroom. With `type: temporal` both
+    /// ends are ISO-8601 dates.
+    #[model(absent = "fits the data")]
+    pub domain: Option<AxisDomain>,
     /// Log-scale param.
     #[model(absent = "no log param")]
     pub log: Option<ScaleLogStyle>,

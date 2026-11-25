@@ -9,12 +9,10 @@ Detection rule:
   AND one series reaches under ``_REACH_THRESHOLD`` of the shared axis.
 
 A series' reach is the height of its drawn band over the axis span: the band
-runs from zero when the axis includes zero (a bar hangs from it, a line near
-the floor reads the same), else it is the series' own variation. The axis span
+runs from zero to the series' values, clipped to the axis, so it measures where
+the series sits rather than how much it varies. The axis span
 is ``effective_measure_domain`` over every compared series (an authored domain
-wins; a log or non-quantitative axis abstains). A
-series with no height (a constant on a zoomed axis) is flat by its data, not
-crushed, and is not compared.
+wins; a log or non-quantitative axis abstains).
 
 A layer carrying its own ``query:`` is compared like any other — its rows come
 from ``ctx.layer_results`` rather than the chart's own result set. That shape
@@ -38,7 +36,6 @@ from dbt_charts.core.diagnostics import (
     RelatedLocation,
 )
 from dbt_charts.core.render.chart.emitters._cartesian import (
-    authored_measure_domain,
     effective_measure_domain,
 )
 from dbt_charts.core.render.warnings.base import WarningContext
@@ -49,7 +46,7 @@ _REACH_THRESHOLD = 0.06
 
 
 def detect(ctx: WarningContext) -> list[Diagnostic]:
-    """Return one Diagnostic per chart+layers with a ≥100× y-scale mismatch."""
+    """Return one Diagnostic per layered chart with a crushed y series."""
     warnings: list[Diagnostic] = []
 
     for chart_id, chart in ctx.board_spec.charts.items():
@@ -123,25 +120,17 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         )
         if domain is None:
             continue
-        # One fact for both the span and the band: the baked `zero_anchored`
-        # (resolve decides it for a bar, which never bakes `zero`). An authored
-        # domain is the rendered axis outright, zero or not.
-        zero_anchored = axis_y.zero_anchored
-        floor, ceiling = domain
-        if zero_anchored and authored_measure_domain(axis_y) is None:
-            floor, ceiling = min(floor, 0.0), max(ceiling, 0.0)
+        # The comparison axis always includes zero: a series is crushed by its
+        # magnitude against the other, never by how close it sits to a zoomed
+        # axis's floor.
+        floor, ceiling = min(domain[0], 0.0), max(domain[1], 0.0)
         span = ceiling - floor
         if span == 0.0:
             continue
 
-        # Reach: the series' drawn band over the axis span, clipped to the axis.
-        # On a zero-anchored axis the band runs from zero (a bar's height); on a
-        # zoomed axis it is only the series' own variation, so a series with
-        # none is flat by its data, not crushed.
         reaches: list[tuple[float, str, str]] = []
         for path, col, lo, hi in extents:
-            if zero_anchored:
-                lo, hi = min(lo, 0.0), max(hi, 0.0)
+            lo, hi = min(lo, 0.0), max(hi, 0.0)
             lo, hi = max(lo, floor), min(hi, ceiling)
             if hi > lo:
                 reaches.append(((hi - lo) / span, path, col))

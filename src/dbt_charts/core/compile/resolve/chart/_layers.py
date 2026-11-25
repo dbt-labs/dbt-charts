@@ -41,6 +41,7 @@ from dbt_charts.core.compile.models.style.resolved import (
 )
 from dbt_charts.core.compile.models.style.resolved._base import ResolvedTickLabel
 from dbt_charts.core.compile.models.style.theme.area import AreaChartStyle
+from dbt_charts.core.compile.models.style.theme.axis import AxisDomain
 from dbt_charts.core.compile.models.style.theme.bar import BarChartStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     category_scale_for,
@@ -92,8 +93,6 @@ from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.constants.marks import STROKE_FALLBACK_WIDTH
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
-    ERR_LAYER_AXIS_STYLE_WITHOUT_POSITION,
-    ERR_LAYER_AXIS_TITLE_WITHOUT_POSITION,
     ERR_LAYER_OUTSIDE_PINNED_DOMAIN,
     ERR_LAYERS_AMBIGUOUS_Y_DOMAIN,
 )
@@ -209,7 +208,7 @@ def _resolve_layer_inks(
     elif color is None:
         name = _series_display_name(
             normalized.y if isinstance(normalized.y, str) else None,
-            normalized.y_label,
+            None,
             normalized.field_labels,
         )
         base = LayerBase(
@@ -597,7 +596,7 @@ def _resolve_one_layer(
 def _check_layers_y_domain(
     chart_id: str,
     layers: tuple[ResolvedLayer, ...],
-    chart_domain: tuple[int | float | str, int | float | str],
+    chart_domain: AxisDomain,
 ) -> None:
     """Raise CompilationError when a chart-level y domain is set on a split dual-axis chart.
 
@@ -614,14 +613,14 @@ def _check_layers_y_domain(
         raise CompilationError.from_code(
             ERR_LAYERS_AMBIGUOUS_Y_DOMAIN,
             chart_id=chart_id,
-            domain=list(chart_domain),
+            domain=[chart_domain.min, chart_domain.max],
         )
 
 
 def _check_line_layers_in_domain(
     chart_id: str,
     layers: Sequence[CartesianLayer],
-    chart_domain: tuple[int | float | str, int | float | str],
+    chart_domain: AxisDomain,
     data: ChartRows,
     base_query_name: str | None,
     datasets: LayerDatasets,
@@ -646,7 +645,7 @@ def _check_line_layers_in_domain(
             raise CompilationError.from_code(
                 ERR_LAYER_OUTSIDE_PINNED_DOMAIN,
                 chart_id=chart_id,
-                domain=list(chart_domain),
+                domain=[chart_domain.min, chart_domain.max],
                 layer=f"layers[{index}] ({layer.y})",
                 low=min(values),
                 high=max(values),
@@ -694,29 +693,6 @@ def _resolve_layer_list(
     """
     if not layers:
         return ()
-    # A layer's own y-axis title only has an axis to land on once some layer
-    # pins `axis_y.position` and splits the scales.
-    if not any(
-        layer.axis_y is not None and layer.axis_y.position is not None
-        for layer in layers
-    ):
-        for index, layer in enumerate(layers):
-            if layer.axis_y is not None and layer.axis_y.title is not None:
-                raise CompilationError.from_code(
-                    ERR_LAYER_AXIS_TITLE_WITHOUT_POSITION,
-                    field_path=f"charts.{chart_id}.layers[{index}].axis_y.title",
-                )
-            if layer.axis_y is not None and (
-                layer.axis_y.color is not None
-                or (
-                    layer.axis_y.grid is not None
-                    and layer.axis_y.grid.model_fields_set - {"visible"}
-                )
-            ):
-                raise CompilationError.from_code(
-                    ERR_LAYER_AXIS_STYLE_WITHOUT_POSITION,
-                    field_path=f"charts.{chart_id}.layers[{index}].axis_y",
-                )
     return tuple(
         _resolve_one_layer(
             layer,

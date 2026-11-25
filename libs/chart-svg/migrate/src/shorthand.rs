@@ -4,22 +4,16 @@
 //! them. They change the node, never the text: a rewrite here owes no `Edit`.
 //!
 //! - A bare string under a board's `queries:` is `{sql: <text>, type: sql}`
-//!   (`normalize_query_value`), at the root board and every nested board. A string shaped like a
-//!   query ref (`<file>.queries.<name>`) is left as written: Python reads it as `{ref: ..}`,
-//!   which the model has no arm for yet, and the reader refuses it as it did before.
+//!   (`normalize_query_value`), at the root board and every nested board. A string that is one
+//!   dotted token is left as written: Python reads it as `{ref: ..}`, and the reader resolves it or
+//!   refuses it by the ref grammar.
 
-use fancy_regex::Regex;
-use std::sync::OnceLock;
 use yaml::{Entry, Kind, Node, Value};
 
-/// `QUERY_REF_RE` in `models/refs.py`.
-const QUERY_REF: &str = r"^(?:\.\./)*[A-Za-z_][\w/\-.]*\.queries\.[A-Za-z_]\w*$";
-
-fn is_query_ref(text: &str) -> bool {
-    static RE: OnceLock<Option<Regex>> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(QUERY_REF).ok())
-        .as_ref()
-        .is_some_and(|re| re.is_match(text.trim()).unwrap_or(false))
+/// A string `normalize_query_value` reads as a ref: one dotted token, which is never SQL.
+pub fn is_ref_shaped(text: &str) -> bool {
+    let text = text.trim();
+    text.contains('.') && text.split_whitespace().count() == 1
 }
 
 /// `migrate` followed by every shorthand: the board node as a model reads it.
@@ -76,7 +70,7 @@ fn bare_sql(query: &mut Node) {
     let Kind::Scalar(Value::Str(text)) = &query.kind else {
         return;
     };
-    if is_query_ref(text) {
+    if is_ref_shaped(text) {
         return;
     }
     let span = query.span;
@@ -128,7 +122,7 @@ mod tests {
 
     #[test]
     fn a_ref_string_a_mapping_and_other_keys_are_left_alone() {
-        let text = "queries:\n  r: shared.yml.queries.revenue\n  m:\n    sql: SELECT 1\nvariables:\n  queries: not a query\n";
+        let text = "queries:\n  r: shared.yml.queries.revenue\n  d: 1_source.queries.sales\n  m:\n    sql: SELECT 1\nvariables:\n  queries: not a query\n";
         let got = expanded(text);
         let want = yaml::parse_node(text).expect("parses").to_json();
         assert_eq!(got, want);

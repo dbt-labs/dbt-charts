@@ -23,6 +23,7 @@ def migrate_command(
     *,
     project: Project,
     dry_run: bool,
+    diff: bool,
 ) -> None:
     """Rewrite supported retired board syntax in the selected paths."""
     from dbt_charts.agent_api import ProjectSession
@@ -35,19 +36,30 @@ def migrate_command(
     )
     with ProjectSession.from_project(project) as project_session:
         summary = project_session.migrate_paths(relpaths, dry_run=dry_run)
-    _emit(summary, dry_run=dry_run)
+    _emit(summary, dry_run=dry_run, diff=diff)
 
 
-def _emit(summary: MigrateSummary, *, dry_run: bool) -> None:
+def _emit(summary: MigrateSummary, *, dry_run: bool, diff: bool) -> None:
     action = "Would update" if dry_run else "Updated"
-    for path in summary.updated:
-        _console.print(f"{action} {path}")
+    for migrated in summary.updated:
+        _console.print(f"{action} {migrated.path}")
+        for change in migrated.changes:
+            _console.print(f"  {change}", markup=False, highlight=False, soft_wrap=True)
+        if diff:
+            _console.print(
+                migrated.diff, markup=False, highlight=False, soft_wrap=True, end=""
+            )
     for note in summary.notes:
         _console.print(f"  {note.path}: {note.message}")
     for path in summary.current:
         _console.print(f"Current {path}")
     for error in summary.errors:
-        _console.print(f"Error {error.path}: {error.message}")
+        _console.print(
+            f"Error {error.path}: {error.message}",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
 
     _console.print(
         f"{len(summary.updated)} files {'would be ' if dry_run else ''}updated, "

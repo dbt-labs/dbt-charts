@@ -96,16 +96,15 @@ class TestBackwardCompatibility:
     def test_existing_config_unchanged(self) -> None:
         cfg = ScaleTargetConfig(
             palette=["#fff7fb", "#023858"],
-            domain="data",
-            min=0.0,
-            max=100.0,
+            domain=[0.0, 100.0],
             null_color="#cccccc",
         )
         assert cfg.hinge is None
         assert cfg.arm_mode == "asymmetric"
         assert cfg.palette == ["#fff7fb", "#023858"]
-        assert cfg.min == 0.0
-        assert cfg.max == 100.0
+        assert cfg.domain is not None
+        assert cfg.domain.min == 0.0
+        assert cfg.domain.max == 100.0
         assert cfg.null_color == "#cccccc"
 
     def test_dict_round_trip_no_hinge(self) -> None:

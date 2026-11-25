@@ -1715,6 +1715,10 @@ def migrate(
         bool,
         typer.Option("--dry-run", help="Report changes without writing files."),
     ] = False,
+    diff: Annotated[
+        bool,
+        typer.Option("--diff", help="Also print a unified diff of each updated file."),
+    ] = False,
     project_dir: ProjectDirOption = None,
     dbt_project_dir: DbtProjectDirOption = None,
 ) -> None:
@@ -1729,6 +1733,7 @@ def migrate(
     \b
     Examples:
       dct migrate --dry-run
+      dct migrate --dry-run --diff
       dct migrate
       dct migrate charts/revenue.yml
       dct migrate charts/
@@ -1738,6 +1743,7 @@ def migrate(
         project_dir=project_dir,
         dbt_project_dir=dbt_project_dir,
         dry_run=dry_run,
+        diff=diff,
     )
 
 

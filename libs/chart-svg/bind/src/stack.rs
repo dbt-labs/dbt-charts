@@ -137,21 +137,21 @@ fn zero_stack(values: &[Vec<f64>]) -> Vec<Vec<[f64; 2]>> {
     spans
 }
 
-/// Baseline-first series order of a stacked chart — port of
-/// `core/utils.py::sorted_series_by_stack_order`. `value` (the default when
-/// `stack_order` is unauthored): descending global sum of `y_field`, ties by
+/// A stacked or grouped chart's series order, baseline-first or first-slot-first — port of
+/// `core/utils.py::sorted_by_series_order`. `value` (the default when
+/// `series_order` is unauthored): descending global sum of `y_field`, ties by
 /// name; `alphabetical`: by name; `data`: first encounter of the series cell
 /// in `rows`, a series never encountered ranking last. Any other string
 /// refuses by name rather than ranking by a guessed rule.
-pub fn sorted_series_by_stack_order(
+pub fn sorted_by_series_order(
     series: &[String],
     rows: &[serde_json::Map<String, Value>],
     series_field: &str,
     y_field: &str,
-    stack_order: Option<&str>,
+    series_order: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let mut ordered = series.to_vec();
-    match stack_order {
+    match series_order {
         Some("alphabetical") => ordered.sort(),
         Some("data") => {
             let mut encounter: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -181,7 +181,7 @@ pub fn sorted_series_by_stack_order(
         }
         Some(other) => {
             return Err(format!(
-                "stack: style.stack_order={other:?} not supported — only \"value\", \"data\", or \"alphabetical\""
+                "style.series_order={other:?} not supported — only \"value\", \"data\", or \"alphabetical\""
             ));
         }
     }
@@ -198,9 +198,9 @@ fn ranked_number(label: &str) -> Option<(String, u64)> {
 }
 
 /// A vertical stack's legend, top to bottom as the layers draw: the series that pile above the baseline,
-/// last-stacked first, then the ones below it, nearest the baseline first. `stack_order` is baseline-first;
+/// last-stacked first, then the ones below it, nearest the baseline first. `series_order` is baseline-first;
 /// a series piles below when its values sum negative.
-pub fn vertical_legend_order(stack_order: &[String], rows: &[serde_json::Map<String, Value>], series_field: &str, y_field: &str) -> Vec<String> {
+pub fn vertical_legend_order(series_order: &[String], rows: &[serde_json::Map<String, Value>], series_field: &str, y_field: &str) -> Vec<String> {
     let mut sums: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
     for row in rows {
         if row.get(series_field).is_some_and(|v| !v.is_null()) {
@@ -210,8 +210,8 @@ pub fn vertical_legend_order(stack_order: &[String], rows: &[serde_json::Map<Str
         }
     }
     let below = |s: &&String| sums.get(*s).copied().unwrap_or(0.0) < 0.0;
-    let above = stack_order.iter().filter(|s| !below(s)).rev();
-    above.chain(stack_order.iter().filter(below)).cloned().collect()
+    let above = series_order.iter().filter(|s| !below(s)).rev();
+    above.chain(series_order.iter().filter(below)).cloned().collect()
 }
 
 /// How a chart sizes its series: the sum of its measure (a bar, line or area), or the average of it

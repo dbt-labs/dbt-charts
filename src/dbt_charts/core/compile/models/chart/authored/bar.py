@@ -72,6 +72,12 @@ class BarChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
             ),
         ),
         Forbids(
+            ("style.axis_x.type",),
+            "style.axis_x.type is not supported on type: histogram: a histogram "
+            "bins a numeric x, so its x scale is always continuous.",
+            when=(ValueIn("type", ("histogram",)),),
+        ),
+        Forbids(
             ("annotations",),
             "annotations are not supported on type: histogram: a histogram "
             "bins x, so an anchor has no category or date slot to name.",

@@ -282,10 +282,15 @@ def _attr(tag: str, name: str) -> str | None:
 def _line_tags(svg: str) -> list[str]:
     """The stroked, unfilled paths: every halo and line run, in paint order.
 
-    A knockout mask redraws the stack's outer edge; it paints nothing, so it is not counted.
+    A knockout mask redraws the stack's outer edge; it paints nothing, so it is not counted,
+    and the torn baseline is axis furniture, not a line run.
     """
     drawn = re.sub(r"<mask.*?</mask>", "", svg, flags=re.S)
-    return [t for t in _PATH.findall(drawn) if _attr(t, "fill") == "none"]
+    return [
+        t
+        for t in _PATH.findall(drawn)
+        if _attr(t, "fill") == "none" and _attr(t, "class") != "torn-baseline"
+    ]
 
 
 def _runs(svg: str, color: str) -> list[str]:

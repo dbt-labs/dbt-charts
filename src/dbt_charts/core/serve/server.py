@@ -468,7 +468,7 @@ def _error_nav(
         content_left="",
         show_download=False,
         show_actions=True,
-        sidebar_query=None,
+        show_sidebar=False,
     )
 
 
@@ -581,7 +581,6 @@ def _render_board_file(
     project: FilesystemProject,
     env: ExecEnv,
     clock: Callable[[], datetime],
-    carried_query: str,
     serve_storage_prefix: str | None = None,
     max_workers: int | None = None,
     result_cache: QueryResultCache | None = None,
@@ -595,8 +594,6 @@ def _render_board_file(
     rendered page in the same response, so a slow board is never a blank tab.
     Only a browser navigation asks for it: a streamed page is a 200 before its
     render can fail, and any other client keeps the page's real status.
-    ``carried_query`` is what the nav sidebar's board links append, so a sibling
-    board opens with the same variables.
     """
     if not file_path.exists():
         raise HTTPException(
@@ -648,7 +645,7 @@ def _render_board_file(
             content_left="0",
             show_download=True,
             show_actions=True,
-            sidebar_query=carried_query,
+            show_sidebar=True,
         )
         if include_nav
         else ""
@@ -972,7 +969,6 @@ def _render_directory_listing(
     project: Project,
     url_mount_dir: str,
     clock: Callable[[], datetime],
-    carried_query: str,
     result_cache: QueryResultCache | None = None,
     include_nav: bool = True,
 ) -> HTMLResponse:
@@ -1018,7 +1014,7 @@ def _render_directory_listing(
                 content_left="0",
                 show_download=False,
                 show_actions=True,
-                sidebar_query=carried_query,
+                show_sidebar=True,
             )
             if include_nav
             else ""
@@ -1546,7 +1542,6 @@ def create_server(
                     result_cache=app.state.result_cache,
                     download_format=fmt,
                     include_nav=app.state.server_nav,
-                    carried_query="",
                 )
 
         # /foo.yaml — serve raw YAML source as plain text.
@@ -1580,13 +1575,6 @@ def create_server(
         # ?_embed renders the board without nav chrome, for a host's modal iframe.
         embed = raw_params.pop("_embed", None) is not None
         variables = raw_params
-        carried_query = urlencode(
-            [
-                (k, v)
-                for k, v in request.query_params.multi_items()
-                if k != "format" and not k.startswith("_")
-            ]
-        )
         # A top-level page load; a frame, fetch, or script sends another value.
         navigation = request.headers.get("sec-fetch-dest") == "document"
 
@@ -1649,7 +1637,6 @@ def create_server(
                 download_format=download_format,
                 include_nav=app.state.server_nav and not embed,
                 stream=navigation,
-                carried_query=carried_query,
             )
 
         if isinstance(resolved, ProjectPath):
@@ -1661,7 +1648,6 @@ def create_server(
                 project=project,
                 url_mount_dir=_url_mount_dir(resolved[0].relpath, project),
                 clock=clock,
-                carried_query=carried_query,
                 result_cache=app.state.result_cache,
                 include_nav=app.state.server_nav,
             )

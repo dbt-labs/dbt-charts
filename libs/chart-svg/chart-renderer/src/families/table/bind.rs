@@ -16,7 +16,6 @@ use super::Cell;
 use super::Chart;
 use super::ColConfig;
 use super::ColMeta;
-use super::ColumnFont;
 use super::DimOrder;
 use super::Drawn;
 use super::EmptyResolved;
@@ -513,7 +512,8 @@ pub(super) fn column_font_lanes(
 /// The scale layer (skipped for a summary/total row,
 /// `null_color` on a null value, the interpolated color on a numeric one)
 /// supplies the base `background`; a matching when-rule then overrides
-/// `background`/`color`/`weight`/`style`/`decoration` on top, and supplies
+/// `background`/`color`/`weight`/`style`/`decoration` on top (over the
+/// column's own static `style`/`decoration`), and supplies
 /// `glyph`/`glyph_color` unconditionally (production's `resolve_cell_glyph_
 /// from_overrides` always reads the WITH-tones `overrides`, never the
 /// scale-path's own tones-less recomputation — see this file's module doc
@@ -566,13 +566,14 @@ pub(super) fn resolve_cell_style(
                 }
                 Some(v) => {
                     if let Some(num) = coerce_numeric_cell(Some(v)) {
+                        let bounds = target.domain.unwrap_or_default();
                         let raw = compute_scale_domain(
                             scale_rows,
                             col.scale_fields(),
-                            target.min,
-                            target.max,
+                            bounds.min,
+                            bounds.max,
                         );
-                        let (lo, hi) = nice_domain(target.min, target.max, target.nice.unwrap_or(false), raw);
+                        let (lo, hi) = nice_domain(bounds.min, bounds.max, target.nice.unwrap_or(false), raw);
                         let palette = resolve_palette_stops(target)?;
                         let col_format = col
                             .cfg
@@ -608,6 +609,7 @@ pub(super) fn resolve_cell_style(
     if overrides.background.is_some() {
         background = overrides.background;
     }
+    let static_font = col.cfg.font.as_ref();
     let (glyph, glyph_color) = if overrides.glyph.is_some() {
         (overrides.glyph, overrides.glyph_color)
     } else if row_style.glyph.is_some() {
@@ -621,8 +623,14 @@ pub(super) fn resolve_cell_style(
         background,
         color: overrides.color.or(scaled_color),
         weight: overrides.weight.or(row_style.weight),
-        style: overrides.style.or(row_style.style),
-        decoration: overrides.decoration.or(row_style.decoration),
+        style: overrides
+            .style
+            .or(row_style.style)
+            .or_else(|| static_font.and_then(|f| f.style.clone())),
+        decoration: overrides
+            .decoration
+            .or(row_style.decoration)
+            .or_else(|| static_font.and_then(|f| f.decoration.clone())),
         glyph,
         glyph_color,
         tone_color: None,
@@ -2336,10 +2344,7 @@ pub(super) fn visible_columns<'a>(
                     cfg.background = defaults.background.clone();
                 }
                 if cfg.font.is_none() {
-                    cfg.font = defaults.font.as_ref().map(|f| ColumnFont {
-                        color: f.color.clone(),
-                        weight: f.weight.clone(),
-                    });
+                    cfg.font.clone_from(&defaults.font);
                 }
             }
 

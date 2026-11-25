@@ -360,14 +360,16 @@ def test_empty_patch_title_is_none() -> None:
 def test_unwrap_type_resolves_tuple_behind_a_nested_annotated_constraint() -> None:
     """A constraint nested on an *inner* Annotated (e.g.
     Annotated[Annotated[tuple[X, X], Field(strict=True)] | None, Merge(...)]) --
-    the pattern ScaleContinuousStyle.domain uses so the constraint survives
+    the pattern ResolvedScaleContinuousStyle.domain uses so the constraint survives
     build_patch_model_ext -- must still resolve to `tuple`, not the leftover
     Annotated wrapper. _unwrap_type previously peeled Annotated and Union each
     only once, in that fixed order, and missed this case."""
     from dbt_charts.core.compile.merge import _unwrap_type
-    from dbt_charts.core.compile.models.style.theme.axis import ScaleContinuousStyle
+    from dbt_charts.core.compile.models.style.resolved._base import (
+        ResolvedScaleContinuousStyle,
+    )
 
-    field = ScaleContinuousStyle.model_fields["domain"]
+    field = ResolvedScaleContinuousStyle.model_fields["domain"]
     assert _unwrap_type(field) is tuple
 
 

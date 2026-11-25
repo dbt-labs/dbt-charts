@@ -143,7 +143,7 @@ class TestKpiBackgroundGradientResolve:
         single degenerate midpoint."""
         scale_spec = {
             "column": "revenue",
-            "scale": {"palette": ["#ffffff", "#3366cc"], "min": 0, "max": 1_000_000},
+            "scale": {"palette": ["#ffffff", "#3366cc"], "domain": [0, 1_000_000]},
         }
         rs, ctx = resolve_style_and_context(get_theme_style())
 

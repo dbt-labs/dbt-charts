@@ -395,20 +395,36 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
             let p: syn::Path = syn::parse_str(p)?;
             quote!(Some(#p))
         }
-        (Some(_), None) => {
-            return Err(Error::new_spanned(
-                name,
-                "`shorthand_with` needs a `string_pattern` for the schema's string arm",
-            ))
-        }
         (None, Some(_)) => {
             return Err(Error::new_spanned(
                 name,
                 "`string_pattern` goes with `shorthand_with`",
             ))
         }
-        (None, None) => quote!(None),
+        (_, None) => quote!(None),
     };
+    let shorthand_items = match (&container.shorthand_with, &container.shorthand_items) {
+        (Some(_), Some(p)) => {
+            let p: syn::Path = syn::parse_str(p)?;
+            quote!(Some(&#p))
+        }
+        (None, Some(_)) => {
+            return Err(Error::new_spanned(
+                name,
+                "`shorthand_items` goes with `shorthand_with`",
+            ))
+        }
+        (_, None) => quote!(None),
+    };
+    if container.shorthand_with.is_some()
+        && container.string_pattern.is_none()
+        && container.shorthand_items.is_none()
+    {
+        return Err(Error::new_spanned(
+            name,
+            "`shorthand_with` needs a `string_pattern` or `shorthand_items` for the schema's arm",
+        ));
+    }
     let complete = container.complete;
     let read_under = match &container.read_under {
         Some(k) => quote!(Some(#k)),
@@ -421,7 +437,7 @@ pub fn expand(input: &DeriveInput) -> Result<TokenStream> {
             fn info() -> &'static ::model_core::ModelInfo {
                 #(#asserts)*
                 const INFO: ::model_core::ModelInfo = ::model_core::ModelInfo {
-                    name: #name_s, doc: #doc, kind: #kind, fields: &[#(#f),*], constraints: &[#(#cons),*], shorthand: #shorthand, string_pattern: #string_pattern, complete: #complete, read_under: #read_under,
+                    name: #name_s, doc: #doc, kind: #kind, fields: &[#(#f),*], constraints: &[#(#cons),*], shorthand: #shorthand, string_pattern: #string_pattern, shorthand_items: #shorthand_items, complete: #complete, read_under: #read_under,
                 };
                 &INFO
             }

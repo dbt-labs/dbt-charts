@@ -24,6 +24,7 @@ from dbt_charts.core.compile.models.style.theme import (
     BaseScaleStyle,
     ScaleContinuousStyle,
 )
+from dbt_charts.core.compile.models.style.theme.axis import AxisDomain
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
     CartesianChart,
     ChartDataset,
@@ -49,6 +50,8 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_Y_NOT_NUMERIC,
     ERR_BAR_Y_START_KIND,
     ERR_BAR_Y_START_NULL,
+    ERR_DOMAIN_OPEN_END_INDEPENDENT_SCALE,
+    ERR_DOMAIN_OPEN_END_INVERTED,
     ERR_LAYER_BASELINE_ON_DATE_MEASURE,
     ERR_LAYER_MIXED_AXES_ON_DATE_MEASURE,
     ERR_LAYER_Y_KIND_MISMATCH,
@@ -1192,28 +1195,151 @@ def _first_non_numeric_y(
     return None
 
 
+def domain_ends(
+    cont: ScaleContinuousStyle | None,
+) -> tuple[int | float | str | None, int | float | str | None] | None:
+    """The authored ``scale.continuous.domain`` as ``(min, max)``, or None when unset."""
+    if cont is None or cont.domain is None:
+        return None
+    return (cont.domain.min, cont.domain.max)
+
+
+def _with_domain(ay: AxisYStyle, domain: tuple[float, float] | None) -> AxisYStyle:
+    """``ay`` with ``scale.continuous.domain`` set to ``domain``, whatever it held."""
+    ay_sc = ay.scale
+    ay_cont = ay_sc.continuous if ay_sc is not None else None
+    pinned = None if domain is None else AxisDomain(min=domain[0], max=domain[1])
+    cont = (
+        ay_cont.model_copy(update={"domain": pinned})
+        if ay_cont is not None
+        else ScaleContinuousStyle(domain=pinned)
+    )
+    scale = (
+        ay_sc.model_copy(update={"continuous": cont})
+        if ay_sc is not None
+        else BaseScaleStyle(continuous=cont)
+    )
+    return ay.model_copy(update={"scale": scale})
+
+
 def _bake_measure_domain(
-    ay_merged: AxisYStyle, domain: tuple[float, float]
+    chart_id: str, ay_merged: AxisYStyle, domain: tuple[float, float]
 ) -> AxisYStyle:
     """Bake ``domain`` onto ay_merged unless the author already set one.
 
     A normalize-stack axis bakes [0, 1]: measure_axis_to_vl estimates label
     widths from the resolved domain, and without it reads raw query values
     (e.g. 0..1000) and computes an over-wide label pad. An outlier tear bakes
-    its break so the axis ends there.
+    its break so the axis ends there. An authored one-sided domain keeps its
+    pinned end and takes the other from ``domain``.
     """
     ay_sc = ay_merged.scale
     ay_cont = ay_sc.continuous if ay_sc is not None else None
-    if ay_cont is not None and ay_cont.domain is not None:
-        return ay_merged
-    norm_cont = (
-        ay_cont.model_copy(update={"domain": domain})
-        if ay_cont is not None
-        else ScaleContinuousStyle(domain=domain)
+    match domain_ends(ay_cont):
+        case None:
+            return _with_domain(ay_merged, domain)
+        case (None, int() | float() as high):
+            return _seat_open_end(chart_id, ay_merged, True, float(high), domain[0])
+        case (int() | float() as low, None):
+            return _seat_open_end(chart_id, ay_merged, False, float(low), domain[1])
+        case _:
+            return ay_merged
+
+
+def _seat_open_end(
+    chart_id: str, ay: AxisYStyle, low_open: bool, pinned: float, fitted: float
+) -> AxisYStyle:
+    """``ay`` with its open domain end set to ``fitted``, raising if it crosses ``pinned``."""
+    if not (fitted < pinned if low_open else fitted > pinned):
+        raise CompilationError.from_code(
+            ERR_DOMAIN_OPEN_END_INVERTED,
+            chart_id=chart_id,
+            pinned_end="upper" if low_open else "lower",
+            pinned=pinned,
+            fitted=fitted,
+            direction="below" if low_open else "above",
+        )
+    return _with_domain(ay, (fitted, pinned) if low_open else (pinned, fitted))
+
+
+def close_open_y_domain(
+    chart_id: str,
+    ay: AxisYStyle,
+    y_values: list[float],
+    zero_anchor: bool,
+    scale: Literal["shared", "independent"],
+) -> AxisYStyle:
+    """Bake a one-sided ``axis_y`` domain (``[null, 1]``, ``[0, null]``) into two numbers.
+
+    The pinned end stays exact; the open end gets the fit the axis would have
+    without an authored domain, so ``y_values`` must span everything drawn on
+    the axis (a stack passes its total max). A domain with both ends set, or
+    none, returns ``ay`` unchanged. The open end mirrors
+    ``_resolve_cartesian_ticks``'s headroom laws, and ``headroom`` never moves
+    the pinned end:
+
+    - zero-anchored: the low end is 0 (the headroom-expanded data floor when it
+      is negative), the high end is the data max with multiplicative headroom
+      (never below 0);
+    - zoomed: the data extreme moved out by ``headroom`` of the data span; a
+      percent axis whose data lies in [0, 1] stops at those bounds;
+    - log: the data extreme, with no headroom.
+
+    Raises when ``scale`` is ``independent`` (one shared closed domain would
+    contradict per-panel scales), or when the fitted end lands on the wrong
+    side of the pinned one. With no numeric values at all there is nothing to
+    fit or draw, so the open domain is dropped and the empty chart fits as if
+    it had none.
+    """
+    cont = ay.scale.continuous if ay.scale is not None else None
+    match domain_ends(cont):
+        case (None, int() | float() as pin):
+            low_open = True
+        case (int() | float() as pin, None):
+            low_open = False
+        case _:
+            return ay
+    if scale == "independent":
+        raise CompilationError.from_code(
+            ERR_DOMAIN_OPEN_END_INDEPENDENT_SCALE, chart_id=chart_id
+        )
+    if not y_values:
+        return _with_domain(ay, None)
+    data_min, data_max = min(y_values), max(y_values)
+    is_log = cont is not None and cont.type == "log"
+    headroom = None if is_log else _axis_headroom(ay)
+    cap = _unit_cap(ay, data_min, data_max)
+    if zero_anchor and not is_log:
+        free_low = min(0.0, _headroom_floor(data_min, headroom))
+        free_high = max(0.0, apply_headroom(data_max, headroom, cap=cap))
+    else:
+        reach = headroom * (data_max - data_min) if headroom else 0.0
+        free_low, free_high = data_min - reach, data_max + reach
+        if cap is not None:
+            free_low, free_high = max(free_low, 0.0), min(free_high, cap)
+    fitted = free_low if low_open else free_high
+    return _seat_open_end(chart_id, ay, low_open, float(pin), fitted)
+
+
+def stacked_total_max(
+    dataset: ChartDataset,
+    cat_field: str,
+    y_fields: list[str],
+    scale: Literal["shared", "independent"],
+    extra_values: Sequence[float],
+) -> float | None:
+    """Largest per-category stacked total (``extra_values`` joining), or None without data.
+
+    The ``fold_panels`` read shared by a stacked bar's baked ``domainMax`` and
+    the fit of a stacked chart's open domain end.
+    """
+    # cat_field can itself be the multiples field — partition() strips a
+    # panel's own partition column from its rows, so restamp it back before
+    # grouping, or every row's cat_field reads as absent and the stacked total
+    # silently folds to None (nothing to sum).
+    total = fold_panels(
+        restamp(dataset, cat_field),
+        scale,
+        lambda rows: stacked_totals_max(rows, cat_field, y_fields),
     )
-    norm_scale = (
-        ay_sc.model_copy(update={"continuous": norm_cont})
-        if ay_sc is not None
-        else BaseScaleStyle(continuous=norm_cont)
-    )
-    return ay_merged.model_copy(update={"scale": norm_scale})
+    return None if total is None else max([total, *extra_values])

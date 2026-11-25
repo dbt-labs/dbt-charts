@@ -24,6 +24,7 @@ import pytest
 from pydantic import ValidationError
 
 from dbt_charts.core.compile.models.style.theme.axis import (
+    AxisDomain,
     ScaleContinuousStyle,
     ScaleLogStyle,
     ScalePowStyle,
@@ -58,12 +59,12 @@ def test_scale_domain_rejects_more_than_two_elements():
 
 def test_scale_domain_two_elements_ok_without_type():
     scale = ScaleContinuousStyle(domain=[400.0, 600.0])
-    assert scale.domain == (400.0, 600.0)
+    assert scale.domain == AxisDomain(min=400.0, max=600.0)
 
 
 def test_scale_type_temporal_with_iso_date_domain_ok():
     scale = ScaleContinuousStyle(type="temporal", domain=["1955-01-01", "2026-01-01"])
-    assert scale.domain == ("1955-01-01", "2026-01-01")
+    assert scale.domain == AxisDomain(min="1955-01-01", max="2026-01-01")
 
 
 def test_scale_type_temporal_with_iso_datetime_domain_ok():
@@ -94,28 +95,29 @@ def test_scale_type_temporal_rejects_non_iso_string_domain():
         ScaleContinuousStyle(type="temporal", domain=["not-a-date", "also-not-a-date"])
 
 
-def test_scale_domain_rejects_null_bound() -> None:
-    """A one-ended `domain: [1.0, null]` must raise, not be silently discarded.
+def test_scale_domain_accepts_one_open_end() -> None:
+    assert ScaleContinuousStyle(domain=[None, 1]).domain == AxisDomain(min=None, max=1)
+    assert ScaleContinuousStyle(domain=[0, None]).domain == AxisDomain(min=0, max=None)
 
-    The shape validates today (2 elements, non-temporal), then `null` fails the
-    all-numeric guard in `numeric_domain_bounds` and the whole domain is dropped
-    in three places — the VL scale, the tick ladder, and the unity-baseline gate
-    — with no error and no sign anything was ignored. Rejection now comes from
-    the field's own int|float|str element typing (None matches none of the
-    three arms), not a hand-written check -- so no message is pinned here.
-    """
+
+def test_scale_domain_rejects_both_ends_open() -> None:
+    with pytest.raises(ValidationError, match="omit `domain`"):
+        ScaleContinuousStyle(domain=[None, None])
+
+
+def test_scale_domain_open_end_needs_a_numeric_pin() -> None:
+    with pytest.raises(ValidationError, match="pins a number"):
+        ScaleContinuousStyle(domain=[None, "2026-01-01"])
+
+
+def test_scale_domain_open_end_rejected_on_temporal_scale() -> None:
     with pytest.raises(ValidationError):
-        ScaleContinuousStyle(domain=[1.0, None])
-
-
-def test_scale_domain_rejects_null_lower_bound() -> None:
-    with pytest.raises(ValidationError):
-        ScaleContinuousStyle(domain=[None, 1.2])
+        ScaleContinuousStyle(type="temporal", domain=[None, "2026-01-01"])
 
 
 def test_scale_domain_iso_strings_still_valid_without_temporal_type() -> None:
     scale = ScaleContinuousStyle(domain=["1955-01-01", "2026-01-01"])
-    assert scale.domain == ("1955-01-01", "2026-01-01")
+    assert scale.domain == AxisDomain(min="1955-01-01", max="2026-01-01")
 
 
 def test_scale_domain_rejects_non_list_iterable_without_temporal_type():
@@ -194,11 +196,14 @@ def test_scale_style_patch_rejects_numeric_temporal_domain():
         ScaleContinuousStylePatch(type="temporal", domain=[1955, 2026])
 
 
-def test_scale_style_patch_rejects_null_bound() -> None:
+def test_scale_style_patch_accepts_one_open_end_and_rejects_both() -> None:
     from dbt_charts.core.compile.models.style.authored import ScaleContinuousStylePatch
 
-    with pytest.raises(ValidationError):
-        ScaleContinuousStylePatch(domain=[1.0, None])
+    assert ScaleContinuousStylePatch(domain=[None, 1]).domain == AxisDomain(
+        min=None, max=1
+    )
+    with pytest.raises(ValidationError, match="omit `domain`"):
+        ScaleContinuousStylePatch(domain=[None, None])
 
 
 def test_scale_style_patch_accepts_valid_temporal_domain():
@@ -207,7 +212,7 @@ def test_scale_style_patch_accepts_valid_temporal_domain():
     patch = ScaleContinuousStylePatch(
         type="temporal", domain=["1955-01-01", "2026-01-01"]
     )
-    assert patch.domain == ("1955-01-01", "2026-01-01")
+    assert patch.domain == AxisDomain(min="1955-01-01", max="2026-01-01")
 
 
 _BOARD_WITH_DOMAIN = """
@@ -319,7 +324,7 @@ def test_scale_style_log_type_with_non_positive_domain_raises(
 
 def test_scale_style_log_type_with_positive_domain_ok() -> None:
     scale = ScaleContinuousStyle(type="log", domain=[1, 1_000])
-    assert scale.domain == (1, 1_000)
+    assert scale.domain == AxisDomain(min=1, max=1_000)
 
 
 @pytest.mark.parametrize("base", [0.0, -2.0, 0.5, 1.0])

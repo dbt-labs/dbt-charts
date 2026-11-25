@@ -15,9 +15,13 @@ from dbt_charts.core.compile.models.chart.resolved import (
 from dbt_charts.core.compile.models.primitives import (
     ScaleTargetConfig,
     bake_scale_target_stops,
+    resolved_as,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedHeatmapStyle
+from dbt_charts.core.compile.models.style.resolved._marks import ResolvedRectLabels
+from dbt_charts.core.compile.models.style.resolved.heatmap import ResolvedRectMark
+from dbt_charts.core.compile.models.style.theme.marks import labels_drawn
 from dbt_charts.core.compile.resolve.chart._axes import (
     _bake_ay_position_left,
     cartesian_series_naming,
@@ -42,6 +46,10 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _color_column_format,
     authored_measure_format,
     board_family_style,
+)
+from dbt_charts.core.compile.resolve.chart._marks import (
+    _label_format_fallback,
+    datum_format,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
@@ -68,6 +76,7 @@ from dbt_charts.core.compile.resolve.style.legend_position import (
 )
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
+from dbt_charts.core.utils import vega_infers_quantitative
 
 __all__ = [
     "_resolve_heatmap",
@@ -121,13 +130,23 @@ def _resolve_heatmap(
         normalized.y,
         has_quantitative_axis=False,
         temporal_band_axes=frozenset(temporal_axes),
+        x_type_defaulted=False,
+        y_type_defaulted=False,
         horizontal=False,
     )
     primary = plan.primary
     heatmap = merge_unset(board_family_style(chart_style_context, normalized), primary)
-    heatmap_conditional = resolve_mark_conditional(
-        heatmap.conditional, data, unsupported=("marks.text",)
-    )
+    rect_labels = heatmap.marks.rect.labels
+    if (
+        labels_drawn(rect_labels.visible)
+        and rect_labels.format is not None
+        and _is_temporal(normalized.color, data)
+    ):
+        raise ValueError(
+            f"style.marks.rect.labels.format does not apply to the date color "
+            f"{normalized.color!r}: its labels print as the legend spells its dates."
+        )
+    heatmap_conditional = resolve_mark_conditional(heatmap.conditional, data)
     channels = plan.channels
     ay_merged = plan.axes.y.style
     # Heatmap's color channel is always a gradient (a continuous scale over
@@ -201,9 +220,17 @@ def _resolve_heatmap(
     )
     reject_native(style_tail["tooltip_format"], "style.tooltip.format")
     _tf = resolve_title_font(chart_local_style_context, width)
+    tinted_field = (
+        normalized.color
+        if heatmap.tints
+        and normalized.pattern is None
+        and normalized.color is not None
+        and vega_infers_quantitative(data, normalized.color)
+        else normalized.pattern
+    )
     pattern = resolve_pattern(
-        normalized.pattern,
-        authored_color,
+        tinted_field,
+        None if tinted_field != normalized.pattern else authored_color,
         data,
         chart_style_context,
         heatmap.pattern,
@@ -214,6 +241,17 @@ def _resolve_heatmap(
             rhythm_slot=normalized.rhythm_slot,
         ),
         primary,
+    )
+    strip_key_format, strip_key_is_house = (
+        datum_format(
+            None,
+            chart_style_context.formats,
+            normalized.query.formats if normalized.query else None,
+            normalized.color,
+            data,
+        )
+        if heatmap.strip_key and normalized.color
+        else (None, False)
     )
     return ResolvedHeatmapChart(
         pattern=pattern,
@@ -254,6 +292,11 @@ def _resolve_heatmap(
         ),
         chart_type="heatmap",
         style=ResolvedHeatmapStyle(
+            tints=bool(heatmap.tints),
+            label_divides=bool(heatmap.label_divides),
+            strip_key=bool(heatmap.strip_key),
+            strip_key_format=strip_key_format,
+            strip_key_is_house=strip_key_is_house,
             # An empty palette is a legal heatmap with a color channel; only a
             # colorless heatmap reads the fill.
             single_series_fill=(
@@ -273,7 +316,18 @@ def _resolve_heatmap(
                 if heatmap.color is not None and heatmap.color.gradient is not None
                 else None
             ),
-            rect_mark=heatmap.marks.rect,
+            rect_mark=resolved_as(
+                ResolvedRectMark,
+                heatmap.marks.rect,
+                labels=_label_format_fallback(
+                    heatmap.marks.rect.labels,
+                    ResolvedRectLabels,
+                    style_tail["tooltip_format"],
+                    False,
+                    chart_style_context.formats,
+                    tooltip_format_values,
+                )[0],
+            ),
             conditional=heatmap_conditional,
             label_usable_ratio=chart_style_context.label_usable_ratio,
             title_font=_tf,

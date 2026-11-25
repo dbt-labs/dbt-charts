@@ -191,10 +191,23 @@ def test_two_columns_patching_one_property_are_refused() -> None:
     assert "marks.slice.color" in _refusal(_board(_PIE, _PIE_ROWS, style))
 
 
-def test_a_heatmap_rule_cannot_style_text_the_chart_never_draws() -> None:
-    rule = {"gte": 9, "marks": {"text": {"font": {"color": RED}}}}
-    message = _refusal(_board(_HEAT, _HEAT_ROWS, {"conditional": {"n": [rule]}}))
-    assert "marks.text.font.color" in message
+def test_a_heatmap_rule_restyles_its_cells_value_label() -> None:
+    rule = {"gte": 9, "marks": {"text": {"font": {"color": RED, "weight": 700}}}}
+    style = {
+        "marks": {"rect": {"labels": {"visible": True}}},
+        "conditional": {"n": [rule]},
+    }
+    svg = _svg(_HEAT, _HEAT_ROWS, style)
+    (label,) = [t for t in _tags(svg, "text") if f'fill="{RED}"' in t]
+    assert 'font-weight="700"' in label
+
+
+def test_heatmap_value_labels_are_off_until_visible() -> None:
+    plain = _svg(_HEAT, _HEAT_ROWS, {})
+    labeled = _svg(
+        _HEAT, _HEAT_ROWS, {"marks": {"rect": {"labels": {"visible": True}}}}
+    )
+    assert len(re.findall(r"<text ", labeled)) == len(re.findall(r"<text ", plain)) + 4
 
 
 @pytest.mark.parametrize(
@@ -283,3 +296,48 @@ def test_a_rule_slice_on_a_transparent_chart_inks_its_label_against_the_canvas()
         },
     )
     assert BLUE in svg
+
+
+def _labeled_heat_svg(
+    rows: list[dict[str, Any]], formats: dict[str, str], labels: dict[str, Any]
+) -> str:
+    board = yaml.safe_load(
+        _board(
+            _HEAT, rows, {"marks": {"rect": {"labels": {"visible": True, **labels}}}}
+        )
+    )
+    board["queries"]["q"] = {
+        "columns": ["day", "hour", "n"],
+        "values": [[r["day"], r["hour"], r["n"]] for r in rows],
+        "formats": {"n": "dollars"},
+    }
+    board["style"] = {"formats": {"dollars": formats["n"]}}
+    result = render_board_svg_result(yaml.safe_dump(board, sort_keys=False))
+    assert not result.chart_errors
+    return result.output
+
+
+def test_heatmap_labels_follow_the_color_columns_format_unless_authored() -> None:
+    rows = [
+        {"day": "Mon", "hour": "a", "n": 1234},
+        {"day": "Tue", "hour": "a", "n": 99},
+    ]
+    declared = _labeled_heat_svg(rows, {"n": "$,.0f"}, {})
+    assert ">$1,234</text>" in declared
+    authored = _labeled_heat_svg(rows, {"n": "$,.0f"}, {"format": ",.1f"})
+    assert ">1,234.0</text>" in authored
+    assert ">$1,234</text>" not in authored
+
+
+def test_an_authored_label_format_on_a_date_color_is_refused() -> None:
+    rows = [
+        {"day": "Mon", "hour": "a", "n": "2024-01-05"},
+        {"day": "Tue", "hour": "a", "n": "2024-02-09"},
+    ]
+    board = _board(
+        _HEAT,
+        rows,
+        {"marks": {"rect": {"labels": {"visible": True, "format": ",.0f"}}}},
+    )
+    result = render_board_svg_result(board)
+    assert "labels.format" in " ".join(str(e) for e in result.chart_errors)

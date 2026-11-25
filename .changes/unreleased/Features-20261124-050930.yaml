@@ -1,0 +1,5 @@
+kind: Features
+body: '`dct migrate` names each key it changes, `--diff` prints a diff of each file, and a key inside a YAML anchor is reported by file and line for a manual edit'
+time: 2026-11-24T05:09:30.103871885Z
+custom:
+    DbtChartsIssue: "113"

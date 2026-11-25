@@ -18,7 +18,7 @@
 //! nodes, which `render` prints between the frame and the title.
 
 use ::layout::scene_path::scene_path;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use d3rs::geojson::{Feature, FeatureCollection, GeoJson};
@@ -45,7 +45,7 @@ use ::bind::legend::{fold_symbol_limit};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::href::LinkOpen;
 use crate::layout::{Layout, Rect};
-use scene::{Attrs, Node, PathData, Role, Shape};
+use scene::{Attrs, Node, PathCommand, PathData, Role, Shape};
 use print::print;
 use measure::FontBook;
 use crate::vega_fit::Bounds;
@@ -98,6 +98,11 @@ struct Resolved {
 struct Style {
     geoshape: FamilyStyle,
     tooltip_format: FormatSlot,
+    /// The strip key's two values print in the value-label format, not the tooltip's.
+    #[serde(default)]
+    strip_key_format: Option<FormatSlot>,
+    #[serde(default)]
+    strip_key_is_house: bool,
     title_font: Option<Font>,
 }
 
@@ -108,6 +113,12 @@ struct FamilyStyle {
     /// `style.conditional`: per-column rules restyling a region by its own row.
     #[serde(default)]
     conditional: Option<std::collections::BTreeMap<String, Vec<crate::conditional::MarkRule>>>,
+    #[serde(default)]
+    tints: Option<Value>,
+    #[serde(default)]
+    no_data_dash: Option<Vec<f64>>,
+    #[serde(default)]
+    strip_key: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -146,8 +157,63 @@ struct Overlay {
 
 struct Choropleth {
     coloring: Coloring,
+    /// Under `tints`: each step's tint and the `steps + 1` values bounding the steps.
+    steps: Option<(Vec<String>, Vec<f64>)>,
     overlay: Vec<Overlay>,
     title: String,
+}
+
+/// The ramp step of `n` over the values `(lo, hi)`; a range of no width takes the ramp's middle step.
+fn tint_step(plan: &crate::pattern::PatternPlan, n: f64, (lo, hi): (f64, f64)) -> Result<usize, String> {
+    if lo == hi {
+        return plan.spec().and_then(|spec| spec.steps).map(|steps| steps / 2).ok_or_else(|| "geoshape: tints resolve a ramp's step count (resolver required)".to_string());
+    }
+    plan.step_of(n, lo, hi)
+}
+
+/// The edges of `d` no earlier region stroked, joined into runs; every edge it keeps joins `stroked`.
+/// Two regions share an edge when it joins the same two points, in either direction, to 0.01 px.
+/// A region sharing none keeps its path as drawn, so its closed corner stays joined.
+fn owned_edges(d: &PathData, stroked: &mut HashSet<((i64, i64), (i64, i64))>) -> PathData {
+    let mut shared = false;
+    let key = |(x, y): (f64, f64)| ((x * 100.0).round() as i64, (y * 100.0).round() as i64);
+    let (mut owned, mut start, mut at, mut pen) = (PathData::new(), (0.0, 0.0), (0.0, 0.0), None::<(f64, f64)>);
+    let mut edge = |owned: PathData, from: (f64, f64), to: (f64, f64), pen: &mut Option<(f64, f64)>, shared: &mut bool| {
+        let (a, b) = (key(from), key(to));
+        if a == b {
+            return owned;
+        }
+        if !stroked.insert(if a < b { (a, b) } else { (b, a) }) {
+            *shared = true;
+            *pen = None;
+            return owned;
+        }
+        let owned = if *pen == Some(from) { owned } else { owned.move_to(from.0, from.1) };
+        *pen = Some(to);
+        owned.line_to(to.0, to.1)
+    };
+    for command in d.commands() {
+        match *command {
+            PathCommand::M(x, y) => (start, at, pen) = ((x, y), (x, y), None),
+            PathCommand::L(x, y) => {
+                owned = edge(owned, at, (x, y), &mut pen, &mut shared);
+                at = (x, y);
+            }
+            PathCommand::Z => {
+                owned = edge(owned, at, start, &mut pen, &mut shared);
+                at = start;
+            }
+            PathCommand::C(.., x, y) | PathCommand::A { x, y, .. } => {
+                owned = edge(owned, at, (x, y), &mut pen, &mut shared);
+                at = (x, y);
+            }
+        }
+    }
+    if shared {
+        owned
+    } else {
+        d.clone()
+    }
 }
 
 /// What the data decides: the features, the join and the colors.
@@ -155,6 +221,8 @@ pub struct Bound {
     resolved: Resolved,
     decoded: Arc<Decoded>,
     choropleth: Option<Choropleth>,
+    /// The tints' plan and ink, under `style.tints`.
+    tints: Option<(crate::pattern::PatternPlan, String)>,
     /// The base map's link; a choropleth's overlay carries none.
     href: Option<String>,
 }
@@ -307,6 +375,7 @@ fn affixed_label(value: Option<(&str, String)>, lookup: Option<(&str, String)>) 
 fn bind_choropleth(
     types: &column_types::ColumnTypes,
     r: &Resolved,
+    tints: Option<&(crate::pattern::PatternPlan, String)>,
     features: &[Feature],
     keys: &[String],
     rows: &[Map<String, Value>],
@@ -382,13 +451,35 @@ fn bind_choropleth(
                 native_label((&title, ::bind::formats::locale::d3_format("", n)?), lookup_row(Some(row))?)
             };
             let patch = patch_of(Some(row))?;
-            let fill = patch.fill.clone().unwrap_or_else(|| scale.fill(n));
+            let tint = tints.map(|(plan, ink)| plan.step(tint_step(plan, n, (lo, hi))?, ink).map(|paint| paint.color().to_string())).transpose()?;
+            let fill = patch.fill.clone().or(tint).unwrap_or_else(|| scale.fill(n));
             overlay.push(Overlay { feature, fill: Some(fill), label, patch });
+        }
+        // Tints read as steps: the key lists each step's tint from its lower bound.
+        if let Some((plan, ink)) = tints {
+            // With no drawn value every region is no data and there is nothing to key.
+            if !lo.is_finite() || !hi.is_finite() {
+                let coloring = Coloring::Categories(CategoryScale::plain(Vec::new(), Vec::new()));
+                return Ok(Choropleth { coloring, steps: Some((Vec::new(), Vec::new())), overlay, title });
+            }
+            // One value is one step, the ramp's middle, and the key names the value once.
+            if lo == hi {
+                let fill = plan.step(tint_step(plan, lo, (lo, hi))?, ink)?.color().to_string();
+                let label = r.style.tooltip_format.paint(lo)?;
+                let coloring = Coloring::Categories(CategoryScale::plain(vec![label], vec![fill.clone()]));
+                return Ok(Choropleth { coloring, steps: Some((vec![fill], vec![lo, hi])), overlay, title });
+            }
+            let steps = plan.spec().and_then(|spec| spec.steps).ok_or("geoshape: tints resolve a ramp's step count (resolver required)")?;
+            let bounds: Vec<f64> = (0..=steps).map(|i| lo + (hi - lo) * i as f64 / steps as f64).collect();
+            let fills = (0..steps).map(|i| plan.step(i, ink).map(|paint| paint.color().to_string())).collect::<Result<Vec<_>, _>>()?;
+            let labels = bounds[..steps].iter().map(|&from| r.style.tooltip_format.paint(from)).collect::<Result<Vec<_>, _>>()?;
+            let coloring = Coloring::Categories(CategoryScale::plain(labels, fills.clone()));
+            return Ok(Choropleth { coloring, steps: Some((fills, bounds)), overlay, title });
         }
         // Both bounds authored, or `nice: false`: the legend labels the scale's ends
         // (`apply_geo_choropleth_legend_endpoint_labels`); a nice scale keeps Vega's ticks.
         let legend_ends = (r.legend.values.is_none()
-            && ((gradient.min.is_some() && gradient.max.is_some()) || gradient.nice == Some(false) || (gradient.nice.is_none() && !r.legend.visible)))
+            && (gradient.domain.is_some_and(|d| d.min.is_some() && d.max.is_some()) || gradient.nice == Some(false) || (gradient.nice.is_none() && !r.legend.visible)))
             .then(|| vec![js_number_string(scale.lo), js_number_string(scale.hi)]);
         Coloring::Gradient { scale, legend_ends }
     } else {
@@ -427,7 +518,7 @@ fn bind_choropleth(
         }
         Coloring::Categories(CategoryScale::plain(domain, fills))
     };
-    Ok(Choropleth { coloring, overlay, title: legend_title_text(value_field, &r.legend, &r.field_labels)? })
+    Ok(Choropleth { coloring, steps: None, overlay, title: legend_title_text(value_field, &r.legend, &r.field_labels)? })
 }
 
 /// Decode the chart's geometry, join its rows and assign colors.
@@ -455,6 +546,16 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     }
     let decoded = decode(&source, geometries)?;
     resolved.mark()?;
+    let tints = match (&resolved.style.geoshape.tints, &resolved.style.geoshape.no_data_dash) {
+        (None, None) => None,
+        (None, Some(_)) => return Err("geoshape: `no_data_dash` draws in the `tints` ink, and `tints` is unset".into()),
+        (Some(_), _) => {
+            let plan = crate::pattern::PatternPlan::from_resolved(&payload.resolved)?.tinted();
+            plan.refuse_unsequential_tints()?;
+            let ink = plan.spec().and_then(|spec| spec.color.clone()).ok_or("geoshape: `tints` resolve a pattern ink (resolver required)")?;
+            Some((plan, ink))
+        }
+    };
     let rows: Vec<Map<String, Value>> = payload.rows.iter().map(js_cell::normalized).collect();
     let rows = &rows[..];
     let has_color_channel = resolved.resolved_channels.contains_key("color");
@@ -462,7 +563,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         (Some(lookup), value) if !rows.is_empty() && (value.is_some() || has_color_channel) => {
             let value = value.as_deref().ok_or("geoshape: value_field absent (resolver required)")?;
             let keys = join_keys(&source, &decoded, &resolved.geo_join_key)?;
-            Some(bind_choropleth(&payload.schema.rows, &resolved, &decoded.features, &keys, rows, (lookup, value))?)
+            Some(bind_choropleth(&payload.schema.rows, &resolved, tints.as_ref(), &decoded.features, &keys, rows, (lookup, value))?)
         }
         _ => None,
     };
@@ -490,7 +591,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         }
         None => None,
     };
-    Ok(Bound { resolved, decoded, choropleth, href })
+    Ok(Bound { resolved, decoded, choropleth, tints, href })
 }
 
 /// The legend a layout draws.
@@ -513,7 +614,25 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     );
 
     let grad_id = format!("geo_grad-{}", contract::scoped_id(&r.id));
-    let legend_visible = r.legend.visible;
+    let strip_on = r.style.geoshape.strip_key == Some(true);
+    let legend_visible = r.legend.visible && !strip_on;
+    let strip = if strip_on {
+        let (fills, bounds) = bound
+            .choropleth
+            .as_ref()
+            .and_then(|c| c.steps.as_ref())
+            .ok_or("geoshape: a `strip_key` steps the `tints` of a numeric value, and the map has none")?;
+        let format = r.style.strip_key_format.as_ref().ok_or("geoshape: a strip key labels values in `strip_key_format` (resolver required)")?;
+        let end = |v: f64| crate::common::format_mark_label(Some(format), v, r.style.strip_key_is_house);
+        let title = bound.choropleth.as_ref().map_or("", |c| c.title.as_str());
+        match (bounds.first(), bounds.last()) {
+            (Some(lo), Some(hi)) => Some(crate::families::strip_key::StripKey::new(fills, [end(*lo)?, end(*hi)?], title, &r.legend.label.font, fonts)?.fits(frame.avail_w())?),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let strip_h = strip.as_ref().map_or(0.0, |s| s.height);
     // An authored `symbol_shape` takes the mark's stroke; a mark with none draws the shape fill-only.
     let default_symbol = match (r.legend.symbol_shape.as_deref(), mark.stroke.as_ref().and_then(|s| s.color.as_deref())) {
         (None, None) => LegendSymbol::FilledCircle,
@@ -576,6 +695,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         Ok(())
     };
     let m = frame.fit(title, |pw, ph, b| {
+        b.union(&Bounds::new(0.0, -strip_h, 0.0, 0.0));
         if failure.is_none() {
             failure = ink(pw, ph, b).err();
         }
@@ -585,6 +705,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     }
     let (plot_left, plot_top) = frame.origin(&m);
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
+    let strip_nodes = strip.as_ref().map(|s| s.nodes((frame.pad.0, plot_top - strip_h))).unwrap_or_default();
     let path = fitter.at((plot_w, plot_h))?.into_path((!fit).then_some((plot_w, plot_h)));
     let paths: Vec<Option<PathData>> =
         bound.decoded.features.iter().map(|f| path.path(&GeoJson::Feature(f.clone())).map(|d| d.map(|d| scene_path(&d)))).collect::<Result<_, _>>()?;
@@ -649,17 +770,33 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         let container = display_text::language::tr("aria.container_shape", None, &[])?;
         Ok(Node::group(Role::Chrome, attrs.set("role", role).set("aria-roledescription", container), marks))
     };
-    let background = bound
-        .decoded
-        .features
-        .iter()
-        .zip(&paths)
-        .enumerate()
-        .filter_map(|(i, (_, d))| d.as_ref().map(|d| shape(0, i, d, None, mark.fill.as_deref(), &no_patch)))
-        .collect();
-    let mut layers = vec![group(0, if layered { "layer_0_marks" } else { "marks" }, Some(&clip_ids[0]), false, background)?];
+    let valued: std::collections::HashSet<usize> =
+        bound.choropleth.iter().flat_map(|c| c.overlay.iter().filter(|o| o.fill.is_some()).map(|o| o.feature)).collect();
+    let no_data_dash = r.style.geoshape.no_data_dash.as_ref().map(|dash| dash.iter().map(|d| js_number_string(*d)).collect::<Vec<_>>().join(" "));
+    let no_data = no_data_dash.as_ref().zip(bound.tints.as_ref().map(|(_, ink)| ink));
+    // A region with no value is its outline alone, dashed in the tints ink. It paints after every
+    // fill and border, or a neighbor's fill and canvas gap cover it.
+    let (mut outlines, mut background) = (Vec::new(), Vec::new());
+    let mut stroked = HashSet::new();
+    for (i, d) in paths.iter().enumerate() {
+        let Some(d) = d else { continue };
+        match no_data.filter(|_| !valued.contains(&i)) {
+            Some((dash, ink)) => {
+                // A border two regions share is stroked once, by the first, or the dashes of the two overlap.
+                let owned = owned_edges(d, &mut stroked);
+                if owned.commands().is_empty() {
+                    continue;
+                }
+                let attrs = Attrs::new().set("fill", "none").set("stroke", ink).num("stroke-width", 1.0).set("stroke-dasharray", dash.as_str());
+                outlines.push(Node::path(Role::Mark { layer: 0, series: None, datum: Some(i) }, owned, attrs).translate(0.0, 0.0));
+            }
+            None => background.push(shape(0, i, d, None, mark.fill.as_deref(), &no_patch)),
+        }
+    }
+    let mut layers = Vec::new();
     if let Some(choropleth) = &bound.choropleth {
-        let overlay = choropleth
+        layers.push(group(0, if layered { "layer_0_marks" } else { "marks" }, Some(&clip_ids[0]), false, background)?);
+        let overlay: Vec<Node> = choropleth
             .overlay
             .iter()
             .filter_map(|o| {
@@ -667,8 +804,20 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             })
             .collect();
         layers.push(group(1, "layer_1_marks", Some(&clip_ids[1]), true, overlay)?);
+        if !outlines.is_empty() {
+            // Outside the knockout mask, which would cut the outlines along every shared border.
+            let mut attrs = Attrs::new().set("class", "mark-shape role-mark layer_2_marks");
+            if !fit {
+                attrs = attrs.set("clip-path", format!("url(#{})", clip_ids[1]));
+            }
+            layers.push(Node::group(Role::Chrome, attrs, outlines));
+        }
+    } else {
+        background.append(&mut outlines);
+        layers.push(group(0, if layered { "layer_0_marks" } else { "marks" }, Some(&clip_ids[0]), false, background)?);
     }
     let mut nodes = vec![Node::group(Role::Chrome, Attrs::new(), layers).translate(plot_left, plot_top)];
+    nodes.extend(strip_nodes);
 
     let (leg_x, leg_y) = (plot_left + legend_xy.0, plot_top + legend_xy.1);
     let slide = |size: (f64, f64)| slide_block(&r.id, &r.legend.position, size, (plot_w, plot_h));

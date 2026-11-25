@@ -165,8 +165,12 @@ impl AxisRung<'_> {
             }
             _ => false,
         };
+        // The engine draws no tear, so a rung that turns the tear off asks for what it draws.
+        let tear_off = self.shared().is_some_and(|s| s.grid.torn_baseline.enabled == Some(false));
         let mut note = |path: &str| {
-            let read = walked(path, flushes) || TIME_ONLY.contains(&path) && at_theme_value(path);
+            let read = walked(path, flushes)
+                || TIME_ONLY.contains(&path) && at_theme_value(path)
+                || tear_off && path.starts_with("grid.torn_baseline.");
             if !read {
                 found.get_or_insert_with(|| path.to_string());
             }

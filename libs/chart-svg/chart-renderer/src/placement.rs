@@ -11,6 +11,9 @@ use scene::{Node, Role, Shape};
 use serde_json::json;
 use crate::vega_fit::{self, Bounds};
 
+/// The WCAG contrast against the canvas at which a gridline reads as text-strength ink.
+const HEAVY_GRID_CONTRAST: f64 = 4.5;
+
 /// Overlap areas and distances closer than this tie.
 pub(crate) const EPS: f64 = 1e-6;
 
@@ -69,9 +72,10 @@ const STEP_OUT: [f64; 2] = [4.0, 8.0];
 const COINCIDENT: f64 = 6.0;
 /// Scatter points nearer than this share a label's height, so their labels part sideways.
 const PAIR_REACH: f64 = 12.0;
-/// How much of its text box's top and bottom an axis-channel label gives up: digits fill
-/// far less than a line box, so two numbers read apart once they are a digit height away.
-const DIGIT_INSET: f64 = 4.5;
+/// How much of its text box's top and bottom an axis-channel label gives up beside a tick.
+/// Digits stop 1px inside a text box's top and 3px inside its bottom, so giving up 2 on
+/// one box still keeps the two numbers' digits 2px apart above or below.
+const DIGIT_INSET: f64 = 2.0;
 /// Both offsets of a label set off a corner of its datum.
 const DIAGONAL: f64 = 4.0;
 /// The radius a label's default offset already clears; a larger marker pushes it out.
@@ -87,12 +91,14 @@ pub(crate) struct Obstacle {
     soft: bool,
     /// A gridline a label may cross; a spot clear of every faint box ranks above one on it.
     faint: bool,
+    /// A gridline drawn at text contrast: it strikes through digits in either direction.
+    heavy: bool,
     stroke: Option<(Vec<(f64, f64)>, f64)>,
 }
 
 impl Obstacle {
     pub(crate) fn mark(b: Bounds) -> Self {
-        Obstacle { b, pad: LABEL_PAD, soft: false, faint: false, stroke: None }
+        Obstacle { b, pad: LABEL_PAD, soft: false, faint: false, heavy: false, stroke: None }
     }
 
     pub(crate) fn label(b: Bounds) -> Self {
@@ -100,11 +106,11 @@ impl Obstacle {
     }
 
     pub(crate) fn rule(b: Bounds) -> Self {
-        Obstacle { b, pad: RULE_PAD, soft: false, faint: false, stroke: None }
+        Obstacle { b, pad: RULE_PAD, soft: false, faint: false, heavy: false, stroke: None }
     }
 
-    pub(crate) fn grid(b: Bounds) -> Self {
-        Obstacle { faint: true, ..Obstacle::rule(b) }
+    pub(crate) fn grid(b: Bounds, heavy: bool) -> Self {
+        Obstacle { faint: true, heavy, ..Obstacle::rule(b) }
     }
 
     /// A chart mark as obstacles: a line is its true stroke, an area's fill soft column boxes.
@@ -116,7 +122,7 @@ impl Obstacle {
                 let ys = points.iter().map(|p| p.1);
                 let (x1, x2) = (xs.clone().fold(f64::INFINITY, f64::min), xs.fold(f64::NEG_INFINITY, f64::max));
                 let (y1, y2) = (ys.clone().fold(f64::INFINITY, f64::min), ys.fold(f64::NEG_INFINITY, f64::max));
-                vec![Obstacle { b: Bounds::new(x1, y1, x2, y2), pad: LINE_PAD, soft: false, faint: false, stroke: Some((points.clone(), width / 2.0)) }]
+                vec![Obstacle { b: Bounds::new(x1, y1, x2, y2), pad: LINE_PAD, soft: false, faint: false, heavy: false, stroke: Some((points.clone(), width / 2.0)) }]
             }
             DataMark::Polygon(_) => mark.boxes().into_iter().map(|b| Obstacle { soft: true, ..Obstacle::mark(b) }).collect(),
             _ => mark.boxes().into_iter().map(Obstacle::mark).collect(),
@@ -171,7 +177,8 @@ pub(crate) type Frame<'a> = (&'a [Node], (f64, f64));
 /// What a value label keeps off, read from the laid-out nodes: the marks among `plot`, and in
 /// `plot` and every `beside` frame the gridlines (`Role::Grid` lines), reference rules
 /// (`Role::Rule` lines) and measured axis and label text. A line is inflated by its stroke width.
-pub(crate) fn obstacles(plot: &[Node], beside: &[Frame]) -> Vec<Obstacle> {
+/// A gridline at `HEAVY_GRID_CONTRAST` or more against `canvas` is heavy.
+pub(crate) fn obstacles(plot: &[Node], beside: &[Frame], canvas: &str) -> Result<Vec<Obstacle>, String> {
     let mut out: Vec<Obstacle> = DataMark::plot_marks(plot).iter().flat_map(Obstacle::of_mark).collect();
     for (nodes, (dx, dy)) in std::iter::once((plot, (0.0, 0.0))).chain(beside.iter().copied()) {
         for d in scene::drawn(nodes, |role| matches!(role, Role::Grid | Role::Rule | Role::Axis | Role::Label)) {
@@ -179,14 +186,37 @@ pub(crate) fn obstacles(plot: &[Node], beside: &[Frame]) -> Vec<Obstacle> {
             let (b, half) = (&d.bounds, d.paint_num("stroke-width").unwrap_or(1.0) * d.map.a.hypot(d.map.b) / 2.0);
             let shifted = |pad: f64| Bounds::new(b.x1 - pad + dx, b.y1 - pad + dy, b.x2 + pad + dx, b.y2 + pad + dy);
             match (&d.node.role, &d.node.shape) {
-                (Role::Grid, Shape::Line { .. }) => out.push(Obstacle::grid(shifted(half))),
+                (Role::Grid, Shape::Line { .. }) => {
+                    let heavy = match d.paint("stroke") {
+                        Some(stroke) => {
+                            let opacity = d.paint_num("opacity").unwrap_or(1.0) * d.paint_num("stroke-opacity").unwrap_or(1.0);
+                            dbt_charts_color::wcag_contrast(&painted_on(stroke, opacity, canvas)?, canvas)? >= HEAVY_GRID_CONTRAST
+                        }
+                        None => false,
+                    };
+                    out.push(Obstacle::grid(shifted(half), heavy));
+                }
                 (Role::Rule, Shape::Line { .. }) => out.push(Obstacle::rule(shifted(half))),
                 (Role::Axis | Role::Label, Shape::Text { .. }) => out.push(Obstacle::mark(shifted(0.0))),
                 _ => {}
             }
         }
     }
-    out
+    Ok(out)
+}
+
+/// The opaque color a line of `stroke` at `opacity` paints on the opaque `canvas`. A stroke
+/// that does not parse paints nothing, as in [`dbt_charts_color::ink_canvas`].
+fn painted_on(stroke: &str, opacity: f64, canvas: &str) -> Result<String, String> {
+    let ink = dbt_charts_color::parse_css_color(&dbt_charts_color::ink_canvas(&[stroke, canvas])?)?;
+    let (r, g, b, _) = dbt_charts_color::composite_over((ink.0, ink.1, ink.2, opacity), dbt_charts_color::parse_css_color(canvas)?);
+    Ok(dbt_charts_color::rgb01_to_hex(r, g, b))
+}
+
+/// The gridlines among `plot` drawn at text contrast on `canvas`: a value label that cannot
+/// move freely still keeps off them.
+pub(crate) fn strikes(plot: &[Node], canvas: &str) -> Result<Vec<Obstacle>, String> {
+    Ok(obstacles(plot, &[], canvas)?.into_iter().filter(|o| o.heavy).collect())
 }
 
 /// The measured axis text among `frames` as `(center y, text)` in the plot's frame: the drawn tick labels.
@@ -458,7 +488,9 @@ fn place_one(r: &LabelReq, size: f64, comfort: f64, field: &Field) -> Option<Cap
         let slack = hard.map(|o| if squeezed { o.gap(&inked) - EPS } else { o.slack(&b) }).fold(size, f64::min);
         let over_fill = field.obstacles.iter().any(|o| o.soft && gap(&b, &o.b) < EPS);
         // A vertical gridline barely touches the digits it passes through; a horizontal one runs along them.
-        let on_grid = field.obstacles.iter().any(|o| o.faint && o.b.x2 - o.b.x1 > 3.0 && gap(&b, &o.b) < EPS);
+        // A heavy gridline strikes through either way.
+        let on_grid = field.obstacles.iter().any(|o| o.faint && (o.heavy || o.b.x2 - o.b.x1 > 3.0) && gap(&b, &o.b) < EPS);
+        let on_heavy = field.obstacles.iter().any(|o| o.heavy && gap(&b, &o.b) < EPS);
         if slack < -EPS || (squeezed && slack <= 0.0) {
             continue;
         }
@@ -470,7 +502,7 @@ fn place_one(r: &LabelReq, size: f64, comfort: f64, field: &Field) -> Option<Cap
         let own = path_distance(&field.paths[r.owner], center);
         let foreign = field.paths.iter().enumerate().filter(|(o, _)| *o != r.owner).map(|(_, p)| path_distance(p, center)).fold(f64::INFINITY, f64::min);
         let (nearer_foreign, moved) = (foreign < own - EPS, (center.0 - sx).hypot(center.1 - sy));
-        if k == 0 && (r.channel || (slack >= comfort && !nearer_foreign && !over_fill)) {
+        if k == 0 && (r.channel || (slack >= comfort && !nearer_foreign && !over_fill && !on_heavy)) {
             return Some(*s);
         }
         let better = |(_, bt, bs, bf, bo, bg, bd): (usize, u8, f64, bool, bool, bool, f64)| {
@@ -545,7 +577,7 @@ mod tests {
         let unmeasured = Node::text(Role::Axis, (0.0, 0.0), Attrs::new(), "title");
         let rail = Node::group(Role::Chrome, Attrs::new(), vec![Node::text(Role::Label, (0.0, 0.0), Attrs::new(), "Series").with_text_bounds(scene::Bounds { x1: 0.0, y1: 20.0, x2: 40.0, y2: 31.0 })]).translate(210.0, 5.0);
         let axis = [tick, unmeasured];
-        let found = obstacles(&plot, &[(&axis, (0.0, 0.0)), (std::slice::from_ref(&rail), (-10.0, 0.0))]);
+        let found = obstacles(&plot, &[(&axis, (0.0, 0.0)), (std::slice::from_ref(&rail), (-10.0, 0.0))], "#ffffff").unwrap();
         assert_eq!(found.len(), 5, "mark, grid, rule, tick label, rail label; the torn path and the unmeasured title are no obstacle");
         let kinds: Vec<(f64, bool, bool)> = found.iter().map(|o| (o.pad, o.soft, o.faint)).collect();
         assert_eq!(kinds, vec![(LABEL_PAD, false, false), (RULE_PAD, false, true), (RULE_PAD, false, false), (LABEL_PAD, false, false), (LABEL_PAD, false, false)]);
@@ -694,7 +726,7 @@ mod tests {
     fn a_gridline_never_costs_a_label() {
         let v: Vec<(f64, f64)> = (0..20).map(|i| (i as f64 * 10.0 + 5.0, 1.0)).collect();
         let h: Vec<(f64, f64)> = (0..20).map(|i| (i as f64 * 10.0 + 5.0, 1.0)).collect();
-        let mut f = field(obstacles(&lines(Role::Grid, &v, &h), &[]), vec![vec![(100.0, 100.0)]]);
+        let mut f = field(obstacles(&lines(Role::Grid, &v, &h), &[], "#ffffff").unwrap(), vec![vec![(100.0, 100.0)]]);
         assert!(place(req((100.0, 100.0), 0), &mut f).is_some());
     }
 
@@ -707,16 +739,43 @@ mod tests {
         let bottom = CaptionSpot { edge: None, align: "center", baseline: "top", dx: 0.0, dy: 4.0 };
         let grid = (ink(&bottom, &r).y1 + ink(&bottom, &r).y2) / 2.0;
         let mut found = vec![Obstacle::mark(wall)];
-        found.extend(obstacles(&lines(Role::Grid, &[], &[(grid, 1.0)]), &[]));
+        found.extend(obstacles(&lines(Role::Grid, &[], &[(grid, 1.0)]), &[], "#ffffff").unwrap());
         let mut f = field(found, vec![vec![(100.0, 100.0)]]);
         let spot = place(req((100.0, 100.0), 0), &mut f).expect("a spot");
         assert!(gap(&ink(&spot, &r), &Bounds::new(0.0, grid, 200.0, grid)) > 0.0);
     }
 
+    /// A vertical gridline at `x` painted `stroke` at `opacity`.
+    fn gridline(x: f64, stroke: &str, opacity: f64) -> Node {
+        Node::line(Role::Grid, (x, 0.0), (x, 200.0), Attrs::new().set("stroke", stroke).num("opacity", opacity))
+    }
+
+    #[test]
+    fn a_gridline_is_heavy_by_the_ink_it_paints_on_the_canvas() {
+        let heavy = |stroke: &str, opacity: f64| obstacles(&[gridline(100.0, stroke, opacity)], &[], "#ffffff").expect("any authored color reads")[0].heavy;
+        assert!(heavy("#313233", 1.0));
+        assert!(heavy("#333", 1.0));
+        assert!(heavy("black", 1.0));
+        assert!(!heavy("#D0D3D9", 1.0));
+        assert!(!heavy("#313233", 0.2));
+        assert!(!heavy("#31323333", 1.0));
+        assert!(!heavy("oklch(30% 0 0)", 1.0), "a color the canvas reader cannot parse paints nothing");
+    }
+
+    #[test]
+    fn a_gridline_at_text_contrast_moves_a_label_off_it_in_either_direction() {
+        let r = req((100.0, 100.0), 0);
+        let placed = |stroke: &str| place(req((100.0, 100.0), 0), &mut field(obstacles(&[gridline(100.0, stroke, 1.0)], &[], "#ffffff").unwrap(), vec![vec![(100.0, 100.0)]])).expect("a spot");
+        assert_eq!(placed("#D0D3D9").dx, top().dx, "a faint vertical gridline is painted over");
+        assert_eq!(placed("#D0D3D9").dy, top().dy);
+        let b = ink(&placed("#313233"), &r);
+        assert!(b.x1 > 100.0 || b.x2 < 100.0, "clear of the heavy gridline: {b:?}");
+    }
+
     #[test]
     fn a_heavy_rule_through_the_datum_is_never_straddled() {
         let r = req((100.0, 100.0), 0);
-        let mut f = field(obstacles(&lines(Role::Rule, &[(100.0, 2.0)], &[]), &[]), vec![vec![(100.0, 100.0)]]);
+        let mut f = field(obstacles(&lines(Role::Rule, &[(100.0, 2.0)], &[]), &[], "#ffffff").unwrap(), vec![vec![(100.0, 100.0)]]);
         let spot = place(req((100.0, 100.0), 0), &mut f).expect("a spot");
         let b = ink(&spot, &r);
         assert!(b.x1 >= 101.0 || b.x2 <= 99.0, "{b:?}");
@@ -767,6 +826,8 @@ mod tests {
             place(r, &mut field(vec![tick], vec![vec![(195.0, 100.0)]])).expect("placed").dx
         };
         assert_eq!(dx_with_tick_at(90.0), 30.0);
+        // Centers 8 apart: the digits, 8 tall, would touch.
+        assert_ne!(dx_with_tick_at(92.0), 30.0);
         assert_ne!(dx_with_tick_at(94.0), 30.0);
     }
 

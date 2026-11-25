@@ -120,8 +120,9 @@ impl<'a, 'n> Walk<'a, 'n, '_> {
 }
 
 impl Schema {
-    /// A struct's node as authored JSON, with each bare string a model reads as its shorthand
-    /// written out (`font: heading` is `{extends: heading}`), so a rule's dotted key reaches it.
+    /// A struct's node as authored JSON, with each bare string or list a model reads as its
+    /// shorthand written out (`font: heading` is `{extends: heading}`, `domain: [0, 1]` is
+    /// `{min: 0, max: 1}`), so a rule's dotted key reaches it.
     pub fn authored_json(&self, model: &str, node: &Node) -> serde_json::Value {
         self.expand(&Ty::Ref(model.to_string()), node)
     }
@@ -138,6 +139,21 @@ impl Schema {
                 .map(|(k, e)| (k.clone(), self.expand(item, &e.value)))
                 .collect::<serde_json::Map<_, _>>()
                 .into(),
+            // A `[min, max]` shorthand names the struct's fields in order; a null item is unset.
+            (Ty::Ref(name), Kind::Seq(items)) => match self.models.get(name).map(|m| &m.body) {
+                Some(Body::Struct {
+                    shorthand_items: Some(_),
+                    fields,
+                    ..
+                }) => fields
+                    .iter()
+                    .zip(items)
+                    .filter(|(_, n)| !matches!(n.kind, Kind::Scalar(yaml::Value::Null)))
+                    .map(|(f, n)| (f.key.to_string(), n.to_json()))
+                    .collect::<serde_json::Map<_, _>>()
+                    .into(),
+                _ => node.to_json(),
+            },
             (Ty::Ref(name), Kind::Scalar(yaml::Value::Str(text))) => {
                 match self.models.get(name).map(|m| &m.body) {
                     Some(Body::Struct {

@@ -716,8 +716,7 @@ fn value_labels(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
 }
 
 /// `_overlay.py`: a layer's pinned y-axis side and a band-aware step curve
-/// both need a vertical base, an area layer needs a vertical or unsplit base,
-/// and a band-aware step is a single-series idiom.
+/// both need a vertical base, and a band-aware step is a single-series idiom.
 fn layers(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
     let chart_id = || json!(facts.chart_id());
     let step_curve = |layer: &Layer| {
@@ -749,19 +748,8 @@ fn layers(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
         if facts.layers.iter().any(pinned) {
             return Err(Diagnostic::new(&codes::ERR_LAYER_AXIS_POSITION_ORIENTATION, [("chart_id", chart_id())]));
         }
-        // Each layer's own branch raises in authored order; an area layer's split-base check precedes its step.
-        let color_is_category = match facts.color.as_deref() {
-            Some(c) => matches!(infer_vega_type(&payload.schema.rows, &payload.rows, c)?, VegaType::Nominal | VegaType::Ordinal),
-            None => false,
-        };
-        let split_base = !facts.wide_measures.is_empty() || color_is_category;
-        for layer in &facts.layers {
-            if layer.kind == "area" && split_base {
-                return Err(Diagnostic::new(&codes::ERR_LAYER_AREA_SPLIT_HORIZONTAL_BASE, [("chart_id", chart_id())]));
-            }
-            if step_curve(layer) {
-                return Err(Diagnostic::new(&codes::ERR_LAYER_STEP_ORIENTATION, [("chart_id", chart_id())]));
-            }
+        if facts.layers.iter().any(step_curve) {
+            return Err(Diagnostic::new(&codes::ERR_LAYER_STEP_ORIENTATION, [("chart_id", chart_id())]));
         }
         return Ok(());
     }

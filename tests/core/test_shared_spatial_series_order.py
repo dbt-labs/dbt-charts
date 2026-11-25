@@ -83,7 +83,7 @@ def test_distinct_series_values_never_admits_a_none_label():
 
 
 # ---------------------------------------------------------------------------
-# Grouped bar: verify-only. No stack_order concept — the legend must use
+# Grouped bar: verify-only. No series_order concept — the legend must use
 # whatever order the marks' own xOffset uses (today, VL's shared default),
 # never a separately-computed order.
 # ---------------------------------------------------------------------------

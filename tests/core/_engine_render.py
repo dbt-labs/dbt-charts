@@ -177,7 +177,7 @@ def kpi_gradient_chart(
         "style": {
             "background": {
                 "column": "v",
-                "scale": {"palette": palette, "min": low, "max": high},
+                "scale": {"palette": palette, "domain": [low, high]},
             }
         },
     }

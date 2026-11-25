@@ -1,0 +1,3 @@
+kind: Fixes
+body: A board or theme that sets `style.charts.histogram.axis_x.type` now gets a clear error instead of having the key ignored; remove it, since a histogram's x scale is always continuous.
+time: 2026-11-24T18:06:15.651527537Z

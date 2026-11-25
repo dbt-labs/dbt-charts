@@ -96,7 +96,7 @@ Also exist: `preferred_width`, `padding`, `background`, `aspect_ratio`, `min_hei
 - `background`: Chart-local background color override; None inherits from theme
 - `padding` ({left, right, top, bottom}): Padding as {top, right, bottom, left} in pixels, never one number
 - `aspect_ratio` (number): Chart aspect ratio (width/height)
-- `color` ({gradient: {palette, domain, min, max, nice, null_color, hinge, arm_mode}, categorical: {palette, single_series_palette}}): Chart color scales: categorical palette and/or gradient
+- `color` ({gradient: {palette, domain, nice, null_color, hinge, arm_mode}, categorical: {palette, single_series_palette}}): Chart color scales: categorical palette and/or gradient
 - `axis_x` (mapping): The category or time axis, in either orientation (a horizontal bar's category axis is still `axis_x`). Inherits the global axis_x
 - `axis_y` (mapping): The measure axis, in either orientation: its number format goes here, a horizontal bar's too. Inherits the global axis_y
 - `key` ({visible, type, legend: {}, direct: {offset, font: {}, height}}): How the chart names its series
@@ -104,7 +104,7 @@ Also exist: `preferred_width`, `padding`, `background`, `aspect_ratio`, `min_hei
 - `stack` (none|zero|normalize|center): Default stack mode for bar charts; none renders side-by-side columns
 - `orientation` (horizontal|vertical|auto): Preferred bar orientation
 - `outliers` ({median_multiplier, variant, reveal, cap: {band, length}}): Tear bars far longer than the rest
-Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `pattern`, `conditional`.
+Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `series_order`, `grouped`, `pattern`, `conditional`.
 
 `outliers (bar charts)`:
 - `median_multiplier` (number|none): Tear bars at least this many times the median bar; none turns it off
@@ -122,6 +122,8 @@ Also exist: `grid`, `line`, `ticks`, `labels`, `title`, `scale`, `position`, `fi
 
 `axis_x.grid, axis_y.grid`: `visible`, `opacity`, `width`, `color`, `dash`, `threshold`, `torn_baseline`.
 
+`torn_baseline` is on by default for lines and floating bars. Scatter opts in per chart (`style.axis`) or per axis. Turn it off on rank axes: counting has no zero.
+
 `axis_x.ticks`: `visible`, `color`, `length`, `width`, `offset`, `count`, `step`, `time_unit`.
 
 `axis_x.labels, axis_y.labels`: `font`, `padding`, `max_width`, `angle`, `align`, `overlap`, `min_gap`, `visible`, `expr`, `bound`, `flush`, `offset`, `format`, `time_unit`, `clock`, `tilt_increments`, `values`.
@@ -136,7 +138,7 @@ Also exist: `round`, `clamp`, `padding`, `continuous`.
 
 `axis_y.scale.continuous`:
 - `type` (linear|log|pow|sqrt|symlog|temporal): Scale type override; pow, sqrt and symlog bend only a scatter's axes
-- `domain` (tuple[int | float | str, int | float | str]): Explicit [low, high] scale domain; None fits the domain to the data
+- `domain` (tuple[int | float | str | None, int | float | str | None]|{min, max}): Where the scale's ends sit, as [min, max]; unset fits the data
 - `zero` (bool|auto): Force scale zero-baseline
 Also exist: `log`, `pow`, `symlog`.
 
@@ -162,7 +164,7 @@ Also exist: `dx`, `dy`, `font`, `stacked`, `template`.
 - `labels` ({visible, field, format, dx, dy, font: {}, position}): Value label style for line marks
 Also exist: `connect`, `disconnected_cap`, `disconnected_width`, `halo_multiplier`.
 
-`marks.point`: `size`, `color`, `shape`, `opacity`, `filled`, `fill`, `stroke_width`, `labels`.
+`marks.point`: `size`, `color`, `shape`, `opacity`, `filled`, `fill`, `stroke_width`, `halo`, `labels`.
 
 `marks.area`: `color`, `opacity`, `curve`, `backdrop`, `stacked`.
 
@@ -182,13 +184,13 @@ Also exist: `direction`, `columns`, `compact_columns`, `row`, `title`, `symbol_l
 
 `color`:
 - `categorical` ({palette, single_series_palette}): Palettes used when color encodes distinct categories, or a lone series
-- `gradient` ({palette, domain, min, max, nice, null_color, hinge, arm_mode}): Continuous gradient scale for the color encoding
+- `gradient` ({palette, domain, nice, null_color, hinge, arm_mode}): Continuous gradient scale for the color encoding
 
 `color.categorical`:
 - `palette` (name|list of text|text): Palette name, or a list of colors, even one: ['#2E6B4F']
 - `single_series_palette` (name|list of text|text): Ink without a color column: palette name, or colors list, even one: ['#2E6B4F']
 
-`color.gradient`: `palette`, `domain`, `min`, `max`, `nice`, `null_color`, `hinge`, `arm_mode`.
+`color.gradient`: `palette`, `domain`, `nice`, `null_color`, `hinge`, `arm_mode`.
 
 ### Palettes
 
@@ -210,7 +212,7 @@ A color request ("make Created orange") pins `category.<hue>` under `style.chart
 - `value` ({font: {}, format, compact: {spec, threshold}, affix: {font: {}}, glyph: {up, down, neutral, font: {}, arrow: {}}}): KPI headline value slot
 - `label` ({font: {}, overflow}): KPI card label slot
 - `support` ({font: {}, format, tone, glyph: {up, down, neutral, font: {}}}): KPI support row slot
-- `background` (text|{column, scale: {palette, domain, min, max, nice, null_color, hinge, arm_mode}}): Card fill, or a {column, scale} gradient; defaults to charts.background
+- `background` (text|{column, scale: {palette, domain, nice, null_color, hinge, arm_mode}}): Card fill, or a {column, scale} gradient; defaults to charts.background
 - `conditional` (map of list of mapping): Rules that restyle the card by value, keyed by column name
 Also exist: `preferred_width`, `padding`, `font`, `min_card_width`, `default_height`, `border`, `content_padding`.
 
@@ -260,7 +262,7 @@ Also exist: `divider`, `roles`.
 - `link` (text|{url, open}): URL template for cell values, with the row's fields available
 - `background`: Cell background color (hex string, or 'transparent'/'none'), or a column ID
 - `font` (mapping): Cell font style overrides
-- `scale` ({background: {palette, domain, min, max, nice, null_color, hinge, arm_mode}, color: {palette, domain, min, max, nice, null_color, hinge, arm_mode}}): Continuous color mapping configuration for this column
+- `scale` ({background: {palette, domain, nice, null_color, hinge, arm_mode}, color: {palette, domain, nice, null_color, hinge, arm_mode}}): Continuous color mapping configuration for this column
 - `glyph`: Text shown before every cell value
 - `spark` (line|area|bar|bar-normalize|column|columns): Miniature chart drawn inside each cell
 - `conditional` (list of mapping): Rules that restyle this column's cells by the cell's own value

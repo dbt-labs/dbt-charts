@@ -72,10 +72,19 @@ pub struct HeatmapChartStyle {
     pub cell_padding: f64,
     /// How the `pattern:` channel paints fills.
     pub pattern: PatternStyle,
+    /// Draw a numeric color as flat tints of the pattern color: each cell takes the tint of its `style.pattern` ramp step.
+    #[model(absent = "the color scale's own fills")]
+    pub tints: Option<bool>,
+    /// Draw the `tints` key as one strip of square swatches in place of the side key, labeled at its two ends in the value-label format.
+    #[model(absent = "the side key")]
+    pub strip_key: Option<bool>,
+    /// Center each x label on the divide where its column starts, as an hour names the moment it begins, instead of on the column's middle.
+    #[model(absent = "labels centered on their cells")]
+    pub label_divides: Option<bool>,
     /// Heatmap-family mark overrides.
     #[model(inherit_slot = "Style.charts.marks")]
     pub marks: HeatmapChartMarksStyle,
-    /// Rules that restyle a cell by its row's value, keyed by column name. Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, is_null, or default) plus the style it applies: marks.rect color, opacity and stroke (color, width), and marks.text font color and weight. A rule's color overrides an authored color channel for the matched cell only; the legend is unchanged. Every matching rule applies; where two set the same key the later one wins, so list the more specific rule last. A `default: true` rule applies only when no other rule matched. Two columns cannot patch the same property.
+    /// Rules that restyle a cell by its row's value, keyed by column name. Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, is_null, or default) plus the style it applies: marks.rect color, opacity and stroke (color, width), and marks.text font color and weight (the cell labels). A rule's color overrides an authored color channel for the matched cell only; the legend is unchanged. Every matching rule applies; where two set the same key the later one wins, so list the more specific rule last. A `default: true` rule applies only when no other rule matched. Two columns cannot patch the same property.
     #[model(fill = fill_empty)]
     pub conditional: IndexMap<String, Vec<HeatmapChartStyleConditional>>,
 }

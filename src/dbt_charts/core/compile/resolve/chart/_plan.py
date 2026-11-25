@@ -44,6 +44,7 @@ from dbt_charts.core.compile.resolve.chart._axis_color import (
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _channels_for,
+    _classifier_defaults,
     _classify_to_channel_type,
     _column_numeric_values,
 )
@@ -66,7 +67,10 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
 from dbt_charts.core.compile.resolve.style.chart_context import CartesianFamilyChart
 from dbt_charts.core.compile.resolve.style.chart_style import over_board_family_color
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
-from dbt_charts.core.diagnostics.codes_compile import ERR_SCALE_TYPE_SCATTER_ONLY
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_DOMAIN_OPEN_END_UNSUPPORTED,
+    ERR_SCALE_TYPE_SCATTER_ONLY,
+)
 
 __all__ = [
     "CartesianPlan",
@@ -82,9 +86,10 @@ def x_channel_type(
     data: ChartRows,
     chart_style_context: ChartStyleContext,
     chart_type: str,
-) -> str:
+) -> tuple[str, bool]:
     """The x channel's type: ``nominal`` when the cascade's ``axis_x.type``
-    says so, else what the column's values classify as.
+    says so, else what the column's values classify as; and whether that type
+    is the classifier's default for a column with no non-null value.
 
     ``axis_x.type`` sits only on the ``axis_x`` slots (the chart's own, its
     family's, ``charts.axis_x``), never on a channel-typed slot, so it is
@@ -102,8 +107,11 @@ def x_channel_type(
         None,
     )
     if authored == "nominal":
-        return "nominal"
-    return _classify_to_channel_type(normalized.x, data, is_dimension=True)
+        return "nominal", False
+    return (
+        _classify_to_channel_type(normalized.x, data, is_dimension=True),
+        _classifier_defaults(normalized.x, data),
+    )
 
 
 def quantitative_channel_values(
@@ -190,6 +198,8 @@ def plan_cartesian(
     *,
     has_quantitative_axis: bool,
     temporal_band_axes: frozenset[Literal["axis_x", "axis_y"]],
+    x_type_defaulted: bool,
+    y_type_defaulted: bool,
     horizontal: bool | None,
 ) -> CartesianPlan:
     """Run the shared cartesian prelude: channels, axis bake.
@@ -208,6 +218,10 @@ def plan_cartesian(
     has no ``axis_quantitative`` field to read (see
     ``_QuantitativeAxisChartStyleMixin`` in ``compile/models/style/theme/
     _chart_base.py``). Every other cartesian family keeps the default.
+
+    ``x_type_defaulted``/``y_type_defaulted`` mark a channel type the family
+    took from a classifier that found no non-null value; heatmap declares both
+    axes nominal, so neither is defaulted.
     """
     primary = _with_color_tokens(
         over_board_family_color(normalized, normalized.style, chart_style_context),
@@ -227,12 +241,14 @@ def plan_cartesian(
         x_channel_type,
         y_channel_type,
         axis_overrides,
-        bool(data),
+        x_type_defaulted,
+        y_type_defaulted,
         multiples=multiples,
         y=y,
         temporal_band_axes=temporal_band_axes,
     )
     _reject_bent_scale_off_scatter(normalized.id, normalized.type, baked)
+    _reject_unfitted_open_domain(normalized.id, normalized.type, baked)
     if horizontal is not None:
         ax, ay, _ = settle_axis_edges(
             baked.x.style, baked.y.style, axis_overrides, horizontal, normalized.id
@@ -259,6 +275,35 @@ def plan_cartesian(
     return CartesianPlan(
         primary=primary, channels=channels, axes=baked, axis_overrides=axis_overrides
     )
+
+
+def _reject_unfitted_open_domain(
+    chart_id: str, chart_type: str, baked: BakedCartesianAxes
+) -> None:
+    """Raise when a domain has a null end on an axis no resolver fits to the data.
+
+    Only the measure y-axis of a line, area, bar or scatter closes a null end.
+    """
+    axes: list[tuple[str, AxisXStyle | AxisYStyle]] = [("axis_x", baked.x.style)]
+    if chart_type in ("heatmap", "histogram"):
+        axes.append(("axis_y", baked.y.style))
+    for axis, style in axes:
+        continuous = style.scale.continuous if style.scale is not None else None
+        if (
+            continuous is not None
+            and continuous.domain is not None
+            and None
+            in (
+                continuous.domain.min,
+                continuous.domain.max,
+            )
+        ):
+            raise CompilationError.from_code(
+                ERR_DOMAIN_OPEN_END_UNSUPPORTED,
+                chart_id=chart_id,
+                axis=axis,
+                chart_type=chart_type,
+            )
 
 
 _BENT_SCALE_TYPES = frozenset({"pow", "sqrt", "symlog"})

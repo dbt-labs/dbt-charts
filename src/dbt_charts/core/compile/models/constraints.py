@@ -124,8 +124,9 @@ class Forbids:
 
 @dataclasses.dataclass(frozen=True)
 class ItemsMatch:
-    """When every condition holds, each item of the list at ``key`` is a string
-    fully matching ``pattern`` (ECMA-262 compatible, anchored with ``^...$``)."""
+    """When every condition holds, each item of the list at ``key``, or each set
+    value of the mapping there, is a string fully matching ``pattern``
+    (ECMA-262 compatible, anchored with ``^...$``)."""
 
     key: str
     pattern: str
@@ -309,6 +310,8 @@ def check_constraints(model: BaseModel) -> None:
                         raise _fail(model, message)
             case ItemsMatch(key, pattern, message, when):
                 items = _value_at(model, key)
+                if isinstance(items, BaseModel):
+                    items = [v for v in items.model_dump().values() if v is not None]
                 if not isinstance(items, (list, tuple)) or not all(
                     _holds(model, c) for c in when
                 ):

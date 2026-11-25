@@ -3,8 +3,7 @@
 Detection rule: fires on a bar/line/area/scatter chart with typed overlay
 ``layers`` when one y series (the base chart's own y column or a layer's)
 reaches under 6% of the shared y-axis, AND no layer pins its own y-axis.
-Reach is the series' drawn band: from the axis baseline (zero) when the axis
-includes it, else its own variation.
+Reach is the series' drawn band: from zero to its values, clipped to the axis.
 
 The canonical same-query cases, adapted to the current
 ``chart.layers`` overlay model (no separate ``type: layered`` chart — the
@@ -388,8 +387,8 @@ def test_no_fire_when_layer_with_own_query_has_axis_y_set() -> None:
 # ---------------------------------------------------------------------------
 # Reach threshold: accept / reject table
 #
-# Reach = the series' drawn band over the shared axis span, the band running
-# from zero when the axis includes it. Fires under 6%.
+# Reach = the series' band (zero to its values, clipped to the axis) over the
+# shared axis span. Fires under 6%.
 #
 #   series on a shared axis                        | zero | reach | verdict
 #   -----------------------------------------------|------|-------|--------
@@ -400,7 +399,7 @@ def test_no_fire_when_layer_with_own_query_has_axis_y_set() -> None:
 #   revenue 80-120 (bar) + constant target 100     | yes  | 83%   | silent
 #   revenue 4.8-5.0M (bar) + profit 6.0-6.1M       | yes  | 73%   | silent
 #   line 42-78 + line 50-70                        | no   | 56%   | silent
-#   line 42-78 + constant target 60                | no   | n/a   | silent (flat by data)
+#   line 42-78 + constant target 60                | no   | 50%   | silent
 #   either layer pins axis_y.position              | -    | -     | silent
 # ---------------------------------------------------------------------------
 
@@ -525,5 +524,56 @@ def test_a_pinned_non_extreme_layer_silences_the_whole_chart() -> None:
     rows = [
         {"month": "Jan", "sales": 100.0, "conv": 2.0, "margin": 40.0},
         {"month": "Feb", "sales": 90.0, "conv": 3.0, "margin": 50.0},
+    ]
+    assert not _fires(chart, rows)
+
+
+def test_silent_on_a_goal_line_that_tracks_its_bars_on_an_authored_domain() -> None:
+    chart = _line_chart(
+        y="change",
+        layers=[LineLayer(type="line", y="goal")],
+        style={"axis_y": {"scale": {"continuous": {"domain": [-5, 15]}}}},
+    )
+    rows = [
+        {"month": "Jan", "change": 2.9, "goal": 4.6},
+        {"month": "Feb", "change": 4.1, "goal": 4.9},
+        {"month": "Mar", "change": 5.4, "goal": 5.1},
+    ]
+    assert not _fires(chart, rows)
+
+
+def test_silent_on_a_goal_line_beside_a_zoomed_line_that_is_not_zero_anchored() -> None:
+    chart = _line_chart(y="sales", layers=[LineLayer(type="line", y="goal")])
+    rows = _two_series("goal", [58.0, 60.0, 62.0])
+    assert not _fires(chart, rows)
+
+
+def test_fires_with_advice_that_never_suggests_a_dual_axis() -> None:
+    chart = _make_chart(y="revenue", layers=[LineLayer(type="line", y="rate")])
+    rows = [
+        {"month": "Jan", "revenue": 100_000.0, "rate": 0.02},
+        {"month": "Feb", "revenue": 180_000.0, "rate": 0.03},
+    ]
+    (w,) = detector.detect(_make_ctx(chart, rows))
+    assert w.fix is not None
+    fix = w.fix.lower()
+    assert "same units" in fix and "two charts" in fix
+    assert "dual" not in fix and "second axis" not in fix and "own axis" not in fix
+
+
+def test_silent_on_a_constant_target_just_above_the_floor_of_a_zoomed_line() -> None:
+    chart = _line_chart(y="sales", layers=[LineLayer(type="line", y="target")])
+    assert not _fires(chart, _two_series("target", [43.0, 43.0, 43.0]))
+
+
+def test_silent_on_a_constant_target_just_above_a_rounded_tick_floor() -> None:
+    chart = _line_chart(
+        y="sales",
+        layers=[LineLayer(type="line", y="target")],
+        style={"axis_y": {"scale": {"continuous": {"domain": [40, 80]}}}},
+    )
+    rows = [
+        {"month": m, "sales": s, "target": 40.5}
+        for m, s in zip(["Jan", "Feb", "Mar"], [41.0, 60.0, 79.0], strict=True)
     ]
     assert not _fires(chart, rows)

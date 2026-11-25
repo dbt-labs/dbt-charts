@@ -581,7 +581,7 @@ _OVERFLOW_WIDTH = 450.0
 
 def _layered_chart(family: str, **kwargs: Any) -> Chart:
     return _BUILDERS[family](
-        y_label=_LONG_BASE_LABEL,
+        field_labels={"revenue": _LONG_BASE_LABEL},
         layers=[LineLayer(type="line", y="target", label=_LONG_LAYER_LABEL)],
         **kwargs,
     )

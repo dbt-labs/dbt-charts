@@ -10,9 +10,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.resolve.chart._chart_rows import PanelRows
+
+if TYPE_CHECKING:
+    from dbt_charts.core.compile.models.primitives import ScaleDomain
+    from dbt_charts.core.compile.models.style.theme.axis import AxisDomain
 
 ChartValue = str | int | float | Decimal
 # stacked_bar_totals's row shape -- a named alias so the type-state gate
@@ -43,24 +47,24 @@ def apply_headroom(
     return top if cap is None else max(value, min(top, cap))
 
 
-def numeric_domain_bounds(domain: object) -> tuple[float, float] | None:
-    """Return ``(lo, hi)`` when ``domain`` is a 2-element list/tuple of reals.
+def numeric_domain_bounds(
+    domain: AxisDomain
+    | ScaleDomain
+    | tuple[int | float | str, int | float | str]
+    | None,
+) -> tuple[float, float] | None:
+    """Return ``(lo, hi)`` when ``domain`` pins both ends to numbers.
 
     An authored quantitative ``scale.domain`` feeds these bounds into
     ``nice_tick_values`` so the tick ladder spans the authored range, not just
-    the data extent. Returns ``None`` for an unset, non-numeric (categorical /
-    ordinal), or malformed domain — the caller then falls back to the data
-    extent unchanged.
+    the data extent. Returns ``None`` for an unset, one-sided or date domain:
+    the caller then falls back to the data extent unchanged. Takes the authored
+    domain or the resolved style's closed pair.
     """
-    if not isinstance(domain, (list, tuple)) or len(domain) != 2:
+    if domain is None:
         return None
-    lo, hi = domain
-    if (
-        isinstance(lo, (int, float))
-        and not isinstance(lo, bool)
-        and isinstance(hi, (int, float))
-        and not isinstance(hi, bool)
-    ):
+    lo, hi = domain if isinstance(domain, tuple) else (domain.min, domain.max)
+    if isinstance(lo, (int, float)) and isinstance(hi, (int, float)):
         return float(lo), float(hi)
     return None
 

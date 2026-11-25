@@ -84,7 +84,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                 continue
             if not rows:
                 continue
-            lo, hi = min(scale.domain), max(scale.domain)
+            lo, hi = sorted((scale.domain.min, scale.domain.max))
             if not any(
                 paints_outside_domain(row.get(layer.y), (lo, hi)) for row in rows
             ):

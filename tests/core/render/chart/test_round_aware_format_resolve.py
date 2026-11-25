@@ -72,7 +72,14 @@ def _resolved_axis_y_for_format(format_spec: str) -> object:
         y=AxisYStylePatch(labels=AxisYLabelStylePatch(format=format_spec))
     )
     baked = _bake_cartesian_axes(
-        chart_style_context, chart, "bar", "ordinal", "quantitative", overrides, True
+        chart_style_context,
+        chart,
+        "bar",
+        "ordinal",
+        "quantitative",
+        overrides,
+        False,
+        False,
     )
     return build_resolved_axis(
         baked.y.style,

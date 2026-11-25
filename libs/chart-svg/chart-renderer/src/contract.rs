@@ -130,6 +130,12 @@ pub fn facet_header(header: &str, text: Node) -> Result<Node, String> {
     Ok(Node::group(Role::Title, attrs, vec![text]))
 }
 
+/// Every `aria-label` value in `svg`, in document order.
+#[cfg(test)]
+pub(crate) fn aria_labels(svg: &str) -> Vec<String> {
+    svg.split("aria-label=\"").skip(1).map(|tail| tail[..tail.find('"').expect("an attribute value closes")].to_string()).collect()
+}
+
 /// Whether `svg` announces nothing but axes: no mark carries an `aria-label`.
 #[cfg(test)]
 pub(crate) fn has_no_mark_labels(svg: &str) -> bool {
@@ -851,7 +857,7 @@ mod tests {
     }
 
     /// `charts/bar-charts_8/region_revenue_by_category` (horizontal, same
-    /// `stack_order` as the vertical case above): ranks over the
+    /// `series_order` as the vertical case above): ranks over the
     /// UNREVERSED domain -- `Electronics` (the paint order's own first
     /// entry) ranks first here, `Tools` last, the opposite of the vertical
     /// chart above despite identical series sums.

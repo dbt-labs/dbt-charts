@@ -11,7 +11,6 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
-    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -25,6 +24,10 @@ from dbt_charts.core.compile.models.constraints import (
     ItemsMatch,
     ValueIn,
 )
+from dbt_charts.core.compile.models.factories import (
+    register_as_own_patch,
+    register_shorthand,
+)
 from dbt_charts.core.compile.models.markers import (
     AUTO,
     Absent,
@@ -33,10 +36,8 @@ from dbt_charts.core.compile.models.markers import (
     Conditionable,
     Format,
     InheritSlot,
-    Merge,
     NullHint,
     SkipInheritSlots,
-    Strategy,
 )
 from dbt_charts.core.compile.models.schema_names import FormatAlias
 
@@ -93,8 +94,11 @@ class AxisLabelOverlapConfig(BaseModel):
 
 
 from dbt_charts.core.compile.models.primitives import (
+    DOMAIN_NEITHER_END,
     FontStyle,
     FormatConfig,
+    StrictNumber,
+    domain_shorthand,
 )
 from dbt_charts.core.compile.models.style.theme.board import (
     PaddingStyle,
@@ -133,8 +137,8 @@ class AxisGridTornBaselineStyle(BaseModel):
 
     When a value axis excludes zero, the plot edge nearest zero is torn like
     paper, in the gridline ink, so it cannot be read as a floor at zero. Line
-    charts tear the y-axis and ranged bars their value axis; other chart types
-    ignore it.
+    charts tear the y-axis and ranged bars their value axis by default; scatter
+    plots tear each value axis on request; other chart types ignore it.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -602,21 +606,63 @@ _ISO_DATE_PATTERN = (
     r"(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])?)?$"
 )
 _TEMPORAL_DOMAIN_MESSAGE = (
-    "scale.domain element {item!r} is not an ISO-8601 date/datetime string, "
+    "scale.domain bound {item!r} is not an ISO-8601 date/datetime string, "
     "but scale.type: temporal requires both domain bounds to be dates (e.g. "
     "'1955-01-01')."
 )
 
 
-def _coerce_list_to_tuple(
-    value: object,  # type-state: object_annotation — BeforeValidator input, any raw value
-) -> object:  # type-state: object_annotation — mirrors the input's object type
-    """YAML has no tuple literal -- every authored ``domain:`` arrives as a
-    ``list``. Normalize it to a ``tuple`` before the field's own strict
-    tuple-arity validation runs, so that validation can reject every other
-    iterable (a set, a deque, a generator) as a real shape error instead of
-    silently reordering or truncating it."""
-    return tuple(value) if isinstance(value, list) else value
+class AxisDomain(ConstrainedModel):
+    """The values an axis scale's ends sit at; ``[min, max]`` is its shorthand."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        AtLeastOneOf(("min", "max"), DOMAIN_NEITHER_END),
+    )
+
+    min: StrictNumber | str | None = Field(
+        default=None, description="Where the scale's low end sits; unset fits the data."
+    )
+    max: StrictNumber | str | None = Field(
+        default=None,
+        description="Where the scale's high end sits; unset fits the data.",
+    )
+
+    # The pattern bounds month and day but cannot know month lengths.
+    @field_validator("min", "max")
+    @classmethod
+    def _reject_impossible_dates(
+        cls, end: int | float | str | None
+    ) -> int | float | str | None:
+        if isinstance(end, str) and re.fullmatch(_ISO_DATE_PATTERN, end):
+            try:
+                dt.date.fromisoformat(end[:10])
+            except ValueError:
+                raise ValueError(
+                    f"scale.domain bound {end!r} is not a real date."
+                ) from None
+        return end
+
+    @model_validator(mode="after")
+    def _reject_open_date_end(self) -> AxisDomain:
+        if (self.min is None) != (self.max is None):
+            pinned = self.min if self.max is None else self.max
+            if isinstance(pinned, str):
+                raise ValueError(
+                    f"scale.domain with an open end pins a number, got {pinned!r}. "
+                    "Use a numeric bound, or pin both ends."
+                )
+        return self
+
+
+AXIS_DOMAIN_SHORTHAND = BeforeValidator(
+    domain_shorthand,
+    json_schema_input_type=tuple[StrictNumber | str | None, StrictNumber | str | None]
+    | AxisDomain,
+)
+register_as_own_patch(AxisDomain)
+register_shorthand(AxisDomain, AXIS_DOMAIN_SHORTHAND)
 
 
 class ScaleDomainValidationMixin(ConstrainedModel):
@@ -638,26 +684,6 @@ class ScaleDomainValidationMixin(ConstrainedModel):
             when=(ValueIn("type", ("temporal",)),),
         ),
     )
-
-    # The pattern bounds month and day but cannot know month lengths.
-    @field_validator("domain", check_fields=False)
-    @classmethod
-    def _reject_impossible_dates(
-        cls,
-        domain: tuple[int | float | str, int | float | str] | None,
-        info: ValidationInfo,
-    ) -> tuple[int | float | str, int | float | str] | None:
-        if domain is None or info.data.get("type") != "temporal":
-            return domain
-        for value in domain:
-            if isinstance(value, str) and re.fullmatch(_ISO_DATE_PATTERN, value):
-                try:
-                    dt.date.fromisoformat(value[:10])
-                except ValueError:
-                    raise ValueError(
-                        _TEMPORAL_DOMAIN_MESSAGE.format(item=value)
-                    ) from None
-        return domain
 
 
 class ScaleLogStyle(BaseModel):
@@ -753,42 +779,13 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
             "the field type."
         ),
     )
-    domain: Annotated[
-        Annotated[
-            # A domain is structurally [low, high] -- a fixed 2-tuple, not
-            # an arbitrary-length list. strict=True on the numeric arms
-            # excludes bool (an int subclass; lax mode would otherwise
-            # silently rewrite an authored `true` to `1`).
-            tuple[
-                Annotated[int, Field(strict=True)]
-                | Annotated[float, Field(strict=True)]
-                | str,
-                Annotated[int, Field(strict=True)]
-                | Annotated[float, Field(strict=True)]
-                | str,
-            ],
-            # strict=True on the tuple itself too -- domain order is
-            # semantic ([low, high]), so pydantic's lax mode silently
-            # coercing a set/frozenset/deque/generator into a tuple (in
-            # arbitrary order for a set) would silently corrupt it rather
-            # than reject it. _coerce_list_to_tuple runs first so a real
-            # authored (YAML) list still reaches this strict check as a
-            # tuple, since YAML itself has no tuple literal.
-            Field(strict=True),
-            BeforeValidator(_coerce_list_to_tuple),
-        ]
-        | None,
-        Merge(Strategy.OVERRIDE),
-    ] = Field(
+    domain: Annotated[AxisDomain, AXIS_DOMAIN_SHORTHAND] | None = Field(
         default=None,
         description=(
-            "Explicit [low, high] scale domain; None fits the domain "
-            "to the data. Must have exactly 2 elements: "
-            "dbt charts only supports a continuous range override, "
-            "not an explicit category enumeration. Neither element "
-            "may be null; pin both bounds, or omit the key to fit the data. "
-            "When ``type: temporal`` is set, both elements must be ISO-8601 "
-            "date/datetime strings."
+            "Where the scale's ends sit, as [min, max]; unset fits the data. "
+            "On the y-axis one end may be left out (or null): the pinned end is "
+            "exact and the open end fits the data, with its usual headroom. "
+            "With ``type: temporal`` both ends are ISO-8601 dates."
         ),
     )
     log: ScaleLogStyle | None = Field(
@@ -810,12 +807,13 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
             self.type == "log"
             and self.domain is not None
             and any(
-                isinstance(bound, (int, float)) and bound <= 0 for bound in self.domain
+                isinstance(bound, (int, float)) and bound <= 0
+                for bound in (self.domain.min, self.domain.max)
             )
         ):
             raise ValueError(
                 "scale.continuous.type: log requires a positive domain — a log "
-                f"scale is undefined at and below 0, got domain {list(self.domain)}. "
+                f"scale is undefined at and below 0, got domain {[self.domain.min, self.domain.max]}. "
                 "Use positive bounds or drop the log scale."
             )
         if self.log is not None and self.log.base is not None and self.log.base <= 1:
@@ -872,7 +870,7 @@ class BaseScaleStyle(BaseModel):
             "domain_max = data_max + headroom * span; "
             "domain_min = data_min - headroom * span. "
             "None inherits the theme default; 0 disables headroom. "
-            "Ignored with an explicit `domain` or `stack: normalize`."
+            "Applies only to a data-fitted end: ignored for a pinned `domain` end and with `stack: normalize`."
         ),
     )
     # Explicit tick values for the scale (not to be confused with

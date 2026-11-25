@@ -782,16 +782,18 @@ struct ColConfig {
     // `transparent`/`none`, or the name of a row field carrying one
     #[serde(default)]
     background: Option<String>,
-    // Static cell ink — the `color` and `weight` of `TableColumnConfig.font`,
-    // the only two fields the paint site reads.
+    // Static cell ink — the `color`, `weight`, `style` and `decoration` of
+    // `TableColumnConfig.font`, the fields the paint site reads.
     #[serde(default)]
     font: Option<ColumnFont>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct ColumnFont {
     color: Option<String>,
     weight: Option<Value>,
+    style: Option<String>,
+    decoration: Option<String>,
 }
 
 /// `numeral_scale.py`'s `SuffixMode`. It fixes the register
@@ -2393,7 +2395,6 @@ pub(crate) mod tests {
         let _locale = ::bind::time_locale::en_us_scope();
         let columns = json!({"team": {}, "n": {"scale": {"background": {
             "palette": "seq",
-            "domain": "data",
             "arm_mode": "asymmetric",
             "resolved_stops": ["#000000", "#ffffff"]
         }}}});
@@ -9230,7 +9231,6 @@ mod conditional_formatting_tests {
         let columns = json!({"v": {"label": "V", "format": "percent", "scale": {
             "background": {
                 "palette": "seq",
-                "domain": "data",
                 "hinge": "auto",
                 "arm_mode": "asymmetric",
                 "resolved_stops": ["#000000", "#808080", "#ffffff"]
@@ -9250,7 +9250,6 @@ mod conditional_formatting_tests {
         let columns = json!({"v": {"label": "V", "scale": {
             "background": {
                 "palette": "seq",
-                "domain": "data",
                 "arm_mode": "asymmetric",
                 "resolved_stops": ["#000000", "#ffffff"]
             }
@@ -9271,7 +9270,6 @@ mod conditional_formatting_tests {
             let columns = json!({"v": {"label": "V", "scale": {
                 "background": {
                     "palette": "seq",
-                    "domain": "data",
                     "nice": nice,
                     "arm_mode": "asymmetric",
                     "resolved_stops": ["#000000", "#ffffff"]
@@ -9304,7 +9302,6 @@ mod conditional_formatting_tests {
         let columns = json!({"v": {"label": "V", "scale": {
             "background": {
                 "palette": "seq",
-                "domain": "data",
                 "arm_mode": "asymmetric",
                 "resolved_stops": ["#000000", "#ffffff"]
             }
@@ -9351,9 +9348,7 @@ mod conditional_formatting_tests {
         let columns = json!({"v": {"label": "V", "scale": {
             "background": {
                 "palette": "seq",
-                "domain": "data",
-                "min": 0.0,
-                "max": 10.0,
+                "domain": {"min": 0.0, "max": 10.0},
                 "arm_mode": "asymmetric",
                 "resolved_stops": ["#000000", "#ffffff"]
             }
@@ -9401,7 +9396,6 @@ mod conditional_formatting_tests {
         let columns = json!({"v": {"label": "V", "scale": {
             "background": {
                 "palette": "seq",
-                "domain": "data",
                 "arm_mode": "asymmetric",
                 "resolved_stops": ["#000000", "#ffffff"]
             }
@@ -9528,8 +9522,8 @@ mod conditional_formatting_tests {
 
     fn scale_target(null_color: Option<&str>) -> Value {
         json!({
-            "palette": "seq", "domain": "data", "arm_mode": "asymmetric",
-            "resolved_stops": ["#000000", "#ffffff"], "min": 0, "max": 100,
+            "palette": "seq", "arm_mode": "asymmetric",
+            "resolved_stops": ["#000000", "#ffffff"], "domain": {"min": 0, "max": 100},
             "null_color": null_color,
         })
     }
@@ -9591,6 +9585,26 @@ mod conditional_formatting_tests {
         assert!(svg.contains("fill=\"#ffffff\""), "scaled fill missing:\n{svg}");
         assert!(svg.contains("fill=\"#eeeeee\""), "static fill missing:\n{svg}");
         assert_eq!(text_fill(&svg, "100"), "#112233");
+    }
+
+    /// A column's static `font.style` and `font.decoration` paint its cells; a matching
+    /// rule's own `decoration` wins over the static one.
+    #[test]
+    fn a_static_font_style_and_decoration_paint_under_the_rules() {
+        let rows = vec![json!({"s": "plain"}), json!({"s": "ruled"})];
+        let columns = json!({"s": {
+            "label": "S", "font": {"style": "italic", "decoration": "underline"},
+        }});
+        let cf = json!({"s": [{"eq": "ruled", "font": {"decoration": "line-through"}}]});
+        let svg = render(&cf_payload(columns, rows, cf), &test_fonts()).unwrap();
+        let tag = |text: &str| {
+            let end = svg.find(&format!(">{text}<")).unwrap_or_else(|| panic!("{text} missing:\n{svg}"));
+            svg[svg[..end].rfind("<text").unwrap()..end].to_string()
+        };
+        assert!(tag("plain").contains("text-decoration=\"underline\""), "{svg}");
+        assert!(tag("plain").contains("font-style=\"italic\""), "{svg}");
+        assert!(tag("ruled").contains("text-decoration=\"line-through\""), "{svg}");
+        assert!(tag("ruled").contains("font-style=\"italic\""), "{svg}");
     }
 
     #[test]
@@ -9902,9 +9916,10 @@ mod all_pinned_overflow_growth_tests {
 
     #[test]
     fn a_mixed_pin_and_auto_overflow_clips_and_warns() {
-        // Not every column is pinned here (`b` is auto): the columns still
-        // sum past the slot, so the table clips to it and says so.
-        let rows = vec![json!({"a": "x", "b": "a very much longer cell value here"})];
+        // Not every column is pinned here (`b` is auto): the pin gives width
+        // back only down to its own widest word, which alone outruns the slot,
+        // so the table clips to it and says so.
+        let rows = vec![json!({"a": "Extraordinarily", "b": "a very much longer cell value here"})];
         let columns = json!({
             "a": {"label": "A", "width": 490},
             "b": {"label": "B"},
@@ -9921,7 +9936,7 @@ mod all_pinned_overflow_growth_tests {
         let payload_json = json!({
             "resolved": resolved,
             "rows": rows,
-            "width": 500.0,
+            "width": 60.0,
             "height": 200.0,
             "background": "#ffffff",
             "fonts_dir": null,
@@ -9930,7 +9945,7 @@ mod all_pinned_overflow_growth_tests {
         let payload: Payload = crate::test_payload(payload_json);
         let (svg, codes) = super::tests::render_with_warnings(&payload);
         assert!(codes.contains(&"WARN-TABLE-COLUMNS-OVERFLOW"), "{codes:?}");
-        assert!(svg.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"500\""), "{svg}");
+        assert!(svg.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"60\""), "{svg}");
         assert!(svg.contains("clip-path=\"url(#table-clip-"), "the body clips to the slot:\n{svg}");
     }
     fn pinned_payload(width: f64, pin: f64) -> Payload {
@@ -13419,8 +13434,9 @@ mod contract_tests {
         let _scope = super::tests::en_us_scope();
         let fonts = fonts();
         let measure = Measure { fonts: &fonts };
-        let bound = bind::bind(&payload_pinned(200.0, json!(500))).expect("binds");
-        let cell = Rect { x: 0.0, y: 0.0, width: 200.0, height: 400.0 };
+        // The pin gives width back, but the columns' widest words outrun the slot.
+        let bound = bind::bind(&payload_pinned(60.0, json!(500))).expect("binds");
+        let cell = Rect { x: 0.0, y: 0.0, width: 60.0, height: 400.0 };
         let (laid_out, sunk) =
             diagnostic::collect(|| layout::layout(&bound, cell, &measure).expect("lays out"));
         assert!(sunk.is_empty(), "{sunk:?}");

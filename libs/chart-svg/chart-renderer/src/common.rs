@@ -4228,6 +4228,29 @@ pub fn wide_measures_title(
         .join(&display_text::language::tr("controls.list_join", None, &[])?))
 }
 
+/// The value axis's title: the authored `y_label`, else the measure's own
+/// title, which on a folded multi-measure chart (`field` is then the synthetic
+/// value field) is the joined measure names.
+pub fn measure_title(
+    field: &str,
+    label: Option<&str>,
+    wide_measures: &[String],
+    field_labels: &FieldLabels,
+) -> Result<String, String> {
+    match (label, wide_measures.is_empty()) {
+        (_, true) => axis_title_text(field, label, field_labels),
+        (Some(label), false) => Ok(display_text::collapse_title_newlines(label)),
+        (None, false) => wide_measures_title(wide_measures, field_labels),
+    }
+}
+
+/// The authored axis label a hover names its value by. A blank `x_label` or
+/// `y_label` only hides the axis title, so the hover then reads the field's
+/// own title, as with no label authored.
+pub fn hover_label(label: Option<&str>) -> Option<&str> {
+    label.filter(|label| !label.trim().is_empty())
+}
+
 // Named engine format → d3 spec (`PREDEFINED_SPECS`). Shared by kpi.rs and
 // table.rs — the only two families with a `format:` column that can name a
 // predefined number format. The SI members carry an explicit `.3` because d3's
@@ -5213,6 +5236,15 @@ pub struct StyleChannel {
     pub scale: Option<ScaleTarget>,
 }
 
+/// A gradient's authored `domain`: either end absent fits the data on that side.
+#[derive(Deserialize, Clone, Copy, Default)]
+pub struct DomainBounds {
+    #[serde(default)]
+    pub min: Option<f64>,
+    #[serde(default)]
+    pub max: Option<f64>,
+}
+
 /// `ResolvedScaleTarget` (`resolve_hinge`/`compute_scale_domain`/
 /// `interpolate_scale_color` all take this as `target`): the palette (a Vega
 /// scheme name, or color stops: a named palette's already baked into
@@ -5224,9 +5256,7 @@ pub struct ScaleTarget {
     #[serde(default)]
     pub resolved_stops: Option<Vec<String>>,
     #[serde(default)]
-    pub min: Option<f64>,
-    #[serde(default)]
-    pub max: Option<f64>,
+    pub domain: Option<DomainBounds>,
     #[serde(default)]
     pub nice: Option<bool>,
     #[serde(default)]

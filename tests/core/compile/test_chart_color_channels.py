@@ -465,17 +465,17 @@ def test_parse_style_channel_scale_must_be_dict():
 
 
 # ============================================================================
-# C1: KPI gradient requires explicit min/max
+# C1: KPI gradient domain is optional
 # ============================================================================
 
 
 def test_kpi_gradient_without_explicit_bounds_ok():
-    """KPI gradient with data-domain (no explicit min/max) compiles cleanly.
+    """KPI gradient with data-domain (no explicit domain) compiles cleanly.
 
     The renderer's ``interpolate_scale_color`` returns the middle palette stop
     when the single-row KPI domain collapses to (v, v). That's a sensible
     fallback matching Looker's "show some color" behavior on KPIs with named
-    min/max constraints. Authors who want sharper colors set min/max
+    domain constraints. Authors who want sharper colors set a domain
     explicitly.
     """
     from dbt_charts.core.compile.resolve.chart.channel import normalize_chart_channels
@@ -487,19 +487,18 @@ def test_kpi_gradient_without_explicit_bounds_ok():
     channels = normalize_chart_channels(chart, {"revenue"})
     assert channels["color"].mode == "gradient"
     assert channels["color"].scale is not None
-    assert channels["color"].scale.min is None
-    assert channels["color"].scale.max is None
+    assert channels["color"].scale.domain is None
 
 
 def test_kpi_gradient_with_explicit_bounds_ok():
-    """KPI gradient channel with explicit min and max does not raise."""
+    """KPI gradient channel with an explicit domain does not raise."""
     from dbt_charts.core.compile.resolve.chart.channel import normalize_chart_channels
 
     chart = _FakeChart(
         type="kpi",
         color={
             "column": "revenue",
-            "scale": {"palette": ["#fff", "#00f"], "min": 0, "max": 1_000_000},
+            "scale": {"palette": ["#fff", "#00f"], "domain": [0, 1_000_000]},
         },
     )
     channels = normalize_chart_channels(chart, {"revenue"})
@@ -535,32 +534,8 @@ _DIVERGING_STOPS = ["#08306b", "#2166ac", "#e4e4e4", "#b2182b", "#67001f"]
 
 
 # ============================================================================
-# Regression: domain=None preserved through bake and ResolvedScaleTargetConfig guard
+# ResolvedScaleTargetConfig guard
 # ============================================================================
-
-
-def test_bake_scale_target_stops_preserves_explicit_domain_none():
-    """domain=None must survive the authored→resolved upgrade in bake_scale_target_stops.
-
-    ScaleTargetConfig.domain defaults to 'data'; an explicit domain=None is
-    meaningful ('use explicit min/max'). Previously, model_dump(exclude_none=True)
-    silently dropped it and revalidation re-applied the 'data' default, discarding
-    the author's intent before any downstream consumer saw it."""
-    from dbt_charts.core.compile.models.primitives import bake_scale_target_stops
-
-    cfg = ScaleTargetConfig(palette="blues", domain=None, min=0.0, max=1.0)
-    baked = bake_scale_target_stops(cfg)
-    assert baked.domain is None, (
-        f"explicit domain=None was silently reset to {baked.domain!r} during bake"
-    )
-
-    named_cfg = ScaleTargetConfig(
-        palette="dbt-seq-blue", domain=None, min=0.0, max=10.0
-    )
-    baked_named = bake_scale_target_stops(named_cfg)
-    assert baked_named.domain is None, (
-        f"explicit domain=None was silently reset to {baked_named.domain!r} during named-palette bake"
-    )
 
 
 def test_resolved_scale_target_config_rejects_unbaked_named_palette():

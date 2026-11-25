@@ -139,13 +139,13 @@ class FieldObservation:
 
     ``totals`` maps a value to the sum of the chart's measure over its rows
     (``series_totals``); a chart with no additive measure has none, and weighs
-    nothing. ``stacked`` is the order the author explicitly asked of this chart
-    (``stack_order: data`` or ``alphabetical``), empty when none.
+    nothing. ``ordered`` is the order the author explicitly asked of this chart
+    (``series_order: data`` or ``alphabetical``), empty when none.
     """
 
     values: tuple[str, ...]
     totals: Mapping[str, float]
-    stacked: tuple[str, ...] = ()
+    ordered: tuple[str, ...] = ()
 
 
 # Per-chart observations: field name → what that chart draws for it.
@@ -193,13 +193,13 @@ def _ranked(
 
 def _discover(
     options: Sequence[str],
-    stacked: Sequence[str],
+    ordered: Sequence[str],
     drawn: Sequence[str],
     observations: Sequence[FieldObservation],
 ) -> list[str]:
     """Every value the field seats, in slot order: what the author said (the
     variable's ``options``, then explicit stack orders), then the rest ranked."""
-    said = dict.fromkeys([*options, *stacked])
+    said = dict.fromkeys([*options, *ordered])
     rest = list(dict.fromkeys(v for v in drawn if v not in said))
     return [*said, *_ranked(rest, observations)]
 
@@ -219,7 +219,7 @@ def plan_category_colors(
        ``style.charts.category_colors``; the options of a variable a chart's
        link sets from the field (``seeded``, in option order, so a series keeps
        its swatch whichever options a filter leaves rows for); then an explicit
-       ``stack_order: data`` or ``alphabetical`` on a chart.
+       ``series_order: data`` or ``alphabetical`` on a chart.
     2. The values' own order, when they are all one stem and a number
        (``P1``..``P10``, ``Tier 1``..``Tier 3``).
     3. Size: the largest total first (see ``_ranked``), ties alphabetical.
@@ -256,7 +256,7 @@ def plan_category_colors(
     for field, field_observations in per_field.items():
         is_authored = field in authored
         options = list(seeded[field]) if field in seeded else []
-        stacked = [v for o in field_observations for v in o.stacked]
+        ordered = [v for o in field_observations for v in o.ordered]
         drawn = [v for o in field_observations for v in o.values]
         if not drawn and not options:
             # Nothing on screen encodes this field, so there is no scale to
@@ -266,13 +266,13 @@ def plan_category_colors(
             continue
 
         pinned, unseen, domain, seats = seats_for(
-            field, _discover(options, stacked, drawn, field_observations)
+            field, _discover(options, ordered, drawn, field_observations)
         )
         if seats > len(palette) and options:
             # Seeding is an enhancement on top of binding: options that do not
             # fit leave the field to the values the data holds, as before.
             pinned, unseen, domain, seats = seats_for(
-                field, _discover([], stacked, drawn, field_observations)
+                field, _discover([], ordered, drawn, field_observations)
             )
         if seats > len(palette):
             # Binding is an enhancement the engine volunteers; when the

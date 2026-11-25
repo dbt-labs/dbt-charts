@@ -71,7 +71,8 @@ def _build_hover_emphasis_dict(
     ``data-dbt-chart-canvas`` and read there by the runtime. The drop line
     is a different mechanism (a scaffold line added by the runtime, not a
     recede-in-place), so its paint has no such rendered fact to read off and
-    is carried explicitly instead.
+    is carried explicitly instead. ``textInk`` is the color chart text uses,
+    which an annotation rule steps up to on hover.
     """
     hover_emphasis = resolved_style.chart_defaults.hover_emphasis
     return {
@@ -79,6 +80,7 @@ def _build_hover_emphasis_dict(
         "recedeContrast": hover_emphasis.recede_contrast,
         "dropLineColor": hover_emphasis.drop_line_color,
         "dropLineWidth": hover_emphasis.drop_line_width,
+        "textInk": resolved_style.font.color,
         "dropLineDash": hover_emphasis.drop_line_dash,
     }
 

@@ -115,6 +115,8 @@ def resolve_torn_break(
         else "with a bar layer on the shared axis_y scale"
         if not layers_own_y_scale(normalized)
         and any(isinstance(layer, BarLayer) for layer in normalized.layers)
+        else "with a one-sided axis_y domain"
+        if continuous is not None and continuous.domain is not None and authored is None
         else "with an authored axis_y domain above zero"
         if authored is not None and authored[0] > 0
         else "with `axis_y.scale.continuous.zero: false`"
@@ -199,22 +201,21 @@ def plan_off_chart(
 ) -> OffChartPlan | None:
     """The tear of a ``variant: torn`` chart, or None when no bar passes it.
 
-    A pinned ``axis_y`` domain max is the break whenever a bar passes it,
-    whatever ``median_multiplier`` says; without one the break is the axis the
-    untorn bars alone would have, pinned here so the renderer needs no second
-    rule. Shapes the off-chart bar cannot draw (a numeric x among them: its bars
+    A pinned ``axis_y`` domain max, one-sided or not, is the break whenever a
+    bar passes it, whatever ``median_multiplier`` says; without one the break is
+    the axis the untorn bars alone would have, pinned here so the renderer needs
+    no second rule. Shapes the off-chart bar cannot draw (a numeric x among them: its bars
     sit on a linear scale, not bands) get the break but no domain.
     """
     continuous = ay.scale.continuous if ay.scale is not None else None
-    authored = numeric_domain_bounds(
-        continuous.domain if continuous is not None else None
-    )
+    domain = continuous.domain if continuous is not None else None
     extents, floor = bar_extents(
         dataset, normalized.x, y_fields, stacked=stack not in (None, "none")
     )
     headroom = _axis_headroom(ay)
-    if authored is not None:
-        high = authored[1]
+    pinned_high = domain.max if domain is not None else None
+    if isinstance(pinned_high, (int, float)):
+        high = float(pinned_high)
         return OffChartPlan(high, None) if max(extents, default=0.0) > high else None
     torn_break = pick_torn_break(
         extents, headroom, median_multiplier, max(layer_values, default=None)

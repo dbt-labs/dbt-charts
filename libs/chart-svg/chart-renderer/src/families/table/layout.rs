@@ -423,6 +423,35 @@ fn scale_to_budget_holding_floors(
     }
 }
 
+/// Authored `width:` pins give width back when the room they leave the other
+/// columns is short of `held`, the sum of those columns' widest words: each pin
+/// shrinks toward its own widest word (never below it, never wider than written),
+/// in proportion to the width it holds above that word, until `held` fits. Pins
+/// already at their words leave the shortfall to the allocator.
+pub(super) fn yield_pins_to_floors(
+    pins: &mut BTreeMap<String, f64>,
+    word_floors: &BTreeMap<String, f64>,
+    held: f64,
+    room: f64,
+) {
+    let shortfall = held - room;
+    if shortfall <= 0.0 {
+        return;
+    }
+    let slack: BTreeMap<String, f64> = pins
+        .iter()
+        .map(|(c, &w)| (c.clone(), (w - word_floors[c].min(w)).max(0.0)))
+        .collect();
+    let total_slack = sum_values(&slack);
+    if total_slack <= 0.0 {
+        return;
+    }
+    let given = shortfall.min(total_slack);
+    for (c, s) in slack {
+        *pins.get_mut(&c).unwrap() -= given * s / total_slack;
+    }
+}
+
 /// Cover each column's header gap
 /// first (proportionally when the surplus can't cover them all), then
 /// spread any residual proportionally to current width.
@@ -4483,13 +4512,29 @@ pub(crate) fn lay_out(
         for col in cols {
             if let Some(w) = parse_column_width(col.cfg.width.as_ref(), budget)? {
                 pins.insert(col.name.to_string(), w);
-            } else if let Some(&w) = scroll_pins.get(col.name.as_str()) {
-                pins.insert(col.name.to_string(), w);
             }
             caps.insert(
                 col.name.to_string(),
                 parse_column_width(col.cfg.max_width.as_ref(), budget)?,
             );
+        }
+        let others: Vec<&String> = column_names
+            .iter()
+            .filter(|c| !pins.contains_key(*c) && !scroll_pins.contains_key(*c))
+            .collect();
+        let held: f64 = others
+            .iter()
+            .map(|c| {
+                let floor = inputs.word_floors[*c];
+                caps[*c].map_or(floor, |m| floor.min(m))
+            })
+            .sum();
+        let room = budget - sum_values(&pins) - sum_values(scroll_pins);
+        if !others.is_empty() {
+            yield_pins_to_floors(&mut pins, &inputs.word_floors, held, room);
+        }
+        for (c, &w) in scroll_pins {
+            pins.entry(c.clone()).or_insert(w);
         }
         if std::env::var("TABLE_DEBUG").is_ok() {
             eprintln!("RUST demands: {:?}", inputs.demands);
@@ -4828,6 +4873,16 @@ pub(crate) fn lay_out(
                 continue;
             }
             let content_w = col_ws[ci] - 2.0 * pad;
+            // An auto column squeezed under its widest word would break words
+            // mid-glyph: under `fit` its cells stay on one line and paint cuts
+            // them with an ellipsis. A `width` or `max_width` the author wrote
+            // below the word keeps wrapping.
+            let floor = word_floors[col.name.as_str()];
+            let word_w = caps[col.name.as_str()].map_or(floor, |m| floor.min(m)) - 2.0 * alloc_pad;
+            if !scroll_x_mode && col.cfg.width.is_none() && content_w < word_w {
+                wrapped_lines.push(vec![None; n_rows]);
+                continue;
+            }
             let mut col_lines: Vec<Option<Vec<String>>> = Vec::with_capacity(n_rows);
             let mut tall_cells = 0_usize;
             let mut tallest = 0_usize;

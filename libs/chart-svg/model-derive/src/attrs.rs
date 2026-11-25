@@ -214,6 +214,8 @@ pub struct Container {
     pub shorthand_with: Option<String>,
     /// `string_pattern = PATH`: the pattern the schema states for that string arm.
     pub string_pattern: Option<String>,
+    /// `shorthand_items = PATH`: the `TypeExpr` of the fixed-length list `shorthand_with` widens.
+    pub shorthand_items: Option<String>,
     /// `complete`: every key is required even under an inherit slot.
     pub complete: bool,
     /// `read_under = "type"`: constraints may name the tag the model is read under.
@@ -519,6 +521,10 @@ pub fn container(attrs: &[Attribute]) -> Result<Container> {
             }
             if m.path.is_ident("string_pattern") {
                 out.string_pattern = Some(path(&m.value()?.parse::<Path>()?));
+                return Ok(());
+            }
+            if m.path.is_ident("shorthand_items") {
+                out.shorthand_items = Some(path(&m.value()?.parse::<Path>()?));
                 return Ok(());
             }
             if m.path.is_ident("fill") {

@@ -21,6 +21,7 @@ from dbt_charts.core.compile.models.style.resolved import (
 from dbt_charts.core.compile.models.style.resolved._cartesian import (
     ResolvedEndpointLabelsConfig,
 )
+from dbt_charts.core.compile.models.style.theme.axis import AxisDomain
 from dbt_charts.core.compile.resolve.chart._annotations import (
     NO_ANNOTATIONS,
     annotation_chart,
@@ -56,7 +57,9 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _resolve_stacked_bar_ticks,
     _shared_y_values,
     _zero_anchor_floats,
+    close_open_y_domain,
     resolve_y_zero,
+    stacked_total_max,
 )
 from dbt_charts.core.compile.resolve.chart._header_inks import series_header_inks
 from dbt_charts.core.compile.resolve.chart._kwargs import (
@@ -274,7 +277,9 @@ def _resolve_area(
     multiples_scale = (
         normalized.multiples.scale if normalized.multiples is not None else "shared"
     )
-    x_ch_type = x_channel_type(normalized, data, chart_style_context, "area")
+    x_ch_type, x_type_defaulted = x_channel_type(
+        normalized, data, chart_style_context, "area"
+    )
     # Checked before plan_cartesian's axis bake so a doubly-invalid chart
     # reports this encoding error, not the axis bake's. When chart.stack is
     # authored, resolved_stack doesn't need the context and the validator
@@ -304,6 +309,8 @@ def _resolve_area(
         normalized.y,
         has_quantitative_axis=True,
         temporal_band_axes=frozenset(),
+        x_type_defaulted=x_type_defaulted,
+        y_type_defaulted=False,
         horizontal=False,
     )
     area = chart_local_style_context.area
@@ -364,7 +371,6 @@ def _resolve_area(
     )
     legend_entries = cartesian_top_legend_entries(
         normalized.y if isinstance(normalized.y, str) else None,
-        normalized.y_label,
         normalized.layers,
         color_domain_values=color_domain_values,
         has_color=normalized.color is not None,
@@ -523,7 +529,9 @@ def _resolve_area(
         ] + [v for v in annotations.y_values if v > 0]
         if _log_y_floats and ay_merged.scale is not None:
             _new_cont = _ay_cont_log.model_copy(
-                update={"domain": [min(_log_y_floats), max(_log_y_floats)]}
+                update={
+                    "domain": AxisDomain(min=min(_log_y_floats), max=max(_log_y_floats))
+                }
             )
             ay_merged = ay_merged.model_copy(
                 update={
@@ -558,8 +566,22 @@ def _resolve_area(
     if resolved_stack == "normalize":
         # normalize-stack domain is always [0,1].
         area_ticks = _CartesianTickResolution((), None)
-        ay_merged = _bake_measure_domain(ay_merged, (0.0, 1.0))
+        ay_merged = _bake_measure_domain(normalized.id, ay_merged, (0.0, 1.0))
     elif is_stacked and x_field_area and _log_y_fields:
+        stacked_max = stacked_total_max(
+            dataset,
+            x_field_area,
+            _log_y_fields,
+            multiples_scale,
+            annotations.y_values,
+        )
+        ay_merged = close_open_y_domain(
+            normalized.id,
+            ay_merged,
+            [] if stacked_max is None else [*_area_floats, stacked_max],
+            True,
+            multiples_scale,
+        )
         # Stacked area ladders against the cumulative column total, not the raw
         # per-series range. Without this a chart whose columns sum to 154 labels
         # an axis that stops at 70, leaving two thirds of the plot unlabeled —
@@ -583,6 +605,9 @@ def _resolve_area(
             + list(annotations.y_values)
             if y_field_area
             else _area_floats
+        )
+        ay_merged = close_open_y_domain(
+            normalized.id, ay_merged, area_y_values, zero_anchored_area, multiples_scale
         )
         area_ticks = _resolve_cartesian_ticks(
             normalized.id,
@@ -822,7 +847,7 @@ def _resolve_area(
                 width,
                 chart_local_style_context.ink_canvas,
             ),
-            stack_order=area.stack_order,
+            series_order=area.series_order,
             area_mark=resolved_area_mark,
             line_mark=resolved_line_mark,
             point_mark=area_point_mark,

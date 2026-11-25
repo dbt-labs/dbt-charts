@@ -84,7 +84,7 @@ pub use engine::{
     migrate, plan_text, retired_keys, Migrated, Outcome, RetiredKey, TextError, TextPlan,
 };
 pub use registry::Registry;
-pub use shorthand::read_board;
+pub use shorthand::{is_ref_shaped, read_board};
 pub use v0_6_0::THEME_RENAMES;
 
 type Module = fn(&Grammars) -> Declarations;

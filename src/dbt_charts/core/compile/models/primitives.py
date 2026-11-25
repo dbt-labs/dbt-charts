@@ -15,6 +15,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    ClassVar,
     Literal,
     Self,
     TypeGuard,
@@ -45,6 +46,11 @@ from pydantic_core import core_schema
 from d3_format import LocaleDefinition
 from dbt_charts import _engine
 from dbt_charts.core.colors import CSS_COLOR_NAMES
+from dbt_charts.core.compile.models.constraints import (
+    AtLeastOneOf,
+    ConstrainedModel,
+    Constraint,
+)
 from dbt_charts.core.compile.models.factories import (
     FontAlias,
     FontSlotBase,
@@ -1370,6 +1376,60 @@ def might_be_palette_role(value: str) -> bool:
     )
 
 
+StrictNumber = Annotated[int, Field(strict=True)] | Annotated[float, Field(strict=True)]
+
+
+def domain_shorthand(
+    value: Any,  # type-state: explicit_any — before-validator input, raw YAML value
+) -> Any:  # type-state: explicit_any — non-list input passes through
+    """``domain: [min, max]`` is shorthand for ``{min, max}``; a null end stays unset."""
+    if not isinstance(value, list):
+        return value
+    if len(value) != 2:
+        raise ValueError(
+            f"domain shorthand is [min, max], got {len(value)} values. "
+            "Write null for an end that fits the data."
+        )
+    return {
+        key: end
+        for key, end in zip(("min", "max"), value, strict=True)
+        if end is not None
+    }
+
+
+DOMAIN_NEITHER_END = (
+    "domain pins neither end: omit `domain` to fit both ends to the data."
+)
+
+
+class ScaleDomain(ConstrainedModel):
+    """The values a color scale's ends map to; ``[min, max]`` is its shorthand."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        AtLeastOneOf(("min", "max"), DOMAIN_NEITHER_END),
+    )
+
+    min: StrictNumber | None = Field(
+        default=None,
+        description="Value the scale's low end maps to; unset fits the data.",
+    )
+    max: StrictNumber | None = Field(
+        default=None,
+        description="Value the scale's high end maps to; unset fits the data.",
+    )
+
+
+DOMAIN_SHORTHAND = BeforeValidator(
+    domain_shorthand,
+    json_schema_input_type=tuple[StrictNumber | None, StrictNumber | None]
+    | ScaleDomain,
+)
+register_as_own_patch(ScaleDomain)
+register_shorthand(ScaleDomain, DOMAIN_SHORTHAND)
+
+
 class ScaleTargetPaletteValidationMixin(BaseModel):
     """Shared authored-input validator for ``ScaleTargetConfig.palette``.
 
@@ -1459,18 +1519,9 @@ class ScaleTargetConfig(ScaleTargetPaletteValidationMixin):
     ] = Field(
         description="Which colors the scale draws from: a built-in palette name or Vega color-scheme name, a CSS color list for categorical, or a float list for relative stops."
     )
-    domain: Literal["data"] | None = Field(
-        default="data",
-        description=(
-            "Scale domain source ('data' uses the data extent, widened to "
-            "nice round bounds when nice is true; None uses explicit min/max)."
-        ),
-    )
-    min: float | int | None = Field(
-        default=None, description="Minimum scale domain value (overrides data minimum)."
-    )
-    max: float | int | None = Field(
-        default=None, description="Maximum scale domain value (overrides data maximum)."
+    domain: Annotated[ScaleDomain, DOMAIN_SHORTHAND] | None = Field(
+        default=None,
+        description="Values the scale's ends map to, as [min, max]; unset fits the data.",
     )
     nice: bool | None = Field(
         default=None,
@@ -1481,8 +1532,8 @@ class ScaleTargetConfig(ScaleTargetPaletteValidationMixin):
             "legend (heatmap, map, a chart color gradient whose legend is "
             "shown) and uses the exact extent where none is drawn (table "
             "columns, a hidden legend); true or false always wins. Ignored "
-            "once min or max is set; a single-sided bound already fixes "
-            "that edge exactly."
+            "once either end of domain is set; a one-sided bound already "
+            "fixes that edge exactly."
         ),
     )
     null_color: Annotated[str | None, Color()] = Field(

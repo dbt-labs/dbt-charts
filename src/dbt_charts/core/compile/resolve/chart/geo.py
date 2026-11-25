@@ -26,7 +26,11 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedPointMapChart,
 )
 from dbt_charts.core.compile.models.config import ConfigNode
-from dbt_charts.core.compile.models.primitives import bake_scale_target_stops
+from dbt_charts.core.compile.models.primitives import (
+    PatternStyle,
+    ResolvedPattern,
+    bake_scale_target_stops,
+)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedGeoshapeChartStyle,
@@ -59,12 +63,16 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _geo_kwargs,
     board_family_style,
 )
-from dbt_charts.core.compile.resolve.chart._marks import _resolved_point_mark
+from dbt_charts.core.compile.resolve.chart._marks import (
+    _resolved_point_mark,
+    datum_format,
+)
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_single_series_fill,
     _effective_warned_palette,
     _with_color_tokens,
 )
+from dbt_charts.core.compile.resolve.chart._pattern import resolve_pattern
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
@@ -343,6 +351,23 @@ def _with_baked_color_gradient(
     )
 
 
+def _tint_ramp(
+    tints: PatternStyle | None,
+    field: str | None,
+    key: str,
+    data: list[dict[str, Any]],  # type-state: explicit_any — query-row boundary values
+    chart_style_context: ChartStyleContext,
+) -> ResolvedPattern | None:
+    """The pattern ramp a map's `tints` draw the flat tints of, over `field`'s values."""
+    if tints is None:
+        return None
+    if tints.color is None:
+        raise ValueError("style.tints.color names the ink the tints are drawn in.")
+    if field is None:
+        raise ValueError(f"style.tints spans a numeric field's values: set `{key}:`.")
+    return resolve_pattern(field, None, data, chart_style_context, tints, None, None)
+
+
 def _resolve_geoshape(
     normalized: GeoshapeChart,
     data: list[dict[str, Any]],
@@ -365,10 +390,27 @@ def _resolve_geoshape(
     # is normalized.value when authored, else the color channel
     # (_resolve_choropleth_value_field) -- vote on that same field, not the
     # color channel directly, or an authored `value:` silently outvotes it.
-    tooltip_format_values = _column_numeric_values(
-        data, _resolve_choropleth_value_field(normalized, channels)
+    value_field = _resolve_choropleth_value_field(normalized, channels)
+    tooltip_format_values = _column_numeric_values(data, value_field)
+    strip_key_format, strip_key_is_house = (
+        datum_format(
+            None,
+            chart_style_context.formats,
+            normalized.query.formats if normalized.query else None,
+            value_field,
+            data,
+        )
+        if geoshape.strip_key and value_field
+        else (None, False)
     )
     return ResolvedGeoshapeChart(
+        pattern=_tint_ramp(
+            geoshape.tints,
+            value_field,
+            "value",
+            data,
+            chart_style_context,
+        ),
         **_base_kwargs(
             normalized,
             chart_style_context,
@@ -381,7 +423,7 @@ def _resolve_geoshape(
                 color_legend_entries(
                     channels,
                     data,
-                    _resolve_choropleth_value_field(normalized, channels),
+                    value_field,
                 ),
                 width,
                 chart_local_style_context.legend,
@@ -394,6 +436,8 @@ def _resolve_geoshape(
         style=ResolvedGeoshapeStyle(
             geoshape=_with_baked_color_gradient(geoshape),
             scatter=chart_style_context.scatter,
+            strip_key_format=strip_key_format,
+            strip_key_is_house=strip_key_is_house,
             tooltip_format=reject_native(
                 column_format(
                     "number",
@@ -402,7 +446,7 @@ def _resolve_geoshape(
                     query_formats=normalized.query.formats
                     if normalized.query
                     else None,
-                    columns=_resolve_choropleth_value_field(normalized, channels),
+                    columns=value_field,
                     values=tooltip_format_values,
                 ),
                 "style.tooltip.format",
@@ -507,7 +551,21 @@ def _resolve_point_map(
     geo_kw = _geo_kwargs(normalized, chart_local_style_context, display_text)
 
     _tf = resolve_title_font(chart_local_style_context, width)
+    named_format, named_is_house = (
+        datum_format(
+            None,
+            chart_style_context.formats,
+            normalized.query.formats if normalized.query else None,
+            normalized.size,
+            data,
+        )
+        if point_map.named and normalized.size
+        else (None, False)
+    )
     return ResolvedPointMapChart(
+        pattern=_tint_ramp(
+            point_map.tints, normalized.size, "size", data, chart_style_context
+        ),
         **_base_kwargs(
             normalized,
             chart_style_context,
@@ -564,6 +622,8 @@ def _resolve_point_map(
                 ),
                 "style.tooltip.format",
             ),
+            named_format=named_format,
+            named_is_house=named_is_house,
             title_font=_tf,
         ),
     )

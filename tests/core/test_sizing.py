@@ -7,6 +7,7 @@ that ensures proper height equalization, and render-ready sizing fields.
 
 import dataclasses
 import importlib as _importlib
+import re
 
 import pytest
 from pydantic import TypeAdapter
@@ -3658,6 +3659,86 @@ rows:
             f"KPI item height should be DISTINCTIVE ({DISTINCTIVE}) + "
             f"2*card_pad ({card_pad}) = {expected}, got {kpi_item.height}"
         )
+
+    def test_static_layout_reads_the_charts_own_default_height(self) -> None:
+        """Sizing without data reads a chart's `style.default_height` over the board's."""
+        DISTINCTIVE = 311.0
+        result = compile(
+            f"""
+queries:
+  q:
+    type: values
+    rows:
+      - {{revenue: 100}}
+charts:
+  kpi1:
+    type: kpi
+    query: q
+    value: revenue
+    style:
+      default_height: {DISTINCTIVE}
+rows:
+  - kpi1
+"""
+        )
+        assert result.success, f"Compile failed: {result.errors}"
+        kpi_item = apply_static_layout(result.board).layout.items[0]
+
+        card_pad = float(result.board.resolved_style.frame.card_padding)
+        assert kpi_item.height == pytest.approx(DISTINCTIVE + 2 * card_pad)
+
+    def test_chart_style_default_height_sizes_the_drawn_card(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A chart's own `style.default_height` sizes its card, as the board's does."""
+        from dbt_charts.core.board import render_dashboard
+        from dbt_charts.core.compile.models.source import DuckDBSourceConfig
+        from dbt_charts.core.project import InMemoryBoard
+
+        from .._scripted_env import ScriptedBackend, scripted_env
+
+        project = local_project(tmp_path)
+        env = scripted_env(
+            ScriptedBackend([{"rate": 0.5}]),
+            named_sources={"db": DuckDBSourceConfig(type="duckdb", path=":memory:")},
+        )
+
+        def drawn_height(board_style: str, chart_style: str) -> float:
+            board = InMemoryBoard(
+                f"""
+source: db
+{board_style}
+queries:
+  q: SELECT rate FROM t
+charts:
+  k:
+    query: q
+    type: kpi
+    value: rate
+    label: Rate
+{chart_style}
+rows:
+  - k
+""",
+                path=project.path("charts/_k.yml"),
+            )
+            svg = render_dashboard(
+                board=board, env=env, format="svg", project=project, result_cache=None
+            ).data
+            assert isinstance(svg, str)
+            match = re.search(
+                r'data-chart-id="k"[^>]*data-chart-height="([0-9.]+)"', svg
+            )
+            assert match, svg[:400]
+            return float(match.group(1))
+
+        board_tier = drawn_height(
+            "style:\n  charts:\n    kpi:\n      default_height: 300", ""
+        )
+        chart_tier = drawn_height("", "    style:\n      default_height: 300")
+        unset = drawn_height("", "")
+        assert board_tier > unset
+        assert chart_tier == pytest.approx(board_tier)
 
 
 class TestSparkBarCascadeHeight:

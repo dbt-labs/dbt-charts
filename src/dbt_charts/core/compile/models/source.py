@@ -407,14 +407,13 @@ class DuckDBAttachmentConfig(BaseModel):
         bool,
         Field(
             description=(
-                "Whether the attached database is read-only. Honored as "
-                "written when the adapter itself is read-write; when the "
-                "adapter is read_only (the default), the in-process DuckDB "
-                "adapter forces every attachment read-only regardless of "
-                "this flag."
+                "Whether the attached database is read-only. A read-only "
+                "adapter (the default) forces every attachment read-only "
+                "regardless, except a Quack attach that sets `read_only: "
+                "false` on local `dct`, which is attached writable."
             ),
         ),
-    ] = False
+    ] = True
     options: Annotated[
         dict[str, SourceOptionScalar] | None,
         Field(description="Additional scalar DuckDB ATTACH options."),
@@ -423,6 +422,26 @@ class DuckDBAttachmentConfig(BaseModel):
         bool | None,
         Field(description="Whether the attachment is a DuckLake database."),
     ] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_options_read_only(
+        cls,
+        data: Any,  # type-state: explicit_any — raw YAML before validation
+    ) -> Any:  # type-state: explicit_any — passes non-dict input through
+        # dbt-duckdb also accepts `options.read_only`; one field must hold it,
+        # or the `True` default could not be told apart from an authored value.
+        if not isinstance(data, dict):
+            return data
+        options = data.get("options")
+        if not isinstance(options, dict) or "read_only" not in options:
+            return data
+        if "read_only" in data:
+            raise ValueError(
+                "read_only is set both directly and in options; set it once"
+            )
+        rest = {k: v for k, v in options.items() if k != "read_only"}
+        return {**data, "read_only": options["read_only"], "options": rest or None}
 
 
 class DuckDBExtensionConfig(BaseModel):
@@ -828,6 +847,10 @@ class BigQuerySourceConfig(
     maximum_bytes_billed: Annotated[
         int | None,
         Field(description="Maximum bytes a BigQuery job may bill."),
+    ] = None
+    reservation: Annotated[
+        str | None,
+        Field(description="BigQuery reservation that runs the jobs."),
     ] = None
     impersonate_service_account: Annotated[
         str | None,
@@ -1452,10 +1475,13 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
     (ATTACH/INSTALL/CREATE SECRET), so the in-process adapter applies them
     with it on, then locks the connection: SQL reads only the attach paths
     and secret `scope` prefixes. Extensions must be listed; autoloading one
-    at query time is refused. read_only itself is never relaxed: when the adapter is read_only, every
-    `attach` entry gets READ_ONLY forced onto its ATTACH statement regardless
-    of `attach[].read_only`. `settings` applies as a plain SET and
-    has no external-access requirement.  `plugins`, `filesystems`, `remote`,
+    at query time is refused. When the adapter is read_only, every `attach`
+    entry gets READ_ONLY forced onto its ATTACH statement regardless of
+    `attach[].read_only`, with one exception: a Quack attach (which cannot
+    enforce READ_ONLY and is otherwise refused) that explicitly writes
+    `read_only: false` is attached writable for a project read from local
+    disk. `settings` applies as a plain SET and has no external-access
+    requirement.  `plugins`, `filesystems`, `remote`,
     and `use_credential_provider` are not supported; remove them from the
     source config.
 

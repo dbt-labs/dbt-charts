@@ -114,6 +114,42 @@ def test_a_pinned_domain_max_tears_whatever_the_multiplier_says() -> None:
     assert resolved.torn_break == 40
 
 
+def test_a_one_sided_pinned_max_is_the_break_like_a_two_sided_one() -> None:
+    pinned = {
+        "style": {
+            "orientation": "vertical",
+            "axis_y": {"scale": {"continuous": {"domain": [None, 50]}}},
+        }
+    }
+    resolved = _resolved(ONE_OUTLIER, chart=pinned)
+    assert resolved.torn_break == 50
+    assert resolved.style.axis_y.scale.continuous.domain == (0, 50)
+
+
+def test_a_one_sided_pinned_min_keeps_the_planned_break() -> None:
+    pinned = {
+        "style": {
+            "orientation": "vertical",
+            "axis_y": {"scale": {"continuous": {"domain": [0, None]}}},
+        }
+    }
+    resolved = _resolved(ONE_OUTLIER, chart=pinned)
+    assert resolved.torn_break is not None and 8 < resolved.torn_break < 20
+    assert resolved.style.axis_y.scale.continuous.domain == (0, resolved.torn_break)
+
+
+def test_a_one_sided_pinned_min_past_the_planned_break_is_an_error() -> None:
+    pinned = {
+        "style": {
+            "orientation": "vertical",
+            "axis_y": {"scale": {"continuous": {"domain": [20, None]}}},
+        }
+    }
+    with pytest.raises(CompilationError) as err:
+        _resolved(ONE_OUTLIER, chart=pinned)
+    assert err.value.code.code == "ERR-DOMAIN-OPEN-END-INVERTED"
+
+
 def test_a_pinned_domain_no_bar_passes_beats_the_multiplier() -> None:
     pinned = {"style": {"axis_y": {"scale": {"continuous": {"domain": [0, 200]}}}}}
     assert _resolved(ONE_OUTLIER, chart=pinned).torn_break is None
@@ -264,6 +300,10 @@ def test_stacked_extents_are_category_totals() -> None:
         (
             {"style": {"axis_y": {"scale": {"continuous": {"domain": [10, 200]}}}}},
             "domain above zero",
+        ),
+        (
+            {"style": {"axis_y": {"scale": {"continuous": {"domain": [None, 200]}}}}},
+            "one-sided axis_y domain",
         ),
         (
             {

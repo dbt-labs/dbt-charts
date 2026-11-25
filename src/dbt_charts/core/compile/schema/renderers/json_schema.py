@@ -197,7 +197,10 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
 
     if field.tuple_item_reprs is not None:
         tuple_schema = _tuple_schema(field.tuple_item_reprs, field.tuple_item_bounds)
-        return {"anyOf": [tuple_schema, {"type": "null"}]} if nullable else tuple_schema
+        arms = [tuple_schema, *(_ref(n, root) for n in field.nested_models)]
+        if nullable:
+            arms.append({"type": "null"})
+        return {"anyOf": arms} if len(arms) > 1 else tuple_schema
 
     if field.enum_values is not None:
         # Copy: the IR is a shared memoized instance; emitted schema must not
@@ -562,8 +565,9 @@ def _constraint(
                 ]
             }
         case ItemsMatch(key, pattern, _, when):
-            items = {"items": {"type": "string", "pattern": pattern}}
-            return _when(when, _at(key, items, required=False))
+            each = {"type": "string", "pattern": pattern}
+            matches = {"pattern": pattern, "items": each, "additionalProperties": each}
+            return _when(when, _at(key, matches, required=False))
 
 
 # Annotation keyword marking an `allOf` entry as a cross-field rule. Validators

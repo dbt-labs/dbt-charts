@@ -144,9 +144,7 @@ pub(crate) struct ColorGradient {
     pub(crate) resolved_stops: Vec<String>,
     /// Author-supplied domain override; null means use the data range.
     #[serde(default)]
-    pub(crate) min: Option<f64>,
-    #[serde(default)]
-    pub(crate) max: Option<f64>,
+    pub(crate) domain: Option<crate::common::DomainBounds>,
     /// The author's choice of the nice-widened tick ladder; unset follows `legend_drawn`.
     pub(crate) nice: Option<bool>,
     #[serde(default)]
@@ -242,8 +240,7 @@ impl ColorGradient {
         let target = ScaleTarget {
             palette: self.palette.clone(),
             resolved_stops: baked.then(|| self.resolved_stops.clone()),
-            min: self.min,
-            max: self.max,
+            domain: self.domain,
             nice: self.nice,
             null_color: None,
             hinge: self.hinge.clone(),
@@ -291,6 +288,9 @@ impl<'a> GradientColors<'a> {
 pub(crate) struct RectMark {
     pub(crate) opacity: Option<f64>,
     pub(crate) stroke: Option<crate::common::Stroke>,
+    /// `style.marks.rect.labels`: the value printed at each cell's center.
+    #[serde(default)]
+    pub(crate) labels: Option<crate::common::MarkLabels>,
 }
 
 impl RectMark {
@@ -350,6 +350,17 @@ pub(crate) struct HeatmapStyle {
     /// Fraction of the slot width the x labels may crowd into.
     #[serde(default)]
     pub(crate) label_usable_ratio: Option<f64>,
+    #[serde(default)]
+    pub(crate) tints: bool,
+    #[serde(default)]
+    pub(crate) label_divides: bool,
+    #[serde(default)]
+    pub(crate) strip_key: bool,
+    /// The strip's two values print in the value-label format, not the tooltip's.
+    #[serde(default)]
+    pub(crate) strip_key_format: Option<FormatSlot>,
+    #[serde(default)]
+    pub(crate) strip_key_is_house: bool,
 }
 
 impl HeatmapResolved {
@@ -357,6 +368,12 @@ impl HeatmapResolved {
         let mut r: Self = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("heatmap payload: {e}"))?;
         r.series_palette = payload.series_palette(&r.palette);
         r.patterns = crate::pattern::PatternPlan::from_resolved(&payload.resolved)?;
+        if r.style.tints {
+            if !r.patterns.is_active() {
+                return Err(diagnostic::refuse!("heatmap: `tints` without a pattern ramp is not supported"));
+            }
+            r.patterns = std::mem::take(&mut r.patterns).tinted();
+        }
         r.link_context = payload.link_context.clone();
         Ok(r)
     }
@@ -431,7 +448,7 @@ pub(crate) enum CellFill<'a> {
     Gradient { colors: GradientColors<'a>, min: f64, max: f64 },
     Categories(&'a CategoryScale),
     /// A date column on a time scale, in day numbers.
-    Dates { min: f64, max: f64 },
+    Dates { min: f64, max: f64, aware: bool },
 }
 
 /// How a dimension's value heads the cell's tooltip: a date column prints its
@@ -486,7 +503,101 @@ pub(crate) struct CellPaint<'a> {
     pub(crate) ghost_titles: Option<(&'a str, &'a str)>,
     pub(crate) patterns: &'a crate::pattern::PatternPlan,
     pub(crate) conditional: Option<&'a std::collections::BTreeMap<String, Vec<crate::conditional::MarkRule>>>,
+    pub(crate) labels: Option<CellLabeling<'a>>,
 }
+
+/// What prints each cell's value label: the authored labels and the canvas its ink starts from.
+pub(crate) struct CellLabeling<'a> {
+    ml: &'a crate::common::MarkLabels,
+    canvas: &'a str,
+    field_is_text: bool,
+}
+
+impl<'a> CellLabeling<'a> {
+    pub(crate) fn of(r: &'a HeatmapResolved, rows: &[serde_json::Map<String, Value>]) -> Option<Self> {
+        let ml = r.style.rect_mark.labels.as_ref().filter(|ml| ml.visible)?;
+        Some(Self { ml, canvas: &r.canvas, field_is_text: ml.field_is_text(rows) })
+    }
+
+    /// The label of one cell, or `None` where its `labels.field` is null. The value is the cell's
+    /// color measure, a category's own name, a date as the legend spells it, or the `labels.field` column. The ink is the
+    /// rule's or the author's font color, else whichever of the canvas color and [`opposite_ink`]
+    /// reads better on the cell's fill, deepened only where neither clears the floor.
+    fn of_cell(&self, row: &serde_json::Map<String, Value>, value: Option<LabelValue>, fill: &str, patch: &crate::conditional::MarkPatch) -> Result<Option<CellLabel>, String> {
+        let is_house = self.ml.format.as_ref().is_some_and(FormatSlot::is_house);
+        let text = match (&self.ml.field, value) {
+            (None, Some(LabelValue::Number(value))) => crate::common::format_mark_label(self.ml.format.as_ref(), value, is_house)?,
+            (None, Some(LabelValue::Text(text))) => text,
+            (None, None) => return Ok(None),
+            (Some(_), _) => {
+                let (text, blank) = self.ml.field_text(is_house, self.field_is_text, Some(row), 0.0)?;
+                if blank {
+                    return Ok(None);
+                }
+                text
+            }
+        };
+        let ink = match patch.font_color.clone().or_else(|| self.ml.font.as_ref().and_then(|f| f.color.clone())) {
+            Some(ink) => ink,
+            None => {
+                let ground = if fill == "none" { self.canvas } else { fill };
+                let floor = crate::constants::contrast::LABEL_INK_MIN_CONTRAST;
+                let opposite = opposite_ink(self.canvas)?;
+                let contrast = |ink: &str| dbt_charts_color::wcag_contrast(&hex(ink)?, &hex(ground)?);
+                let pick = if contrast(self.canvas)? >= contrast(&opposite)? { self.canvas } else { opposite.as_str() };
+                dbt_charts_color::readable_ink_on_fill(pick, ground, floor)?
+            }
+        };
+        Ok(Some(CellLabel { text, ink, weight: patch.font_weight.clone() }))
+    }
+}
+
+/// The neutral label ink on a light canvas.
+const NEUTRAL_INK: &str = "#313233";
+
+/// [`NEUTRAL_INK`], moved across `canvas` until it stands as far
+/// from it as that ink stands from white: `#313233` itself on a light canvas, an equally strong
+/// light gray on a dark one.
+fn opposite_ink(canvas: &str) -> Result<String, String> {
+    let neutral = NEUTRAL_INK;
+    let canvas = hex(canvas)?;
+    let strength = dbt_charts_color::wcag_contrast(neutral, "#ffffff")?;
+    let reachable = dbt_charts_color::wcag_contrast("#000000", &canvas)?.max(dbt_charts_color::wcag_contrast("#ffffff", &canvas)?);
+    dbt_charts_color::readable_ink_on_fill(neutral, &canvas, strength.min(reachable))
+}
+
+fn hex(color: &str) -> Result<String, String> {
+    let (r, g, b, _) = dbt_charts_color::parse_css_color(color)?;
+    Ok(dbt_charts_color::rgb01_to_hex(r, g, b))
+}
+
+/// What a cell's label prints when no `labels.field` names a column: the color measure (formatted),
+/// or the color's own text (a category's name, a date as the legend spells it). A null color has none.
+pub(crate) enum LabelValue {
+    Number(f64),
+    Text(String),
+}
+
+/// A cell's value label as bind decides it; layout fits it.
+pub(crate) struct CellLabel {
+    pub(crate) text: String,
+    pub(crate) ink: String,
+    /// A conditional rule's weight, over the labels' own.
+    weight: Option<String>,
+}
+
+/// The face the value labels paint in, and where they sit against the cell's center.
+pub(crate) struct ValueLabelFace {
+    family: String,
+    size: f64,
+    weight: String,
+    style: Option<String>,
+    dx: f64,
+    dy: f64,
+}
+
+/// A label keeps this much clear of its cell's edge, or it is omitted.
+const LABEL_CELL_PADDING: f64 = 2.0;
 
 /// How a cell's rect draws: its opacity and stroke, and how far the stroke grows its bounds.
 pub(crate) struct CellMarks {
@@ -496,12 +607,29 @@ pub(crate) struct CellMarks {
     /// The painted stroke's color and width, which a conditional rule overrides one at a time.
     stroke_color: Option<String>,
     stroke_width: Option<f64>,
+    labels: Option<ValueLabelFace>,
 }
 
 impl CellMarks {
-    pub(crate) fn of(mark: &RectMark) -> Result<Self, String> {
+    pub(crate) fn of(mark: &RectMark, board_style: Option<&crate::BoardStyle>) -> Result<Self, String> {
         let painted = mark.painted_stroke();
+        let labels = match mark.labels.as_ref().filter(|ml| ml.visible) {
+            Some(ml) => {
+                ml.refuse_anchors("heatmap")?;
+                let (family, size) = crate::common::value_label_face(ml.font.as_ref(), board_style)?;
+                Some(ValueLabelFace {
+                    family,
+                    size,
+                    weight: ml.font.as_ref().map_or_else(|| "400".into(), |f| f.weight_str()),
+                    style: ml.font.as_ref().and_then(|f| f.style.clone()),
+                    dx: ml.dx.unwrap_or(0.0),
+                    dy: ml.dy.unwrap_or(0.0),
+                })
+            }
+            None => None,
+        };
         Ok(CellMarks {
+            labels,
             opacity: mark.opacity.unwrap_or(1.0),
             stroke: mark.stroke_attrs()?,
             reach: mark.stroke_reach(),
@@ -558,6 +686,7 @@ pub(crate) struct Cell {
     pub(crate) ghost: Option<String>,
     /// What `style.conditional` sets on this cell beyond its fill (already in `fill`).
     pub(crate) patch: crate::conditional::MarkPatch,
+    pub(crate) label: Option<CellLabel>,
 }
 
 impl Cell {
@@ -588,7 +717,7 @@ pub(crate) fn bind_cells(
         let yv = row_str(row, c.y_field);
         let (Some(&x), Some(&y)) = (x_index.get(xv.as_str()), y_index.get(yv.as_str())) else { continue };
         let patch = crate::conditional::MarkPatch::of(c.conditional, row, crate::conditional::MarkKind::Rect)?;
-        let (fill, cv) = match c.fill {
+        let (fill, cv, label_value) = match c.fill {
             CellFill::Gradient { colors, min, max } => {
                 let Some(cv) = row_num(row, c.color_field) else { continue };
                 let paint = match c.patterns.spec() {
@@ -599,25 +728,27 @@ pub(crate) fn bind_cells(
                     }
                     _ => crate::pattern::Paint::Color(colors.at(min, max, cv)?),
                 };
-                (paint, HeatmapValue::Number(cv))
+                (paint, HeatmapValue::Number(cv), Some(LabelValue::Number(cv)))
             }
-            CellFill::Dates { min, max } => {
+            CellFill::Dates { min, max, aware } => {
                 let Some(day) = row.get(c.color_field).and_then(date_cell_day) else { continue };
-                // The tooltip prints the epoch milliseconds as a number.
-                (crate::pattern::Paint::Color(date_color(min, max, day)), HeatmapValue::Number(day * MS_PER_DAY))
+                // A date label reads as the legend does; the tooltip prints the epoch milliseconds as a number.
+                let text = if c.labels.is_some() { Some(LabelValue::Text(legend_date_label(day, aware)?)) } else { None };
+                (crate::pattern::Paint::Color(date_color(min, max, day)), HeatmapValue::Number(day * MS_PER_DAY), text)
             }
             CellFill::Categories(scale) => {
                 let null_cell = row.get(c.color_field).is_none_or(Value::is_null);
                 let name = if null_cell { NULL_CATEGORY.to_string() } else { row_str(row, c.color_field) };
                 if name == NULL_CATEGORY && null_cell != scale.null_is_js {
-                    (crate::pattern::Paint::Color("none".to_string()), HeatmapValue::Category(NULL_CATEGORY))
+                    (crate::pattern::Paint::Color("none".to_string()), HeatmapValue::Category(NULL_CATEGORY), None)
                 } else {
                     let slot = scale
                         .domain
                         .iter()
                         .position(|d| *d == name)
                         .ok_or_else(|| format!("heatmap: color {name:?} is not in its own category domain"))?;
-                    (scale.fills[slot].clone(), HeatmapValue::Category(&scale.domain[slot]))
+                    let value = if null_cell { None } else { Some(LabelValue::Text(name.clone())) };
+                    (scale.fills[slot].clone(), HeatmapValue::Category(&scale.domain[slot]), value)
                 }
             }
         };
@@ -647,7 +778,11 @@ pub(crate) fn bind_cells(
         let href = c.link.as_ref().map(|link| link.href(row)).transpose()?;
         let ghost = if c.mirror { ghost_label.or_else(|| aria.clone()) } else { None };
         let fill = patch.fill.clone().map_or(fill, crate::pattern::Paint::Color);
-        cells.push(Cell { x, y, fill, aria, href: href.zip(link_open), ghost, patch });
+        let label = match &c.labels {
+            Some(labeling) => labeling.of_cell(row, label_value, fill.color(), &patch)?,
+            None => None,
+        };
+        cells.push(Cell { x, y, fill, aria, href: href.zip(link_open), ghost, patch, label });
     }
     Ok(cells)
 }
@@ -659,6 +794,7 @@ pub(crate) fn cell_nodes(
     x_scale: &BandScale,
     y_scale: &BandScale,
     marks: &CellMarks,
+    fonts: &measure::FontBook,
 ) -> Result<Vec<Node>, String> {
     use crate::contract::{ghost_layer, GhostRule, GhostRun};
     use ::layout::contract::{aria_attrs, mark_group, ItemRole};
@@ -703,10 +839,52 @@ pub(crate) fn cell_nodes(
             });
         }
     }
+    if let Some(face) = &marks.labels {
+        nodes.extend(value_labels(cells, x_scale, y_scale, face, fonts)?);
+    }
     if !rules.is_empty() {
         nodes.push(ghost_layer(&rules, GhostRun::ToOrigin)?);
     }
     Ok(nodes)
+}
+
+/// One centered `<text>` per cell whose label fits inside its cell, a label that does not being
+/// omitted: the font never shrinks and the text never overflows.
+fn value_labels(cells: &[Cell], x_scale: &BandScale, y_scale: &BandScale, face: &ValueLabelFace, fonts: &measure::FontBook) -> Result<Vec<Node>, String> {
+    use ::layout::contract::{aria_attrs, value_label_group, ItemRole};
+    let (cell_w, cell_h) = (x_scale.bandwidth(), y_scale.bandwidth());
+    let mut labels = Vec::new();
+    let mut described = false;
+    for cell in cells {
+        let Some(label) = &cell.label else { continue };
+        let weight = label.weight.as_deref().unwrap_or(&face.weight);
+        let width = crate::common::measure_at_css_weight(fonts, &label.text, &face.family, face.size, weight)?;
+        // The shifted box must stay inside the cell, so an offset narrows the room on both sides.
+        if width + 2.0 * (LABEL_CELL_PADDING + face.dx.abs()) > cell_w || face.size + 2.0 * (LABEL_CELL_PADDING + face.dy.abs()) > cell_h {
+            continue;
+        }
+        let x = x_scale.position_at(cell.x) + cell_w / 2.0 + face.dx;
+        let middle = y_scale.position_at(cell.y) + cell_h / 2.0 + face.dy;
+        let ink = crate::vega_fit::text_ink(x, middle, width, face.size, "center", "middle");
+        let attrs = Attrs::new()
+            .set("text-anchor", "middle")
+            .vega("font-family", face.family.as_str())
+            .num("font-size", face.size)
+            .set("font-weight", weight)
+            .set_if(face.style.is_some(), "font-style", face.style.clone().unwrap_or_default())
+            .set("fill", label.ink.as_str())
+            .extend(aria_attrs(cell.aria.as_deref(), ItemRole::TextMark)?);
+        described |= cell.aria.is_some();
+        let at = (x, middle + measure::baseline_shift("middle", face.size));
+        let text = Node::text(Role::Label, at, attrs, label.text.as_str())
+            .with_text_bounds(scene::Bounds { x1: ink.x1, y1: ink.y1, x2: ink.x2, y2: ink.y2 });
+        labels.push(crate::href::linked(cell.anchor(), text));
+    }
+    Ok(match (described, labels.is_empty()) {
+        (_, true) => Vec::new(),
+        (true, false) => vec![value_label_group("layer_1_marks", labels)?],
+        (false, false) => labels,
+    })
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -862,15 +1040,16 @@ pub(crate) fn gradient_ladder(
         // `emitters/heatmap.py`: a quantitative color column with no number to span.
         return Err(Diagnostic::new(&codes::ERR_HEATMAP_COLOR_NO_VALUES, [("field", Value::from(field))]));
     }
-    if let (Some(lo), Some(hi)) = (gradient.min, gradient.max) {
+    let bounds = gradient.domain.unwrap_or_default();
+    if let (Some(lo), Some(hi)) = (bounds.min, bounds.max) {
         return Ok((lo, hi, vec![lo, hi]));
     }
-    if gradient.nice.unwrap_or(legend_drawn) && gradient.min.is_none() && gradient.max.is_none() {
+    if gradient.nice.unwrap_or(legend_drawn) && bounds.min.is_none() && bounds.max.is_none() {
         let ticks = crate::families::color_scale::nice_ticks(data_lo, data_hi);
         return Ok((ticks[0], ticks[ticks.len() - 1], ticks));
     }
-    let lo = gradient.min.unwrap_or(data_lo);
-    let hi = gradient.max.unwrap_or(data_hi);
+    let lo = bounds.min.unwrap_or(data_lo);
+    let hi = bounds.max.unwrap_or(data_hi);
     Ok((lo, hi, vec![lo, hi]))
 }
 
@@ -1191,7 +1370,7 @@ mod tests {
                     "axis_y": axis_json(false, Some("left")),
                     "color_gradient": {
                         "resolved_stops": ["#000000", "#ffffff"],
-                        "min": null, "max": null, "nice": true
+                        "domain": null, "nice": true
                     },
                     "rect_mark": {},
                     "tooltip_format": ",.2~f",
@@ -1458,8 +1637,7 @@ mod tests {
     #[test]
     fn an_authored_min_and_max_replace_the_ladder() {
         let svg = render_json(heatmap_payload(|j| {
-            j["resolved"]["style"]["color_gradient"]["min"] = json!(5000.0);
-            j["resolved"]["style"]["color_gradient"]["max"] = json!(55000.0);
+            j["resolved"]["style"]["color_gradient"]["domain"] = json!({"min": 5000.0, "max": 55000.0});
         }));
         assert!(svg.contains(">5,000</text>") && svg.contains(">55,000</text>"), "{svg}");
         for v in ["10,000", "20,000", "60,000"] {
@@ -1472,7 +1650,7 @@ mod tests {
     #[test]
     fn a_single_sided_bound_bypasses_nicing() {
         let svg = render_json(heatmap_payload(|j| {
-            j["resolved"]["style"]["color_gradient"]["min"] = json!(5000.0);
+            j["resolved"]["style"]["color_gradient"]["domain"] = json!({"min": 5000.0});
         }));
         assert!(svg.contains(">5,000</text>") && svg.contains(">58,396</text>"), "{svg}");
         assert!(!svg.contains(">60,000</text>"), "nice widening leaked: {svg}");
@@ -1932,8 +2110,7 @@ mod tests {
         // overlap along the bar.
         let two_ends = |edge: &str| {
             let mut p = edge_payload(edge, "horizontal");
-            p["resolved"]["style"]["color_gradient"]["min"] = json!(0.0);
-            p["resolved"]["style"]["color_gradient"]["max"] = json!(100000.0);
+            p["resolved"]["style"]["color_gradient"]["domain"] = json!({"min": 0.0, "max": 100000.0});
             render_json(p)
         };
         let svg = two_ends("bottom");
@@ -2145,7 +2322,7 @@ mod tests {
     /// boolean counts as the number production's `is_vega_numeric_value` reads it as.
     #[test]
     fn a_gradient_color_with_no_number_raises_even_with_both_bounds_authored() {
-        let gradient: super::ColorGradient = serde_json::from_value(serde_json::json!({"nice": true, "min": 0.0, "max": 10.0})).unwrap();
+        let gradient: super::ColorGradient = serde_json::from_value(serde_json::json!({"nice": true, "domain": {"min": 0.0, "max": 10.0}})).unwrap();
         let rows = |cells: &[serde_json::Value]| -> Vec<serde_json::Map<String, serde_json::Value>> {
             cells.iter().map(|cell| serde_json::json!({"c": cell}).as_object().unwrap().clone()).collect()
         };
@@ -2251,5 +2428,197 @@ mod tests {
         let (svg, sunk) = diagnostic::collect(|| render(&payload, &fonts));
         assert_eq!(svg.unwrap(), print::print(&laid.nodes));
         assert_eq!(sunk, laid.diagnostics);
+    }
+
+    /// `rect_mark.labels` as resolve sends it: the format is resolved, the font is the author's.
+    fn labeled(size: f64, extra: Value) -> impl FnOnce(&mut Value) {
+        move |json| {
+            let mut labels = json!({
+                "visible": true,
+                "format": {"spec": ",.0f", "prefix": "", "suffix": ""},
+                "font": {"family": TEST_FONT, "size": size, "weight": "400"}
+            });
+            labels.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            json["resolved"]["style"]["rect_mark"] = json!({"labels": labels});
+        }
+    }
+
+    /// Every drawn label text with its fill, in document order.
+    fn label_fills(svg: &str, values: &[&str]) -> Vec<(String, Option<String>)> {
+        values
+            .iter()
+            .map(|v| {
+                let at = svg.find(&format!(">{v}</text>"));
+                let fill = at.and_then(|at| {
+                    let open = svg[..at].rfind("<text").unwrap();
+                    let tag = &svg[open..at];
+                    tag.split("fill=\"").nth(1).map(|rest| rest.split('"').next().unwrap().to_string())
+                });
+                (v.to_string(), fill)
+            })
+            .collect()
+    }
+
+    const REVENUES: [&str; 12] = [
+        "47,368", "58,396", "14,824", "34,968", "40,565", "22,859", "38,244", "53,637", "20,865", "31,924", "44,601", "34,772",
+    ];
+
+    #[test]
+    fn a_labeled_heatmap_prints_each_cells_value_in_the_color_fields_format() {
+        let svg = render_json(heatmap_payload(labeled(11.0, json!({}))));
+        for (value, fill) in label_fills(&svg, &REVENUES) {
+            assert!(fill.is_some(), "no label for {value}: {svg}");
+        }
+    }
+
+    #[test]
+    fn a_heatmap_without_visible_labels_draws_none_and_is_unchanged() {
+        let plain = render_json(heatmap_payload(|_| {}));
+        let hidden = render_json(heatmap_payload(labeled(11.0, json!({"visible": false}))));
+        assert_eq!(plain, hidden);
+        assert!(!plain.contains(">47,368</text>"));
+    }
+
+    #[test]
+    fn a_label_that_does_not_fit_its_cell_is_omitted_not_shrunk() {
+        let svg = render_json(heatmap_payload(labeled(120.0, json!({}))));
+        assert!(!svg.contains(">47,368</text>"), "{svg}");
+        let roomy = render_json(heatmap_payload(labeled(11.0, json!({}))));
+        assert!(roomy.contains(">47,368</text>"));
+    }
+
+    /// Over the whole ramp, on a light and on a dark canvas, every label reads on its own cell.
+    #[test]
+    fn every_label_keeps_aa_contrast_against_its_own_cell_over_the_ramp() {
+        for canvas in ["#ffffff", "#111111"] {
+            let (payload, bound) = bound(|json| {
+                labeled(11.0, json!({}))(json);
+                json["resolved"]["canvas"] = json!(canvas);
+                json["rows"] = json!((0..=20)
+                    .map(|i| json!({"region": format!("r{i}"), "category": "c", "revenue": i * 5}))
+                    .collect::<Vec<_>>());
+            });
+            drop(payload);
+            assert_eq!(bound.cells.len(), 21);
+            for cell in &bound.cells {
+                let label = cell.label.as_ref().expect("a label per cell");
+                let hex = |color: &str| {
+                    let (r, g, b, _) = dbt_charts_color::parse_css_color(color).unwrap();
+                    dbt_charts_color::rgb01_to_hex(r, g, b)
+                };
+                let ratio = dbt_charts_color::wcag_contrast(&hex(&label.ink), &hex(cell.fill.color())).unwrap();
+                assert!(ratio >= 4.5, "{canvas}: {} on {} is {ratio:.2}", label.ink, cell.fill.color());
+            }
+        }
+    }
+
+    /// A pale cell takes the neutral dark ink bars print outside their bars, not a washed-out
+    /// lightness of the canvas color; a dark cell takes the canvas color.
+    #[test]
+    fn a_pale_cell_takes_the_neutral_ink_and_a_dark_cell_the_canvas() {
+        let (_, bound) = bound(|json| {
+            labeled(11.0, json!({}))(json);
+            json["rows"] = json!((0..=20)
+                .map(|i| json!({"region": format!("r{i}"), "category": "c", "revenue": i * 5}))
+                .collect::<Vec<_>>());
+        });
+        let mut by_lightness: Vec<(f64, &str)> = bound
+            .cells
+            .iter()
+            .map(|c| (dbt_charts_color::hex_to_oklch(&super::hex(c.fill.color()).unwrap()).unwrap().0, c.label.as_ref().unwrap().ink.as_str()))
+            .collect();
+        by_lightness.sort_by(|a, b| a.0.total_cmp(&b.0));
+        assert_eq!(by_lightness.last().map(|c| c.1), Some(super::NEUTRAL_INK), "{by_lightness:?}");
+        assert_eq!(by_lightness.first().map(|c| c.1), Some("#ffffff"), "{by_lightness:?}");
+    }
+
+    /// On a dark canvas the darkest cell's label is as strong against the canvas as the neutral
+    /// ink is on white, not a gray that barely clears the floor.
+    #[test]
+    fn a_dark_canvas_mirrors_the_neutral_inks_strength() {
+        let (_, bound) = bound(|json| {
+            labeled(11.0, json!({}))(json);
+            json["resolved"]["canvas"] = json!("#181818");
+            json["rows"] = json!((0..=20)
+                .map(|i| json!({"region": format!("r{i}"), "category": "c", "revenue": i * 5}))
+                .collect::<Vec<_>>());
+        });
+        let neutral = dbt_charts_color::wcag_contrast(super::NEUTRAL_INK, "#ffffff").unwrap();
+        let light: Vec<&str> = bound.cells.iter().map(|c| c.label.as_ref().unwrap().ink.as_str()).filter(|ink| dbt_charts_color::is_light_canvas(&super::hex(ink).unwrap()).unwrap()).collect();
+        assert!(!light.is_empty());
+        for ink in light {
+            let ratio = dbt_charts_color::wcag_contrast(&super::hex(ink).unwrap(), "#181818").unwrap();
+            assert!(ratio >= neutral - 0.05, "{ink} is {ratio:.2} against the canvas, want {neutral:.2}");
+        }
+    }
+
+    #[test]
+    fn an_authored_label_color_wins_over_the_computed_ink() {
+        let svg = render_json(heatmap_payload(labeled(11.0, json!({"font": {"family": TEST_FONT, "size": 11.0, "weight": "400", "color": "#ff00ff"}}))));
+        assert!(label_fills(&svg, &REVENUES).iter().all(|(_, fill)| fill.as_deref() == Some("#ff00ff")), "{svg}");
+    }
+
+    #[test]
+    fn a_conditional_rule_restyles_its_cells_label() {
+        let svg = render_json(heatmap_payload(|json| {
+            labeled(11.0, json!({}))(json);
+            json["resolved"]["style"]["conditional"] = json!({
+                "region": [{"eq": "East", "marks": {"text": {"font": {"color": "#00ff00", "weight": "700"}}}}]
+            });
+        }));
+        let east = label_fills(&svg, &["47,368"]);
+        assert_eq!(east[0].1.as_deref(), Some("#00ff00"), "{svg}");
+        let open = svg[..svg.find(">47,368</text>").unwrap()].rfind("<text").unwrap();
+        assert!(svg[open..].starts_with("<text") && svg[open..svg.find(">47,368</text>").unwrap()].contains("font-weight=\"700\""));
+        let north = label_fills(&svg, &["34,968"]);
+        assert_ne!(north[0].1.as_deref(), Some("#00ff00"));
+    }
+
+    /// A heatmap whose color column holds these values as categories (or dates), labels on.
+    fn colored_by(values: Value) -> Value {
+        heatmap_payload(|json| {
+            labeled(11.0, json!({}))(json);
+            json["rows"] = Value::Array(
+                values.as_array().unwrap().iter().enumerate().map(|(i, v)| json!({"region": format!("r{i}"), "category": "A", "tier": v})).collect(),
+            );
+            json["resolved"]["color"] = json!("tier");
+            json["resolved"]["palette"] = json!(["#111111", "#222222", "#333333"]);
+            json["resolved"]["resolved_channels"] =
+                json!({"color": {"channel": "color", "mode": "series", "data_field": "tier", "quantitative_data": false}});
+        })
+    }
+
+    #[test]
+    fn a_date_color_labels_each_cell_as_the_legend_spells_its_date() {
+        let _en = ::bind::time_locale::en_us_scope();
+        let svg = render_json(colored_by(json!(["2024-01-05", "2024-03-09"])));
+        assert!(svg.contains(">Jan 05, 2024</text>") && svg.contains(">Mar 09, 2024</text>"), "{svg}");
+        assert!(!svg.contains(">2024-01-05</text>"));
+    }
+
+    #[test]
+    fn a_null_category_cell_gets_no_label() {
+        let svg = render_json(colored_by(json!(["red", null, "blue"])));
+        assert!(svg.contains(">red</text>") && svg.contains(">blue</text>"), "{svg}");
+        assert_eq!(svg.matches("aria-roledescription=\"text mark\"").count(), 2, "only red and blue are labeled: {svg}");
+    }
+
+    #[test]
+    fn an_offset_that_would_push_a_label_out_of_its_cell_omits_it() {
+        let fits = render_json(heatmap_payload(labeled(11.0, json!({"dx": 2.0}))));
+        assert!(fits.contains(">47,368</text>"));
+        let pushed = render_json(heatmap_payload(labeled(11.0, json!({"dx": 80.0}))));
+        assert!(!pushed.contains(">47,368</text>"), "{pushed}");
+    }
+
+    #[test]
+    fn the_opposite_ink_never_fails_a_render_on_a_mid_gray_canvas() {
+        for canvas in ["#777777", "#757575", "#7a7a7a", "#808080"] {
+            let svg = render_json(heatmap_payload(|json| {
+                labeled(11.0, json!({}))(json);
+                json["resolved"]["canvas"] = json!(canvas);
+            }));
+            assert!(svg.contains(">47,368</text>"), "{canvas}");
+        }
     }
 }

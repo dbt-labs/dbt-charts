@@ -236,6 +236,7 @@ macro_rules! string_enum {
                     constraints: &[],
                     shorthand: None,
                     string_pattern: None,
+                    shorthand_items: None,
                     complete: false,
                     read_under: None,
                 };

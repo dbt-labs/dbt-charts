@@ -14,6 +14,7 @@ from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedScaleSymlogStyle,
 )
 from dbt_charts.core.compile.models.style.theme import BaseScaleStyle, XScaleStyle
+from dbt_charts.core.compile.models.style.theme.axis import AxisDomain
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_AXIS_COLUMN_REQUIRES_TABULAR_FONT,
 )
@@ -29,6 +30,21 @@ from dbt_charts.core.text.numeral_scale import (
     shared_scale_for_ladder,
     suffix_at_register,
 )
+
+
+def _closed_domain(
+    domain: AxisDomain | None,
+) -> tuple[int | float | str, int | float | str] | None:
+    """The domain as a closed pair; an open end must have been fitted by resolve."""
+    if domain is None:
+        return None
+    low, high = domain.min, domain.max
+    if low is None or high is None:
+        raise ValueError(
+            f"scale.continuous.domain {[low, high]} reached the resolved style "
+            "with a null end: the chart family's resolver must close it first."
+        )
+    return low, high
 
 
 def ladder_anchor_at_start(tick_values: tuple[float, ...]) -> bool:
@@ -67,7 +83,7 @@ def build_resolved_scale(
             ResolvedScaleContinuousStyle(
                 zero=None if scale.continuous.zero == "auto" else scale.continuous.zero,
                 type=scale.continuous.type,
-                domain=scale.continuous.domain,
+                domain=_closed_domain(scale.continuous.domain),
                 log=(
                     ResolvedScaleLogStyle(base=scale.continuous.log.base)
                     if scale.continuous.log is not None

@@ -318,6 +318,8 @@ pub struct PatternPlan {
     size: Cell<TileSize>,
     used: RefCell<Vec<(String, Node)>>,
     fallbacks: Rc<Fallbacks>,
+    /// Every slot and step draws its flat tint in place of its tile ([`Self::tinted`]).
+    flat: bool,
 }
 
 impl PatternPlan {
@@ -373,6 +375,7 @@ impl PatternPlan {
             size: Cell::default(),
             used: RefCell::new(Vec::new()),
             fallbacks: Rc::default(),
+            flat: false,
         })
     }
 
@@ -594,11 +597,31 @@ impl PatternPlan {
         if inverse { 1.0 - marks } else { marks }
     }
 
+    /// This plan with every slot and step drawn as its flat tint, the shade a mark too small for
+    /// the tile draws: one ink's tints that read the pattern library's own lightness per step.
+    pub fn tinted(self) -> Self {
+        Self { flat: true, ..self }
+    }
+
+    /// Refuses a map's `tints` over a ramp that is not sequential: a diverging ramp bins by
+    /// distance from zero, so its steps are not the key's and its first step is its darkest.
+    pub fn refuse_unsequential_tints(&self) -> Result<(), String> {
+        match self.spec().map(|spec| spec.scale) {
+            Some(Scale::Diverging) => Err("`tints` need a sequential ramp, and the pattern is diverging (resolver required)".to_string()),
+            Some(Scale::Category) => Err("`tints` need a sequential ramp, and the pattern is a category scale (resolver required)".to_string()),
+            Some(Scale::Sequential) | None => Ok(()),
+        }
+    }
+
     /// The pattern paint for `tile` in `ink` on `ground` (swapped when `inverse`), its tile
-    /// registered for the chart's `<defs>` the first time it is handed out.
+    /// registered for the chart's `<defs>` the first time it is handed out; a tinted plan's
+    /// flat tint.
     fn build(&self, key: &str, tile: &Tile, ink_share: f64, ink: &str, ground: &str, outline: &str, inverse: bool) -> Result<Paint, String> {
         let (marks_color, bed) = if inverse { (ground, ink) } else { (ink, ground) };
         let flat = lin_mix(ground, ink, ink_share)?;
+        if self.flat {
+            return Ok(Paint::Color(flat));
+        }
         let id = self.tile_id(key, marks_color, bed)?;
         let key_id = self.define_key(key, &id, tile, marks_color, bed, outline)?;
         self.define_tile(&id, &key_id, tile, marks_color, bed);
@@ -670,6 +693,7 @@ impl Default for PatternPlan {
             size: Cell::default(),
             used: RefCell::new(Vec::new()),
             fallbacks: Rc::default(),
+            flat: false,
         }
     }
 }
@@ -707,15 +731,10 @@ pub fn tile_node(id: &str, key: &str, tile: &Tile, marks_color: &str, ground: &s
     Node::new(Role::Chrome, attrs, Shape::Pattern { w, h, transform: None, children })
 }
 
-/// `ink` when it keeps [`PATTERN_INK_MIN_CONTRAST`] against `ground`; otherwise the lightness of
-/// `ink`'s hue nearest to it that does, toward whichever of black and white contrasts more with
-/// `ground` (`dbt_charts_color::ensure_readable_ink`, the rule label ink follows).
+/// `ink` kept readable against `ground` at [`PATTERN_INK_MIN_CONTRAST`] (`dbt_charts_color::readable_ink_on_fill`,
+/// the rule label ink over a mark follows).
 fn contrasting(ink: &str, ground: &str) -> Result<String, String> {
-    let (ink_hex, ground_hex) = (format!("#{}", hex(ink)?), format!("#{}", hex(ground)?));
-    if dbt_charts_color::wcag_contrast(&ink_hex, &ground_hex)? >= PATTERN_INK_MIN_CONTRAST {
-        return Ok(ink.to_string());
-    }
-    dbt_charts_color::ensure_readable_ink(&ink_hex, &ground_hex, PATTERN_INK_MIN_CONTRAST)
+    dbt_charts_color::readable_ink_on_fill(ink, ground, PATTERN_INK_MIN_CONTRAST)
 }
 
 fn rgb255(color: &str) -> Result<[f64; 3], String> {
@@ -1054,6 +1073,22 @@ mod tests {
                 previous = tint;
             }
         }
+    }
+
+    #[test]
+    fn a_tinted_plan_paints_each_step_and_slot_in_the_patterns_own_flat_tint() {
+        let ramp = PatternSpec { field: "v".into(), scale: Scale::Sequential, motifs: vec![], ladder: None, ramp: Some("dots".into()), steps: Some(6), color: Some("#2a2a2a".into()), ground: background(), inverse: false };
+        let patterned = PatternPlan::new("c", Some(ramp.clone()), "#fefcf9").unwrap();
+        let tinted = PatternPlan::new("c", Some(ramp), "#fefcf9").unwrap().tinted();
+        for i in 0..6 {
+            let tint = tinted.step(i, "#000000").unwrap();
+            assert!(matches!(tint, Paint::Color(_)), "step {i} draws flat");
+            assert_eq!(tint.color(), patterned.step(i, "#000000").unwrap().color(), "step {i}: the tint is the pattern's flat tint");
+        }
+        let category = category(&["hatch-45", "dots"], background(), false);
+        let (patterned, tinted) = (plan(Some(category.clone())), plan(Some(category)).tinted());
+        assert_eq!(tinted.category(1, 1, 2, "#335").unwrap(), Paint::Color(patterned.category(1, 1, 2, "#335").unwrap().color().to_string()));
+        assert!(tinted.finish(true).unwrap().is_none(), "a tinted plan defines no tile");
     }
 
     #[test]

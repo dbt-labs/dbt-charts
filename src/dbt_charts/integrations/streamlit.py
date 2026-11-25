@@ -295,7 +295,7 @@ def st_project(project_dir: str | Path, session: SnowparkSession | None = None) 
                     nav_content_left(compiled.board),
                     show_download=False,
                     show_actions=False,
-                    sidebar_query=None,
+                    show_sidebar=False,
                 ),
             )
         else:
@@ -317,7 +317,7 @@ def st_project(project_dir: str | Path, session: SnowparkSession | None = None) 
                     nav_content_left(compiled.board),
                     show_download=False,
                     show_actions=False,
-                    sidebar_query=None,
+                    show_sidebar=False,
                 ),
             )
         raise_on_dashboard_failure(result)

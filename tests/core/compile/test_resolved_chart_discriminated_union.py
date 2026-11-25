@@ -301,7 +301,8 @@ def _default_axis_d(chart_type: str, x_type: str, y_type: str) -> tuple[dict, di
         x_type,
         y_type,
         AxisOverrides(),
-        True,
+        False,
+        False,
     )
     ax_merged, ay_merged, ax_band_position, ay_band_position = (
         baked.x.style,
@@ -781,9 +782,9 @@ def test_table_has_column_configs(table_style: ResolvedTableStyle) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resolved_bar_style_has_stack_order(bar_style: ResolvedBarStyle) -> None:
-    s = bar_style.model_copy(update={"stack_order": "value"})
-    assert s.stack_order == "value"
+def test_resolved_bar_style_has_series_order(bar_style: ResolvedBarStyle) -> None:
+    s = bar_style.model_copy(update={"series_order": "value"})
+    assert s.series_order == "value"
 
 
 def test_resolved_bar_style_rejects_kpi_fields() -> None:

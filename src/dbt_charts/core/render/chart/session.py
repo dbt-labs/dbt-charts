@@ -84,10 +84,15 @@ class BoardRenderSession:
                     ERR_INTERNAL,
                     message=f"chart {chart.id!r} is drawn outside a board placement",
                 )
+            # A KPI draws at its own height, as a table does: a taller slot (a cols
+            # row beside a taller chart) leaves room below the card.
+            cell_height = None if isinstance(chart, ResolvedKpiChart) else height
             return draw_in_cell(
                 chart,
                 placement,
-                cell_args(chart, self.board_style, width, height, padding, title_shift),
+                cell_args(
+                    chart, self.board_style, width, cell_height, padding, title_shift
+                ),
             )
         # A chart drawn outside a board layout is its own first placement.
         ordinal = 0 if placement is None else placement_ordinal(chart.id, placement)

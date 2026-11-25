@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from datetime import date
 
 import pytest
 
@@ -11,7 +12,11 @@ from dbt_charts.core.compile.config import (
     get_theme_style,
 )
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.models.chart.normalized import LineChart, ScatterChart
+from dbt_charts.core.compile.models.chart.normalized import (
+    HeatmapChart,
+    LineChart,
+    ScatterChart,
+)
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
@@ -19,6 +24,7 @@ from dbt_charts.core.compile.models.style.authored import (
     AxisYLabelStylePatch,
     AxisYStylePatch,
     DimensionLabelStylePatch,
+    HeatmapChartStylePatch,
     LineChartStylePatch,
     ScatterChartStylePatch,
 )
@@ -45,7 +51,7 @@ def _bake_ay_with_format(chart_type: str, y_channel_type: str, fmt: FormatConfig
         y=AxisYStylePatch(labels=AxisYLabelStylePatch(format=fmt))
     )
     return _bake_cartesian_axes(
-        ctx, chart, chart_type, "nominal", y_channel_type, overrides, True
+        ctx, chart, chart_type, "nominal", y_channel_type, overrides, False, False
     )
 
 
@@ -56,7 +62,7 @@ def _bake_ay_with_format_and_expr(chart_type: str, fmt: str | FormatConfig, expr
         y=AxisYStylePatch(labels=AxisYLabelStylePatch(format=fmt, expr=expr))
     )
     return _bake_cartesian_axes(
-        ctx, chart, chart_type, "nominal", "quantitative", overrides, True
+        ctx, chart, chart_type, "nominal", "quantitative", overrides, False, False
     )
 
 
@@ -94,44 +100,101 @@ def test_ordinal_channel_rejects_the_authored_affix():
     assert exc_info.value.code.code == "ERR-FORMAT-AFFIX-NOMINAL-AXIS-UNSUPPORTED"
 
 
+_EMPTY_SCATTER = ScatterChart(
+    id="s",
+    type="scatter",
+    query=SqlQuery(sql="SELECT 1", source="t"),
+    query_name="q",
+    x="sold_date",
+    y="price",
+    style=ScatterChartStylePatch.model_validate(
+        {"axis_y": {"labels": {"format": "currency_compact"}}}
+    ),
+)
+_EMPTY_LINE = LineChart(
+    id="l",
+    type="line",
+    query=SqlQuery(sql="SELECT 1", source="t"),
+    query_name="q",
+    x="n",
+    y="price",
+    style=LineChartStylePatch.model_validate(
+        {"axis_x": {"labels": {"format": "compact"}}}
+    ),
+)
+
+
 @pytest.mark.parametrize(
-    "chart",
+    ("chart", "rows"),
     [
+        pytest.param(_EMPTY_SCATTER, [], id="scatter_axis_y_no_rows"),
+        pytest.param(_EMPTY_LINE, [], id="line_axis_x_no_rows"),
         pytest.param(
-            ScatterChart(
-                id="s",
-                type="scatter",
-                query=SqlQuery(sql="SELECT 1", source="t"),
-                query_name="q",
-                x="sold_date",
-                y="price",
-                style=ScatterChartStylePatch.model_validate(
-                    {"axis_y": {"labels": {"format": "currency_compact"}}}
-                ),
-            ),
+            _EMPTY_SCATTER,
+            [{"sold_date": date(2024, 1, 1), "price": None}],
+            id="scatter_axis_y_all_null",
         ),
         pytest.param(
-            LineChart(
-                id="l",
-                type="line",
-                query=SqlQuery(sql="SELECT 1", source="t"),
-                query_name="q",
-                x="n",
-                y="price",
-                style=LineChartStylePatch.model_validate(
-                    {"axis_x": {"labels": {"format": "compact"}}}
-                ),
-            ),
+            _EMPTY_LINE,
+            [{"n": None, "price": 1.0}],
+            id="line_axis_x_all_null",
         ),
     ],
-    ids=["scatter_axis_y", "line_axis_x"],
 )
-def test_empty_result_does_not_reject_the_affix(chart):
-    """With no rows a channel has no values to classify, so its nominal
-    default is not evidence of a categorical axis: the chart resolves and
-    renders its empty state."""
+def test_unclassified_channel_does_not_reject_the_affix(chart, rows):
+    """A column with no non-null value has nothing to classify, so its nominal
+    default is not evidence of a categorical axis, and the axis paints no
+    tick labels to protect."""
     ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
-    resolve(chart, [], ctx)
+    resolve(chart, rows, ctx)
+
+
+_AUTHORED_NOMINAL_LINE = LineChart(
+    id="l",
+    type="line",
+    query=SqlQuery(sql="SELECT 1", source="t"),
+    query_name="q",
+    x="n",
+    y="price",
+    style=LineChartStylePatch.model_validate(
+        {"axis_x": {"type": "nominal", "labels": {"format": "compact"}}}
+    ),
+)
+_HEATMAP = HeatmapChart(
+    id="h",
+    type="heatmap",
+    query=SqlQuery(sql="SELECT 1", source="t"),
+    query_name="q",
+    x="n",
+    y="price",
+    style=HeatmapChartStylePatch.model_validate(
+        {"axis_x": {"labels": {"format": "compact"}}}
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("chart", "rows"),
+    [
+        pytest.param(_AUTHORED_NOMINAL_LINE, [], id="authored_nominal_no_rows"),
+        pytest.param(
+            _AUTHORED_NOMINAL_LINE,
+            [{"n": None, "price": 1.0}],
+            id="authored_nominal_all_null",
+        ),
+        pytest.param(_HEATMAP, [], id="heatmap_no_rows"),
+        pytest.param(_HEATMAP, [{"n": None, "price": 1.0}], id="heatmap_all_null"),
+    ],
+)
+def test_declared_nominal_channel_rejects_the_affix_without_values(chart, rows):
+    """A nominal channel the author or the family declares is not a classifier
+    default: it rejects the affix whether or not the column holds values, so a
+    board that passes against an empty warehouse cannot fail once data
+    arrives."""
+    ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
+    with pytest.raises(CompilationError) as exc_info:
+        resolve(chart, rows, ctx)
+    assert exc_info.value.code.code == "ERR-FORMAT-AFFIX-NOMINAL-AXIS-UNSUPPORTED"
 
 
 def test_nominal_x_channel_rejects_the_authored_affix():
@@ -148,7 +211,7 @@ def test_nominal_x_channel_rejects_the_authored_affix():
     )
     with pytest.raises(CompilationError) as exc_info:
         _bake_cartesian_axes(
-            ctx, chart, "bar", "nominal", "quantitative", overrides, True
+            ctx, chart, "bar", "nominal", "quantitative", overrides, False, False
         )
     assert exc_info.value.code.code == "ERR-FORMAT-AFFIX-NOMINAL-AXIS-UNSUPPORTED"
 
@@ -167,7 +230,7 @@ def test_house_alias_ruler_suppresses_the_authored_affix_override():
         )
     )
     baked = _bake_cartesian_axes(
-        ctx, chart, "bar", "nominal", "quantitative", overrides, True
+        ctx, chart, "bar", "nominal", "quantitative", overrides, False, False
     )
     resolved = build_resolved_axis(
         baked.y.style,
@@ -206,7 +269,7 @@ def test_authored_affix_persists_on_labels_format_alongside_a_ladder():
         )
     )
     baked = _bake_cartesian_axes(
-        ctx, chart, "bar", "nominal", "quantitative", overrides, True
+        ctx, chart, "bar", "nominal", "quantitative", overrides, False, False
     )
     resolved = build_resolved_axis(
         baked.y.style,
@@ -262,7 +325,7 @@ def _resolved_ay_axis(
         y=AxisYStylePatch(labels=AxisYLabelStylePatch(format=fmt))
     )
     baked = _bake_cartesian_axes(
-        ctx, chart, chart_type, "nominal", "quantitative", overrides, True
+        ctx, chart, chart_type, "nominal", "quantitative", overrides, False, False
     )
     return build_resolved_axis(
         baked.y.style,

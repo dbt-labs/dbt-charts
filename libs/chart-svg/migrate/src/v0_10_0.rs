@@ -31,7 +31,7 @@ const HEATMAP_FORMAT_REASON: &str =
     "A heatmap's axes are both grid dimensions, so {key} never applied. Set formats: on the query.";
 
 const KPI_LINE_HEIGHT_NOTE: &str =
-    "line_height has no effect on KPI text slots (each renders a single line); removed.";
+    "line_height has no effect on KPI text slots (a wrapped label's lines sit a fixed step apart); removed.";
 const KPI_NO_TITLE: &str = "A KPI has no title: its overflow moved to label.overflow, and any other title setting was dropped. Style the label under label.";
 const KPI_CHARACTER: &str = "character only drew on the KPI glyph slot; it was ignored here.";
 const STYLE_NULL_NOTE: &str = "style null is accepted only where it means no value (no link, solid line, no stroke). Elsewhere it was dropped; where it had cleared a value from the theme or a parent, write the value you want instead.";

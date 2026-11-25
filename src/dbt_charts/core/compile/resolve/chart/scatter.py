@@ -36,6 +36,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     no_rail,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
+    _classifier_defaults,
     _classify_to_channel_type,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
@@ -57,6 +58,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _resolve_cartesian_ticks,
     _shared_y_values,
     _zero_anchor_floats,
+    close_open_y_domain,
     reject_non_positive_log_size,
     resolve_y_zero,
 )
@@ -151,11 +153,16 @@ def _resolve_scatter(
     # numeric — the dot-plot recipe (a real column classified nominal/ordinal)
     # only ever applies to a single authored y column.
     y_field_scatter = normalized.y if isinstance(normalized.y, str) else None
-    x_ch_type = x_channel_type(normalized, data, chart_style_context, "scatter")
+    x_ch_type, x_type_defaulted = x_channel_type(
+        normalized, data, chart_style_context, "scatter"
+    )
     y_ch_type = (
         "quantitative"
         if isinstance(normalized.y, list)
         else _classify_to_channel_type(y_field_scatter, data, is_dimension=False)
+    )
+    y_type_defaulted = y_field_scatter is not None and _classifier_defaults(
+        y_field_scatter, data
     )
     _check_bar_layer_spans(normalized, data, datasets, None)
     chart_local_style_context = build_chart_style_context(
@@ -175,6 +182,8 @@ def _resolve_scatter(
         normalized.y,
         has_quantitative_axis=True,
         temporal_band_axes=frozenset(),
+        x_type_defaulted=x_type_defaulted,
+        y_type_defaulted=y_type_defaulted,
         horizontal=False,
     )
     primary = plan.primary
@@ -349,20 +358,31 @@ def _resolve_scatter(
             # an unanchored axis fits the data instead of pinning a floor
             # at 0.
             _scatter_anchored = False
+        scatter_y_values = (
+            _shared_y_values(data, y_field_scatter, normalized, datasets)
+            + list(annotations.y_values)
+            if y_field_scatter
+            else _zero_floats
+        )
+        ay_merged = close_open_y_domain(
+            normalized.id,
+            ay_merged,
+            scatter_y_values,
+            _scatter_anchored,
+            multiples_scale,
+        )
         scatter_ticks = _resolve_cartesian_ticks(
             normalized.id,
             ay_merged,
-            (
-                _shared_y_values(data, y_field_scatter, normalized, datasets)
-                + list(annotations.y_values)
-                if y_field_scatter
-                else _zero_floats
-            ),
+            scatter_y_values,
             zero_anchor=_scatter_anchored,
             scale=multiples_scale,
             is_quantitative=y_ch_type == "quantitative",
         )
     else:
+        ay_merged = close_open_y_domain(
+            normalized.id, ay_merged, [], False, multiples_scale
+        )
         scatter_ticks = _CartesianTickResolution((), None)
         _scatter_anchored = False
     # Scatter's x (even a categorical "dot plot" x) is always bottom-orient —

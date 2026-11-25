@@ -15,6 +15,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
@@ -239,3 +240,21 @@ def test_a_colorless_heatmap_fills_from_the_board_family_palette() -> None:
     ctx = _ctx({**_categorical(_GLOBAL), "heatmap": _categorical(_BOARD)})
     chart = {"type": "heatmap", "x": "m", "y": "s"}
     assert _resolved(chart, _SERIES_ROWS, ctx).style.single_series_fill == _BOARD[0]
+
+
+def test_a_board_histogram_axis_x_type_is_a_compile_error() -> None:
+    """A histogram bins a numeric x, so a type addressed to the histogram
+    family is refused, not dropped."""
+    ctx = _ctx({"histogram": {"axis_x": {"type": "nominal"}}})
+    with pytest.raises(CompilationError) as exc_info:
+        _resolved({"type": "histogram", "x": "v"}, _SERIES_ROWS, ctx)
+    assert exc_info.value.code is not None
+    assert exc_info.value.code.code == "ERR-HISTOGRAM-AXIS-X-TYPE"
+    assert "style.charts.histogram.axis_x.type" in str(exc_info.value)
+
+
+def test_a_board_wide_axis_x_type_leaves_a_histogram_resolving() -> None:
+    """`charts.axis_x.type` styles every cartesian family on the board; a
+    histogram beside the bar it was set for keeps binning its numeric x."""
+    ctx = _ctx({"axis_x": {"type": "nominal"}})
+    _resolved({"type": "histogram", "x": "v"}, _SERIES_ROWS, ctx)

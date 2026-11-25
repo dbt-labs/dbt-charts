@@ -16,12 +16,19 @@ from dbt_charts.core.compile.models.style.theme import (
     BarLabelsStyle,
     BarMarkStyle,
     BarTotalLabelStyle,
+    MarkLabelsStyle,
     PointLabelsStyle,
     PointMarkStyle,
 )
 
 
 class ResolvedBarLabels(BarLabelsStyle):
+    format: ResolvedFormat | None = Field(
+        default=None, description="Resolved value-label format."
+    )
+
+
+class ResolvedRectLabels(MarkLabelsStyle):
     format: ResolvedFormat | None = Field(
         default=None, description="Resolved value-label format."
     )
@@ -251,6 +258,7 @@ __all__ = [
     "ResolvedBarTotalLabel",
     "ResolvedLineMarkStyle",
     "ResolvedMarkLabels",
+    "ResolvedRectLabels",
     "ResolvedPointLabels",
     "ResolvedPointMarkStyle",
     "ResolvedSeriesLabelStyle",

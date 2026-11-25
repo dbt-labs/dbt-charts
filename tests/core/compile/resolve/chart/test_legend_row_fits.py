@@ -355,7 +355,7 @@ class TestCartesianTopLegendEntries:
     def test_no_layers_and_no_color_domain_is_empty(self) -> None:
         assert (
             cartesian_top_legend_entries(
-                "revenue", None, [], (), has_color=False, field_labels={}
+                "revenue", [], (), has_color=False, field_labels={}
             )
             == ()
         )
@@ -363,7 +363,6 @@ class TestCartesianTopLegendEntries:
     def test_layers_present_names_base_and_each_layer(self) -> None:
         entries = cartesian_top_legend_entries(
             "revenue",
-            "Revenue",
             [LineLayer(type="line", y="target", label="Target")],
             (),
             has_color=False,
@@ -376,7 +375,6 @@ class TestCartesianTopLegendEntries:
     ) -> None:
         entries = cartesian_top_legend_entries(
             "revenue",
-            "Revenue",
             [LineLayer(type="line", y="order_target", label=None)],
             (),
             has_color=False,
@@ -387,7 +385,6 @@ class TestCartesianTopLegendEntries:
     def test_color_domain_values_are_appended(self) -> None:
         entries = cartesian_top_legend_entries(
             "revenue",
-            "Revenue",
             [LineLayer(type="line", y="target", label="Target")],
             ("S1", "S2"),
             has_color=False,
@@ -403,7 +400,6 @@ class TestCartesianTopLegendEntries:
         render never draws."""
         entries = cartesian_top_legend_entries(
             "revenue",
-            "Revenue",
             [LineLayer(type="line", y="target", label="Target")],
             ("S1", "S2"),
             has_color=True,
@@ -417,7 +413,6 @@ class TestCartesianTopLegendEntries:
         measured as though it inherited the base's y."""
         entries = cartesian_top_legend_entries(
             "revenue",
-            "Revenue",
             [LineLayer(type="line", y=None, label="Ghost")],
             (),
             has_color=False,

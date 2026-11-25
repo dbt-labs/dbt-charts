@@ -32,6 +32,10 @@ def _board(**fields: object) -> dict[str, object]:
             r"Invalid query reference 'nope'.*'<file>\.queries\.<name>'",
         ),
         (
+            {"queries": {"q": " 1_source.queries.sales "}},
+            r"Invalid query reference '1_source\.queries\.sales'.*start with a letter",
+        ),
+        (
             {"aliases": ["old"]},
             r"Alias 'old' is not absolute.*/old-reports/",
         ),

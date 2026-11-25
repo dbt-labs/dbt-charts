@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 from dbt_charts.core.compile.models.constraints import (
     ConstrainedModel,
@@ -24,8 +31,19 @@ from dbt_charts.core.compile.models.primitives import (
     NON_BLANK,
     ErrorHint,
     FormatConfig,
+    StrictNumber,
+    domain_shorthand,
 )
 from dbt_charts.core.compile.models.schema_names import FormatAlias
+
+
+class LayerScaleDomain(BaseModel):
+    """Where a layer's own y scale's ends sit; ``[min, max]`` is its shorthand."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    min: StrictNumber = Field(description="Where the layer's y scale's low end sits.")
+    max: StrictNumber = Field(description="Where the layer's y scale's high end sits.")
 
 
 class LayerAxisYScale(BaseModel):
@@ -33,11 +51,19 @@ class LayerAxisYScale(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    domain: list[float] | None = Field(
+    domain: (
+        Annotated[
+            LayerScaleDomain,
+            BeforeValidator(
+                domain_shorthand,
+                json_schema_input_type=tuple[StrictNumber, StrictNumber]
+                | LayerScaleDomain,
+            ),
+        ]
+        | None
+    ) = Field(
         default=None,
-        min_length=2,
-        max_length=2,
-        description="Explicit [min, max] domain for this layer's y scale.",
+        description="Where this layer's y scale's ends sit, as [min, max].",
     )
     clip: bool = Field(
         default=True,

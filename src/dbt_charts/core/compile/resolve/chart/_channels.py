@@ -35,6 +35,7 @@ from dbt_charts.core.utils import is_year_shaped, vega_infers_quantitative
 __all__ = [
     "_bar_orientation",
     "_channels_for",
+    "_classifier_defaults",
     "_classify_to_channel_type",
     "_column_numeric_values",
 ]
@@ -207,6 +208,15 @@ def _bar_orientation(
     )
 
 
+def _classifier_defaults(
+    field: str | None,
+    data: list[dict[str, Any]],  # type-state: explicit_any — query-row boundary values
+) -> bool:
+    """Whether ``field`` holds no non-null value to classify, so
+    ``_classify_to_channel_type`` answers its ``nominal`` default."""
+    return not field or not first_non_null_samples(field, data, limit=1)
+
+
 def _classify_to_channel_type(
     field: str | None, data: list[dict[str, Any]], is_dimension: bool
 ) -> str:
@@ -224,11 +234,9 @@ def _classify_to_channel_type(
     must pass ``is_dimension=False`` and stay quantitative even when its
     values happen to fall in the year range.
     """
-    if not field or not data:
+    if field is None or _classifier_defaults(field, data):
         return "nominal"
     samples = first_non_null_samples(field, data)
-    if not samples:
-        return "nominal"
     # Year-shaped INTEGER/VARCHAR x bakes the same band/temporal axis-style
     # cascade as a genuine DATE column — otherwise the quantitative-axis SI
     # suffix default (.3~s) leaks onto year ticks even though orientation and

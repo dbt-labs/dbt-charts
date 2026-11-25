@@ -359,6 +359,9 @@ pub struct Annotation {
     pub enclose: Option<Enclose>,
     pub trend: Option<Trend>,
     pub style: Style,
+    /// Set when a layout must reserve the numbered-rules key from the start.
+    #[serde(skip)]
+    pub numbered: std::sync::OnceLock<()>,
 }
 
 impl Annotation {
@@ -511,12 +514,17 @@ impl Annotation {
         if let Some(text) = &self.text {
             return text.clone();
         }
-        let anchors: Vec<String> = [&self.x, &self.y].into_iter().flatten().map(Anchor::text).collect();
+        let anchors = self.anchor_text();
         if anchors.is_empty() {
             self.kind.name().to_string()
         } else {
-            format!("{} at {}", self.kind.name(), anchors.join(", "))
+            format!("{} at {anchors}", self.kind.name())
         }
+    }
+
+    /// The anchors as authored, comma-joined; empty when it has none.
+    pub fn anchor_text(&self) -> String {
+        [&self.x, &self.y].into_iter().flatten().map(Anchor::text).collect::<Vec<_>>().join(", ")
     }
 }
 

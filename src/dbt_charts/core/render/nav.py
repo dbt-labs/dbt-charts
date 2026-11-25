@@ -114,7 +114,6 @@ def _sidebar(
     list_url: str,
     current_board: str | None,
     current_folder: str | None,
-    query: str,
 ) -> list[SidebarRow]:
     """Rows for the sidebar of ``list_dir``: ``..`` (below the root), boards (index/overview first, then filename order), then
     subfolders; the root adds each installed package's boards as a folder, as
@@ -141,7 +140,6 @@ def _sidebar(
             )
             if r.namespace not in hosted
         ]
-    suffix = f"?{query}" if query else ""
     boards = sorted(
         ((e, e.handle) for e in entries if isinstance(e.handle, ProjectPath)),
         key=lambda pair: pair[0].label not in _LEADING_STEMS,
@@ -152,7 +150,7 @@ def _sidebar(
                 kind="folder",
                 label="..",
                 # The listed folder's own page lists its parent, one level back.
-                url=list_url + suffix,
+                url=list_url,
                 current=False,
             )
         ]
@@ -165,7 +163,7 @@ def _sidebar(
             SidebarRow(
                 kind="board",
                 label=read_board_text(handle).label.title,
-                url=e.url + suffix,
+                url=e.url,
                 current=e.label == current_board,
             )
             for e, handle in boards
@@ -174,7 +172,7 @@ def _sidebar(
             SidebarRow(
                 kind="folder",
                 label=name,
-                url=url + suffix,
+                url=url,
                 current=name == current_folder,
             )
             for name, url in folders
@@ -191,7 +189,7 @@ def render_nav_html(
     content_left: str,
     show_download: bool,
     show_actions: bool,
-    sidebar_query: str | None,
+    show_sidebar: bool,
 ) -> str:
     """Build the top-of-page nav as a plain-HTML fragment for the page body.
 
@@ -217,10 +215,9 @@ def render_nav_html(
             menu at all. They lean on ``dct serve``'s own routes and window
             sizing, so a host embedding the board in a frame turns them off.
 
-        sidebar_query: None when the host shows no sidebar; otherwise the query
-            string (possibly empty) its board links carry, so a sibling opens with
-            the same variables. The sidebar replaces the file menu once the folder
-            it lists holds two or more boards and subfolders.
+        show_sidebar: whether the host shows the folder sidebar. It replaces the
+            file menu once the folder it lists holds two or more boards and
+            subfolders.
 
     Returns "" when there's nothing to show or it fails — the nav is chrome and
     must never break the page it sits above.
@@ -249,17 +246,15 @@ def render_nav_html(
         # it, with itself current. The root listing has nothing above it, so it
         # lists itself.
         this_url = str(dir_ctx["this_dir"]["url"])
-        if sidebar_query is None:
+        if not show_sidebar:
             sidebar = []
         elif current_url == "" and this_url == "/":
-            sidebar = _sidebar(nav_dir, this_url, None, None, sidebar_query)
+            sidebar = _sidebar(nav_dir, this_url, None, None)
         elif current_url == "":
             parent_url = str(dir_ctx["parent_dir"]["url"])
-            sidebar = _sidebar(
-                nav_dir.parent, parent_url, None, nav_dir.name, sidebar_query
-            )
+            sidebar = _sidebar(nav_dir.parent, parent_url, None, nav_dir.name)
         else:
-            sidebar = _sidebar(nav_dir, this_url, current_label, None, sidebar_query)
+            sidebar = _sidebar(nav_dir, this_url, current_label, None)
         # The sidebar names boards by title, so the path names the file.
         if sidebar and current_url:
             ctx["current_label"] = next(

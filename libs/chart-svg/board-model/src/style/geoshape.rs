@@ -1,5 +1,6 @@
 //! `style/theme/geoshape.py`: the geoshape (choropleth) chart family.
 
+use crate::primitives::PatternStyle;
 use crate::style::chart_base::GeoChartStyle;
 use crate::chart::conditional_formatting::Predicate;
 use crate::style::bar::misplaced_defaults;
@@ -51,6 +52,15 @@ pub struct GeoshapeChartStyle {
     /// Geoshape (choropleth)-family mark overrides.
     #[model(inherit_slot = "Style.charts.marks")]
     pub marks: GeoshapeChartMarksStyle,
+    /// Draw in flat tints of one ink: each step of this sequential pattern ramp is one tint, and a region takes the tint of the step its value falls in.
+    #[model(absent = "the color scale's own fills")]
+    pub tints: Option<PatternStyle>,
+    /// Draw the `tints` key as one strip of square swatches in place of the side key, labeled at its two ends in the value-label format.
+    #[model(absent = "the side key")]
+    pub strip_key: Option<bool>,
+    /// Dash pattern in pixels, such as `[2, 2]`, of the outline a region with no value draws in the `tints` ink, with no fill. Needs `tints`.
+    #[model(absent = "no outline")]
+    pub no_data_dash: Option<Vec<f64>>,
     /// Rules that restyle a region by its row's value, keyed by column name. Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, is_null, or default) plus the style it applies: marks.geoshape fill and stroke (color, width). A rule's color overrides an authored color channel for the matched region only; the legend is unchanged. Every matching rule applies; where two set the same key the later one wins, so list the more specific rule last. A `default: true` rule applies only when no other rule matched. Two columns cannot patch the same property.
     #[model(fill = fill_empty)]
     pub conditional: IndexMap<String, Vec<GeoshapeChartStyleConditional>>,

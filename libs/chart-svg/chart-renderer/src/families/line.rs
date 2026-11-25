@@ -21,9 +21,9 @@
 //!
 //! `stack: zero`/`center`/`normalize` on an AREA is `bind::stack::grammar_stack`
 //! (d3-shape's stack): each series' span is read off the stack of every series
-//! below it at that x, in production's `sorted_series_by_stack_order` order
-//! (`style.stack_order`: the default descending global sum, `data`'s first
-//! encounter, or `alphabetical` — `bind::stack::sorted_series_by_stack_order`) —
+//! below it at that x, in production's `sorted_by_series_order` order
+//! (`style.series_order`: the default descending global sum, `data`'s first
+//! encounter, or `alphabetical` — `bind::stack::sorted_by_series_order`) —
 //! a THIRD list beside `spatial_domain` and `palette_domain`, never a
 //! reordering of either). `center` is the
 //! silhouette of the magnitudes floated up by half the tallest column, so the
@@ -328,10 +328,10 @@ pub(crate) struct LineStyle {
     pub series_label: SeriesLabel,
     pub endpoint_labels: EndpointLabels,
     pub single_series_fill: String,
-    /// `style.stack_order` (`value`/`data`/`alphabetical`) — the stacked
-    /// area's baseline-first series rule, `bind::stack::sorted_series_by_stack_order`.
+    /// `style.series_order` (`value`/`data`/`alphabetical`) — the stacked
+    /// area's baseline-first series rule, `bind::stack::sorted_by_series_order`.
     #[serde(default)]
-    pub stack_order: Option<String>,
+    pub series_order: Option<String>,
     #[serde(default)]
     pub area_mark: Option<AreaMark>,
     /// Width-resolved title font (production's `chart_title_spec` output for
@@ -579,6 +579,9 @@ pub(crate) struct PointMark {
     pub anchored_only: bool,
     /// The point area the x edge pad clears, drawn or not (resolve's `bake_edge_size`).
     pub edge_size: f64,
+    /// The canvas ring only a point map draws; a line or area refuses it in `from_payload`.
+    #[serde(default)]
+    pub halo: Option<f64>,
 }
 
 /// The halo point layer sets no `strokeWidth` of its own
@@ -1316,6 +1319,9 @@ impl LineResolved {
 
     pub(crate) fn from_payload(payload: &Payload) -> Result<Self, String> {
         let mut r: Self = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("line payload: {e}"))?;
+        if r.style.point_mark.as_ref().is_some_and(|point| point.halo.is_some()) {
+            return Err(diagnostic::refuse!("line and area: `marks.point.halo` is not supported"));
+        }
         r.series_palette = payload.series_palette(&r.palette);
         r.patterns = crate::pattern::PatternPlan::from_resolved(&payload.resolved)?;
         r.link_context = payload.link_context.clone();
@@ -2525,7 +2531,8 @@ mod tests {
         let at = |needle: &str| svg.find(needle).unwrap_or_else(|| panic!("{needle} missing: {svg}"));
         let halo = at("layer_1_marks");
         let tint = at("<rect x=\"138.45\"");
-        let rule = at("<line x1=\"0\" y1=\"66.2\"");
+        // The rule's invisible hit line sits before everything; its drawn line follows the tint.
+        let rule = tint + svg[tint..].find("<line x1=\"0\" y1=\"66.2\"").expect("the drawn rule");
         let main = at("layer_3_marks");
         let text = at("annotations-text\"><g data");
         assert!(halo < tint && tint < rule && rule < main && main < text, "{svg}");
@@ -4255,6 +4262,40 @@ mod tests {
         render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts())
     }
 
+    /// A blank `x_label` hides the axis title only: every hover row that
+    /// names the x (a layer's, a support_table cell's) reads as it does with
+    /// no label authored.
+    #[test]
+    fn a_blank_x_label_changes_no_hover_row() {
+        let mut scatter = layered_line_payload_with_cross_query_layer();
+        scatter["resolved"]["layers"].as_array_mut().unwrap().push(scatter_layer_json());
+        let mut labeled_line = layered_line_payload_with_cross_query_layer();
+        labeled_line["resolved"]["layers"][0]["line_mark"]["labels"] = serde_json::json!({"visible": true});
+        let mut labeled_bar = year_below_100_bar_layer_payload(&[2024, 2025, 2026]);
+        labeled_bar["resolved"]["layers"][0]["bar_mark"]["labels"]["visible"] = serde_json::json!(true);
+        let variants = [
+            ("line layer", labeled_line),
+            ("bar layer", labeled_bar),
+            ("scatter layer", scatter),
+            ("support_table", make_composed_strip_payload(true)),
+        ];
+        let mut changed = Vec::new();
+        for (name, mut p) in variants {
+            p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
+            let arias = |label: Option<&str>| -> Vec<String> {
+                let mut p = p.clone();
+                if let Some(label) = label {
+                    p["resolved"]["x_label"] = serde_json::json!(label);
+                }
+                let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).unwrap_or_else(|err| panic!("{name}: {err}"));
+                crate::contract::aria_labels(&svg)
+            };
+            let plain = arias(None);
+            changed.extend(arias(Some("")).into_iter().filter(|a| !plain.contains(a)).map(|a| format!("{name}: {a}")));
+        }
+        assert!(changed.is_empty(), "{changed:#?}");
+    }
+
     /// A log axis bakes no ladder, so the layers' share of the one y scale
     /// comes from their own rows: a layer reaching a decade below the base
     /// opens that decade (Vega-Lite unions the layers' domains).
@@ -4592,35 +4633,6 @@ mod tests {
         assert!(svg.contains(">Marker<") && !svg.contains("d=\"M-10,0L10,0\""), "{svg}");
     }
 
-    /// An area layer's color groups stack where they share an x: the first
-    /// value on top, the rest closing down onto the one below instead of the zero.
-    #[test]
-    fn an_area_layer_with_its_own_color_stacks_its_groups() {
-        let mut layer = area_layer_json(0.16, "Area");
-        layer["color"] = serde_json::json!("region");
-        layer["ink"] = serde_json::Value::Null;
-        layer["series_inks"] = serde_json::json!({"East": "#779bc9", "West": "#608470"});
-        let svg = render_layered(|p| {
-            p["resolved"]["palette"] = serde_json::json!(["#40639c", "#779bc9", "#608470"]);
-            p["resolved"]["layers"] = serde_json::json!([layer]);
-            p["datasets"] = serde_json::json!({"trend_query": [
-                {"week": "2026-01-01", "trend": 110.0, "region": "East"},
-                {"week": "2026-01-01", "trend": 40.0, "region": "West"},
-                {"week": "2026-01-08", "trend": 140.0, "region": "East"},
-                {"week": "2026-01-08", "trend": 50.0, "region": "West"}
-            ]});
-        })
-        .expect("renders");
-        let closing_y = |fill: &str| -> f64 {
-            let at = svg.find(&format!("fill=\"{fill}\" fill-opacity=\"0.16\"")).expect(fill);
-            let start = svg[..at].rfind("d=\"").expect("a path") + 3;
-            let d = svg[start..at].split('"').next().expect("d");
-            d.trim_end_matches('Z').rsplit(',').next().expect("a vertex").parse().expect("a number")
-        };
-        // West is on the bottom (closing on the plot's floor), East above it.
-        assert!(closing_y("#779bc9") < closing_y("#608470"), "East closes onto West's top: {svg}");
-    }
-
     /// With only area layers the base keeps the default short stroke; a plain
     /// line layer brings the long mixed stroke back. Every area circle takes the
     /// last area layer's opacity.
@@ -4802,21 +4814,6 @@ mod tests {
         assert!(svg.contains("stroke=\"none\" stroke-width"), "the null group strokes nothing: {svg}");
         assert_eq!(svg.matches(">West</text>").count(), 1, "{svg}");
         assert!(svg.contains("stroke=\"#779bc9\" stroke-width"), "West takes palette[1], the null claims none: {svg}");
-    }
-
-    /// Rows of an area layer sharing an x stack in row order, so over a grouped
-    /// base each x's wedge spans both rows.
-    #[test]
-    fn an_area_layer_over_a_grouped_base_stacks_the_rows_sharing_an_x() {
-        let svg = render_layered(|p| {
-            p["resolved"]["color"] = serde_json::json!("region");
-            for (i, row) in p["rows"].as_array_mut().unwrap().iter_mut().enumerate() {
-                row["region"] = serde_json::json!(if i % 2 == 0 { "East" } else { "West" });
-            }
-            p["resolved"]["layers"] = serde_json::json!([area_layer_json(0.16, "Area")]);
-        })
-        .expect("renders");
-        assert!(svg.contains("fill-opacity=\"0.16\""), "{svg}");
     }
 
     /// Layers claim palette slots and paint in authored order whatever their type.
@@ -5164,6 +5161,25 @@ mod tests {
         .expect("renders");
         assert!(!plain.contains("graphics-object"));
         assert!(crate::contract::has_no_mark_labels(&plain));
+    }
+
+    /// A blank `y_label` hides the axis title only: the hover's value row
+    /// keeps the field's own title, as it reads with no label authored.
+    #[test]
+    fn a_blank_y_label_keeps_the_hover_value_row() {
+        use serde_json::json;
+        for label in ["", " "] {
+            let mut p = make_line_payload(true, false);
+            p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
+            p["resolved"]["y_label"] = json!(label);
+            let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+            assert!(svg.contains("; Signups: 100\""), "{label:?}: {svg}");
+        }
+        let mut p = make_wide_line_payload();
+        p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
+        p["resolved"]["y_label"] = json!("");
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+        assert!(svg.contains("; Revenue, Units sold: 100\""), "{svg}");
     }
 
     /// The value labels are ONE text mark set stamped `data-dbt-value-label`
@@ -5784,14 +5800,14 @@ mod tests {
     /// white perimeter stroke, no rail and no legend so the marks are the
     /// only painted series. `services` carries the largest global sum,
     /// `subscriptions` the next, `hardware` the least.
-    fn make_wide_stacked_area_payload(stack_order: Option<&str>) -> serde_json::Value {
+    fn make_wide_stacked_area_payload(series_order: Option<&str>) -> serde_json::Value {
         use serde_json::json;
         let mut p = make_wide_line_payload();
         p["resolved"]["wide_measures"] = json!(["subscriptions", "services", "hardware"]);
         p["resolved"]["stack"] = json!("zero");
         p["resolved"]["palette"] = json!(["#111111", "#222222", "#333333"]);
         p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(false);
-        p["resolved"]["style"]["stack_order"] = json!(stack_order);
+        p["resolved"]["style"]["series_order"] = json!(series_order);
         p["resolved"]["style"]["area_mark"] = json!({"opacity": 1.0, "backdrop": false});
         p["resolved"]["style"]["line_mark"] = json!({
             "stroke": {"width": 1.0, "color": "#ffffff", "cap": "round", "join": "round"},
@@ -5820,7 +5836,7 @@ mod tests {
     }
 
     /// `_emit_multi_metric_area`'s stacked arm: the baseline order is
-    /// `sorted_series_by_stack_order` over the unfolded rows (default:
+    /// `sorted_by_series_order` over the unfolded rows (default:
     /// descending global sum), so `services` sits on zero, `subscriptions`
     /// on it, `hardware` on top — while the marks PAINT in fold order
     /// (`fold_order=measures`, the authored list) and the palette follows
@@ -5846,8 +5862,8 @@ mod tests {
         );
     }
 
-    /// `style.stack_order: data` ranks by first encounter over the unfolded
-    /// rows (`sorted_series_by_stack_order`), so the listed first measure
+    /// `style.series_order: data` ranks by first encounter over the unfolded
+    /// rows (`sorted_by_series_order`), so the listed first measure
     /// sits on zero even though `services` is larger.
     #[test]
     fn wide_area_stacked_data_order_stacks_in_listed_order() {
@@ -5866,7 +5882,7 @@ mod tests {
     }
 
     /// A measure null on the first rows is encountered later under
-    /// `stack_order: data` ("a measure null in the first rows appears later",
+    /// `series_order: data` ("a measure null in the first rows appears later",
     /// `docs/charts/area-charts.md`): `unfold_wide_rows` drops its null
     /// cells, so its first encounter is its first non-null row.
     #[test]
@@ -5945,23 +5961,23 @@ mod tests {
         );
     }
 
-    /// `sorted_series_by_stack_order` admits `value`, `data`, `alphabetical`;
+    /// `sorted_by_series_order` admits `value`, `data`, `alphabetical`;
     /// any other authored string refuses by name.
     #[test]
-    fn stacked_area_unknown_stack_order_refuses() {
+    fn stacked_area_unknown_series_order_refuses() {
         let err = render_wide_stacked(make_wide_stacked_area_payload(Some("reverse"))).unwrap_err();
-        assert!(err.contains("stack_order") && err.contains("reverse"), "{err}");
+        assert!(err.contains("series_order") && err.contains("reverse"), "{err}");
     }
 
-    /// `style.stack_order` governs an authored-`color:` stacked area just as
+    /// `style.series_order` governs an authored-`color:` stacked area just as
     /// it does a wide one (`_area_spatial_order` passes
-    /// `chart.style.stack_order`): "A" (global sum 250) would sit on zero by
+    /// `chart.style.series_order`): "A" (global sum 250) would sit on zero by
     /// default; `data` puts the first-encountered "B" (sum 100) there instead.
     #[test]
-    fn stacked_area_data_order_honors_style_stack_order() {
+    fn stacked_area_data_order_honors_style_series_order() {
         use serde_json::json;
         let mut p = make_stacked_area_payload("zero");
-        p["resolved"]["style"]["stack_order"] = json!("data");
+        p["resolved"]["style"]["series_order"] = json!("data");
         p["rows"] = json!([
             {"week": "2026-01-01", "series": "B", "signups": 40.0},
             {"week": "2026-01-08", "series": "B", "signups": 60.0},
@@ -6014,8 +6030,8 @@ mod tests {
     /// A two-series stacked-area payload off the same rows
     /// `make_multi_series_line_payload_with_bottom_legend` uses — A: 100,
     /// 150; B: 40, 60. A's global sum (250) beats B's (100), so
-    /// production's `sorted_series_by_stack_order` (area never authors
-    /// `stack_order`, so this is always its default) puts A at the
+    /// production's `sorted_by_series_order` (area never authors
+    /// `series_order`, so this is always its default) puts A at the
     /// baseline. Grid + zero enabled so the zero-rule tests below can
     /// observe it firing/not firing.
     fn make_stacked_area_payload(stack: &str) -> serde_json::Value {
@@ -6207,7 +6223,7 @@ mod tests {
         assert_eq!(fills, vec!["#222222", "#111111"], "A paints first, X second: {svg}");
     }
 
-    /// `sorted_series_by_stack_order`'s baseline order (largest sum first)
+    /// `sorted_by_series_order`'s baseline order (largest sum first)
     /// is a THIRD list beside `spatial_domain` (paint order, unaffected by
     /// stacking) and the STACK POSITION itself — the running sum
     /// accumulates from A (baseline) up through B, never the reverse.
@@ -16588,6 +16604,31 @@ mod tests {
                 row["day"] = json!(day);
             }
             render_facet_payload(p).expect("renders")
+        }
+
+        /// A blank `x_label` hides the axis title only: a facet panel's
+        /// hover keeps the x row under the field's own title.
+        #[test]
+        fn a_blank_x_label_keeps_the_facet_hover_x_row() {
+            let label_svg = |label: Option<&str>| {
+                let mut p = make_facet_line_payload("shared");
+                p["resolved"]["x"] = json!("day");
+                p["resolved"]["style"]["axis_x"]["is_quantitative"] = json!(true);
+                p["resolved"]["style"]["tooltip_format"] = json!(",.0f");
+                if let Some(label) = label {
+                    p["resolved"]["x_label"] = json!(label);
+                }
+                for (row, day) in p["rows"].as_array_mut().unwrap().iter_mut().zip([100.0, 200.0, 300.0, 100.0, 200.0, 300.0]) {
+                    row["day"] = json!(day);
+                }
+                render_facet_payload(p).expect("renders")
+            };
+            let arias = |svg: &str| -> Vec<String> {
+                crate::contract::aria_labels(svg).into_iter().filter(|a| a.contains("200.0")).collect()
+            };
+            let plain = arias(&label_svg(None));
+            assert!(!plain.is_empty());
+            assert_eq!(arias(&label_svg(Some(""))), plain);
         }
 
         #[test]

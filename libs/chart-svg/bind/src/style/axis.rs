@@ -15,7 +15,7 @@
 use board_model::primitives::{AffixRepeat, FormatConfig, FormatSpec, Notation, SignPlacement};
 use board_model::rule::Auto;
 use board_model::style::axis::{
-    AxisXStyle, AxisYStyle, BandAxisStyle, BaseAxisStyle, BaseScaleStyle, DomainBound, QuantitativeAxisStyle, ScaleDomain, ScaleType, TimeUnit,
+    AxisXStyle, AxisYStyle, BandAxisStyle, BaseAxisStyle, BaseScaleStyle, DomainBound, QuantitativeAxisStyle, ScaleType, TimeUnit,
 };
 use diagnostic::{refuse, Diagnostic};
 use crate::bound::ValueScale;
@@ -327,15 +327,23 @@ impl<'a> Scale<'a> {
         }
     }
 
-    /// `scale.continuous.domain` as this rung sets it.
-    fn domain(&self) -> Tri<&'a ScaleDomain> {
+    /// One end of `scale.continuous.domain` as this rung sets it: the ends merge one by one.
+    fn domain_end(&self, max: bool) -> Tri<&'a DomainBound> {
         match self {
             Scale::Patch(p, _) => match &p.continuous {
-                Tri::Value(c) => c.domain.as_ref(),
+                Tri::Value(c) => match &c.domain {
+                    Tri::Value(d) => (if max { &d.max } else { &d.min }).as_ref(),
+                    Tri::Null => Tri::Null,
+                    Tri::Unset => Tri::Unset,
+                },
                 Tri::Null => Tri::Null,
                 Tri::Unset => Tri::Unset,
             },
-            Scale::Total(t) => t.continuous.as_ref().map_or(Tri::Unset, |c| absent(&c.domain)),
+            Scale::Total(t) => t
+                .continuous
+                .as_ref()
+                .and_then(|c| c.domain.as_ref())
+                .map_or(Tri::Unset, |d| absent(if max { &d.max } else { &d.min })),
         }
     }
 
@@ -409,7 +417,7 @@ impl<'a> Scale<'a> {
                 Tri::Value(c) => [
                     ("scale.continuous.zero", !reads_value_leaves && !matches!(c.zero, Tri::Unset)),
                     ("scale.continuous.type", !reads_value_leaves && !matches!(c.r#type, Tri::Unset)),
-                    ("scale.continuous.domain", matches!(&c.domain, Tri::Value(d) if !reads_value_leaves || numeric(d).is_none()) || matches!(c.domain, Tri::Null)),
+                    ("scale.continuous.domain", matches!(&c.domain, Tri::Value(d) if !reads_value_leaves || numeric(tri_value(d.min.as_ref()), tri_value(d.max.as_ref())).is_none()) || matches!(c.domain, Tri::Null)),
                     ("scale.continuous.log", !reads_value_leaves && !matches!(c.log, Tri::Unset)),
                     ("scale.continuous.pow", !reads_value_leaves && !matches!(c.pow, Tri::Unset)),
                     ("scale.continuous.symlog", !reads_value_leaves && !matches!(c.symlog, Tri::Unset)),
@@ -421,7 +429,7 @@ impl<'a> Scale<'a> {
                 [
                     ("scale.continuous.zero", !reads_value_leaves && c.zero.is_some()),
                     ("scale.continuous.type", !reads_value_leaves && c.r#type.is_some()),
-                    ("scale.continuous.domain", c.domain.as_ref().is_some_and(|d| !reads_value_leaves || numeric(d).is_none())),
+                    ("scale.continuous.domain", c.domain.as_ref().is_some_and(|d| !reads_value_leaves || numeric(d.min.as_ref(), d.max.as_ref()).is_none())),
                     ("scale.continuous.log", !reads_value_leaves && c.log.is_some()),
                     ("scale.continuous.pow", !reads_value_leaves && c.pow.is_some()),
                     ("scale.continuous.symlog", !reads_value_leaves && c.symlog.is_some()),
@@ -461,11 +469,19 @@ impl<'a> Scale<'a> {
     }
 }
 
-/// A domain's bounds when both are numbers: production's `numeric_domain_bounds`.
-fn numeric(domain: &ScaleDomain) -> Option<(f64, f64)> {
-    match (&domain.low, &domain.high) {
-        (DomainBound::Number(low), DomainBound::Number(high)) => Some((*low, *high)),
+/// A domain's bounds when both are numbers: production's `numeric_domain_bounds`. An open end
+/// has no number yet, so a one-sided domain is not numeric.
+fn numeric(min: Option<&DomainBound>, max: Option<&DomainBound>) -> Option<(f64, f64)> {
+    match (min, max) {
+        (Some(DomainBound::Number(low)), Some(DomainBound::Number(high))) => Some((*low, *high)),
         _ => None,
+    }
+}
+
+fn tri_value<T>(tri: Tri<T>) -> Option<T> {
+    match tri {
+        Tri::Value(v) => Some(v),
+        Tri::Null | Tri::Unset => None,
     }
 }
 
@@ -663,12 +679,14 @@ impl<'a> AxisLadder<'a> {
     /// The authored numeric `scale.continuous.domain`, as walked; a text bound is refused by
     /// `unwalked_leaf`.
     pub fn domain(&self) -> Option<(f64, f64)> {
-        let walked = self.rungs.walk(|layer| layer.read(|rung| match rung.scale() {
-            Tri::Value(scale) => scale.domain(),
-            Tri::Null => Tri::Null,
-            Tri::Unset => Tri::Unset,
-        }));
-        walked.and_then(numeric)
+        let end = |max: bool| {
+            self.rungs.walk(|layer| layer.read(|rung| match rung.scale() {
+                Tri::Value(scale) => scale.domain_end(max),
+                Tri::Null => Tri::Null,
+                Tri::Unset => Tri::Unset,
+            }))
+        };
+        numeric(end(false), end(true))
     }
 
     /// The continuous scale type of a value axis, `scale.continuous.type` walked with the parameter its

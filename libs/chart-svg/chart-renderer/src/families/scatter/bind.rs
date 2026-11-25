@@ -220,6 +220,9 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
         crate::point_conditional::axis_label_rules("scatter", r.style.conditional.as_ref(), &r.x)
             .refuse_all("a scatter's non-date x axis draws its labels per tick")?;
     }
+    if r.style.point_mark.halo.is_some() {
+        return Err(diagnostic::refuse!("scatter: `marks.point.halo` is not supported").into());
+    }
     Ok(Bound {
         payload: prepared,
         r,

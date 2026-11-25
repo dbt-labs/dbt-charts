@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 from pathlib import PurePosixPath
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,14 +33,30 @@ class MigrateNote(BaseModel):
     message: str = Field(description="Why the field was removed during migration.")
 
 
+class MigratedFile(BaseModel):
+    """What migrating one updated file changes."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    path: PurePosixPath = Field(description="Project-relative path of the file.")
+    changes: list[str] = Field(
+        description="Each change as an author reads it, in applied order: "
+        "`old.key → new.key`, `key: old → new`, `key removed`, `key set to value`."
+    )
+    diff: str = Field(
+        description="Unified diff of the file's text before and after migrating."
+    )
+
+
 class MigrateSummary(BaseModel):
     """Results of a migration run, separated by outcome."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    updated: list[PurePosixPath] = Field(
+    updated: list[MigratedFile] = Field(
         default_factory=list,
-        description="Files rewritten with a real structural change, stamped "
+        description="Files rewritten with a real structural change, each with "
+        "its changes and diff, stamped "
         "with _schema_version alongside it, or would be during a dry run. "
         "_schema_version is never the sole reason a file is rewritten.",
     )
@@ -71,7 +88,7 @@ def migrate_paths(
     dry_run: bool,
 ) -> MigrateSummary:
     """Migrate named board files/directories, or all public boards by default."""
-    updated: list[PurePosixPath] = []
+    updated: list[MigratedFile] = []
     current: list[PurePosixPath] = []
     errors: list[MigrateError] = []
     notes: list[MigrateNote] = []
@@ -79,6 +96,7 @@ def migrate_paths(
     from dbt_charts.core.compile.migrations import (
         collect_migration_notices,
         migrate_board_yaml_text,
+        migration_notice_file,
     )
     from dbt_charts.core.compile.parse.parser import parse_yaml
 
@@ -86,10 +104,14 @@ def migrate_paths(
         path = PurePosixPath(board_path.relpath)
         try:
             original = board_path.read_text()
-            with collect_migration_notices() as dropped:
-                migrated = migrate_board_yaml_text(
+            with (
+                collect_migration_notices() as dropped,
+                migration_notice_file(str(path)),
+            ):
+                migration = migrate_board_yaml_text(
                     original, locked_schema_version=project.locked_schema_version
                 )
+            migrated = migration.text
             notes.extend(MigrateNote(path=path, message=n.message) for n in dropped)
             if migrated == original:
                 current.append(path)
@@ -108,7 +130,13 @@ def migrate_paths(
                 parse_yaml(migrated)
             if not dry_run:
                 project.write_text(board_path.relpath, migrated)
-            updated.append(path)
+            updated.append(
+                MigratedFile(
+                    path=path,
+                    changes=migration.changes,
+                    diff=_unified_diff(path, original, migrated),
+                )
+            )
         except (OSError, ValueError, ParseError) as exc:
             errors.append(MigrateError(path=path, message=str(exc)))
     return MigrateSummary(
@@ -116,6 +144,19 @@ def migrate_paths(
         current=current,
         errors=errors,
         notes=notes,
+    )
+
+
+def _unified_diff(path: PurePosixPath, original: str, migrated: str) -> str:
+    lines = difflib.unified_diff(
+        original.splitlines(keepends=True),
+        migrated.splitlines(keepends=True),
+        fromfile=str(path),
+        tofile=f"{path} (migrated)",
+    )
+    return "".join(
+        line if line.endswith("\n") else f"{line}\n\\ No newline at end of file\n"
+        for line in lines
     )
 
 

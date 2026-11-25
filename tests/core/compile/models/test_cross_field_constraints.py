@@ -131,6 +131,13 @@ CASES: list[tuple[str, type[BaseModel], dict[str, Any], str]] = [
         "from zero, so it takes no y_start.",
     ),
     (
+        "histogram-axis-x-type",
+        BarChart,
+        {"type": "histogram", "x": "a", "style": {"axis_x": {"type": "nominal"}}},
+        "style.axis_x.type is not supported on type: histogram: a histogram "
+        "bins a numeric x, so its x scale is always continuous.",
+    ),
+    (
         "bar-y-start-stacked",
         BarChart,
         {**_BAR, "y_start": "a", "style": {"stack": "zero"}},
@@ -247,8 +254,8 @@ CASES: list[tuple[str, type[BaseModel], dict[str, Any], str]] = [
     (
         "temporal-domain-not-iso",
         ScaleContinuousStyle,
-        {"type": "temporal", "domain": ["2024-01-01", "x"]},
-        "scale.domain element 'x' is not an ISO-8601 date/datetime string, but "
+        {"type": "temporal", "domain": ["2024-01-01", 2026]},
+        "scale.domain bound 2026 is not an ISO-8601 date/datetime string, but "
         "scale.type: temporal requires both domain bounds to be dates (e.g. "
         "'1955-01-01').",
     ),
@@ -256,9 +263,13 @@ CASES: list[tuple[str, type[BaseModel], dict[str, Any], str]] = [
         "temporal-domain-impossible-date",
         ScaleContinuousStyle,
         {"type": "temporal", "domain": ["2024-02-30", "2024-03-01"]},
-        "scale.domain element '2024-02-30' is not an ISO-8601 date/datetime "
-        "string, but scale.type: temporal requires both domain bounds to be "
-        "dates (e.g. '1955-01-01').",
+        "scale.domain bound '2024-02-30' is not a real date.",
+    ),
+    (
+        "linear-domain-impossible-date",
+        ScaleContinuousStyle,
+        {"type": "linear", "domain": ["2020-02-30", "2020-03-01"]},
+        "scale.domain bound '2020-02-30' is not a real date.",
     ),
 ]
 
@@ -301,7 +312,7 @@ def test_rule_message(
             ScaleContinuousStyle,
             {"type": "temporal", "domain": {1955, 2026}},
             ("domain",),
-            "Input should be a valid tuple",
+            "Input should be a valid dictionary or instance of AxisDomain",
         ),
         (
             CsvSourceConfig,
@@ -358,7 +369,6 @@ def test_length_rule_message(
             {"type": "temporal", "domain": ["2024-01-01", "2024-02-01T10:00:00Z"]},
         ),
         (ScaleContinuousStyle, {"type": "linear", "domain": [0, 10]}),
-        (ScaleContinuousStyle, {"type": "linear", "domain": ["2020-02-30", "x"]}),
     ],
     ids=[
         "rule-eq-empty-string",
@@ -369,7 +379,6 @@ def test_length_rule_message(
         "point-map-no-collapse",
         "temporal-domain-iso",
         "linear-domain",
-        "linear-domain-impossible-date",
     ],
 )
 def test_rule_accepts(model: type[BaseModel], payload: dict[str, Any]) -> None:

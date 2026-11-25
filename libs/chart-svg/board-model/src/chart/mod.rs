@@ -106,7 +106,7 @@ use support_table::SupportTableSpec;
 pub use area::AreaChart;
 pub use bar::BarChart;
 pub use callout::CalloutChart;
-pub use columns::{ColorColumn, Columns, LonLat, NonBlankColumn, NumberPair, PatternColumn};
+pub use columns::{ColorColumn, Columns, LonLat, NonBlankColumn, PatternColumn};
 pub use custom::CustomChart;
 pub use geoshape::GeoshapeChart;
 pub use heatmap::HeatmapChart;

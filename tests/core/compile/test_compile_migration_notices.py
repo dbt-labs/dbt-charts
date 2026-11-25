@@ -60,6 +60,10 @@ def test_compile_reports_in_memory_migration_as_diagnostic() -> None:
     assert not [w for w in caught if issubclass(w.category, SchemaMigrationWarning)]
     [notice] = _migration_warnings(result.warnings)
     assert "migrated this YAML in memory" in notice.message
+    assert (
+        "charts.revenue.style.axis_y.format → "
+        "charts.revenue.style.axis_y.labels.format" in notice.message
+    )
     assert notice.level == "warning"
 
 

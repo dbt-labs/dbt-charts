@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    bind_cells, color_categories, date_color, date_color_extent, date_legend_ticks,
+    bind_cells, CellLabeling, color_categories, date_color, date_color_extent, date_legend_ticks,
     drop_invalid_color_rows, legend_date_label, legend_labels, tooltip_value_title, Cell, CellFill, CellMarks, CellPaint,
     CategoryScale, ColorKind, GradientColors, HeaderFmt, HeatmapResolved, SYMBOL_LEGEND_TICK_COUNT, FLAT_COLOR,
 };
@@ -216,7 +216,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
                 max: *max,
             },
             Coloring::Categories(scale) => CellFill::Categories(scale),
-            Coloring::DateGradient { min, max, .. } => CellFill::Dates { min: *min, max: *max },
+            Coloring::DateGradient { min, max, aware } => CellFill::Dates { min: *min, max: *max, aware: *aware },
         },
         tooltip: tooltip_value_title(&r)?.zip(r.style.tooltip_format.as_ref()).filter(|_| !r.wide_native_aria),
         native_aria: r.wide_native_aria,
@@ -227,9 +227,10 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         ghost_titles: None,
         patterns: &r.patterns,
         conditional: r.style.conditional.as_ref(),
+        labels: CellLabeling::of(&r, &rows),
     };
     let cells = bind_cells(&rows, &x_domain, &y_domain, &paint)?;
-    let marks = CellMarks::of(&r.style.rect_mark)?;
+    let marks = CellMarks::of(&r.style.rect_mark, payload.board_style.as_ref())?;
     let axis_rules = crate::families::heatmap::axis_label_rules(&r);
     if x_grain.is_some() {
         axis_rules.refuse_all("a date x axis draws its labels per tick")?;

@@ -181,15 +181,13 @@ def _resolve_row_conditional(
     columns: Mapping[str, TableColumnConfig] | None,
     data: Sequence[Mapping[str, Any]],  # type-state: explicit_any — query rows
     is_pivot: bool,
-    glyph_columns: Collection[str],
 ) -> TableChartStyle:
     """``table`` with its row rules' aggregates computed, after refusing a row rule
     the table cannot paint.
 
     The pivot and transposed layouts rename their columns after resolve, so a rule
     could not find its cells. A tested column may be any query column; a
-    ``columns.<col>`` target must be a visible one, and a ``tone`` needs a glyph
-    from its own rule or the column (``glyph_columns``).
+    ``columns.<col>`` target must be a visible one.
     """
     rules = table.row.conditional
     if not rules:
@@ -228,20 +226,12 @@ def _resolve_row_conditional(
         for rule in column_rules:
             if rule.columns is None:
                 continue
-            for target, cell in rule.columns.items():
-                where = f"style.row.conditional.{tested} targets columns.{target}"
+            for target in rule.columns:
                 if target not in shown:
                     raise ValueError(
-                        f"{where}, which is not a visible query column. "
+                        f"style.row.conditional.{tested} targets columns.{target}, "
+                        "which is not a visible query column. "
                         f"Visible: {sorted(shown)}"
-                    )
-                ink = (
-                    "tone" if cell.tone else "glyph_color" if cell.glyph_color else None
-                )
-                if ink and not (cell.glyph or target in glyph_columns):
-                    raise ValueError(
-                        f"{where} with a {ink} but no glyph: set glyph in the "
-                        f"rule's columns.{target} or in style.columns.{target}."
                     )
     return resolved
 
@@ -901,7 +891,6 @@ def _resolve_table(
         table_columns,
         data,
         is_pivot=bool(normalized.columns),
-        glyph_columns={name for name, cfg in authored_columns.items() if cfg.glyph},
     )
 
     resolved_columns = _with_resolved_scale_stops(

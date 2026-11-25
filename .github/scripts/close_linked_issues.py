@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Close GitHub issues a just-shipped release's changelog says it fixes.
 
+Also removes the `waiting for release` label from each closed issue.
+
 `.changie.yaml`'s `changeFormat` appends a `[Closes <repo>#N](<issue URL>)`
 link to a changelog entry whenever the fragment that produced it set
 `custom: {DbtChartsIssue: N}`. `build_marker` compiles the match pattern from
@@ -28,6 +30,7 @@ import sys
 from pathlib import Path
 
 _TAG_PREFIX = "dbt-charts-v"
+_WAITING_LABEL = "waiting for release"
 
 
 def build_marker(repo: str) -> re.Pattern[str]:
@@ -48,6 +51,19 @@ def close_issue(repo: str, issue: int, release_url: str, *, dry_run: bool) -> No
         return
     subprocess.run(
         ["gh", "issue", "close", str(issue), "--repo", repo, "--comment", comment],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "gh",
+            "issue",
+            "edit",
+            str(issue),
+            "--repo",
+            repo,
+            "--remove-label",
+            _WAITING_LABEL,
+        ],
         check=True,
     )
     print(f"closed {repo}#{issue}: {comment}")
@@ -96,7 +112,8 @@ def main(argv: list[str]) -> int:
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
             failed.append(issue)
             print(
-                f"::error::failed to close {args.repo}#{issue}: {exc}", file=sys.stderr
+                f"::error::failed to close or unlabel {args.repo}#{issue}: {exc}",
+                file=sys.stderr,
             )
 
     return 1 if failed else 0

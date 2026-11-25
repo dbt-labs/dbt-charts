@@ -190,6 +190,15 @@ def test_a_layer_redrawing_the_base_column_wears_the_base_ink() -> None:
     assert chart.layers[0].ink == PALETTE[0]
 
 
+def test_a_y_label_does_not_rename_the_base_a_layer_claims_by_name() -> None:
+    def ink(label: str) -> str:
+        layer = {"type": "line", "y": "churn_rate", "label": label}
+        return _line(MONTHS, y_label="Amount", layers=[layer]).layers[0].ink
+
+    assert ink("Revenue") == PALETTE[0]
+    assert ink("Amount") == PALETTE[1]
+
+
 def test_an_unauthored_layer_takes_the_first_palette_color_the_base_lacks() -> None:
     chart = _line(MONTHS, layers=[CHURN])
     assert chart.layers[0].ink == PALETTE[1]

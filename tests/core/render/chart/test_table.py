@@ -76,3 +76,35 @@ rows:
     cell = re.search(r'<text[^>]*data-col="0"[^>]*>', svg)
     assert cell is not None
     assert 'font-size="11"' in cell.group(0)
+
+
+def test_a_column_font_decoration_and_style_reach_its_cells() -> None:
+    board = """
+queries:
+  q1:
+    type: values
+    rows:
+      - {subject: First, votes: 3}
+charts:
+  t1:
+    query: q1
+    type: table
+    style:
+      columns:
+        subject:
+          font:
+            decoration: underline
+            style: italic
+        votes:
+          font:
+            decoration: line-through
+rows:
+  - t1
+"""
+    svg = render_board_to_svg(board)
+    subject = re.search(r'<text[^>]*data-col="0"[^>]*>', svg)
+    votes = re.search(r'<text[^>]*data-col="1"[^>]*>', svg)
+    assert subject is not None and votes is not None
+    assert 'text-decoration="underline"' in subject.group(0)
+    assert 'font-style="italic"' in subject.group(0)
+    assert 'text-decoration="line-through"' in votes.group(0)

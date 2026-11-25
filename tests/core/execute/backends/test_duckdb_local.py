@@ -1551,7 +1551,11 @@ class TestDuckDBSqlBuilders:
         )
 
         assert (
-            _attachment_to_sql({"path": "x.duckdb"}, adapter_read_only=False)
+            _attachment_to_sql(
+                {"path": "x.duckdb"},
+                adapter_read_only=False,
+                allow_writable_quack_attach=False,
+            )
             == "ATTACH IF NOT EXISTS 'x.duckdb'"
         )
 
@@ -1564,7 +1568,9 @@ class TestDuckDBSqlBuilders:
         )
 
         sql = _attachment_to_sql(
-            {"path": "md:my_db?motherduck_token=abc123"}, adapter_read_only=False
+            {"path": "md:my_db?motherduck_token=abc123"},
+            adapter_read_only=False,
+            allow_writable_quack_attach=False,
         )
         assert sql == "ATTACH IF NOT EXISTS 'md:my_db'"
 
@@ -1582,6 +1588,7 @@ class TestDuckDBSqlBuilders:
                 "read_only": True,
             },
             adapter_read_only=False,
+            allow_writable_quack_attach=False,
         )
         assert sql == (
             "ATTACH IF NOT EXISTS 'x.duckdb' AS other "
@@ -1599,6 +1606,7 @@ class TestDuckDBSqlBuilders:
                 "options": {"type": "sqlite", "secret": "my_secret", "read_only": True},
             },
             adapter_read_only=False,
+            allow_writable_quack_attach=False,
         )
         assert sql == (
             "ATTACH IF NOT EXISTS 'x.duckdb' (TYPE sqlite, SECRET my_secret, READ_ONLY)"
@@ -1614,6 +1622,7 @@ class TestDuckDBSqlBuilders:
             _attachment_to_sql(
                 {"path": "x.duckdb", "type": "sqlite", "options": {"type": "postgres"}},
                 adapter_read_only=False,
+                allow_writable_quack_attach=False,
             )
         assert excinfo.value.code is not None
         assert excinfo.value.code.code == "ERR-ADAPTER-DUCKDB-CONFIG-INVALID"
@@ -1636,6 +1645,7 @@ class TestDuckDBSqlBuilders:
                     "options": {"foo": ["x\"'); CREATE TABLE p2 AS SELECT 1; --"]},
                 },
                 adapter_read_only=False,
+                allow_writable_quack_attach=False,
             )
         assert excinfo.value.code is not None
         assert excinfo.value.code.code == "ERR-ADAPTER-DUCKDB-CONFIG-INVALID"
@@ -1656,6 +1666,7 @@ class TestDuckDBSqlBuilders:
                 },
             },
             adapter_read_only=False,
+            allow_writable_quack_attach=False,
         )
         assert sql == (
             "ATTACH IF NOT EXISTS 'x.duckdb' "
@@ -1669,7 +1680,11 @@ class TestDuckDBSqlBuilders:
             _attachment_to_sql,
         )
 
-        sql = _attachment_to_sql({"path": "x.duckdb"}, adapter_read_only=True)
+        sql = _attachment_to_sql(
+            {"path": "x.duckdb"},
+            adapter_read_only=True,
+            allow_writable_quack_attach=False,
+        )
         assert sql == "ATTACH IF NOT EXISTS 'x.duckdb' (READ_ONLY)"
 
     def test_attachment_to_sql_adapter_read_write_honors_authored_flag(self) -> None:
@@ -1680,9 +1695,171 @@ class TestDuckDBSqlBuilders:
         )
 
         sql = _attachment_to_sql(
-            {"path": "x.duckdb", "read_only": False}, adapter_read_only=False
+            {"path": "x.duckdb", "read_only": False},
+            adapter_read_only=False,
+            allow_writable_quack_attach=False,
         )
         assert sql == "ATTACH IF NOT EXISTS 'x.duckdb'"
+
+    @pytest.mark.parametrize(
+        ("attachment", "adapter_read_only", "allow_writable"),
+        [
+            ({"path": "quack:localhost:9595", "alias": "demo"}, True, False),
+            (
+                {"path": "QUACK:localhost", "alias": "demo", "read_only": True},
+                True,
+                True,
+            ),
+            ({"path": "quack:", "type": "quack", "secret": "s1"}, True, False),
+            (
+                {"path": "remote", "read_only": True, "options": {"type": "Quack"}},
+                True,
+                True,
+            ),
+            ({"path": "quack:localhost", "read_only": True}, False, True),
+            ({"path": "quack:localhost", "read_only": True}, True, True),
+            # Explicit opt-in on a host that does not allow it.
+            ({"path": "quack:localhost", "read_only": False}, True, False),
+            (
+                {"path": "remote", "options": {"type": "quack", "read_only": False}},
+                True,
+                False,
+            ),
+        ],
+    )
+    def test_attachment_to_sql_refuses_read_only_quack_attach(
+        self,
+        attachment: dict[str, object],
+        adapter_read_only: bool,
+        allow_writable: bool,
+    ) -> None:
+        """Quack cannot enforce READ_ONLY: DuckDB 2.0.0 accepted it and let
+        writes through to the server, 2.0.1 rejects it. A read-only Quack
+        attach is refused before any SQL runs rather than attached writable,
+        unless the author wrote `read_only: false` and the host allows it."""
+        from dbt_charts.core.diagnostics.base import DbtChartsError
+        from dbt_charts.core.execute.backends.duckdb_local import (
+            _attachment_to_sql,
+        )
+
+        with pytest.raises(DbtChartsError) as excinfo:
+            _attachment_to_sql(
+                attachment,
+                adapter_read_only=adapter_read_only,
+                allow_writable_quack_attach=allow_writable,
+            )
+        assert excinfo.value.code is not None
+        assert excinfo.value.code.code == "ERR-ADAPTER-DUCKDB-QUACK-READ-ONLY"
+
+    @pytest.mark.parametrize(
+        "attachment",
+        [
+            {"path": "quack:localhost:9595", "alias": "demo", "read_only": False},
+            {"path": "QUACK:localhost:9595", "alias": "demo", "read_only": False},
+            {
+                "path": "quack:localhost:9595",
+                "alias": "demo",
+                "options": {"read_only": False},
+            },
+        ],
+    )
+    def test_attachment_to_sql_explicit_writable_quack_attach_on_allowed_host(
+        self, attachment: dict[str, object]
+    ) -> None:
+        """An explicit `read_only: false` on a Quack attach, on a host that
+        allows it, is emitted with no READ_ONLY."""
+        from dbt_charts.core.execute.backends.duckdb_local import (
+            _attachment_to_sql,
+        )
+
+        sql = _attachment_to_sql(
+            attachment, adapter_read_only=True, allow_writable_quack_attach=True
+        )
+        assert "READ_ONLY" not in sql
+        assert sql.startswith("ATTACH IF NOT EXISTS '")
+
+    def test_attachment_to_sql_writable_opt_in_does_not_loosen_other_attaches(
+        self,
+    ) -> None:
+        """The opt-in is Quack-only: a file attach stays READ_ONLY on a
+        read-only adapter even with an explicit `read_only: false`."""
+        from dbt_charts.core.execute.backends.duckdb_local import (
+            _attachment_to_sql,
+        )
+
+        sql = _attachment_to_sql(
+            {"path": "x.duckdb", "read_only": False},
+            adapter_read_only=True,
+            allow_writable_quack_attach=True,
+        )
+        assert sql == "ATTACH IF NOT EXISTS 'x.duckdb' (READ_ONLY)"
+
+    def test_attachment_to_sql_quack_on_read_write_adapter(self) -> None:
+        from dbt_charts.core.execute.backends.duckdb_local import (
+            _attachment_to_sql,
+        )
+
+        sql = _attachment_to_sql(
+            {"path": "quack:localhost:9595", "alias": "demo"},
+            adapter_read_only=False,
+            allow_writable_quack_attach=False,
+        )
+        assert sql == "ATTACH IF NOT EXISTS 'quack:localhost:9595' AS demo"
+
+    def test_attachment_config_read_only_defaults_true(self) -> None:
+        """Attaches are read-only unless the author writes `false`; the
+        `options.read_only` spelling is lifted into the field, and setting
+        both is a conflict."""
+        from pydantic import ValidationError
+
+        from dbt_charts.core.compile.models.source import DuckDBAttachmentConfig
+
+        assert DuckDBAttachmentConfig(path="x").read_only is True
+        assert DuckDBAttachmentConfig(path="x", read_only=False).read_only is False
+        lifted = DuckDBAttachmentConfig(
+            path="x", options={"read_only": False, "token": "t"}
+        )
+        assert lifted.read_only is False
+        assert lifted.options == {"token": "t"}
+        with pytest.raises(ValidationError, match="read_only"):
+            DuckDBAttachmentConfig(
+                path="x", read_only=True, options={"read_only": False}
+            )
+
+    def test_build_exec_env_allows_writable_quack_only_for_filesystem_project(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """build_exec_env (local dct) opts the DuckDB backend into writable
+        Quack attaches; a backend built directly (Cloud) refuses by default."""
+        from dbt_charts.core.diagnostics.base import DbtChartsError
+        from dbt_charts.core.execute.backends.duckdb_local import (
+            _attachment_to_sql,
+        )
+        from dbt_charts.core.execute.env import build_exec_env, close_env
+
+        attachment = {"path": "quack:localhost:9595", "read_only": False}
+        env = build_exec_env(local_project(tmp_path))
+        try:
+            local = env.backends.for_source(DuckDBSourceConfig(type="duckdb"))
+            assert isinstance(local, DuckDBBackend)
+            sql = _attachment_to_sql(
+                attachment,
+                adapter_read_only=local.read_only,
+                allow_writable_quack_attach=local.allow_writable_quack_attach,
+            )
+            assert "READ_ONLY" not in sql
+        finally:
+            close_env(env)
+
+        hosted = DuckDBBackend(data_dir=None, read_only=True)
+        with pytest.raises(DbtChartsError) as excinfo:
+            _attachment_to_sql(
+                attachment,
+                adapter_read_only=hosted.read_only,
+                allow_writable_quack_attach=hosted.allow_writable_quack_attach,
+            )
+        assert excinfo.value.code is not None
+        assert excinfo.value.code.code == "ERR-ADAPTER-DUCKDB-QUACK-READ-ONLY"
 
     def test_apply_duckdb_extensions_dict_form_missing_name_raises(self) -> None:
         from dbt_charts.core.diagnostics.base import DbtChartsError

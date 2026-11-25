@@ -9,6 +9,13 @@ use diagnostic::Diagnostic;
 use indexmap::IndexMap;
 use model_core::{Authored, Tri};
 use model_derive::Model;
+use crate::primitives::PatternStyle;
+use crate::string_enum;
+
+string_enum!(
+    /// How a point map draws its size key.
+    SizeKey { Baseline = "baseline" }
+);
 
 /// Point map-family mark overrides.
 #[derive(Debug, Clone, PartialEq, Model)]
@@ -46,6 +53,7 @@ pub struct PointMapChartStyleConditional {
 
 /// Point map chart style.
 #[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(range(named, ge = 1)))]
 pub struct PointMapChartStyle {
     #[flatten]
     pub geo: GeoChartStyle,
@@ -54,6 +62,15 @@ pub struct PointMapChartStyle {
     pub marks: PointMapChartMarksStyle,
     /// Area range and scale type of the `size:` channel.
     pub size: SizeScaleStyle,
+    /// Draw in flat tints of one ink: each step of this sequential pattern ramp is one tint. The basemap takes the lightest step; needs a `size:` field, whose values the ramp spans.
+    #[model(absent = "the color scale's own fills")]
+    pub tints: Option<PatternStyle>,
+    /// Name the largest points by `size:`, this many, beside their dots.
+    #[model(absent = "no point named")]
+    pub named: Option<u32>,
+    /// `baseline` draws the size key as three open circles standing on one baseline: the size scale's smallest, middle and largest rungs, each named beside it.
+    #[model(absent = "the size legend")]
+    pub size_key: Option<SizeKey>,
     /// Rules that restyle a point by its row's value, keyed by column name. Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, is_null, or default) plus the style it applies: marks.point color, fill, filled, size, shape, opacity and stroke_width. A rule size overrides a `size:` channel for the points it matches; the legend is unchanged. Every matching rule applies; where two set the same key the later one wins, so list the more specific rule last. A `default: true` rule applies only when no other rule matched. Two columns cannot patch the same property. Not available with `collapse`.
     #[model(fill = fill_empty)]
     pub conditional: IndexMap<String, Vec<PointMapChartStyleConditional>>,

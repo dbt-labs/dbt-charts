@@ -1,0 +1,3 @@
+kind: Features
+body: Grouped bars now order their series by `style.series_order` (renamed from `style.stack_order`, migrated automatically), largest first by default.
+time: 2026-11-24T12:58:18.616373-08:00

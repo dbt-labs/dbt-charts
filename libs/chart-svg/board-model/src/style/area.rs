@@ -1,7 +1,7 @@
 //! `style/theme/area.py`: the area chart family.
 
 use crate::primitives::{PatternStyle, StrokeStyle};
-use crate::style::bar::{StackMode, StackOrder};
+use crate::style::bar::{StackMode, SeriesOrder};
 use crate::style::chart_base::{
     AnnotatedChartStyleMixin, CartesianChartStyle, LineAreaKeyedChartStyleBase,
     QuantitativeAxisChartStyleMixin,
@@ -112,9 +112,9 @@ pub struct AreaChartStyle {
     pub cartesian: CartesianChartStyle,
     /// Default stack mode for area charts: 'none', 'zero', 'normalize', or 'center'.
     pub stack: StackMode,
-    /// Z-order of stacked segments. Unset or 'value' puts the largest aggregate at baseline. 'data' stacks series in first-appearance order: SQL row order for color:, the listed order for y: [a, b, ...] (a measure null in the first rows appears later). 'alphabetical' sorts by series name. Ignored when stacking is off or there is only one series.
+    /// Order of the stacked bands. Unset or 'value' puts the largest aggregate at baseline. 'data' orders series by first appearance: SQL row order for color:, the listed order for y: [a, b, ...] (a measure null in the first rows appears later). 'alphabetical' sorts by series name. Ignored when stacking is off or there is only one series.
     #[model(absent = "ranks by value")]
-    pub stack_order: Option<StackOrder>,
+    pub series_order: Option<SeriesOrder>,
     /// How the `pattern:` channel paints fills.
     pub pattern: PatternStyle,
     /// Area-family mark overrides.

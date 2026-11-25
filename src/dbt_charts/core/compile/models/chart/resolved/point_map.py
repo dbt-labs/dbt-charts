@@ -8,10 +8,10 @@ from pydantic import Field
 
 from dbt_charts.core.compile.models.style.resolved import ResolvedPointMapStyle
 
-from ._base import _GeoResolvedChartFields
+from ._base import _GeoResolvedChartFields, _PatternResolvedFields
 
 
-class ResolvedPointMapChart(_GeoResolvedChartFields):
+class ResolvedPointMapChart(_GeoResolvedChartFields, _PatternResolvedFields):
     """Render-ready point map or bubble map."""
 
     chart_type: Literal["point_map"] = Field(

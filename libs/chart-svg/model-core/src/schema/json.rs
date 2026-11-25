@@ -374,7 +374,11 @@ fn constraint(c: &Constraint) -> Option<J> {
             c.when,
             at(
                 key,
-                json!({"items": {"type": "string", "pattern": c.pattern}}),
+                json!({
+                    "pattern": c.pattern,
+                    "items": {"type": "string", "pattern": c.pattern},
+                    "additionalProperties": {"type": "string", "pattern": c.pattern},
+                }),
                 false,
             ),
         ),
@@ -382,13 +386,14 @@ fn constraint(c: &Constraint) -> Option<J> {
             let vals: Vec<J> = c.values.iter().map(value).collect();
             when(c.when, at(key, json!({"enum": vals}), false))
         }
-        // A bound on a number, or on each number of a list: numeric keywords
-        // ignore a non-number, and `items` ignores a non-list.
+        // A bound on a number, or on each number of a list or mapping: numeric keywords
+        // ignore a non-number, `items` a non-list and `additionalProperties` a non-mapping.
         ConstraintKind::Range => {
             let b = bounds(&c.bounds);
             let mut with_items = b.clone();
             if let J::Object(o) = &mut with_items {
-                o.insert("items".into(), b);
+                o.insert("items".into(), b.clone());
+                o.insert("additionalProperties".into(), b);
             }
             when(c.when, at(key, with_items, false))
         }
@@ -431,6 +436,10 @@ impl Emit<'_> {
             Some(Body::Struct {
                 shorthand: Some(_), ..
             }) => any_of(vec![to, json!({"type": "string"})]),
+            Some(Body::Struct {
+                shorthand_items: Some(items),
+                ..
+            }) => any_of(vec![self.ty(items), to]),
             // Python's string shorthand belongs to its patch tier and its total models take the mapping; the
             // gate compares the Authored view with those, so the arm is stated in the Patch view only.
             // The parser reads the string in both.

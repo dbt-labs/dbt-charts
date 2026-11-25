@@ -232,7 +232,7 @@ charts:
       stack: zero
       # The bands are a semantic ramp, so they stack in the query's own order
       # (poor, satisfactory, good) rather than the default ascending-by-value.
-      stack_order: data
+      series_order: data
       # The chart is about the measures, not the backdrop, so the legend leads
       # with them; the bands then follow top-down as they stack.
       # Slots follow the color domain (poor, satisfactory, good, actual, goal),

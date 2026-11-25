@@ -45,11 +45,10 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
     endpoint_labels: ResolvedBarEndpointLabelsConfig = Field(
         description="Cascade-merged direct-label config (visible, label_offset, height).",
     )
-    stack_order: Literal["value", "data", "alphabetical"] | None = Field(
+    series_order: Literal["value", "data", "alphabetical"] | None = Field(
         default=None,
         description=(
-            "Z-order of stacked bar segments. "
-            "None / 'value' = largest at bottom (VL default)."
+            "Order of the series in a stack or group. None / 'value' = largest first."
         ),
     )
     mark: ResolvedBarMarkStyle = Field(

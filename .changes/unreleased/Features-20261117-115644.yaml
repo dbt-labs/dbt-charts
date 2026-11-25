@@ -1,0 +1,3 @@
+kind: Features
+body: Heatmap cells can print their values with `style.marks.rect.labels`, in ink that reads against each cell's fill.
+time: 2026-11-17T11:56:44.815229-08:00

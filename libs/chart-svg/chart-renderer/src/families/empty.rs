@@ -105,8 +105,6 @@ pub(crate) struct Head {
     #[serde(default)]
     y: Option<String>,
     #[serde(default)]
-    y_label: Option<String>,
-    #[serde(default)]
     size: Option<String>,
     #[serde(default)]
     shape: Option<String>,
@@ -490,7 +488,7 @@ impl Head {
                 .collect::<Result<_, String>>()?
         } else if color.is_none() {
             let y = self.y.as_deref().ok_or("zero-row legend: payload y absent")?;
-            vec![(crate::common::axis_title_text(y, self.y_label.as_deref(), &self.field_labels)?, single_series_fill()?.clone())]
+            vec![(crate::common::axis_title_text(y, None, &self.field_labels)?, single_series_fill()?.clone())]
         } else {
             Vec::new()
         };

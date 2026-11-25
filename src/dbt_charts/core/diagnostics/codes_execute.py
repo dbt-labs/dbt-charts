@@ -251,6 +251,17 @@ ERR_ADAPTER_DUCKDB_CONFIG_INVALID = REGISTRY.register(
     )
 )
 
+ERR_ADAPTER_DUCKDB_QUACK_READ_ONLY = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ADAPTER-DUCKDB-QUACK-READ-ONLY",
+        domain="execute",
+        title="A Quack attach cannot be made read-only",
+        message_template="DuckDB source attach {path!r} is a Quack database, and Quack cannot enforce read-only access, which this attach requires. Read the data through a read-only file or database attach instead (for example, a DuckDB file exported from the Quack server), or, in local dct only, set `read_only: false` on this attach to attach it writable, which lets board SQL write to the Quack server.",
+        doc="Fired before any SQL is sent, when a DuckDB source's `attach` entry names a Quack database (a `quack:` path, or `type: quack`) and the attach must be read-only: a read-only DuckDB source (the default) attaches every database read-only, and an authored `read_only: true` asks for the same. Quack does not enforce READ_ONLY: DuckDB 2.0.0 accepted the option and let writes reach the server (duckdb/duckdb-quack#327), and 2.0.1 rejects the option (duckdb/duckdb-quack#329). Rather than attach a writable database, dbt Charts refuses the attach. Serve the data through a read-only database or file attach (for example, a DuckDB file exported from the Quack server) instead. Local dct (a project on disk) also accepts an explicit opt-in: write `read_only: false` on the Quack attach entry in the source config and the attach is made without READ_ONLY, at your own risk, so board SQL can write to the Quack server. An unset `read_only` is not an opt-in, and only a project read from local disk honors it.",
+        docs_topic="queries",
+    )
+)
+
 ERR_ADAPTER_DUCKDB_CONFIG_APPLY_FAILED = REGISTRY.register(
     ErrorCode(
         code="ERR-ADAPTER-DUCKDB-CONFIG-APPLY-FAILED",

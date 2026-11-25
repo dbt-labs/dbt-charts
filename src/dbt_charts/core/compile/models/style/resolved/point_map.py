@@ -27,6 +27,13 @@ class ResolvedPointMapStyle(BaseModel):
     tooltip_format: ResolvedFormat = Field(
         description="Resolved tooltip format; an affix composes on the hover card.",
     )
+    named_format: ResolvedFormat | None = Field(
+        default=None,
+        description="A named point prints its size in this format; set with `named`.",
+    )
+    named_is_house: bool = Field(
+        default=False, description="The named format paints the narrative register."
+    )
     title_font: ResolvedFontStyle | None = Field(
         default=None,
         description="Baked title font (size/weight/family/…) from the width tier.",

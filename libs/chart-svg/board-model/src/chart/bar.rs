@@ -33,6 +33,9 @@ use model_derive::Model;
     constraint(forbids("style.key.type", when(is_in(type, "histogram"), is_in("style.key.type", "direct")),
         message = "style.key.type: direct is not supported on type: histogram: it has one series, so there are no series labels to print. Set the type to `legend` or `auto`, or remove it."
     )),
+    constraint(forbids("style.axis_x.type", when(is_in(type, "histogram")),
+        message = "style.axis_x.type is not supported on type: histogram: a histogram bins a numeric x, so its x scale is always continuous."
+    )),
     constraint(forbids(annotations, when(is_in(type, "histogram")), nonempty(annotations),
         message = "annotations are not supported on type: histogram: a histogram bins x, so an anchor has no category or date slot to name."
     )),

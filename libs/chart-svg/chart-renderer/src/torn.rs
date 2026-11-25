@@ -3,6 +3,7 @@
 //! in (along, across) coordinates of the edge; a vertical edge transposes them
 //! when it paints.
 
+use d3rs::scale::{Continuous, Transform};
 use scene::{Attrs, Node, PathCommand, PathData, Role};
 
 use crate::common::TornBaseline;
@@ -89,6 +90,15 @@ pub fn torn_path(cubics: &[Cubic], vertical: bool) -> PathData {
     PathData(commands)
 }
 
+/// The torn baseline's stroke: the tear replacing a gridline.
+pub fn torn_node(cubics: &[Cubic], vertical: bool, ink: &str, width: f64) -> Node {
+    Node::path(
+        Role::Grid,
+        torn_path(cubics, vertical),
+        Attrs::new().set("class", "torn-baseline").set("fill", "none").set("stroke", ink).num("stroke-width", width),
+    )
+}
+
 /// The closed fill between the wave and the straight edge at `far` (in the
 /// wave's across coordinate): the bar or cap whose one edge is torn.
 pub fn torn_fill(cubics: &[Cubic], far: f64, vertical: bool) -> PathData {
@@ -109,6 +119,21 @@ pub fn torn_edge_value(lo: f64, hi: f64) -> Option<f64> {
         Some(hi)
     } else {
         None
+    }
+}
+
+/// Whether a tick's `value` is the torn `edge`, up to float noise.
+pub fn same_value(value: f64, edge: f64) -> bool {
+    (value - edge).abs() <= 1e-9 * edge.abs().max(1.0)
+}
+
+/// `domain`, ascending, widened past its end `edge` so that end sits `pad` of the span in from
+/// the plot edge.
+pub fn widen_past(transform: Transform, (lo, hi): (f64, f64), edge: f64, pad: f64) -> (f64, f64) {
+    if edge == lo {
+        (Continuous::new(transform, [lo, hi], [pad, 1.0]).invert(0.0), hi)
+    } else {
+        (lo, Continuous::new(transform, [lo, hi], [0.0, 1.0 - pad]).invert(1.0))
     }
 }
 
@@ -201,13 +226,5 @@ impl<'a> ValueTear<'a> {
     /// value axis.
     pub fn cubics(&self, edge_px: f64, across: f64, along: f64) -> Vec<Cubic> {
         self.tear.cubics((0.0, along), edge_px, torn_inward(edge_px, 0.0, across), self.edge)
-    }
-
-    pub fn node(&self, cubics: &[Cubic], vertical: bool, ink: &str, width: f64) -> Node {
-        Node::path(
-            Role::Grid,
-            torn_path(cubics, vertical),
-            Attrs::new().set("class", "torn-baseline").set("fill", "none").set("stroke", ink).num("stroke-width", width),
-        )
     }
 }

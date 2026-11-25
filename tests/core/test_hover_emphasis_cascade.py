@@ -57,6 +57,7 @@ def test_runtime_dict_carries_the_switch_and_the_strength() -> None:
         "recedeContrast": resolved.chart_defaults.hover_emphasis.recede_contrast,
         "dropLineColor": resolved.chart_defaults.hover_emphasis.drop_line_color,
         "dropLineWidth": resolved.chart_defaults.hover_emphasis.drop_line_width,
+        "textInk": resolved.font.color,
         "dropLineDash": resolved.chart_defaults.hover_emphasis.drop_line_dash,
     }
 

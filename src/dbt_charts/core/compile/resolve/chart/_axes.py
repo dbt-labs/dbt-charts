@@ -227,21 +227,23 @@ def _bake_axis(
     chart_id: str,
     axis: str,
     channel_type: str,
-    has_rows: bool,
+    type_defaulted: bool,
 ) -> BakedAxis[_S]:
     """Resolve the merged axis's winning ``labels.format`` into a ``ResolvedFormat``.
 
     A categorical axis rejects an affix (a labelExpr would bypass
     the engine's label-format gate); the channel type is only known here.
-    With no rows the channel type is a default, not a classification, and the
-    empty chart paints no ticks, so there is nothing to reject.
+    ``type_defaulted`` marks a ``nominal`` the classifier fell back to for a
+    column with no non-null value: it says nothing about the column and the
+    axis paints no tick labels, so it rejects nothing. A ``nominal`` the author
+    or the family declares rejects the affix with or without values.
     """
     winner = merged.labels.format
     if winner is None:
         return BakedAxis(merged, band_position, None)
     resolved = column_format("number", formats, winner)
     if (
-        has_rows
+        not type_defaulted
         and channel_type not in ("quantitative", "temporal")
         and resolved.has_affix
     ):
@@ -269,7 +271,8 @@ def _bake_cartesian_axes(
     x_channel_type: str,
     y_channel_type: str,
     axis_overrides: AxisOverrides,
-    has_rows: bool,
+    x_type_defaulted: bool,
+    y_type_defaulted: bool,
     multiples: MultiplesConfig | None = None,
     y: str | list[str] | None = None,
     temporal_band_axes: frozenset[Literal["axis_x", "axis_y"]] = frozenset(),
@@ -372,7 +375,7 @@ def _bake_cartesian_axes(
         chart_id=chart.id,
         axis="axis_x",
         channel_type=x_channel_type,
-        has_rows=has_rows,
+        type_defaulted=x_type_defaulted,
     )
     baked_y = _bake_axis(
         ay,
@@ -381,7 +384,7 @@ def _bake_cartesian_axes(
         chart_id=chart.id,
         axis="axis_y",
         channel_type=y_channel_type,
-        has_rows=has_rows,
+        type_defaulted=y_type_defaulted,
     )
     # This getattr is load-bearing, not typing ceremony like x_label/y_label
     # above: HeatmapChart has no `layers` field and DOES resolve through
@@ -839,7 +842,6 @@ def cartesian_series_domain_values(
 
 def cartesian_top_legend_entries(
     y: str | None,
-    y_label: str | None,
     layers: Sequence[CartesianLayer],
     color_domain_values: tuple[str, ...],
     *,
@@ -860,7 +862,7 @@ def cartesian_top_legend_entries(
 
     ``has_color`` mirrors render's own ``field_color_base`` fork
     (``render/chart/emitters/_overlay.py``): a base with its own color field
-    never gets its y-title added as a separate legend entry there -- its
+    never gets its own series name added as a separate legend entry there -- its
     color-domain values (``color_domain_values``) stand in for it instead.
     Passing the base name in on top of that domain would charge the fit
     predicate for an entry render never draws. A layer with no ``y`` is
@@ -870,9 +872,7 @@ def cartesian_top_legend_entries(
     """
     layer_entries: tuple[str, ...] = ()
     if layers:
-        base_name = (
-            None if has_color else _series_display_name(y, y_label, field_labels)
-        )
+        base_name = None if has_color else _series_display_name(y, None, field_labels)
         names = [base_name] + [
             _series_display_name(layer.y, layer.label, field_labels)
             for layer in layers

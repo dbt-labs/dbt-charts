@@ -54,7 +54,7 @@ _DATA: list[dict] = [
 
 
 def test_layer_axis_y_scale_domain_parses() -> None:
-    """axis_y.scale.domain on a layer parses as a list of floats."""
+    """axis_y.scale.domain: [min, max] on a layer parses to both ends."""
     from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
 
     layer = LineLayer.model_validate(
@@ -62,7 +62,20 @@ def test_layer_axis_y_scale_domain_parses() -> None:
     )
     assert layer.axis_y is not None
     assert layer.axis_y.scale is not None
-    assert layer.axis_y.scale.domain == [0.0, 5000.0]
+    assert layer.axis_y.scale.domain is not None
+    assert (layer.axis_y.scale.domain.min, layer.axis_y.scale.domain.max) == (0, 5000)
+
+
+def test_layer_axis_y_scale_domain_pins_both_ends() -> None:
+    """A layer's own y scale has no data fit to fall back on: an open end is refused."""
+    from pydantic import ValidationError
+
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+
+    with pytest.raises(ValidationError, match=r"domain\.max"):
+        LineLayer.model_validate(
+            {"type": "line", "y": "t", "axis_y": {"scale": {"domain": [0, None]}}}
+        )
 
 
 def test_layer_axis_y_ticks_count_parses() -> None:
@@ -118,7 +131,8 @@ def test_layer_axis_y_scale_domain_survives_resolve() -> None:
     rl = resolved.layers[0]
     assert isinstance(rl, ResolvedLineLayer)
     assert rl.axis_y.scale is not None
-    assert rl.axis_y.scale.domain == [0.0, 5000.0]
+    assert rl.axis_y.scale.domain is not None
+    assert (rl.axis_y.scale.domain.min, rl.axis_y.scale.domain.max) == (0, 5000)
 
 
 def test_layer_axis_y_ticks_count_survives_resolve() -> None:
@@ -399,36 +413,6 @@ def test_right_axis_layer_votes_from_its_own_query_at_runtime() -> None:
     )
     assert resolved.layers[0].axis_y.tooltip_format.spec == "$,.2f"
     executor.execute_query.assert_called_once_with("goals", {})
-
-
-# ── layer axis_y.title needs a split axis to land on ─────────────────────
-
-
-def _resolve_layer_axes(*layer_axes: dict[str, object]) -> None:
-    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
-    from dbt_charts.core.compile.resolve import resolve
-
-    layers = [LineLayer(type="line", y="target", axis_y=a) for a in layer_axes]
-    resolve(_bar_normalized(layers=layers), _DATA, _default_board_style())
-
-
-def test_layer_axis_y_title_without_any_pinned_position_raises() -> None:
-    from dbt_charts.core.compile.errors import CompilationError
-
-    with pytest.raises(CompilationError) as exc_info:
-        _resolve_layer_axes({"title": "Target"})
-    assert exc_info.value.code is not None
-    assert exc_info.value.code.code == "ERR-LAYER-AXIS-TITLE-WITHOUT-POSITION"
-    assert "axis_y.position" in str(exc_info.value)
-
-
-def test_layer_axis_y_title_with_pinned_position_compiles() -> None:
-    _resolve_layer_axes({"title": "Target", "position": "right"})
-
-
-def test_layer_axis_y_title_compiles_when_another_layer_pins_a_side() -> None:
-    """The axis split is chart-wide: an unpinned layer's title still lands."""
-    _resolve_layer_axes({"position": "right"}, {"title": "Target"})
 
 
 def test_layer_axis_follows_the_query_format() -> None:

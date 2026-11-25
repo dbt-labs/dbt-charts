@@ -256,11 +256,11 @@ def compute_scale_domain(
     Falls back to (0, 1) when no numeric values are present.
     """
 
-    has_min = cfg.min is not None
-    has_max = cfg.max is not None
+    pinned_min = cfg.domain.min if cfg.domain is not None else None
+    pinned_max = cfg.domain.max if cfg.domain is not None else None
 
-    if has_min and has_max:
-        return (float(cfg.min), float(cfg.max))  # type: ignore[arg-type]
+    if pinned_min is not None and pinned_max is not None:
+        return (float(pinned_min), float(pinned_max))
 
     values: list[float] = []
     for row in data:
@@ -270,10 +270,10 @@ def compute_scale_domain(
 
     if not values:
         return (
-            float(cfg.min) if has_min else 0.0,  # type: ignore[arg-type]
-            float(cfg.max) if has_max else 1.0,  # type: ignore[arg-type]
+            float(pinned_min) if pinned_min is not None else 0.0,
+            float(pinned_max) if pinned_max is not None else 1.0,
         )
 
-    lo = float(cfg.min) if has_min else min(values)  # type: ignore[arg-type]
-    hi = float(cfg.max) if has_max else max(values)  # type: ignore[arg-type]
+    lo = float(pinned_min) if pinned_min is not None else min(values)
+    hi = float(pinned_max) if pinned_max is not None else max(values)
     return (lo, hi)

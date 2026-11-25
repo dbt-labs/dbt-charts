@@ -29,14 +29,14 @@ class TestRenderJsonSchemaStructure:
 
 
 class TestTupleEnforcement:
-    def test_continuous_domain_rejects_null_bounds(self) -> None:
+    def test_continuous_domain_is_a_pair(self) -> None:
         schema = render_json_schema(introspect())
         domain = schema["$defs"]["ScaleContinuousStylePatch"]["properties"]["domain"]
         validator = validator_for(schema)(
             {**domain, "$defs": schema["$defs"]}, format_checker=None
         )
         assert validator.is_valid([0, 10])
-        assert not validator.is_valid([None, None])
+        assert validator.is_valid([None, 10])
         assert not validator.is_valid([0, 10, 20])
 
 

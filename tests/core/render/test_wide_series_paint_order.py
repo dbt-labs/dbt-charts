@@ -1,5 +1,7 @@
 """A `y: [a, b, c]` chart paints its series in `y:` order, whatever their names.
 
+A bar ranks its series by `series_order`, so it asks for `data` to follow `y:`.
+
 Asserted on the painted ink per series in the real render, not on an
 intermediate domain list.
 """
@@ -31,7 +33,7 @@ charts:
     type: {family}
     query: wide
     x: month
-    y: [{order}]
+    y: [{order}]{style}
 rows:
   - c
 """
@@ -48,7 +50,8 @@ def series_ink(
     local_project: Callable[..., FilesystemProject],
 ) -> Callable[[str, str], dict[str, str]]:
     def _ink(family: str, order: str) -> dict[str, str]:
-        result = compile(_BOARD.format(family=family, order=order))
+        style = "\n    style:\n      series_order: data" if family == "bar" else ""
+        result = compile(_BOARD.format(family=family, order=order, style=style))
         assert result.success and result.board is not None, result.errors
         executor = Run(result.board, env=build_exec_env(local_project(Path.cwd())))
         svg = render(result.board, executor.ctx, executor.ledger, format="svg").output

@@ -8,10 +8,10 @@ from pydantic import Field
 
 from dbt_charts.core.compile.models.style.resolved import ResolvedGeoshapeStyle
 
-from ._base import _GeoResolvedChartFields
+from ._base import _GeoResolvedChartFields, _PatternResolvedFields
 
 
-class ResolvedGeoshapeChart(_GeoResolvedChartFields):
+class ResolvedGeoshapeChart(_GeoResolvedChartFields, _PatternResolvedFields):
     """Render-ready geoshape (choropleth) or map chart.
 
     Geo descriptor fields are baked at resolve time (compile layer) so the

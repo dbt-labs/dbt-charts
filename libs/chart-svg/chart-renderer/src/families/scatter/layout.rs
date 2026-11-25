@@ -44,6 +44,17 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     if bound.r.multiples.is_some() {
         return Err("scatter: layout draws one plot; a multiples chart is composed by render".into());
     }
+    crate::annotation::reserve_key(
+        || layout_once(bound, cell, measure),
+        || {
+            crate::annotation::force_numbers(&bound.r.annotations);
+            layout_once(bound, cell, measure)
+        },
+        |laid| &laid.diagnostics,
+    )
+}
+
+fn layout_once(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Diagnostic> {
     let Some(unviewed) = &bound.r.unviewed else { return laid_out(bound, cell, measure, None) };
     let whole = super::bind::bind(unviewed)?;
     let whole_box = laid_out(&whole, cell, measure, None)?.data_box;
@@ -492,7 +503,7 @@ pub(super) fn fit(
         log_x = Some((x_min, x_max));
         vec![0.0; kept.len()]
     } else {
-        let lin = linear_x_scale(r, x_min, x_max, (x_zero_rule_fires, x_unity_rule_fires), edge_pad)?;
+        let lin = linear_x_scale(r, x_min, x_max, (x_zero_rule_fires, x_unity_rule_fires), edge_pad)?.torn_by(ax_x);
         linear_x = Some(lin);
         vec![0.0; kept.len()]
     };
@@ -612,6 +623,7 @@ pub(super) fn fit(
     let mut layer_y_frac: Box<dyn Fn(f64) -> f64> = Box::new(|_| f64::NAN);
     // The base y scale an annotation maps through; every branch below sets it.
     let mut y_scale: Option<YScale> = None;
+    let mut y_tear: Option<YTear> = None;
     let y_scale_caption: CaptionScale;
     if y_nominal {
         // A facet's panels share the whole chart's categories unless each
@@ -712,16 +724,26 @@ pub(super) fn fit(
             Some(pair) => pair,
             None => unauthored_measure_domain(ax_y, y_dmin, y_dmax, y_ladder_pass.2, !shared_layers.is_empty()),
         };
-        y_scale_caption = CaptionScale::Numeric { kind: NumericScale::of_axis(ax_y)?, domain: (y_min, y_max), format: vega_axis_format(ax_y, true)? };
         // d3 maps a collapsed domain onto the range's midpoint with the one
         // value as its only tick; a `NaN` one (an unparsable authored pair)
         // has neither ticks nor positions.
         let y_span = y_max - y_min;
         let y_transform = ax_y.transform();
+        y_tear = crate::torn::ValueTear::of(ax_y.grid.torn_baseline.as_ref(), y_min.min(y_max), y_min.max(y_max)).map(|tear| YTear {
+            padded: authored_y_domain(ax_y, y_ladder_pass.2).is_none(),
+            bottom: tear.edge == y_min,
+            tear,
+        });
+        // The ladder is the fitted domain's; the scale every consumer reads is widened past a padded tear.
+        let (y_lo, y_hi) = match &y_tear {
+            Some(t) if t.padded => crate::torn::widen_past(y_transform, (y_min, y_max), t.tear.edge, t.tear.tear.pad() / y_ladder_pass.2),
+            _ => (y_min, y_max),
+        };
+        y_scale_caption = CaptionScale::Numeric { kind: NumericScale::of_axis(ax_y)?, domain: (y_lo, y_hi), format: vega_axis_format(ax_y, true)? };
         if ::layout::labels_expr::view::active() {
-            ::layout::labels_expr::view::register_continuous("y", y_transform, y_min, y_max, ::layout::labels_expr::view::Span::Height);
+            ::layout::labels_expr::view::register_continuous("y", y_transform, y_lo, y_hi, ::layout::labels_expr::view::Span::Height);
         }
-        let y_from_top = Continuous::new(y_transform, [y_min, y_max], [1.0, 0.0]);
+        let y_from_top = Continuous::new(y_transform, [y_lo, y_hi], [1.0, 0.0]);
         let y_frac = move |v: f64| finite_frac(y_from_top.scale(v));
         if zero_rule_fires {
             baseline_rule_fracs[0] = Some(y_frac(0.0));
@@ -729,7 +751,7 @@ pub(super) fn fit(
         if unity_rule_fires {
             baseline_rule_fracs[1] = Some(y_frac(1.0));
         }
-        y_scale = Some(YScale::Bent(y_transform, (y_min, y_max)));
+        y_scale = Some(YScale::Bent(y_transform, (y_lo, y_hi)));
         layer_y_frac = Box::new(y_frac.clone());
         let y_eps = y_span.abs() * 1e-9;
         // A ladder production bakes is drawn as is; an unbaked one is Vega's
@@ -764,6 +786,15 @@ pub(super) fn fit(
         }
         for (idx, (&(_, row), &yv)) in kept.iter().zip(kept_y.iter()).enumerate() {
             points_data.push((kept_x_frac[idx], y_frac(yv), series_of(row), mark_radii[idx], row));
+        }
+    }
+
+    // A torn edge on the plot's own end is no floor: its rung goes unlabeled.
+    let y_torn_rung = y_tear.as_ref().filter(|t| !t.padded).map(|t| t.tear.edge);
+    let y_is_torn_rung = |value: f64| y_torn_rung.is_some_and(|edge| crate::torn::same_value(value, edge));
+    for (label, &value) in y_labels.iter_mut().zip(&y_tick_values) {
+        if y_is_torn_rung(value) {
+            label.clear();
         }
     }
 
@@ -945,11 +976,7 @@ pub(super) fn fit(
     // (`wide_measures_title`, mirrors `emitters/scatter.py`'s own
     // `chart.y_label or wide_measures_title(chart.wide_measures)?`), never
     // `slug_to_text` on the synthetic field name.
-    let y_title_plain = if wide_series.is_empty() {
-        crate::common::axis_title_text(&r.y, r.y_label.as_deref(), &r.field_labels)?
-    } else {
-        match r.y_label.as_deref() { Some(l) => display_text::collapse_title_newlines(l), None => crate::common::wide_measures_title(&r.wide_measures, &r.field_labels)? }
-    };
+    let y_title_plain = crate::common::measure_title(&r.y, r.y_label.as_deref(), &r.wide_measures, &r.field_labels)?;
     let base_y_title = y_title_plain.clone();
     let y_title_plain = if overlays.is_empty() || independent {
         y_title_plain
@@ -958,7 +985,7 @@ pub(super) fn fit(
             .iter()
             .map(|o| crate::common::axis_title_text(o.y(), o.label(), &r.field_labels))
             .collect::<Result<Vec<_>, _>>()?;
-        ::bind::layers::merged_axis_title(std::iter::once(y_title_plain).chain(layer_titles))
+        ::bind::layers::merged_axis_title(y_title_plain, r.y_label.is_some(), layer_titles)
     };
     let y_title_text = crate::common::wrapped_axis_title(&r.id, "y_label", &y_title_plain, &ax_y.title.font, y_box.0, y_box.1, fonts)?;
     let dual_titles = DualAxisTitles::new(independent, ax_y, r.y_label.as_deref());
@@ -1088,7 +1115,7 @@ pub(super) fn fit(
         };
     let layered = !overlays.is_empty();
     let layered_legend =
-        LayeredLegend::new(r, payload, overlays, color_domain.as_slice(), category_scale, &base_y_title, y_nominal)?;
+        LayeredLegend::new(r, payload, overlays, color_domain.as_slice(), category_scale, y_nominal)?;
     let layered_entries = layered_legend.entries(&r.legend);
     let numeric_legends = crate::families::bar::legend::numeric_legends_of(
         None,
@@ -1727,7 +1754,7 @@ pub(super) fn fit(
                     let x_bounds = (if y_left { -y_reach } else { 0.0 }, pw + ghost_reach);
                     let x_bounds = layer_axes.iter().fold(x_bounds, |bounds, la| la.widen_axes(bounds, pw, 0.0));
                     let x_bounds = (x_bounds.0, x_bounds.1.max(annotation_x2));
-                    let origin = legend::legend_origin(&r.legend.position, x_bounds, (x_axis.y1, x_axis.y2), (pw, ph), stack.size);
+                    let origin = legend::legend_origin(&r.legend.position, x_bounds, (x_axis.y1.min(annotation_ctx(pw, ph).ok().map_or(0.0, |c| crate::annotation::text_y1(&c))), x_axis.y2), (pw, ph), stack.size);
                     legend_xy.set(origin);
                     if let Some(reach) = legend::legend_fit_bounds(&r.legend.position, origin, stack.size) {
                         b.union(&reach);
@@ -1778,7 +1805,7 @@ pub(super) fn fit(
         }
     }
     // A padded domain is drawn over the height it was widened for.
-    if y_pad != 0.0 && panel.is_none() && (plot_h - y_ladder_pass.2).abs() > 1e-9 {
+    if (y_pad != 0.0 || y_tear.as_ref().is_some_and(|t| t.padded)) && panel.is_none() && (plot_h - y_ladder_pass.2).abs() > 1e-9 {
         let (count, pass, _) = y_ladder_pass;
         if pass >= 4 {
             return Err(format!("scatter: the padded y domain of {:?} does not settle on a plot height", r.y).into());
@@ -1846,6 +1873,37 @@ pub(super) fn fit(
         if crate::common::rule_reaches(floor_span, y_plot_edge_x) { crate::common::reach_label_edges(joined, &y_label_edges) } else { joined }
     };
 
+    // Each tear rests on its plot edge. Where the two meet, each stops at the other's torn edge, so
+    // neither overshoots into paper the other has torn away.
+    let x_rest = linear_x.as_ref().or_else(|| plain_x.and_then(PlainXAxis::linear)).zip(ax_x.grid.torn_baseline.as_ref()).and_then(|(lin, tear)| {
+        let value = lin.torn_edge(plot_w)?;
+        let edge_px = if lin.frac(lin.domain_at(plot_w), value) < 0.5 { 0.5 } else { plot_w + 0.5 };
+        let inward = crate::torn::torn_inward(edge_px, 0.0, plot_w);
+        Some((inward, edge_px, tear.cubics((0.5, plot_h + 0.5), edge_px, inward, value)))
+    });
+    let y_rest = y_tear.as_ref().map(|t| {
+        let edge_px = if t.bottom { plot_h + 0.5 } else { 0.5 };
+        let inward = crate::torn::torn_inward(edge_px, 0.0, plot_h);
+        (inward, edge_px, t.tear.tear.cubics((0.5, plot_w + 0.5), edge_px, inward, t.tear.edge))
+    });
+    // The tears' cubics, which the gridlines below run onto.
+    let x_torn = x_rest.as_ref().map(|(inward, edge_px, cubics)| match &y_rest {
+        Some((y_inward, _, y_cubics)) => {
+            let at = crate::torn::torn_across_at(y_cubics, *edge_px);
+            let (from, to) = if *y_inward < 0.0 { (0.5, at) } else { (at, plot_h + 0.5) };
+            (*inward, crate::torn::torn_slice(cubics, from, to, 0.0))
+        }
+        None => (*inward, cubics.clone()),
+    });
+    let torn = y_rest.as_ref().map(|(inward, edge_px, cubics)| match &x_rest {
+        Some((x_inward, _, x_cubics)) => {
+            let at = crate::torn::torn_across_at(x_cubics, *edge_px);
+            let (from, to) = if *x_inward > 0.0 { (at, plot_w + 0.5) } else { (0.5, at) };
+            (*inward, crate::torn::torn_slice(cubics, from, to, 0.0))
+        }
+        None => (*inward, cubics.clone()),
+    });
+
     // Gridlines — grid/tick positions round to whole pixels (Vega
     // tickRound), then take the axis group's +0.5 crispness shift; labels
     // keep exact positions.
@@ -1858,10 +1916,15 @@ pub(super) fn fit(
             .iter()
             .map(|&frac| {
                 let gx = crate::common::tick_round(x_pos(frac));
+                let (gy1, gy2) = match &torn {
+                    Some((inward, cubics)) if *inward < 0.0 => (0.5, crate::torn::torn_across_at(cubics, gx)),
+                    Some((_, cubics)) => (crate::torn::torn_across_at(cubics, gx), plot_h + 0.5),
+                    None => (0.5, plot_h + 0.5),
+                };
                 crate::dash::line(
                     Role::Grid,
-                    (gx, 0.5),
-                    (gx, plot_h + 0.5),
+                    (gx, gy1),
+                    (gx, gy2),
                     ax_x.grid.stroke(gc, gw).num("opacity", go),
                 )
             })
@@ -1877,10 +1940,16 @@ pub(super) fn fit(
         let lines = y_ticks
             .iter()
             .enumerate()
+            .filter(|&(i, _)| !y_is_torn_rung(y_tick_values[i]))
             .map(|(i, &frac)| {
                 let gy = crate::common::tick_round(y_pos(frac));
                 // A rule whose label thinned away has nothing to carry in the gutter.
                 let (gx1, gx2) = if labeled[i] { reach } else { (0.5, plot_w + 0.5) };
+                let (gx1, gx2) = match &x_torn {
+                    Some((inward, cubics)) if *inward < 0.0 => (gx1, gx2.min(crate::torn::torn_across_at(cubics, gy))),
+                    Some((_, cubics)) => (gx1.max(crate::torn::torn_across_at(cubics, gy)), gx2),
+                    None => (gx1, gx2),
+                };
                 crate::dash::line(
                     Role::Grid,
                     (gx1, gy),
@@ -1890,6 +1959,17 @@ pub(super) fn fit(
             })
             .collect();
         plot.push(::layout::contract::grid_group(lines));
+    }
+
+    if let (Some(t), Some((_, cubics))) = (&y_tear, &torn) {
+        // The tear takes the x gridlines' ink, a rung quieter than the y rung it replaces.
+        let gc = crate::common::required_ink(ax_x.grid.color.as_deref(), "scatter", "axis_x.grid.color")?;
+        plot.push(crate::torn::torn_node(cubics, false, gc, ax_x.grid.width.unwrap_or(1.0)));
+    }
+
+    if let Some((_, cubics)) = &x_torn {
+        let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), "scatter", "axis_y.grid.color")?;
+        plot.push(crate::torn::torn_node(cubics, true, gc, ax_y.grid.width.unwrap_or(1.5)));
     }
 
     plot.extend(crate::families::layers::layer_grids(&layer_axes, ax_y, (plot_w, plot_h), "scatter")?);
@@ -1950,8 +2030,8 @@ pub(super) fn fit(
     // (independent) follows; a bound color channel promotes to a swatched
     // header. `xv` here is already the row's raw x reading (not the scaled
     // position) -- reused directly rather than re-reading the row.
-    let y_axis_title = base_y_title.clone();
-    let x_axis_title = crate::common::axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels)?;
+    let y_axis_title = crate::common::measure_title(&r.y, crate::common::hover_label(r.y_label.as_deref()), &r.wide_measures, &r.field_labels)?;
+    let x_axis_title = crate::common::axis_title_text(&r.x, crate::common::hover_label(r.x_label.as_deref()), &r.field_labels)?;
     let color_title = match r.color.as_deref() {
         Some(cf) => legend::color_channel_title(cf, &r.legend, &r.field_labels)?,
         None => String::new(),
@@ -2253,7 +2333,7 @@ pub(super) fn fit(
         if y_tick_eff > 0.0 && !y_above {
             let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
             let tw = ax_y.ticks.width.unwrap_or(1.0);
-            for &frac in &y_ticks {
+            for (&frac, _) in y_ticks.iter().zip(&y_tick_values).filter(|&(_, &value)| !y_is_torn_rung(value)) {
                 let (gy, tc, tw) = crate::common::tick_look(&y_threshold_rules, crate::common::tick_round(y_pos(frac)), tc, tw);
                 items.push(Node::line(
                     Role::Axis,
@@ -2333,7 +2413,7 @@ pub(super) fn fit(
                 channel: false,
             })
             .collect();
-        let obstacles = crate::placement::obstacles(&plot, &[(&value_axis_nodes, (0.0, 0.0))]);
+        let obstacles = crate::placement::obstacles(&plot, &[(&value_axis_nodes, (0.0, 0.0))], &r.canvas)?;
         let mut field = crate::placement::Field { plot: (plot_w, plot_h), obstacles, paths: reqs.iter().map(|req| vec![req.anchor]).collect() };
         let order: Vec<usize> = (0..reqs.len()).collect();
         let spots = crate::placement::place_value_labels(&reqs, &order, value_label_size, &mut field);
@@ -2412,14 +2492,6 @@ pub(super) fn fit(
         match overlay {
             OverlayLayer::Line(l) => {
                 let under = crate::annotation::DataMark::plot_marks(&plot);
-                let stack = match (&l.area_mark, l.color.as_deref()) {
-                    (Some(_), Some(cf)) => Some(
-                        crate::families::layers::LayerStack::descending(rows, x_field, cf, &l.y)
-                            .imputing(rows, crate::families::layers::layer_link(datum_link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())))
-                            .map_err(|e| format!("scatter: {e}"))?,
-                    ),
-                    _ => None,
-                };
                 let line_subset = |subset: &[serde_json::Map<String, Value>], series_color: &str| -> Result<Vec<Node>, String> {
                     crate::families::layers::line_layer_marks(
                         index + 1,
@@ -2441,7 +2513,6 @@ pub(super) fn fit(
                         payload.board_style.as_ref(),
                         label_caption,
                         step_band(plot_w),
-                        stack.as_ref(),
                         crate::families::layers::layer_link(datum_link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
                         crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
                         &under,
@@ -2538,7 +2609,7 @@ pub(super) fn fit(
                     plot_h,
                     |mark| label_caption(mark.row, mark.value).expect("a plotted date parsed at resolve"),
                     crate::families::layers::layer_link(datum_link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())),
-                    (payload.board_style.as_ref(), bg, &under),
+                    (payload.board_style.as_ref(), bg, &under, &crate::placement::strikes(&plot, &r.canvas)?),
                     (
                         crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
                         &sited.iter().map(|&i| bar_widths[i]).collect::<Vec<_>>(),
@@ -2650,6 +2721,7 @@ pub(super) fn fit(
                 title: &x_title_text,
                 caption: &AxisCaption::new(&x_title_text, &ax_x.title, xf.scale.clone().expect("a plain x axis names its scale")).bare_if_undrawn(ax_x),
                 title_key: panel.is_none().then_some(crate::contract::LabelKey::X),
+                torn_floor: torn.as_ref().is_some_and(|(inward, _)| (*inward < 0.0) == (x_edge == crate::common::XEdge::Bottom)),
             },
             fonts,
         )?);
@@ -2697,7 +2769,7 @@ pub(super) fn fit(
         if y_tick_eff > 0.0 && !y_above {
             let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
             let tw = ax_y.ticks.width.unwrap_or(1.0);
-            for &frac in &y_ticks {
+            for (&frac, _) in y_ticks.iter().zip(&y_tick_values).filter(|&(_, &value)| !y_is_torn_rung(value)) {
                 let (gy, tc, tw) = crate::common::tick_look(&y_threshold_rules, crate::common::tick_round(y_pos(frac)), tc, tw);
                 items.push(Node::line(
                     Role::Axis,
@@ -3073,4 +3145,11 @@ pub(super) fn unauthored_measure_domain(ax: &AxisStyle, data_lo: f64, data_hi: f
     } else {
         d3rs::ticks::d3_nice(lo, hi, 10)
     }
+}
+
+struct YTear<'a> {
+    tear: crate::torn::ValueTear<'a>,
+    /// Past the domain's end, which then draws as a rung of its own; else on it.
+    padded: bool,
+    bottom: bool,
 }

@@ -53,20 +53,18 @@ class TestScaleTargetConfigModel:
     def test_basic_palette(self) -> None:
         cfg = ScaleTargetConfig(palette=["#fff7d6", "#f59e0b", "#92400e"])
         assert len(cfg.palette) == 3
-        assert cfg.domain == "data"
-        assert cfg.min is None
-        assert cfg.max is None
+        assert cfg.domain is None
         assert cfg.null_color is None
 
     def test_explicit_domain(self) -> None:
         cfg = ScaleTargetConfig(
             palette=["#white", "#black"],
-            min=0,
-            max=100,
+            domain=[0, 100],
             null_color="#cccccc",
         )
-        assert cfg.min == 0
-        assert cfg.max == 100
+        assert cfg.domain is not None
+        assert cfg.domain.min == 0
+        assert cfg.domain.max == 100
         assert cfg.null_color == "#cccccc"
 
     def test_palette_required(self) -> None:
@@ -107,8 +105,7 @@ class TestTableColumnConfigScale:
             "scale": {
                 "background": {
                     "palette": ["#fff7d6", "#f59e0b", "#92400e"],
-                    "min": 0,
-                    "max": 100000,
+                    "domain": [0, 100000],
                     "null_color": "#f3f4f6",
                 }
             },
@@ -117,8 +114,9 @@ class TestTableColumnConfigScale:
         assert config.scale is not None
         assert config.scale.background is not None
         assert config.scale.background.palette == ["#fff7d6", "#f59e0b", "#92400e"]
-        assert config.scale.background.min == 0
-        assert config.scale.background.max == 100000
+        assert config.scale.background.domain is not None
+        assert config.scale.background.domain.min == 0
+        assert config.scale.background.domain.max == 100000
 
 
 # ---------------------------------------------------------------------------
@@ -190,14 +188,14 @@ class TestComputeScaleDomain:
 
     def test_explicit_overrides(self) -> None:
         data = [{"amount": 10}, {"amount": 50}]
-        cfg = ScaleTargetConfig(palette=["#fff", "#000"], min=0, max=200)
+        cfg = ScaleTargetConfig(palette=["#fff", "#000"], domain=[0, 200])
         lo, hi = compute_scale_domain(data, "amount", cfg)
         assert lo == 0.0
         assert hi == 200.0
 
     def test_partial_override_min_only(self) -> None:
         data = [{"amount": 10}, {"amount": 50}]
-        cfg = ScaleTargetConfig(palette=["#fff", "#000"], min=0)
+        cfg = ScaleTargetConfig(palette=["#fff", "#000"], domain={"min": 0})
         lo, hi = compute_scale_domain(data, "amount", cfg)
         assert lo == 0.0
         assert hi == 50.0
@@ -248,8 +246,7 @@ class TestParseColumnConfigsWithConditionals:
                         "scale": {
                             "background": {
                                 "palette": ["#fff7d6", "#f59e0b", "#92400e"],
-                                "min": 0,
-                                "max": 100000,
+                                "domain": [0, 100000],
                                 "null_color": "#f3f4f6",
                             }
                         },
@@ -263,8 +260,9 @@ class TestParseColumnConfigsWithConditionals:
         assert col.scale is not None
         assert col.scale.background is not None
         assert col.scale.background.palette == ["#fff7d6", "#f59e0b", "#92400e"]
-        assert col.scale.background.min == 0
-        assert col.scale.background.max == 100000
+        assert col.scale.background.domain is not None
+        assert col.scale.background.domain.min == 0
+        assert col.scale.background.domain.max == 100000
         assert col.scale.background.null_color == "#f3f4f6"
         assert col.scale.color is None
 
@@ -311,8 +309,7 @@ class TestTableSVGWithConditionalFormatting:
                             "scale": {
                                 "background": {
                                     "palette": ["#ffffff", "#ff0000"],
-                                    "min": 0,
-                                    "max": 100,
+                                    "domain": [0, 100],
                                 }
                             },
                         }
@@ -428,8 +425,7 @@ def _scale_chart(make_chart: Any) -> Any:
                         "scale": {
                             "background": {
                                 "palette": ["#ffffff", "#2563eb"],
-                                "min": 40000,
-                                "max": 80000,
+                                "domain": [40000, 80000],
                             }
                         },
                     }
@@ -727,8 +723,7 @@ class TestRowRuleZOrderAndFillAlignment:
                             "scale": {
                                 "background": {
                                     "palette": ["#ffffff", "#2563eb"],
-                                    "min": 0,
-                                    "max": 80000,
+                                    "domain": [0, 80000],
                                 }
                             },
                         }

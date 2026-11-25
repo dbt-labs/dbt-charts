@@ -36,7 +36,7 @@ use crate::families::facet_title::{layout_title, TitleLayout, TitleSource};
 use crate::families::heatmap::bind::{fold_wide_y, Prelude};
 use crate::families::heatmap::{
     dated_bands,
-    category_legend_entries, color_categories, date_color, date_color_extent, date_legend_ticks, legend_date_label, ColorKind, drop_invalid_color_rows, GradientColors, SYMBOL_LEGEND_TICK_COUNT, CategoryScale, flat_label, rotated_label, LabelFace, legend_labels, svg_text_anchor, bind_cells, cell_nodes, tooltip_value_title, CellFill, CellMarks, CellPaint, HeaderFmt,
+    category_legend_entries, color_categories, date_color, date_color_extent, date_legend_ticks, legend_date_label, ColorKind, drop_invalid_color_rows, GradientColors, SYMBOL_LEGEND_TICK_COUNT, CategoryScale, flat_label, rotated_label, LabelFace, legend_labels, svg_text_anchor, bind_cells, cell_nodes, CellLabeling, tooltip_value_title, CellFill, CellMarks, CellPaint, HeaderFmt,
     HeatmapResolved, AXIS_TRANSLATE, BREATHING_ROOM_PX,
 };
 use crate::families::color_scale::{
@@ -717,6 +717,7 @@ fn render_panel(
     plot_w: f64,
     plot_h: f64,
     right: &RightAxis,
+    fonts: &FontBook,
 ) -> Result<PanelGeometry, Diagnostic> {
     let x_scale = BandScale::new(x_domain.to_vec(), 0.0, plot_w, 0.0, 0.0);
     let y_scale = BandScale::new(y_domain.to_vec(), 0.0, plot_h, 0.0, 0.0);
@@ -766,7 +767,7 @@ fn render_panel(
     let left = margins.left;
 
     let cells = bind_cells(rows, x_scale.domain(), y_scale.domain(), &style.cells)?;
-    let mut head = vec![Node::group(Role::Chrome, Attrs::new(), cell_nodes(&cells, &x_scale, &y_scale, &style.marks)?).translate(left, 0.0)];
+    let mut head = vec![Node::group(Role::Chrome, Attrs::new(), cell_nodes(&cells, &x_scale, &y_scale, &style.marks, fonts)?).translate(left, 0.0)];
     let y_caption = category_axis_caption(style.y_title, style.ax_y, y_domain)?;
     let face = style.row_face();
     let label_shift = face.shift;
@@ -1154,6 +1155,12 @@ fn render_facet(
     if r.patterns.is_active() {
         return Err(diagnostic::refuse!("heatmap: pattern fills on small multiples are not supported").into());
     }
+    if r.style.strip_key {
+        return Err(diagnostic::refuse!("heatmap: `strip_key` on small multiples is not supported").into());
+    }
+    if r.style.label_divides {
+        return Err(diagnostic::refuse!("heatmap: `label_divides` on small multiples is not supported").into());
+    }
     let independent = mc.scale == "independent";
     let legend_edge = facet_compose::facet_legend_edge(&r.legend.position);
     let ax_x = &r.style.axis_x;
@@ -1265,7 +1272,7 @@ fn render_facet(
                 max: *max,
             },
             FacetColor::Categories(scale) => CellFill::Categories(scale),
-            FacetColor::Dates { min, max, .. } => CellFill::Dates { min: *min, max: *max },
+            FacetColor::Dates { min, max, aware } => CellFill::Dates { min: *min, max: *max, aware: *aware },
         },
         tooltip: tooltip_value_title(r)?.zip(r.style.tooltip_format.as_ref()),
         native_aria: false,
@@ -1276,13 +1283,14 @@ fn render_facet(
         ghost_titles: Some((x_title.as_str(), y_title.as_str())),
         patterns: &r.patterns,
         conditional: r.style.conditional.as_ref(),
+        labels: CellLabeling::of(r, &rows),
     };
     let style = PanelStyle {
         ax_x,
         ax_y,
         cell_x_axis,
         cells,
-        marks: CellMarks::of(&r.style.rect_mark)?,
+        marks: CellMarks::of(&r.style.rect_mark, payload.board_style.as_ref())?,
         y_font_size: y_label_fs,
         y_family: y_label_family,
         y_color: ax_y.labels.font.color.as_deref().unwrap_or("#626366"),
@@ -1432,7 +1440,7 @@ fn render_facet(
                     fold: panel_cols_n == 1,
                     overhang: value_axis_right_overhang,
                 };
-                render_panel(&style, rows, (x_domain, x_axis), y_domain, plot_w, plot_h, &right)
+                render_panel(&style, rows, (x_domain, x_axis), y_domain, plot_w, plot_h, &right, fonts)
             })
             .collect::<Result<Vec<_>, Diagnostic>>()?)
     };

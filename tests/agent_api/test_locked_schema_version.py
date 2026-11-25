@@ -200,7 +200,7 @@ def test_migrate_stops_at_the_lock(tmp_path: Path) -> None:
     )
 
     assert at_lock.current == path
-    assert unlocked.updated == path
+    assert [f.path for f in unlocked.updated] == path
 
 
 def test_migrate_leaves_a_board_newer_than_the_lock_unchanged(tmp_path: Path) -> None:

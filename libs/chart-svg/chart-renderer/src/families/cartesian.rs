@@ -225,33 +225,18 @@ mod ladder_within_domain_tests {
 
 /// Resolve a measure (value) axis's rendered `(min, max)` domain.
 ///
-/// Models Vega's `Scale.js` `configureDomain` order: the zero union happens
-/// first (callers pass `raw_data_min`/`raw_data_max` already zero-unioned),
-/// then a baked `domain_min`/`domain_max` (production's headroom bake from
-/// `compile/resolve/chart/_domain.py` — the ONLY way headroom reaches Vega)
-/// rewrites the corresponding domain end, and `nice` runs LAST on the result
-/// — `nice: true` passes null to `scale.nice()`, d3's default count 10, and
-/// d3's nice loops until the re-derived increment stabilizes
-/// (`d3rs::ticks::d3_nice`), which can climb a rung past a single-pass
-/// estimate. An unbaked domain therefore never sees a headroom multiplier on
-/// the nice path: production's resolver either baked the expanded bound or
-/// never applied it.
+/// Callers pass `raw_data_min`/`raw_data_max` already zero-unioned. A baked
+/// `domain_min`/`domain_max` (the headroom bake in
+/// `compile/resolve/chart/_domain.py`, the only way headroom reaches the
+/// scale) wins verbatim: the top data point sits `headroom` below the plot's
+/// top edge and no clean tick is required there. Endpoint labels change
+/// nothing: their column shares this domain.
 ///
-/// `apply_nice == false` is the wired single-series right-axis fit arm,
-/// whose compiled scales don't nice a BAKED bound: a baked end wins
-/// verbatim, and the zoomed (`ticks.count` unset, `zero: false`) leaf keeps
-/// the raw extent — that shape is oracle-pinned as-is (D1 doesn't reach or
-/// change it; the raw-extent behavior there predates this change and no
-/// law here explains it, only the fully unbaked leaf below does). The
-/// fully unbaked leaf (no baked ends, `ticks.count` unset, zero-anchored)
-/// nices on this arm exactly as it does everywhere else: D1 — production
-/// bakes no `domainMax` there either, so Vega auto-fits and nices the same
-/// data extent regardless of which side the axis renders on.
-///
-/// A flat (zero-span) raw extent on the zoomed leaf defeats `nice()`'s
-/// span-preserving math, so that degenerate case falls back to the plain
-/// headroom expansion rather than surfacing a hard error for data that
-/// rendered fine before this leaf existed.
+/// With nothing baked, the zoomed leaf (`ticks.count` unset, `zero: false`)
+/// keeps the raw extent, and every other leaf nices the data extent with d3
+/// (count 10). A flat (zero-span) extent defeats `nice()`'s span math, so
+/// both fall back to the plain headroom expansion rather than surfacing a
+/// degenerate-domain error for a constant series.
 pub fn resolve_measure_domain(
     raw_data_min: f64,
     raw_data_max: f64,
@@ -260,48 +245,19 @@ pub fn resolve_measure_domain(
     ticks_count: Option<f64>,
     headroom: f64,
     zero_false: bool,
-    apply_nice: bool,
 ) -> (f64, f64) {
     if baked_domain_min.is_some() || baked_domain_max.is_some() {
-        // Vega order (Scale.js configureDomain): zero union, then domainMin/
-        // domainMax rewrite the domain ends, then `nice` runs LAST on the
-        // result — `nice: true` passes null to scale.nice(), d3's default
-        // count 10. Callers pass raw_data_min/max already zero-unioned.
-        // d3's nice re-derives the increment until it stabilizes (ticks.rs
-        // d3_nice), which can climb a rung past the single-pass estimate.
-        if apply_nice {
-            let lo = baked_domain_min.unwrap_or(raw_data_min);
-            let hi = baked_domain_max.unwrap_or(raw_data_max);
-            return d3rs::ticks::d3_nice(lo, hi, 10);
-        }
         let lo = baked_domain_min.unwrap_or(raw_data_min);
         let hi = baked_domain_max.unwrap_or(raw_data_max * (1.0 + headroom));
         return (lo, hi);
     }
-    if ticks_count.is_none() && zero_false {
-        if raw_data_max <= raw_data_min {
-            return (raw_data_min, raw_data_max * (1.0 + headroom));
-        }
-        return if apply_nice {
-            d3rs::ticks::d3_nice(raw_data_min, raw_data_max, 10)
-        } else {
-            (raw_data_min, raw_data_max)
-        };
+    if raw_data_max <= raw_data_min {
+        return (raw_data_min, raw_data_max * (1.0 + headroom));
     }
-    // No baked domain bound reached the payload — production's resolver
-    // never applied headroom (headroom only travels as a baked domainMax),
-    // so Vega sees the plain data extent niced by d3 (count 10) — on EVERY
-    // leaf, including the right-orient one whose compiled scale skips
-    // `nice` on the other branches above (D1: a right-orient axis compiles
-    // no `scale.nice` override either, so it nices exactly like a left one
-    // once nothing is baked). A flat extent defeats nice()'s span math
-    // (zero step returns it unchanged), so fall back to the headroom
-    // expansion — the same guard the zoomed leaf carries — rather than
-    // surfacing a degenerate-domain error for a constant series.
-    if raw_data_max > raw_data_min {
-        d3rs::ticks::d3_nice(raw_data_min, raw_data_max, 10)
+    if ticks_count.is_none() && zero_false {
+        (raw_data_min, raw_data_max)
     } else {
-        (raw_data_min, raw_data_max * (1.0 + headroom))
+        d3rs::ticks::d3_nice(raw_data_min, raw_data_max, 10)
     }
 }
 
@@ -310,98 +266,48 @@ mod resolve_measure_domain_tests {
     use super::*;
 
     #[test]
-    fn unauthored_ticks_count_and_zero_false_applies_nice_without_headroom() {
-        // VL's default scale.nice is true for an unbinned quantitative field:
-        // the raw extent is nice()-rounded, but never headroom-expanded.
-        let (lo, hi) = resolve_measure_domain(42.5, 97.3, None, None, None, 0.05, true, true);
-        assert_eq!((lo, hi), d3rs::ticks::d3_nice(42.5, 97.3, 10));
-        assert_ne!(hi, 97.3 * 1.05, "must not apply headroom on this leaf");
-    }
-
-    #[test]
-    fn unauthored_ticks_count_and_zero_false_without_nice_uses_raw_extent() {
-        let (lo, hi) = resolve_measure_domain(42.5, 97.3, None, None, None, 0.05, true, false);
+    fn unauthored_ticks_count_and_zero_false_uses_raw_extent() {
+        let (lo, hi) = resolve_measure_domain(42.5, 97.3, None, None, None, 0.05, true);
         assert_eq!((lo, hi), (42.5, 97.3));
     }
 
     #[test]
-    fn unauthored_ticks_count_zero_false_flat_data_falls_back_to_headroom() {
-        // Regression: flat positive data (raw_min == raw_max) collapses
-        // nice()'s span-preserving math to a no-op. Before resolve_measure_domain
-        // existed, headroom alone kept y_max > y_min and the chart rendered a
-        // flat line; the raw-extent leaf must not turn that into a hard
-        // "domain is degenerate" error.
-        let (lo, hi) = resolve_measure_domain(120.0, 120.0, None, None, None, 0.08, true, true);
-        assert_eq!(lo, 120.0);
-        assert!(hi > lo, "flat data must still get a non-degenerate domain: {hi}");
-        assert_eq!(hi, 120.0 * 1.08);
+    fn flat_data_falls_back_to_headroom() {
+        // Flat positive data (raw_min == raw_max) collapses nice()'s
+        // span-preserving math to a no-op; headroom keeps y_max > y_min so the
+        // chart draws a flat line instead of a "domain is degenerate" error.
+        let (lo, hi) = resolve_measure_domain(120.0, 120.0, None, None, None, 0.08, true);
+        assert_eq!((lo, hi), (120.0, 120.0 * 1.08));
+        let (lo, hi) = resolve_measure_domain(120.0, 120.0, None, None, Some(6.0), 0.08, false);
+        assert_eq!((lo, hi), (120.0, 120.0 * 1.08));
     }
 
     #[test]
-    fn unbaked_domain_never_headroom_expands_on_the_nice_path() {
-        // Headroom only reaches Vega as a baked domainMax — when the payload
-        // carries no baked bound, production's resolver never applied it, and
-        // the scale sees nice(data extent, 10). Oracle: dashes-palette-lab's
-        // six_series_six_dashes (unbaked ladder, data max 60): the compiled
-        // scale tops at 60 flush, not 60 × 1.08.
-        let (_lo, hi) = resolve_measure_domain(0.0, 100.0, None, None, None, 0.05, false, true);
-        assert_eq!(hi, 100.0, "nice(0, 100) is already nice — no headroom: {hi}");
-        let (_lo, hi) = resolve_measure_domain(0.0, 60.0, None, None, Some(6.0), 0.08, false, true);
-        assert_eq!(hi, 60.0);
-    }
-
-    #[test]
-    fn baked_ends_override_first_then_nice_runs_last() {
-        // Vega's Scale.js configureDomain order: zero union → domainMin/Max
-        // rewrite the ends → nice (d3 default count 10, looping until the
-        // increment stabilizes). Oracle: fixtures/axis-grid's grid_area —
-        // baked [14920, 45080] nices to [10000, 50000] (the first pass gives
-        // step 2000 → [14000, 46000], the re-derived increment climbs to
-        // 5000), so the 50,000 tick draws flush at the plot top.
-        let (lo, hi) =
-            resolve_measure_domain(20000.0, 43000.0, Some(14920.0), Some(45080.0), Some(6.0), 0.08, true, true);
-        assert_eq!((lo, hi), (10000.0, 50000.0));
-        // A zero-anchored stacked area (charts/types_3's area_example):
-        // domainMax 23900.4 overrides the top, nice rounds it to 24000 —
-        // never up to the cover-ladder's 25000, so that rung is culled.
-        let (lo, hi) =
-            resolve_measure_domain(0.0, 22130.0, None, Some(23900.4), Some(6.0), 0.08, false, true);
-        assert_eq!((lo, hi), (0.0, 24000.0));
-    }
-
-    #[test]
-    fn baked_domain_bounds_always_win_regardless_of_zero_false() {
-        // Baked bounds still route through the same nice()/no-nice choice the
-        // pre-existing (unbaked) path always used — unchanged from before this
-        // fix, per the "don't disturb baked-tick-values paths" invariant.
-        let (lo, hi) =
-            resolve_measure_domain(10.0, 90.0, Some(5.0), Some(95.0), None, 0.05, true, false);
-        assert_eq!((lo, hi), (5.0, 95.0));
-    }
-
-    #[test]
-    fn authored_ticks_count_keeps_existing_headroom_and_nice_behavior_even_when_zero_false() {
-        let (lo, hi) =
-            resolve_measure_domain(42.5, 97.3, None, None, Some(6.0), 0.05, true, true);
-        assert_ne!((lo, hi), (42.5, 97.3), "ticks_count authored — old headroom/nice path applies");
-    }
-
-    #[test]
-    fn unbaked_domain_nices_on_the_right_orient_leaf_too() {
-        // D1: `_resolve_cartesian_ticks` (`_domain.py:383`) bakes no domain
-        // bound when `ticks.count` is unset — production emits no
-        // `domainMax`, so Vega auto-fits the (zero-unioned) data extent,
-        // niced by d3 (count 10), on EVERY leaf, including the right-orient
-        // one whose compiled scale skips `nice` elsewhere (`apply_nice ==
-        // false`). Headroom only ever reaches Vega as a baked domainMax, so
-        // it must not apply here either. Oracle:
+    fn unbaked_domain_nices_without_headroom() {
+        // Headroom only reaches the scale as a baked domainMax: with no baked
+        // bound the scale sees nice(data extent, 10). Oracle:
+        // dashes-palette-lab's six_series_six_dashes (unbaked ladder, data max
+        // 60) tops at 60 flush, not 60 × 1.08; and
         // `measured-label-alignment-estimated-lab/right_orient_numeric_unbaked`
-        // (data max 1.5M, headroom 0.08) — the reference ladder tops at
-        // 1.6M, not rust's pre-fix 1.62M.
-        let (lo, hi) = resolve_measure_domain(0.0, 1_500_000.0, None, None, None, 0.08, false, false);
-        assert_eq!((lo, hi), d3rs::ticks::d3_nice(0.0, 1_500_000.0, 10));
-        assert_eq!(hi, 1_600_000.0, "d3 nice(0, 1.5M, 10) tops at 1.6M: {hi}");
-        assert_ne!(hi, 1_500_000.0 * 1.08, "must not headroom-expand the unbaked right-orient leaf");
+        // (data max 1.5M) tops at nice's 1.6M, not 1.62M.
+        let (_lo, hi) = resolve_measure_domain(0.0, 100.0, None, None, None, 0.05, false);
+        assert_eq!(hi, 100.0);
+        let (_lo, hi) = resolve_measure_domain(0.0, 60.0, None, None, Some(6.0), 0.08, false);
+        assert_eq!(hi, 60.0);
+        let (lo, hi) = resolve_measure_domain(0.0, 1_500_000.0, None, None, None, 0.08, false);
+        assert_eq!((lo, hi), (0.0, 1_600_000.0));
+        let (lo, hi) = resolve_measure_domain(42.5, 97.3, None, None, Some(6.0), 0.05, true);
+        assert_eq!((lo, hi), d3rs::ticks::d3_nice(42.5, 97.3, 10));
+    }
+
+    #[test]
+    fn baked_bounds_win_verbatim() {
+        // The settled headroom rule: a baked bound is the domain, never
+        // rounded out to a clean tick.
+        let (lo, hi) = resolve_measure_domain(10.0, 90.0, Some(5.0), Some(95.0), None, 0.05, true);
+        assert_eq!((lo, hi), (5.0, 95.0));
+        let (lo, hi) = resolve_measure_domain(0.0, 22130.0, None, Some(23900.4), Some(6.0), 0.08, false);
+        assert_eq!((lo, hi), (0.0, 23900.4));
     }
 }
 

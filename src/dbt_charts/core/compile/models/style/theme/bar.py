@@ -142,7 +142,8 @@ class _BarChartStyleBase(
         default=None,
         description=(
             "Within-group spacing for grouped bars. Keywords: 'auto' "
-            "(2 series → partial, 3+ → none), 'none' (small gap), 'flush' "
+            "(2 series where one is clearly the bigger → partial, the bigger "
+            "series behind; otherwise none), 'none' (small gap), 'flush' "
             "(bars touch), 'partial' (25% overlap), 'full' (bars coincide; an error "
             "unless each category holds one color). Or a number as a fraction "
             "of bar width: >0 overlaps, 0 touches, <0 gaps; 1 or more is 'full'. "
@@ -152,15 +153,16 @@ class _BarChartStyleBase(
         ),
     )
     # None is the unset sentinel: render ranks by value, and no theme sets it.
-    stack_order: Literal["value", "data", "alphabetical"] | None = Field(
+    series_order: Literal["value", "data", "alphabetical"] | None = Field(
         default=None,
         description=(
-            "Z-order of stacked segments. None/'value' puts the largest aggregate at baseline. "
-            "'data' stacks series in first-appearance order: SQL row order for color:, "
+            "Order of the series in a stack or group. Unset or 'value' puts the "
+            "largest aggregate first: at the baseline when stacked, leftmost "
+            "(topmost when horizontal) when grouped. "
+            "'data' orders series by first appearance: SQL row order for color:, "
             "the listed order for y: [a, b, ...] (a measure null in the first rows "
             "appears later). "
-            "'alphabetical' sorts by series name. Ignored when stacking is off or "
-            "there is only one series."
+            "'alphabetical' sorts by series name. Ignored when there is only one series."
         ),
     )
     # Stacked only: resolve turns the rail back off for a grouped bar, whose

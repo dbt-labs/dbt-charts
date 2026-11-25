@@ -786,6 +786,26 @@ def test_raw_ref_chain_splits_a_dotted_target_name_on_its_section(
     assert [q.sql for q in result.board.queries.values()] == ["select 1 as x"]
 
 
+@pytest.mark.parametrize("query", ["orders.revenue", "\n    ref: orders.revenue"])
+def test_an_imported_query_ref_with_no_queries_section_names_the_ref(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject], query: str
+) -> None:
+    """A source board's query that is one dotted token is a ref; one the raw chain
+    cannot split on `.queries.` is the ref grammar's error at its `ref`."""
+    (tmp_path / "a.yml").write_text(
+        f"title: A\nqueries:\n  q: {query}\n"
+        "charts:\n  c:\n    type: kpi\n    value: x\n    query: q\n"
+    )
+    result = compile(
+        "title: M\ncharts:\n  c: a.yml.charts.c\nrows:\n  - c\n",
+        base_dir=local_project(tmp_path).directory(),
+    )
+    assert [e.code for e in result.errors] == ["ERR-VALIDATION-FIELD"]
+    assert result.errors[0].message.startswith(
+        "Field 'queries.q.ref': Value error, Invalid query reference 'orders.revenue'"
+    )
+
+
 def test_imported_chart_from_a_retired_grammar_board_is_migrated(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:

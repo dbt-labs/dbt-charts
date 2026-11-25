@@ -11,6 +11,7 @@ from dbt_charts.core.compile.models.conditional_predicate import (
 )
 from dbt_charts.core.compile.models.factories import build_conditional_model
 from dbt_charts.core.compile.models.markers import (
+    Absent,
     ChartLocal,
     InheritSlot,
     SkipInheritSlots,
@@ -57,6 +58,29 @@ class _HeatmapChartStyleBase(
     pattern: PatternStyle = Field(
         description="How the `pattern:` channel paints fills."
     )
+    tints: Annotated[bool | None, Absent("the color scale's own fills")] = Field(
+        default=None,
+        description=(
+            "Draw a numeric color as flat tints of the pattern color: each cell takes "
+            "the tint of its `style.pattern` ramp step."
+        ),
+    )
+    strip_key: Annotated[bool | None, Absent("the side key")] = Field(
+        default=None,
+        description=(
+            "Draw the `tints` key as one strip of square swatches in place of the "
+            "side key, labeled at its two ends in the value-label format."
+        ),
+    )
+    label_divides: Annotated[bool | None, Absent("labels centered on their cells")] = (
+        Field(
+            default=None,
+            description=(
+                "Center each x label on the divide where its column starts, as an hour "
+                "names the moment it begins, instead of on the column's middle."
+            ),
+        )
+    )
     marks: Annotated[
         HeatmapChartMarksStyle, InheritSlot(from_path="Style.charts.marks")
     ] = Field(
@@ -98,7 +122,7 @@ class HeatmapChartStyle(_HeatmapChartStyleBase):
             "Rules that restyle a cell by its row's value, keyed by column name. "
             "Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, "
             "is_null, or default) plus the style it applies: marks.rect color, opacity and stroke (color, width), and "
-            "marks.text font color and weight. A rule's color overrides an authored "
+            "marks.text font color and weight (the cell labels). A rule's color overrides an authored "
             "color channel for the matched cell only; the legend is unchanged. "
             "Every matching rule applies; where two set the same key the later one "
             "wins, so list the more specific rule last. A `default: true` rule "

@@ -12,6 +12,8 @@ the base's value.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
@@ -57,3 +59,57 @@ def test_axis_mirror_is_refused_on_a_horizontal_layered_chart() -> None:
         render_chart_svg(
             chart, _DATA, board_style=board_style, chart_style_context=board_ctx
         )
+
+
+_SPLIT_DATA = [
+    {"region": "North", "channel": "store", "revenue": 100, "profit": 30, "cost": 40},
+    {"region": "North", "channel": "web", "revenue": 60, "profit": 20, "cost": 30},
+    {"region": "South", "channel": "store", "revenue": 80, "profit": 25, "cost": 50},
+    {"region": "South", "channel": "web", "revenue": 90, "profit": 35, "cost": 20},
+]
+
+
+@pytest.mark.parametrize(
+    ("y", "color", "stack"),
+    [
+        ("revenue", "channel", "none"),
+        ("revenue", "channel", "zero"),
+        (["revenue", "profit"], None, None),
+    ],
+    ids=["color-split", "stacked", "multi-y"],
+)
+def test_an_area_layer_over_a_split_horizontal_bar_fills_from_zero_along_x(
+    y: str | list[str], color: str | None, stack: str | None
+) -> None:
+    """Each area-layer fill runs from the zero rule to its row's value along x.
+
+    Area layers never stack, so a horizontal base split by color, stacked, or
+    folded from a y list draws the layer exactly as its vertical twin does,
+    transposed.
+    """
+    style = {"orientation": "horizontal"} | ({"stack": stack} if stack else {})
+    chart = BarChart(
+        id="c",
+        query=SqlQuery(sql="SELECT 1", source="t"),
+        query_name="q",
+        type="bar",
+        x="region",
+        y=y,
+        color=color,
+        layers=[{"type": "area", "y": "cost"}],
+        style=BarChartStylePatch.model_validate(style),
+    )
+    data = _SPLIT_DATA if color else _SPLIT_DATA[::2]
+    svg = render_chart_svg(chart, data, width=400)
+    (fill,) = re.findall(r'<path d="([^"]*)" fill="[^"]*" fill-opacity=', svg)
+    (outline,) = re.findall(r'<path d="([^"]*)" fill="none" [^>]*stroke-linecap=', svg)
+    fill_xs = _xs(fill)
+    outline_xs = _xs(outline)
+    assert fill_xs[: len(outline_xs)] == outline_xs
+    assert set(fill_xs[len(outline_xs) :]) == {0.0}
+    px_per_unit = {x / row["cost"] for x, row in zip(outline_xs, data, strict=True)}
+    assert max(px_per_unit) - min(px_per_unit) < 0.01
+
+
+def _xs(d: str) -> list[float]:
+    return [float(x) for x in re.findall(r"[ML](-?[\d.]+),", d)]

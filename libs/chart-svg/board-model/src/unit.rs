@@ -158,10 +158,6 @@ macro_rules! float_or_int {
 }
 
 float_or_int!(
-    /// A scale's `min`/`max`, typed `float | int`.
-    Limit, Float, Int
-);
-float_or_int!(
     /// A chart size or a rule's threshold, typed `int | float`.
     Number, Int, Float
 );

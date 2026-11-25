@@ -72,6 +72,8 @@ pub enum Body {
         shorthand: Option<&'static str>,
         /// The pattern of the bare string the model also reads from.
         string_pattern: Option<&'static str>,
+        /// The fixed-length list the model also reads from, stated beside its `$ref`.
+        shorthand_items: Option<Ty>,
         /// Required of an authored layer even under a slot.
         complete: bool,
         /// The tag key a constraint of this model may name.

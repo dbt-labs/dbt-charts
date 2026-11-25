@@ -7,7 +7,7 @@ use diagnostic::Diagnostic;
 use crate::families::axis_caption::value_axis_caption;
 use d3rs::scale::Continuous;
 use crate::families::facet_compose::PanelGeometry;
-use crate::families::layers::{AreaFrame, BarLayerMark, DualAxisTitles, LayerAxis, LayerAxisFrame, LayerAxisInk, LayerScale, LayerSide, LayerStack, MOVED_BASE_LABEL_PAD, OverlayAxisY, OverlayLayer, PointColor, YSides, claim_layers, layer_series_text, merged_legend_title, panel_layer_rows, placed_bar_layer_marks, scope_group_top};
+use crate::families::layers::{AreaFrame, BarLayerMark, DualAxisTitles, LayerAxis, LayerAxisFrame, LayerAxisInk, LayerScale, LayerSide, MOVED_BASE_LABEL_PAD, OverlayAxisY, OverlayLayer, PointColor, YSides, claim_layers, layer_series_text, merged_legend_title, panel_layer_rows, placed_bar_layer_marks, scope_group_top};
 use ::bind::layers::{layer_color_groups, layer_color_promoted, layer_color_text, merged_axis_title};
 use crate::families::legend::{LegendEntry, LegendSymbol, drawn_symbol_legend, legend_fit_bounds, legend_origin, legend_slide, legend_title_text, vega_legend};
 use crate::families::{facet_compose, multiples};
@@ -452,7 +452,7 @@ pub(super) fn render_vertical_continuous_x_panel(
             .iter()
             .map(|l| axis_title_text(l.y(), l.label(), &r.field_labels))
             .collect::<Result<Vec<_>, _>>()?;
-        merged_axis_title(std::iter::once(y_title_text.clone()).chain(layer_titles))
+        merged_axis_title(y_title_text.clone(), r.y_label.is_some(), layer_titles)
     };
     let y_title_paint = crate::common::wrapped_axis_title(&r.id, "y_label", &y_axis_title, &ax_y.title.font, y_extent, y_panels, fonts)?;
     let dual_titles = DualAxisTitles::new(independent_y, ax_y, r.y_label.as_deref());
@@ -571,7 +571,8 @@ pub(super) fn render_vertical_continuous_x_panel(
     // A layer forces the legend on over a colorless base: one label-scale
     // entry per painted series, each carrying its own mark's glyph.
     let legend_shown = r.legend.visible && layered;
-    let base_entries = [(y_title_text.clone(), r.style.single_series_fill.clone())];
+    // The base series is named by its field label; `y_label` titles only the axis.
+    let base_entries = [(crate::common::axis_title_text(&r.y, None, &r.field_labels)?, r.style.single_series_fill.clone())];
     let mut layer_scale = LayerScale::new(&base_entries, false);
     let claim_pairs: Vec<_> = layers.all.iter().zip(layer_rows.iter().copied()).collect();
     let claims = claim_layers(&mut layer_scale, &claim_pairs, &r.field_labels)?;
@@ -821,14 +822,14 @@ pub(super) fn render_vertical_continuous_x_panel(
                         .filter_map(|(i, (layer, rows))| match layer {
                             OverlayLayer::Line(l) => {
                                 let scale = scale_of(i);
-                                Some(scope_group_top(l, rows, l.x.as_deref().unwrap_or(&r.x), false, |v| scale.scale(v)))
+                                Some(scope_group_top(l, rows, false, |v| scale.scale(v)))
                             }
                             _ => None,
                         })
                         .fold(0.0, f64::min);
                     let bars_top = base_top.min(layer_bars_top).min(line_top);
                     let axes = (axes.0, axes.1.max(crate::annotation::text_x2(&annotation_ctx(pw, ph))));
-                    let origin = legend_origin(&r.legend.position, axes, (bars_top.min(x_axis_y1), x_axis_y2), (pw, ph), size);
+                    let origin = legend_origin(&r.legend.position, axes, (bars_top.min(x_axis_y1).min(crate::annotation::text_y1(&annotation_ctx(pw, ph))), x_axis_y2), (pw, ph), size);
                     legend_xy.set(origin);
                     if let Some(reach) = legend_fit_bounds(&r.legend.position, origin, size) {
                         b.union(&reach);
@@ -1037,12 +1038,15 @@ pub(super) fn render_vertical_continuous_x_panel(
         caption: value_axis_caption(&x_title_paint, &ax_x.title, ax_x, (x_lo, x_hi), false)?,
         title_key: (!suppress_x_axis).then_some(crate::contract::LabelKey::X),
     });
-    let native = suppress_x_axis.then(|| NativeTitles { x: x_title_text.clone(), series: String::new() });
-    let value_title = crate::common::axis_title_text(&r.y, r.y_label.as_deref(), &r.field_labels)?;
+    let hover_x_title = crate::common::axis_title_text(&r.x, crate::common::hover_label(r.x_label.as_deref()), &r.field_labels)?;
+    let native = suppress_x_axis.then(|| NativeTitles { x: hover_x_title.clone(), series: String::new() });
+    let value_title = crate::common::axis_title_text(&r.y, crate::common::hover_label(r.y_label.as_deref()), &r.field_labels)?;
     let tooltip_fmt = &r.style.tooltip_format;
-    // A layered single-series base names itself as the datum's series, so base
-    // and layer rows on the same x don't collapse into one tooltip entry.
-    let combo_series = layered.then_some(value_title.as_str());
+    // A layered single-series base names itself as the datum's series, by the name
+    // its legend entry carries, so base and layer rows on the same x don't collapse
+    // into one tooltip entry.
+    let base_series = crate::common::axis_title_text(&r.y, None, &r.field_labels)?;
+    let combo_series = layered.then_some(base_series.as_str());
     let mut hover_band = hover_band_for(r, rows, suppress_x_axis);
     let mut painted_layers = 1;
     let mut bar_arias: Vec<Option<String>> = Vec::with_capacity(bars_data.len());
@@ -1145,7 +1149,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         let layer_rows = layer_rows[i];
         let layer_clipped = crate::families::layers::layer_clip(layer.layer_type(), layer.y(), layer_rows, ax_y, false, independent_y);
         let x_field = layer.x().unwrap_or(&r.x);
-        let x_title = if layer.x().is_some() { x_field } else { x_title_text.as_str() };
+        let x_title = if layer.x().is_some() { x_field } else { hover_x_title.as_str() };
         let name = crate::common::axis_title_text(layer.y(), layer.label(), &r.field_labels)?;
         match layer {
             OverlayLayer::Bar(bl) => {
@@ -1186,17 +1190,14 @@ pub(super) fn render_vertical_continuous_x_panel(
                     plot_h,
                     |mark| layer_caption(x_title, &name, mark.row, mark.value),
                     crate::families::layers::layer_link(link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())),
-                    (board_style, r.canvas.as_str(), &under),
+                    (board_style, r.canvas.as_str(), &under, &crate::placement::strikes(out, r.canvas.as_str())?),
                     (crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts }, &vec![bw; marks.len()]),
                 )?);
             }
             OverlayLayer::Line(l) => {
                 let promoted = l.color.as_deref().is_some_and(|cf| layer_color_promoted(layer_rows, cf));
                 let under = crate::annotation::DataMark::plot_marks(out);
-                let paint = |series_rows: &[serde_json::Map<String, Value>],
-                             series_color: &str,
-                             stacked: Option<&LayerStack>|
-                 -> Result<Vec<Node>, String> {
+                let paint = |series_rows: &[serde_json::Map<String, Value>], series_color: &str| -> Result<Vec<Node>, String> {
                     crate::families::layers::line_layer_marks(
                         1 + i,
                         l,
@@ -1215,7 +1216,6 @@ pub(super) fn render_vertical_continuous_x_panel(
                         board_style,
                         |row, val| Ok(layer_caption(x_title, &name, row, val)),
                         None,
-                        stacked,
 crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
 crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
 &under,
@@ -1224,18 +1224,12 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                 };
                 match l.color.as_deref() {
                     Some(cf) => {
-                        let stack = l
-                            .area_mark
-                            .is_some()
-                            .then(|| LayerStack::descending(layer_rows, x_field, cf, &l.y).imputing(layer_rows, crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref()))))
-                            .transpose()
-                            .map_err(|e| format!("bar: {e}"))?;
                         for (value, rows_for_value) in layer_color_groups(layer_rows, cf) {
                             let color = claims[i].group_color(&layer_scale, cf, value.as_deref(), &rows_for_value);
-                            out.extend(paint(&rows_for_value, &color, stack.as_ref())?);
+                            out.extend(paint(&rows_for_value, &color)?);
                         }
                     }
-                    None => out.extend(paint(layer_rows, claims[i].fill.as_deref().expect("an ungrouped line layer claimed its fill"), None)?),
+                    None => out.extend(paint(layer_rows, claims[i].fill.as_deref().expect("an ungrouped line layer claimed its fill"))?),
                 }
             }
             OverlayLayer::Scatter(sl) => {
@@ -1346,7 +1340,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
             })
             .collect::<Result<Vec<LabelPoint>, String>>()?;
         let under = crate::annotation::DataMark::plot_marks(&plot);
-        plot.extend(mark_labels(ml, false, false, true, &points, painted_layers, board_style, 0.0, 0.0, r.canvas.as_str(), &under, &mut LayerCaptions::default(), r.link_open)?);
+        plot.extend(mark_labels(ml, false, false, true, &points, painted_layers, board_style, 0.0, 0.0, r.canvas.as_str(), &under, &crate::placement::strikes(&plot, r.canvas.as_str())?, &mut LayerCaptions::default(), r.link_open)?);
     }
     let annotations = crate::annotation::AnnotationCtx { occupied: crate::annotation::DataMark::plot_marks(&plot), ..annotations };
     // Built where the data marks are known, painted right after the x axis so a rule on the plot edge covers its ticks.

@@ -17,6 +17,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.chart.normalized import BarChart, TableChart
@@ -211,11 +212,46 @@ def test_cell_target_that_is_underscore_hidden_is_refused() -> None:
         )
 
 
-@pytest.mark.parametrize("key", ["tone", "glyph_color"])
-def test_a_glyph_ink_without_a_glyph_is_refused(key: str) -> None:
-    value = "positive" if key == "tone" else "#ff00aa"
-    with pytest.raises(ValueError, match=rf"columns\.name.*{key}.*glyph"):
-        _resolve({"status": [{"eq": "x", "columns": {"name": {key: value}}}]})
+def _row_rule_board(cell: str, column: str = "") -> str:
+    return f"""
+queries:
+  q:
+    columns: [name, status]
+    values:
+      - [Acme, churned]
+charts:
+  t:
+    type: table
+    query: q
+    style:
+      columns:
+        name: {{{column}}}
+      row:
+        conditional:
+          status:
+            - eq: churned
+              columns:
+                name: {{{cell}}}
+rows:
+  - t
+"""
+
+
+@pytest.mark.parametrize("ink", ["tone: positive", "glyph_color: '#ff00aa'"])
+def test_a_glyph_ink_without_a_glyph_is_refused_at_compile(ink: str) -> None:
+    result = compile_board(_row_rule_board(ink))
+    assert [e.code for e in result.errors] == ["ERR-TABLE-GLYPH-INK-WITHOUT-GLYPH"]
+    message = result.errors[0].message
+    assert "style.row.conditional.status" in message
+    assert "style.columns.name" in message
+
+
+@pytest.mark.parametrize(
+    ("cell", "column"),
+    [("tone: positive, glyph: '▼'", ""), ("tone: positive", "glyph: '●'")],
+)
+def test_a_glyph_ink_with_a_glyph_compiles(cell: str, column: str) -> None:
+    assert not compile_board(_row_rule_board(cell, column)).errors
 
 
 def test_a_glyph_color_paints_the_column_glyph() -> None:

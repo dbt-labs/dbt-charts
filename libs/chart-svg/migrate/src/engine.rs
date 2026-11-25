@@ -46,8 +46,15 @@ pub struct Migrated {
     pub edits: Vec<crate::doc::Edit>,
 }
 
-const IN_MEMORY: &str =
-    "dbt charts migrated this YAML in memory; `dct migrate` may be able to update the file.";
+/// The notice owed for one step's applied edits, naming each changed key.
+fn in_memory(edits: &[crate::doc::Edit]) -> String {
+    let mut changes: Vec<String> = edits.iter().map(crate::doc::Edit::change).collect();
+    dedupe(&mut changes);
+    format!(
+        "dbt charts migrated this YAML in memory ({}); `dct migrate` may be able to update the file.",
+        changes.join(", ")
+    )
+}
 
 /// Recognizes the grammar `node` was authored against and rewrites it to the
 /// current one. Never fails: a document that cannot be migrated comes back
@@ -68,7 +75,7 @@ pub fn migrate(node: Node, today: Date) -> Migrated {
         let mkd = reg.all.map_key_deletions.iter().collect::<Vec<_>>();
         let mut struck = Applied::default();
         if apply_map_key_deletions(&mut doc, &mkd, &mut struck) {
-            applied.notices.push(IN_MEMORY.to_string());
+            applied.notices.push(in_memory(&struck.edits));
             applied.notices.append(&mut struck.notices);
             applied.edits.append(&mut struck.edits);
         }
@@ -175,7 +182,7 @@ fn apply_identity_moves(
     }
     *doc = work;
     out.notices.append(&mut local.notices);
-    out.notices.push(IN_MEMORY.to_string());
+    out.notices.push(in_memory(&local.edits));
     out.edits.append(&mut local.edits);
     Ok(())
 }
@@ -206,7 +213,7 @@ fn apply_live_moves(
     }
     *doc = work;
     out.notices.append(&mut local.notices);
-    out.notices.push(IN_MEMORY.to_string());
+    out.notices.push(in_memory(&local.edits));
     out.edits.append(&mut local.edits);
     Ok(())
 }
@@ -315,7 +322,7 @@ fn migrate_mapping(
         ))));
     }
     dedupe(&mut out.notices);
-    out.notices.push(IN_MEMORY.to_string());
+    out.notices.push(in_memory(&out.edits));
     Ok(Some((result, out)))
 }
 

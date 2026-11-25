@@ -556,7 +556,7 @@ class TestRenderNavHtml:
             "",
             show_download=True,
             show_actions=True,
-            sidebar_query=None,
+            show_sidebar=False,
         )
 
         assert 'class="dbt-nav"' in html
@@ -582,7 +582,7 @@ class TestRenderNavHtml:
             "",
             show_download=False,
             show_actions=False,
-            sidebar_query=None,
+            show_sidebar=False,
         )
 
         assert 'href="/sales/"' in html
@@ -612,7 +612,7 @@ class TestSidebar:
         local_project: Callable[..., Project],
         files: dict[str, str],
         current: str,
-        sidebar_query: str | None,
+        show_sidebar: bool,
         nav_dir: str = "charts",
         folders: tuple[str, ...] = ("regions",),
     ) -> str:
@@ -632,7 +632,7 @@ class TestSidebar:
             "",
             show_download=True,
             show_actions=True,
-            sidebar_query=sidebar_query,
+            show_sidebar=show_sidebar,
         )
 
     def _two(self, **extra: str) -> dict[str, str]:
@@ -652,7 +652,7 @@ class TestSidebar:
                 }
             ),
             "zeta",
-            "",
+            True,
         )
         order = [
             html.index(f'href="/{stem}"')
@@ -668,7 +668,7 @@ class TestSidebar:
             local_project,
             self._two(**{"sales_east.yml": "description: x\n"}),
             "zeta",
-            "",
+            True,
         )
         sidebar = html[html.index('class="dbt-sidebar"') :]
         assert ">Zeta<" in sidebar
@@ -697,7 +697,7 @@ class TestSidebar:
             local_project,
             self._two(**{"regional_overview.yml": templated}),
             "zeta",
-            "",
+            True,
         )
         sidebar = html[html.index('class="dbt-sidebar"') :]
         assert ">Regional Overview<" in sidebar
@@ -711,7 +711,7 @@ class TestSidebar:
             local_project,
             {"alpha.yml": "title: Alpha\n"},
             "alpha",
-            "",
+            True,
             folders=(),
         )
         assert 'class="dbt-sidebar"' not in html
@@ -721,38 +721,23 @@ class TestSidebar:
         self, tmp_path: Path, local_project: Callable[..., Project]
     ) -> None:
         html = self._nav(
-            tmp_path, local_project, {"alpha.yml": "title: Alpha\n"}, "alpha", ""
+            tmp_path, local_project, {"alpha.yml": "title: Alpha\n"}, "alpha", True
         )
         assert 'class="dbt-sidebar"' in html
 
-    def test_links_carry_query_and_current_is_marked(
+    def test_current_board_is_marked(
         self, tmp_path: Path, local_project: Callable[..., Project]
     ) -> None:
-        html = self._nav(
-            tmp_path, local_project, self._two(), "alpha", "year=2024&region=West"
-        )
-        assert 'href="/zeta?year=2024&amp;region=West"' in html
+        html = self._nav(tmp_path, local_project, self._two(), "alpha", True)
         current = re.search(r'<a [^>]*href="/alpha[^"]*"[^>]*>', html)
         assert current is not None
         assert 'aria-current="page"' in current.group(0)
         assert html.count('aria-current="page"') == 1
 
-    def test_empty_query_adds_no_question_mark(
-        self, tmp_path: Path, local_project: Callable[..., Project]
-    ) -> None:
-        html = self._nav(tmp_path, local_project, self._two(), "alpha", "")
-        assert 'href="/zeta"' in html
-
-    def test_subfolders_carry_query(
-        self, tmp_path: Path, local_project: Callable[..., Project]
-    ) -> None:
-        html = self._nav(tmp_path, local_project, self._two(), "alpha", "year=2024")
-        assert 'href="/regions/?year=2024"' in html
-
     def test_rows_say_whether_they_are_a_board_or_a_folder(
         self, tmp_path: Path, local_project: Callable[..., Project]
     ) -> None:
-        html = self._nav(tmp_path, local_project, self._two(), "alpha", "")
+        html = self._nav(tmp_path, local_project, self._two(), "alpha", True)
         rows = re.findall(r'<a class="dbt-sidebar-link[^"]*"[^>]*>.*?</a>', html, re.S)
         kinds = {
             re.sub(r"<[^>]+>", "", row).strip(): (
@@ -771,11 +756,11 @@ class TestSidebar:
             local_project,
             self._two(),
             "east",
-            "year=2024",
+            True,
             nav_dir="charts/regions",
         )
         rows = re.findall(r'<a class="dbt-sidebar-link[^"]*"[^>]*>.*?</a>', html, re.S)
-        assert 'href="/regions/?year=2024"' in rows[0]
+        assert 'href="/regions/"' in rows[0]
         assert "dbt-sidebar-folder" in rows[0]
         assert re.sub(r"<[^>]+>", "", rows[0]).strip() == ".."
         assert "Up one level" not in html[html.index('class="dbt-sidebar"') :]
@@ -784,7 +769,7 @@ class TestSidebar:
         self, tmp_path: Path, local_project: Callable[..., Project]
     ) -> None:
         html = self._nav(
-            tmp_path, local_project, {}, "east", "", nav_dir="charts/regions"
+            tmp_path, local_project, {}, "east", True, nav_dir="charts/regions"
         )
         assert 'class="dbt-sidebar"' in html
         assert 'href="/regions/"' in html[html.index('class="dbt-sidebar"') :]
@@ -792,7 +777,7 @@ class TestSidebar:
     def test_root_folder_has_no_parent_row(
         self, tmp_path: Path, local_project: Callable[..., Project]
     ) -> None:
-        html = self._nav(tmp_path, local_project, self._two(), "alpha", "")
+        html = self._nav(tmp_path, local_project, self._two(), "alpha", True)
         assert ">..<" not in html
 
     def test_folder_listing_shows_the_parent_with_the_folder_current(
@@ -803,21 +788,21 @@ class TestSidebar:
             local_project,
             self._two(),
             "regions",
-            "year=2024",
+            True,
             nav_dir="charts/regions",
         )
-        assert 'href="/alpha?year=2024"' in html
+        assert 'href="/alpha"' in html
         current = re.search(r'<a [^>]*aria-current="page"[^>]*>', html)
         assert current is not None
-        assert 'href="/regions/?year=2024"' in current.group(0)
+        assert 'href="/regions/"' in current.group(0)
 
     def test_root_listing_lists_the_root(
         self, tmp_path: Path, local_project: Callable[..., Project]
     ) -> None:
-        html = self._nav(tmp_path, local_project, self._two(), "/", "year=2024")
+        html = self._nav(tmp_path, local_project, self._two(), "/", True)
         sidebar = html[html.index('class="dbt-sidebar"') :]
-        assert 'href="/alpha?year=2024"' in sidebar
-        assert 'href="/regions/?year=2024"' in sidebar
+        assert 'href="/alpha"' in sidebar
+        assert 'href="/regions/"' in sidebar
         assert ">..<" not in sidebar
         assert 'aria-current="page"' not in sidebar
 
@@ -829,7 +814,7 @@ class TestSidebar:
             local_project,
             self._two(**{"evil.yml": "title: '<script>alert(1)</script>'\n"}),
             "alpha",
-            "",
+            True,
         )
         assert "<script>alert(1)</script>" not in html
         assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
@@ -837,13 +822,13 @@ class TestSidebar:
     def test_dropdown_replaced_by_plain_label_when_sidebar_shows(
         self, tmp_path: Path, local_project: Callable[..., Project]
     ) -> None:
-        html = self._nav(tmp_path, local_project, self._two(), "alpha", "")
+        html = self._nav(tmp_path, local_project, self._two(), "alpha", True)
         assert 'id="dbt-nav-file-menu"' not in html
         assert 'class="dbt-nav-file-label">alpha.yml<' in html
 
-    def test_sidebar_query_none_renders_no_sidebar(
+    def test_host_without_a_sidebar_renders_none(
         self, tmp_path: Path, local_project: Callable[..., Project]
     ) -> None:
-        html = self._nav(tmp_path, local_project, self._two(), "alpha", None)
+        html = self._nav(tmp_path, local_project, self._two(), "alpha", False)
         assert 'class="dbt-sidebar"' not in html
         assert 'id="dbt-nav-file-menu"' in html

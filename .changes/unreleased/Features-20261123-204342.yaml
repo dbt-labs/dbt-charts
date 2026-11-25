@@ -1,0 +1,3 @@
+kind: Features
+body: BigQuery sources accept a `reservation` to run their queries in.
+time: 2026-11-23T20:43:42.066571-08:00

@@ -135,24 +135,25 @@ def _runs_backwards(chart: _BaseChartFields) -> bool:
     )
     return (
         domain is not None
-        and all(isinstance(end, int | float) for end in domain)
-        and domain[0] > domain[1]
+        and isinstance(domain.min, int | float)
+        and isinstance(domain.max, int | float)
+        and domain.min > domain.max
     )
 
 
-def _explicit_stack_order(
+def _explicit_series_order(
     chart: _BaseChartFields, context: ChartStyleContext
 ) -> str | None:
-    """The `stack_order` the author set for this chart: its own style, else the
+    """The `series_order` the author set for this chart: its own style, else the
     board's. Read off the patches rather than a resolved cascade, so a chart
     whose style fails to resolve still fails as that chart, not the board."""
     if not isinstance(chart, BarChart | AreaChart):
         return None
     inherited = context.bar if chart.type == "bar" else context.area
     own = family_patch_for(chart.style, chart.type)
-    if own is None or own.stack_order is None:
-        return inherited.stack_order
-    return own.stack_order
+    if own is None or own.series_order is None:
+        return inherited.series_order
+    return own.series_order
 
 
 def _observe(
@@ -160,7 +161,7 @@ def _observe(
     rows: ChartRows,
     ranking_rows: ChartRows,
     pinned_fields: frozenset[str],
-    stack_order: str | None,
+    series_order: str | None,
 ) -> tuple[ChartFieldValues, frozenset[str]]:
     """Return (field → what this chart draws, disqualified fields).
 
@@ -186,7 +187,7 @@ def _observe(
     author named its values as categories, and "2020" pinned to a color is
     a name, not a timestamp.
 
-    ``stack_order`` of ``data`` or ``alphabetical`` is the order the author asked
+    ``series_order`` of ``data`` or ``alphabetical`` is the order the author asked
     of this chart; it becomes the chart's say over slot order.
     """
     observed: dict[str, FieldObservation] = {}
@@ -228,15 +229,15 @@ def _observe(
             sizes = {value: abs(total) for value, total in totals.items()}
             top = max(sizes.values()) + min(sizes.values())
             totals = {value: top - size for value, size in sizes.items()}
-        if stack_order == "data":
-            stacked = ranking_values + tuple(
+        if series_order == "data":
+            ordered = ranking_values + tuple(
                 v for v in drawn_values if v not in ranking_values
             )
-        elif stack_order == "alphabetical":
-            stacked = tuple(sorted(values))
+        elif series_order == "alphabetical":
+            ordered = tuple(sorted(values))
         else:
-            stacked = ()
-        observed[field] = FieldObservation(values, totals, stacked)
+            ordered = ()
+        observed[field] = FieldObservation(values, totals, ordered)
     return observed, frozenset(disqualified_fields)
 
 
@@ -310,7 +311,7 @@ def plan_board_category_colors(
             rows,
             ranking_rows,
             frozenset(pins),
-            _explicit_stack_order(chart, context),
+            _explicit_series_order(chart, context),
         )
         poisoned.update(disqualified_fields)
         if observed:

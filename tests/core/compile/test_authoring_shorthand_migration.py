@@ -96,7 +96,7 @@ def _variables_board(shape: str) -> str:
 def test_queries_shorthand_migrates_via_yaml_text(shape: str) -> None:
     yaml_text = _queries_board(shape)
 
-    migrated = migrate_board_yaml_text(yaml_text)
+    migrated = migrate_board_yaml_text(yaml_text).text
 
     doc = load_yaml_mapping(migrated)
     _assert_axis_y_migrated(doc)
@@ -126,7 +126,7 @@ def test_queries_shorthand_migrates_in_memory(shape: str) -> None:
 def test_charts_shorthand_migrates_via_yaml_text(shape: str) -> None:
     yaml_text = _charts_board(shape)
 
-    migrated = migrate_board_yaml_text(yaml_text)
+    migrated = migrate_board_yaml_text(yaml_text).text
 
     doc = load_yaml_mapping(migrated)
     _assert_axis_y_migrated(doc)
@@ -155,7 +155,7 @@ def test_charts_shorthand_migrates_in_memory(shape: str) -> None:
 def test_variables_shorthand_migrates_via_yaml_text(shape: str) -> None:
     yaml_text = _variables_board(shape)
 
-    migrated = migrate_board_yaml_text(yaml_text)
+    migrated = migrate_board_yaml_text(yaml_text).text
 
     doc = load_yaml_mapping(migrated)
     _assert_axis_y_migrated(doc)

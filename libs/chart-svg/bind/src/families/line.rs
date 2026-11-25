@@ -192,8 +192,7 @@ pub fn lines(
         }
         _ => {
             let y_zero = zero::verdict(Family::Line, p.y_ladder.zero_setting(), &drawn);
-            // A single series is production's `apply_nice == false` arm: its baked headroom bounds stand
-            // unrounded (`resolve_measure_domain`; only a rail or layers re-nice).
+            // Baked headroom bounds stand unrounded (`resolve_measure_domain`; only layers re-nice).
             (y_zero, measure_axis(&p.y_ladder, y_zero, &drawn, y_format, domain::Mark::Plotted, Some(false))?)
         }
     };

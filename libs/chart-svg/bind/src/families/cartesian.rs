@@ -22,7 +22,7 @@ use model_core::{Engine, Resolved};
 use crate::category_colors::{series_colors, CategoryColorScale};
 use crate::column_kind::{field_channel, ChannelType, Role};
 use crate::formats::locale::{active_number_locale, d3_format, NumberLocale};
-use crate::derived::{DerivedChart, Placed};
+use crate::derived::{board_ink, DerivedChart, Placed};
 use crate::formats::{column_format, resolve_format_parts, AuthoredFormat, Formats, Kind, Repeat, ResolvedFormat, Tiers};
 use crate::bound::{self, AxisStyles, Key, Ladder, Legend, LegendEntry, Paint, Series, SeriesKey, ValueAxis, ValueDomain, ValueScale, Zero};
 use crate::rows::color_domain_of;
@@ -140,7 +140,7 @@ fn axis_title(field: &str, label: Option<&str>, fields: &CartesianChartFields) -
 /// fill, its label ink read against the canvas of `derived`.
 pub fn single_series(placed: &Placed<'_>, y_field: &str, title: &str, derived: &DerivedChart) -> Result<Series, Diagnostic> {
     let fill = placed.single_series_fill()?;
-    let ink = color::label_ink(&hex(fill), &hex(derived.frame.canvas)).map_err(diag::err_internal)?;
+    let ink = color::label_ink(&hex(fill), &hex(derived.frame.canvas), board_ink(placed.style)).map_err(diag::err_internal)?;
     Ok(Series {
         key: SeriesKey::Measure(y_field.to_string()),
         display: title.to_string(),
@@ -532,6 +532,7 @@ pub fn color_series(
     scales: &[CategoryColorScale],
     palette: &[String],
     canvas: Rgba,
+    board_ink: Option<&str>,
 ) -> Result<ColorSeries, Diagnostic> {
     // `Role::Free`, not `Role::Color`: a date or date-shaped text still refuses as temporal here, where
     // a color field reads it as a category.
@@ -553,7 +554,7 @@ pub fn color_series(
         .zip(&fills)
         .map(|(value, literal)| {
             let fill = color::parse_css_color(literal).map_err(diag::err_internal)?;
-            let ink = color::label_ink(&hex(fill), &hex(canvas)).map_err(diag::err_internal)?;
+            let ink = color::label_ink(&hex(fill), &hex(canvas), board_ink).map_err(diag::err_internal)?;
             Ok(Series {
                 key: SeriesKey::Value(Key::Text(value.clone())),
                 display: value.clone(),

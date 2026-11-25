@@ -572,7 +572,9 @@ class BarMarkStyle(BaseModel):
         description=(
             "Thickest a bar may be, in pixels: caps a band-scale bar's band "
             "fraction and a continuous scale's computed width. Unset, band bars "
-            "are uncapped and a continuous scale applies a built-in ceiling. Also stands in for "
+            "are uncapped unless the theme sets `style.charts.bar.max_thickness`, "
+            "and a continuous scale applies a built-in ceiling. Wins over "
+            "`max_thickness`. Also stands in for "
             "an unauthored `size` when reserving axis padding and when "
             "budgeting a horizontal bar chart's minimum height."
         ),
@@ -849,15 +851,6 @@ class PointMarkStyle(BaseModel):
         default=None,
         description="Stroke width in pixels for hollow point rings; 'auto' uses VL default.",
     )
-    halo: Annotated[float | None, Absent("no ring")] = Field(
-        default=None,
-        ge=0,
-        description=(
-            "Width in pixels of a ring in the canvas color drawn around each point, "
-            "so overlapping points stay apart. Drawn by a point map and refused by "
-            "a scatter; unset draws none."
-        ),
-    )
     # SkipInheritSlots(cascade=True): leaf fields inside labels inherit individually
     # from the parent slot (no container-copy since labels is never None).
     labels: Annotated[PointLabelsStyle, SkipInheritSlots(cascade=True)] = Field(
@@ -866,6 +859,16 @@ class PointMarkStyle(BaseModel):
             "Value label style for point marks. On line charts, setting "
             "marks.point.labels is an alias for marks.line.labels."
         ),
+    )
+
+
+class RingedPointMarkStyle(PointMarkStyle):
+    """Point mark style of a family that draws a canvas ring around each point."""
+
+    halo: Annotated[float | None, Absent("no ring"), SkipInheritSlots()] = Field(
+        default=None,
+        ge=0,
+        description="Width of the canvas-color ring that keeps overlapping points apart.",
     )
 
 

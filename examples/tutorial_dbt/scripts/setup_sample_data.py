@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Setup sample data for dbt example project."""
 
+from __future__ import annotations
+
 import random
 from datetime import datetime, timedelta
 

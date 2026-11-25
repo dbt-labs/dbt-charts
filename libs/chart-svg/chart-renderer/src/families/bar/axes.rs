@@ -13,7 +13,6 @@ use crate::vega_fit;
 use measure::FontBook;
 use scene::{Attrs, Node, Role};
 
-use super::BarResolved;
 
 /// Vega's `labelFlush`: `labelFlush: true` compiles to
 /// `flush(range("x"), scale("x", datum.value), 1, "left", "right", "center")`
@@ -226,11 +225,6 @@ pub(super) fn rotated_rows_reach(
             crate::common::XEdge::Top => -ink.y1,
         }))
     })
-}
-
-/// The theme's usable label-width ratio, required for date labels.
-pub(super) fn cadence_ratio(r: &BarResolved) -> Result<f64, String> {
-    r.style.label_usable_ratio.ok_or_else(|| "bar: label_usable_ratio absent (theme required for date labels)".to_string())
 }
 
 /// An authored `labels.expr` rewrites every bucket `values` keeps, ungated; a bucket it blanks paints

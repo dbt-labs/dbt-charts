@@ -25,9 +25,10 @@ charts:
     color: source
     style:
       stack: center
-      legend:
-        position:
-          edge: endpoints
+      key:
+        type: direct
+        direct:
+          position: end
       color:
         categorical:
           palette: ["#2a4d8f", "#3d8f5a"]
@@ -54,9 +55,9 @@ def test_pin_outside_the_palette_gets_the_companion_ink_of_the_pinned_color() ->
     resolved_board, _ = _resolve_board(_BOARD)
     canvas = resolved_board.charts["stream"].canvas
     ink = _label_ink(render_board_to_svg(_BOARD), "Coal")
-    assert ink == mark_ink("#4a4a4a", canvas)
+    assert ink == mark_ink("#4a4a4a", canvas, None)
     assert ink != "#4a4a4a"
-    assert ink != mark_ink("#2a4d8f", canvas)
+    assert ink != mark_ink("#2a4d8f", canvas, None)
 
 
 _NESTED_BOARD = """
@@ -77,9 +78,10 @@ charts:
     color: source
     style:
       stack: center
-      legend:
-        position:
-          edge: endpoints
+      key:
+        type: direct
+        direct:
+          position: end
       color:
         categorical:
           palette: ["#2a4d8f", "#3d8f5a"]
@@ -147,4 +149,6 @@ style:
 def test_pie_bakes_the_companion_ink_of_a_pinned_color() -> None:
     resolved_board, _ = _resolve_board(_PIE_BOARD)
     wheel = resolved_board.charts["wheel"]
-    assert wheel.pin_companions == (("#4a4a4a", mark_ink("#4a4a4a", wheel.canvas)),)
+    assert wheel.pin_companions == (
+        ("#4a4a4a", mark_ink("#4a4a4a", wheel.canvas, None)),
+    )

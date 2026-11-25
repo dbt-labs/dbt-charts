@@ -749,7 +749,7 @@
                 } catch (e) {
                     allVars[name] = input === 'daterange' && raw ? raw : [];
                 }
-            } else if (input === 'number' || input === 'slider' || input === 'range') {
+            } else if (input === 'number' || input === 'slider') {
                 allVars[name] = raw === '' ? null : parseFloat(raw);
             } else {
                 allVars[name] = raw;
@@ -915,7 +915,6 @@
         datepicker: 'button',
         daterange: 'button',
         slider: 'slider',
-        range: 'slider',
         text: 'textbox',
         input: 'textbox',
         textarea: 'textbox',
@@ -2249,7 +2248,7 @@
             _bindSelect(el, name);
         } else if (input === 'daterange') _bindDateRange(el, name);
         else if (input === 'date' || input === 'datepicker') _bindDate(el, name);
-        else if (input === 'slider' || input === 'range') _bindSlider(el, name);
+        else if (input === 'slider') _bindSlider(el, name);
         else if (input === 'text' || input === 'input' || input === 'textarea'
                  || input === 'number') {
             _bindTextEntry(el, name, input);

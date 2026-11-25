@@ -22,6 +22,9 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.project import Project, ProjectDirectory
 
 # ---------------------------------------------------------------------------
@@ -1065,7 +1068,7 @@ class TestDirectoryListing:
         project = local_project(tmp_path)
 
         board_text, variables = directory_listing(
-            [project.directory("charts/sales")], "sales", project
+            [project.directory("charts/sales")], "sales"
         )
 
         assert variables == {
@@ -1084,9 +1087,152 @@ class TestDirectoryListing:
         (tmp_path / "charts" / "overview.yml").write_text("title: Overview\n")
         project = local_project(tmp_path)
 
-        _, variables = directory_listing([project.directory("charts")], "", project)
+        _, variables = directory_listing([project.directory("charts")], "")
 
         assert variables == {
             "directory_title": "/",
             "listing_markdown": "- [overview.yml](/overview)",
         }
+
+    def test_nav_order_leads_and_the_rest_keep_their_order(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        from dbt_charts.core.render.dir_context import directory_listing
+
+        sales = tmp_path / "charts" / "sales"
+        (sales / "emea").mkdir(parents=True)
+        for stem in ("alpha", "trend", "zeta"):
+            (sales / f"{stem}.yml").write_text(f"title: {stem}\n")
+        (tmp_path / "dbt_charts.yml").write_text(
+            "server:\n  nav_order:\n    sales: [zeta, emea]\n"
+        )
+        project = local_project(tmp_path)
+
+        _, variables = directory_listing([project.directory("charts/sales")], "sales")
+
+        assert variables["listing_markdown"].splitlines() == [
+            "- [../](/)",
+            "- [zeta.yml](/sales/zeta)",
+            "- [emea/](/sales/emea/)",
+            "- [alpha.yml](/sales/alpha)",
+            "- [trend.yml](/sales/trend)",
+        ]
+
+    def test_nav_order_naming_no_entry_is_an_error_at_its_line(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        from dbt_charts.core.render.dir_context import directory_listing
+
+        sales = tmp_path / "charts" / "sales"
+        sales.mkdir(parents=True)
+        (sales / "trend.yml").write_text("title: Trend\n")
+        (tmp_path / "dbt_charts.yml").write_text(
+            "server:\n  nav_order:\n    sales:\n      - trend\n      - gone\n"
+        )
+        project = local_project(tmp_path)
+
+        with pytest.raises(CompilationError) as exc:
+            directory_listing([project.directory("charts/sales")], "sales")
+
+        assert exc.value.code is not None
+        assert exc.value.code.code == "ERR-NAV-ORDER-INVALID"
+        assert exc.value.line == 5
+        assert "dbt_charts.yml:5: server.nav_order['sales']" in str(exc.value)
+        assert "'gone'" in str(exc.value)
+
+    def test_nav_order_naming_a_board_and_a_folder_alike_is_an_error(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        from dbt_charts.core.render.dir_context import directory_listing
+
+        sales = tmp_path / "charts" / "sales"
+        (sales / "trend").mkdir(parents=True)
+        (sales / "trend.yml").write_text("title: Trend\n")
+        (tmp_path / "dbt_charts.yml").write_text(
+            "server:\n  nav_order:\n    sales: [trend]\n"
+        )
+        project = local_project(tmp_path)
+
+        with pytest.raises(CompilationError, match="more than one entry"):
+            directory_listing([project.directory("charts/sales")], "sales")
+
+    def test_root_nav_order_can_place_a_package_folder(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        from dbt_charts.core.render.dir_context import (
+            check_nav_order,
+            directory_listing,
+        )
+
+        (tmp_path / "charts" / "inspect").mkdir(parents=True)
+        (tmp_path / "charts" / "alpha.yml").write_text("title: Alpha\n")
+        config = tmp_path / "dbt_charts.yml"
+        config.write_text("server:\n  nav_order:\n    .: [pkg_a]\n")
+        pkg = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg.mkdir(parents=True)
+        (pkg / "overview.yml").write_text("title: Overview\n")
+        project = local_project(tmp_path)
+
+        _, variables = directory_listing([project.directory("charts")], "")
+
+        assert variables["listing_markdown"].splitlines() == [
+            "- [pkg_a/](/pkg_a/)",
+            "- [alpha.yml](/alpha)",
+        ]
+        check_nav_order(project)
+
+        config.write_text("server:\n  nav_order:\n    .: [inspect]\n")
+        with pytest.raises(CompilationError, match="'inspect'"):
+            check_nav_order(project)
+
+    def test_nav_order_naming_a_missing_folder_is_an_error_at_its_line(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        from dbt_charts.core.render.dir_context import check_nav_order
+
+        (tmp_path / "charts" / "sales").mkdir(parents=True)
+        (tmp_path / "dbt_charts.yml").write_text(
+            "server:\n  nav_order:\n    sales: []\n    gone: [a]\n"
+        )
+
+        with pytest.raises(CompilationError) as exc:
+            check_nav_order(local_project(tmp_path))
+
+        assert exc.value.line == 4
+        assert "server.nav_order['gone'] names a folder" in str(exc.value)
+
+    def test_nav_order_applies_only_to_its_own_folder(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        from dbt_charts.core.render.dir_context import directory_listing
+
+        (tmp_path / "charts" / "sales").mkdir(parents=True)
+        for stem in ("alpha", "zeta"):
+            (tmp_path / "charts" / "sales" / f"{stem}.yml").write_text("title: x\n")
+        (tmp_path / "dbt_charts.yml").write_text(
+            "server:\n  nav_order:\n    .: [sales]\n"
+        )
+        project = local_project(tmp_path)
+
+        _, variables = directory_listing([project.directory("charts/sales")], "sales")
+
+        assert variables["listing_markdown"].splitlines()[1:] == [
+            "- [alpha.yml](/sales/alpha)",
+            "- [zeta.yml](/sales/zeta)",
+        ]
+
+    def test_a_merged_in_nav_order_folder_reports_at_nav_order(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        from dbt_charts.core.render.dir_context import check_nav_order
+
+        (tmp_path / "charts" / "sales").mkdir(parents=True)
+        (tmp_path / "dbt_charts.yml").write_text(
+            "anchors:\n  - &gone\n    gone: [a]\nserver:\n  nav_order:\n    <<: *gone\n"
+        )
+
+        with pytest.raises(CompilationError) as exc:
+            check_nav_order(local_project(tmp_path))
+
+        assert exc.value.line == 5
+        assert "server.nav_order['gone'] names a folder" in str(exc.value)

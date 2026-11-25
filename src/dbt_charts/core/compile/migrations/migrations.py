@@ -249,6 +249,38 @@ def migrate_board_yaml_text(
     return _rewrite_yaml_text(yaml_text, target)
 
 
+def migrate_mapping_to(
+    mapping: dict[str, Any],  # type-state: explicit_any — a raw board mapping
+    stop_target: str,
+) -> dict[str, Any]:  # type-state: explicit_any — a raw board mapping
+    """*mapping* migrated up to frozen version *stop_target*; unchanged when
+    already current or newer. ``migrate_yaml_text``'s plan, without writing text."""
+    plan = _plan_migration(mapping, stop_target, "migrate_mapping_to")
+    return mapping if plan is None else plan[0]
+
+
+def _plan_migration(
+    raw: dict[str, Any],  # type-state: explicit_any — a raw board mapping
+    stop_target: str | None,
+    caller: str,
+) -> tuple[Any, ...] | None:  # type-state: explicit_any — the engine's plan
+    """The engine's ``(staged, edits, notices)`` plan; ``None`` when current."""
+    from dbt_charts import _engine
+
+    plan = _engine_call(_engine.plan_text_migration, raw, stop_target, caller)
+    if plan[0] == "current":
+        return None
+    if plan[0] != "planned":
+        kind, message = plan
+        raise {
+            "unsupported": UnsupportedSchemaError,
+            "incomplete": IncompleteMigrationError,
+            "conflict": MigrationConflictError,
+            "migration": MigrationError,
+        }[kind](message)
+    return plan[1:]
+
+
 def migrate_yaml_text(yaml_text: str, *, stop_target: str | None = None) -> str:
     """Rewrite declared moves while preserving unrelated YAML text.
 
@@ -288,24 +320,13 @@ def _rewrite_yaml_text(yaml_text: str, stop_target: str | None) -> TextMigration
 
     Reports a migration notice per ``Deletion.reason`` whose tail fired.
     """
-    from dbt_charts import _engine
     from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 
     raw = load_yaml_mapping(yaml_text)
-    plan = _engine_call(
-        _engine.plan_text_migration, raw, stop_target, "migrate_yaml_text"
-    )
-    if plan[0] == "current":
+    plan = _plan_migration(raw, stop_target, "migrate_yaml_text")
+    if plan is None:
         return TextMigration(text=yaml_text, changes=[])
-    if plan[0] != "planned":
-        kind, message = plan
-        raise {
-            "unsupported": UnsupportedSchemaError,
-            "incomplete": IncompleteMigrationError,
-            "conflict": MigrationConflictError,
-            "migration": MigrationError,
-        }[kind](message)
-    _, staged, edits, notices = plan
+    staged, edits, notices = plan
     # staged != raw: only stamp a file this call actually changed something
     # in; a structurally-current file must never be rewritten for the stamp
     # alone, and a file is never touched solely to add a key the frozen
@@ -359,8 +380,8 @@ def _replay_edits(
         set_board_values,
     )
 
-    updates: dict[str, ScalarLeaf | None] = {}
-    removals: set[str] = set()
+    # Every edit lands as it is replayed: a queued write would be flushed after
+    # a later tab move rewrote the path it was addressed by.
     for edit in edits:
         if edit["kind"] == "delete":
             yaml_text = _delete_paths_in_yaml_text(yaml_text, [tuple(edit["path"])])
@@ -394,11 +415,6 @@ def _replay_edits(
             )
         value = edit["before"]
         if edit["rewrite"]:
-            # The rewrite lands now and starts from `before`, which already
-            # carries any earlier edit queued at this path; flushing that queued
-            # edit at the end would resurrect the key the rewrite just moved.
-            updates.pop(".".join(source), None)
-            removals.discard(".".join(source))
             yaml_text = _replay_rewrite(yaml_text, edit, value, source, destination)
             continue
         # A value_map changes the value itself (html_policy's bool -> string),
@@ -413,7 +429,9 @@ def _replay_edits(
             if _holds_list(value):
                 yaml_text = _write_rewritten(yaml_text, edit, destination, value)
             else:
-                updates.update(_destination_leaves(edit, destination, value))
+                yaml_text = set_board_values(
+                    yaml_text, {**_destination_leaves(edit, destination, value)}
+                )
             continue
         if value is None or not isinstance(value, (str, int, float, bool)):
             raise MigrationError(
@@ -423,17 +441,18 @@ def _replay_edits(
             )
         if edit["value_map"]:
             value = edit["after"]
-        updates[join_path(destination)] = value
         # An identity-path Move (source == destination) rewrites the key's
-        # value in place -- it must not also be queued as a removal, or the
-        # removals/updates dicts below would collide on the same key and the
-        # merge would delete the rewritten value instead of setting it.
-        if source != destination:
-            removals.add(join_path(source))
+        # value in place and must not also remove it.
+        removal = {join_path(source): None} if source != destination else {}
+        yaml_text = set_board_values(
+            yaml_text, {**removal, join_path(destination): value}
+        )
 
-    if stamp is not None:
-        updates["_schema_version"] = stamp
-    final_text = set_board_values(yaml_text, {**updates, **dict.fromkeys(removals)})
+    final_text = (
+        set_board_values(yaml_text, {"_schema_version": stamp})
+        if stamp is not None
+        else yaml_text
+    )
     if stamp is not None:
         final_text = _mark_stamp_line_auto_written(final_text)
     return final_text
@@ -538,6 +557,30 @@ def _replay_rewrite(
     rewritten = DROP if edit.get("dropped") else edit["after"]
     if source == destination and isinstance(rewritten, (str, int, float, bool)):
         if rewritten == value:
+            return yaml_text
+        return set_board_values(yaml_text, {join_path(destination): rewritten})
+    scalar = (str, int, float, bool)
+    if (
+        source[:-1] == destination[:-1]
+        and isinstance(value, scalar)
+        and isinstance(rewritten, scalar)
+    ):
+        # A scalar renamed beside itself keeps its line and takes its new value; one an
+        # earlier edit queued and this rewrite took over is not in the text yet.
+        node = yaml.load(yaml_text, Loader=YAML_LOADER)
+        for part in _document_path(source):
+            if isinstance(node, dict):
+                node = node.get(part)
+            elif isinstance(node, list) and isinstance(part, int) and part < len(node):
+                node = node[part]
+            else:
+                node = None
+                break
+        if node is not None:
+            yaml_text = rename_key_at_path(
+                yaml_text, join_path(source), destination[-1]
+            )
+        if rewritten == value and node is not None:
             return yaml_text
         return set_board_values(yaml_text, {join_path(destination): rewritten})
     if tuple(source[: len(destination)]) == tuple(destination) and isinstance(

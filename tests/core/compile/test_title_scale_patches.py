@@ -2,7 +2,7 @@
 
 Verifies:
 - ChartStylePatch accepts ChartTitleStylePatch
-- TitleStyle.overflow normalizes snake_case and rejects invalid values
+- TitleStyle.max_lines rejects anything but a line count or `all`
 - Chart-local title override propagates through cascade to resolved_style.title
 """
 
@@ -25,28 +25,15 @@ def test_chart_style_patch_accepts_compiled_title_style_patch():
     assert patch.title.font.color == "#c0ffee"
 
 
-def test_compiled_title_style_overflow_rejects_snake_case():
-    """TitleStyle.overflow does not rewrite wrap_two to wrap-two."""
-    import pytest
-    from pydantic import ValidationError
-
+@pytest.mark.parametrize("junk", ["wrap-two", "truncate", "wrap_two", 0, True])
+def test_compiled_title_style_wrap_rejects_junk(junk):
+    """TitleStyle.max_lines is a count of at least 1 or `all`, nothing else."""
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.models.style.theme import TitleStyle
 
     base = get_theme_style().title.model_dump()
-    base["overflow"] = "wrap_two"
-    with pytest.raises(ValidationError, match="overflow"):
-        TitleStyle.model_validate(base)
-
-
-def test_compiled_title_style_overflow_rejects_invalid():
-    """TitleStyle.overflow raises ValidationError on unknown values (enforced by the Literal type)."""
-    from dbt_charts.core.compile.config import get_theme_style
-    from dbt_charts.core.compile.models.style.theme import TitleStyle
-
-    base = get_theme_style().title.model_dump()
-    base["overflow"] = "trunc"
-    with pytest.raises(ValidationError, match="Input should be"):
+    base["max_lines"] = junk
+    with pytest.raises(ValidationError, match="max_lines"):
         TitleStyle.model_validate(base)
 
 

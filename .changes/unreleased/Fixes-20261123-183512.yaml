@@ -1,3 +1,0 @@
-kind: Fixes
-body: The layered-chart scale-mismatch warning no longer fires on a goal line that sits beside its data on a zoomed axis, and its advice now suggests same units or two charts.
-time: 2026-11-23T18:35:12.272095-08:00

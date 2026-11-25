@@ -21,6 +21,7 @@ model-core = { path = "../model-core" }
 model-derive = { path = "../model-derive" }
 project = { path = "../project" }
 regex = "1"
+serde = "1"
 serde_json = "1"
 yaml = { path = "../yaml" }
 

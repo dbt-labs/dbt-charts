@@ -1,5 +1,0 @@
-kind: Fixes
-body: WARN-FORMAT-UNUSED-NAME no longer fires for a `style.formats` name that text reaches through `format(<expression>)`.
-time: 2026-11-23T19:39:46.664727126Z
-custom:
-    DbtChartsIssue: "122"

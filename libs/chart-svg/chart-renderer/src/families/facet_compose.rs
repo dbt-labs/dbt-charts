@@ -1938,7 +1938,7 @@ mod tests {
         use super::{facet_legend_edge, LegendEdge};
         use crate::families::legend::{LegendAlign, LegendPosition};
         let at = |edge: &str, align: LegendAlign, overlay: bool| {
-            facet_legend_edge(&LegendPosition { edge: edge.into(), align, overlay })
+            facet_legend_edge(&LegendPosition::new(edge, align, overlay))
         };
         for (edge, expected) in [
             ("top", LegendEdge::Top),

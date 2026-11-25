@@ -17,6 +17,7 @@ from typing import (
     Any,
     ClassVar,
     Literal,
+    NamedTuple,
     Self,
     TypeGuard,
     TypeVar,
@@ -181,6 +182,14 @@ TextBaseline = Literal[
 
 
 LinkOpen = Literal["page", "modal", "preview", "new_tab"]
+
+
+# The one spelling of a text line limit: a line count of at least 1, or `all`.
+# Rust's `LineLimit` (board-model `primitives`) is its twin.
+# `LineCount` is its numeric arm, shared by `TableMaxLines`: the schema reader takes one
+# `Literal` arm per union, so `TableMaxLines` spells its keywords in one `Literal`.
+LineCount = Annotated[int, Field(ge=1, strict=True)]
+LineLimit = LineCount | Literal["all"]
 
 
 class Link(BaseModel):
@@ -724,6 +733,18 @@ AUTHORED_FORMATS = "authored_formats"
 """Serialization context flag: dump each ``ResolvedFormat`` as authored board YAML."""
 
 
+class BareRun(NamedTuple):
+    """A run of labels printing bare digits in ``10**exponent`` units (``-2``
+    for percent). A trailing zero is a precision claim: the run's ordinary
+    labels (``ordinary_digits`` integer digits) print at ``pad`` places, zeros
+    included, and any other label trims its zeros, up to ``decimals``."""
+
+    exponent: int
+    decimals: int
+    ordinary_digits: int
+    pad: int
+
+
 class ResolvedFormat(FormatConfig):
     """A resolved d3 spec plus the affix/notation it cannot carry, and the
     authored spec (``raw``) house rules key on.
@@ -740,6 +761,9 @@ class ResolvedFormat(FormatConfig):
     notation: Notation | None = None
     repeat: AffixRepeat | None = None
     raw: str | None = None
+    # A run of line labels that joins its value axis's unit. Resolve-only,
+    # never authored.
+    bare: BareRun | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -769,11 +793,16 @@ class ResolvedFormat(FormatConfig):
                 return self.spec if self.raw is None else self.raw
             config = self._config().model_dump(exclude_none=True)
             return config if self.raw is None else {**config, "spec": self.raw}
-        if self._is_bare and self.raw is None:
+        if self._is_bare and self.raw is None and self.bare is None:
             return self.spec
         wire = self._config().model_dump(exclude_none=True)
         if self.raw is not None:
             wire["raw"] = self.raw
+        if self.bare is not None:
+            wire["bare_exponent"] = self.bare.exponent
+            wire["bare_decimals"] = self.bare.decimals
+            wire["bare_ordinary_digits"] = self.bare.ordinary_digits
+            wire["bare_pad"] = self.bare.pad
         return wire
 
     @classmethod
@@ -1942,3 +1971,8 @@ class ResolvedPattern(BaseModel):
         description="`background`, `tint`, a color, or one ground color per series slot."
     )
     inverse: bool = Field(description="Whether ink and ground are swapped.")
+    ink: str | None = Field(
+        exclude_if=lambda v: v is None,
+        default=None,
+        description="The board's hex `style.roles.ink`, which the renderer never moves toward a ground's contrast.",
+    )

@@ -218,11 +218,11 @@ impl LabelPlan<'_> {
         let (at_x, anchor, align, ink) = if fits {
             // Inside, the font's color or the neutral ink, never the series': a ribbon is already its tint.
             let base = authored.unwrap_or(&ctx.font.ink);
-            (((x + w / 2.0) + (x2 + w2 / 2.0)) / 2.0, "middle", "center", dbt_charts_color::ensure_readable_ink(base, fill, RIBBON_INK_CONTRAST)?)
+            (((x + w / 2.0) + (x2 + w2 / 2.0)) / 2.0, "middle", "center", dbt_charts_color::ensure_readable_ink(base, fill, RIBBON_INK_CONTRAST, ctx.font.board_ink.as_deref())?)
         } else {
             // As a bar's own outside label: the font's color, else the series' (here the nearer bar's).
             let base = authored.unwrap_or(&from.color);
-            (((x + w) + (x2 + w2)) / 2.0 + LABEL_FIT_PADDING, "start", "left", dbt_charts_color::ensure_readable_ink(base, canvas, RIBBON_INK_CONTRAST)?)
+            (((x + w) + (x2 + w2)) / 2.0 + LABEL_FIT_PADDING, "start", "left", dbt_charts_color::ensure_readable_ink(base, canvas, RIBBON_INK_CONTRAST, ctx.font.board_ink.as_deref())?)
         };
         let mut attrs = Attrs::new()
             .set("text-anchor", anchor)

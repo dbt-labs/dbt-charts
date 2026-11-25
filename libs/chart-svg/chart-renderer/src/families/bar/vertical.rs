@@ -30,10 +30,10 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::HashMap;
 
-use super::axes::{BandInterval, BandXAxis, band_tick_snap, bar_temporal_labels, bucket_x, cadence_ratio, format_tick_labels, rotated_rows_reach};
+use super::axes::{BandInterval, BandXAxis, band_tick_snap, bar_temporal_labels, bucket_x, format_tick_labels, rotated_rows_reach};
 use super::bind::zero_label;
 use super::ribbons::RibbonDraft;
-use super::domain::{CenterStack, RawX, SegmentSpan, SegmentSpans, bar_value_extent, base_series, build_cat_domain, build_data_map, Extras, cat_order, category_totals, collapsed_authored_domain, grouped_rail_anchors, grouped_spans, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_reach, stack_spans, stacked_rail_anchors, tallest_total, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
+use super::domain::{CenterStack, RawX, capped_category_extent, SegmentSpan, SegmentSpans, bar_value_extent, base_series, build_cat_domain, build_data_map, Extras, cat_order, category_totals, collapsed_authored_domain, grouped_rail_anchors, grouped_spans, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_reach, stack_spans, stacked_rail_anchors, tallest_total, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
 use super::facet::color_1to1_with_cat;
 use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, label_hang, mark_labels, plain_sites, LayerCaptions, step_band_of, value_label_layers};
 use super::layout::{Drawn, XScale, clipped_if, warn_vertical_density};
@@ -170,6 +170,7 @@ pub(super) fn render_vertical(
     wide_series: &[String],
     layers: &[OverlayLayer],
 ) -> Result<(Drawn, Option<BarStripGeometry>, bool), Diagnostic> {
+    let wrap_h = Cell::new(None);
     let draw = |strip| {
         render_vertical_panel(
             &payload.rows,
@@ -187,16 +188,30 @@ pub(super) fn render_vertical(
             // Not a facet panel at all — `BarFacetPanelOpts` is a facet-only
             // distinction (`render_vertical_panel`'s own doc comment).
             None,
+            &wrap_h,
         )
     };
-    let (drawn, geometry, outcome) = draw(composed_strip)?;
-    if outcome != StripOutcome::Hidden {
-        return Ok((drawn, geometry, outcome == StripOutcome::Drawn));
-    }
+    let (mut drawn, mut geometry, outcome) = draw(composed_strip)?;
     // A strip that cannot fit hides whole, and the chart is then exactly the
     // one authored without it: legend, columns and corners included.
-    let (drawn, geometry, _) = draw(None)?;
-    Ok((drawn, geometry, true))
+    let (strip, strip_drawn) = match outcome {
+        StripOutcome::Hidden => (None, true),
+        _ => (composed_strip, outcome == StripOutcome::Drawn),
+    };
+    if outcome == StripOutcome::Hidden {
+        wrap_h.set(None);
+        (drawn, geometry, _) = draw(None)?;
+    }
+    // A capped column's pitch is a share of the plot's height, which the category labels' wrap helps set:
+    // the wrap is judged again at the height each pass drew, until two passes agree.
+    for _ in 0..3 {
+        let Some(judged_at) = wrap_h.get() else { break };
+        (drawn, geometry, _) = draw(strip)?;
+        if wrap_h.get() == Some(judged_at) {
+            break;
+        }
+    }
+    Ok((drawn, geometry, strip_drawn))
 }
 
 /// What became of a chart's `support_table` strip in one panel pass.
@@ -258,6 +273,8 @@ pub(super) fn shape(show_rail: bool) -> Shape {
 /// What the plot-rect negotiation hands to the scales and the emission —
 /// built once by whichever arm runs, so nothing escapes an arm by mutation.
 pub(super) struct PlotRect {
+    /// Half of what a max thickness freed along the category axis: the plot sits this far right of where the fit put it.
+    pub(super) centering: f64,
     pub(super) plot_left: f64,
     pub(super) plot_top: f64,
     pub(super) plot_w: f64,
@@ -439,6 +456,10 @@ pub(crate) fn render_vertical_panel(
     // own `render_pass` closure — see `BarFacetPanelOpts`'s own doc comment
     // for every field.
     facet: Option<&BarFacetPanelOpts>,
+    // Read: the plot height an earlier pass drew, which the wrap of a capped column's category labels is
+    // judged against; `None` on the first pass, which judges it against the height the card leaves.
+    // Written: the plot height this pass drew, when it judged a wrap against one.
+    wrap_h: &Cell<Option<f64>>,
 ) -> Result<(Drawn, Option<BarStripGeometry>, StripOutcome), Diagnostic> {
     if facet.is_none() {
         r.patterns.reset_fallbacks();
@@ -1253,8 +1274,14 @@ pub(crate) fn render_vertical_panel(
     // Production crowds the rail concat's pane, so the time axis resolves at its width.
     let rail_span = if show_rail_v { rail_pane_w + el.label_offset } else { 0.0 };
     let time_axis_w = w - rail_span;
-    let time_axis: Option<TemporalXAxis> =
-        time.as_ref().map(|t| t.axis(r, time_axis_w, cat_title_paint.clone(), Some(crate::contract::LabelKey::X), fonts)).transpose()?;
+    // The plot a card of `card_w` leaves: the card less its padding and the value axis, before the fit settles it.
+    let plot_w_in = |card_w: f64, widest_val_label: f64| {
+        (card_w - pad_l - pad_r - val_tick_size - base_label_pad - widest_val_label.min(ax_y.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT))).max(1.0)
+    };
+    let time_axis: Option<TemporalXAxis> = time
+        .as_ref()
+        .map(|t| t.axis(r, time_axis_w, plot_w_in(time_axis_w, max_val_w), cat_title_paint.clone(), Some(crate::contract::LabelKey::X), fonts))
+        .transpose()?;
     if time.as_ref().is_some_and(|t| t.width_is_nan) || time_axis.as_ref().is_some_and(TemporalXAxis::raises_no_marks) {
         return Err(payload.painted_no_marks());
     }
@@ -1267,9 +1294,79 @@ pub(crate) fn render_vertical_panel(
     )?;
     let cat_family = ax_x.labels.font.family.as_deref().unwrap_or("sans-serif");
 
-    // The cadence ladder measures against production's usable width
-    // (`_temporal_layout`: `chart_width * label_usable_ratio`).
     let avail_w = w - pad_l - pad_r;
+    // See render_horizontal's matching comment: stacked bars never get the
+    // grouped-bar outer band padding.
+    // A color 1:1 with the category is not grouped either: production's
+    // `_is_color_1to1_with_x` suppresses the offset channel, so the band
+    // stays plain and each category's one bar takes its own color.
+    let one_to_one = is_grouped
+        && !is_stacked
+        && color_is_1to1(color_field.expect("is_grouped implies color"));
+    let (band_pi, band_po) = if is_grouped && !is_stacked && !one_to_one {
+        (r.style.grouped.padding_inner, r.style.grouped.padding_outer)
+    } else {
+        (0.0, 0.0)
+    };
+    let composed_cfg: Option<&support_table_strip::SupportTableConfig> = composed_strip
+        .filter(|_| r.effective_support_table_style.is_some() && !show_rail_v);
+    // The plot the edge slices are judged against: the card less the value axis, before the fit settles it.
+    let plot_w_estimate = plot_w_in(w, max_val_w);
+    // The leader is the whole chart's, so facet panels agree on who overlaps whom.
+    let chart_cells = build_data_map(facet.map_or(rows, |f| f.chart_rows), cat_field, val_field, color_field, r.y_start.is_none())?;
+    let leader = auto_leader(r.style.overlap.as_ref(), r.style.series_order.as_deref(), &color_domain, &chart_cells);
+    // The series that take a grouped band's slots, in paint order: a legend view's shown ones, the leader first.
+    let layout_domain = leader_first(crate::legend_view::shown_among(r.legend_view.as_ref(), &color_domain), &color_domain, leader);
+    let column_split_with = |lead: usize| {
+        (is_grouped && !is_stacked && !one_to_one)
+            .then(|| {
+                // The overlap law keys on the chart's series count: hiding a series must not close a gap or open an overlap.
+                let overlap = grouped_overlap_fraction(r.style.overlap.as_ref(), leader)?;
+                Ok::<_, String>(ColumnSplit {
+                    n_series: layout_domain.len(),
+                    lead,
+                    width_steps: (1.0 + overlap).max(0.05),
+                    layered: !layers.is_empty(),
+                    touching: r.patterns.is_active(),
+                })
+            })
+            .transpose()
+    };
+    // A name wider than its slot wraps under a capped column by the one law horizontal bars wrap theirs;
+    // date axes space their own labels.
+    let column_cap = r.style.max_thickness.as_ref().and_then(|cap| cap.vertical);
+    let columns_capped = column_cap.is_some()
+        && facet.is_none()
+        && r.style.mark.max_size.is_none()
+        && r.style.mark.size.is_none()
+        && time.as_ref().is_none_or(TimeX::widens_with_plot);
+    let wrap_follows_plot_h = columns_capped && time.is_none();
+    let plot_h_estimate = wrap_h.get().unwrap_or_else(|| (h - pad_t - pad_b - val_tick_size - base_label_pad - 2.0 * cat_font_size).max(1.0));
+    let cat_labels = match column_cap.filter(|_| wrap_follows_plot_h).map(|cap| cap.px(plot_h_estimate)) {
+        Some(cap) => {
+            let unit = BandScale::new(cat_domain.clone(), 0.0, 1.0, band_pi, band_po);
+            let split = column_split_with(usize::from(composed_cfg.is_some()))?;
+            let thickness_per_extent = BandColumns::new(unit.bandwidth(), mark_band_width, r.style.mark.size, None, split.as_ref()).width;
+            let pitch_per_extent = 1.0 / (cat_domain.len() as f64 - band_pi + 2.0 * band_po);
+            let pitch = cap / thickness_per_extent * pitch_per_extent;
+            let label_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
+            let fits = |text: &str| Ok(fonts.measure_shaped(text, cat_family, cat_font_size)? <= pitch.min(label_limit));
+            let cut = |text: &str| crate::common::truncate_label(text, pitch.min(label_limit), cat_family, cat_font_size, fonts, true);
+            let wraps = plot_w_estimate * pitch_per_extent > pitch;
+            cat_labels
+                .iter()
+                .map(|name| {
+                    if !wraps {
+                        return Ok(name.clone());
+                    }
+                    let lines = crate::families::cartesian::two_line_label(name, &fits, &cut, true)?
+                        .expect("a label that may be cut always has a layout");
+                    Ok(lines.join(&measure::LINE_SEP.to_string()))
+                })
+                .collect::<Result<Vec<String>, String>>()?
+        }
+        None => cat_labels,
+    };
     // Once a bar's calendar labels grow sparser than its buckets, ticks show
     // under the painted labels, overriding the theme's hidden default.
     let mut x_ticks_restored = false;
@@ -1294,7 +1391,7 @@ pub(crate) fn render_vertical_panel(
                 unit,
                 ax_x,
                 authored_time_format,
-                slot_w * cadence_ratio(r)?,
+                plot_w_in(slot_w, max_val_w),
                 slot_w,
                 r.style.label_usable_ratio,
                 labels_expr.as_ref(),
@@ -1390,8 +1487,6 @@ pub(crate) fn render_vertical_panel(
         }
     };
     let mut cat_angle = vega_fit::normalize_angle(cat_angle_raw);
-    // The plot the edge slices are judged against: the card less the value axis, before the fit settles it.
-    let plot_w_estimate = (avail_w - val_tick_size - base_label_pad - max_val_w.min(ax_y.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT))).max(1.0);
     // Labels named over a calendar period coarser than the buckets center on that period.
     let band_intervals = match (detected_data_tu, label_periods) {
         (Some(data_tu), Some(periods))
@@ -1493,19 +1588,6 @@ pub(crate) fn render_vertical_panel(
     // unconditionally when restored, so every arm must reserve it).
     let x_tick_len = band_tick_len(ax_x, x_ticks_restored);
 
-    // See render_horizontal's matching comment: stacked bars never get the
-    // grouped-bar outer band padding.
-    // A color 1:1 with the category is not grouped either: production's
-    // `_is_color_1to1_with_x` suppresses the offset channel, so the band
-    // stays plain and each category's one bar takes its own color.
-    let one_to_one = is_grouped
-        && !is_stacked
-        && color_is_1to1(color_field.expect("is_grouped implies color"));
-    let (band_pi, band_po) = if is_grouped && !is_stacked && !one_to_one {
-        (r.style.grouped.padding_inner, r.style.grouped.padding_outer)
-    } else {
-        (0.0, 0.0)
-    };
     let make_band = |pw: f64| match (&time, &time_axis) {
         (Some(t), Some(axis)) if t.bars_on_band() => BandScale::anchored(cat_domain.clone(), t.band_starts(axis, pw), t.band_starts(axis, pw)),
         (Some(t), Some(axis)) => BandScale::anchored(cat_domain.clone(), t.starts(axis, pw), t.anchors(axis, pw)),
@@ -1539,8 +1621,6 @@ pub(crate) fn render_vertical_panel(
     // real corpus board, plot_top/plot_left/canvas match this arm's existing
     // formula verbatim once color_field is let through) — never a shape with
     // an active rail alongside it.
-    let composed_cfg: Option<&support_table_strip::SupportTableConfig> = composed_strip
-        .filter(|_| r.effective_support_table_style.is_some() && !show_rail_v);
     // The rail-concat's own modeled sub-shape (S7): a strip with a resolved
     // style is the only condition this filter checks, the rest (left axis, no
     // legend) live in `rail_concat`'s own gate below, alongside the
@@ -1764,19 +1844,18 @@ pub(crate) fn render_vertical_panel(
     // domain as one more sub-band ahead of the series, which narrows every
     // column to `1/(n + 1)` of the band.
     let strip_offset_member = composed_cfg.is_some();
-    let column_split = (is_grouped && !is_stacked && !one_to_one)
-        .then(|| {
-            // The overlap law keys on the chart's series count: hiding a series must not close a gap or open an overlap.
-            let overlap = grouped_overlap_fraction(r.style.overlap.as_ref(), leader)?;
-            Ok::<_, String>(ColumnSplit {
-                n_series: layout_domain.len(),
-                lead: usize::from(strip_offset_member),
-                width_steps: (1.0 + overlap).max(0.05),
-                layered: !layers.is_empty(),
-                touching: r.patterns.is_active(),
-            })
-        })
-        .transpose()?;
+    let column_split = column_split_with(usize::from(strip_offset_member))?;
+    // The plot extent where a column is exactly its cap on a plot `plot_h` tall, or the natural extent when it already is no wider.
+    let capped_extent = |natural: f64, plot_h: f64| {
+        let Some(cap) = column_cap.filter(|_| columns_capped) else {
+            return natural;
+        };
+        let widest = |extent: f64| match (&time, &time_axis) {
+            (Some(t), Some(axis)) => t.columns(axis, extent, column_split.as_ref()).values().map(|c| c.width).fold(0.0, f64::max),
+            _ => BandColumns::new(make_band(extent).bandwidth(), mark_band_width, r.style.mark.size, None, column_split.as_ref()).width,
+        };
+        capped_category_extent(natural, widest, cap.px(plot_h))
+    };
     // The first and last drawn bar as `(category index, series slot)`: Vega
     // bounds one rect per data row, so only a category with a row owns a bar.
     // A band that does not split its columns has the one slot, 0.
@@ -2050,7 +2129,7 @@ pub(crate) fn render_vertical_panel(
             pw,
             column_split.as_ref().expect("a band on a time axis splits its columns"),
         )),
-        _ => Columns::Banded(BandColumns::new(band.bandwidth(), mark_band_width, r.style.mark.max_size, column_split.as_ref())),
+        _ => Columns::Banded(BandColumns::new(band.bandwidth(), mark_band_width, r.style.mark.size, r.style.mark.max_size, column_split.as_ref())),
     };
     let step_layers: Vec<(usize, &OverlayLineLayer, &[serde_json::Map<String, Value>], f64, f64)> =
         if layer_band_step && shape == Shape::Fit {
@@ -2185,6 +2264,8 @@ pub(crate) fn render_vertical_panel(
     // Production's autosize-pad support_table shape: the cells and stubs are
     // ink like any other mark, measured once at the payload's own width, a
     // pad layout never renegotiates the plot, so their x positions are final.
+    // The composed arm's plot is the payload view verbatim, so a max thickness sets the width its strip is built at.
+    let strip_w = if composed_cfg.is_some() { capped_extent(w, h) } else { w };
     let composed: Option<(Vec<support_table_strip::ComposedRow>, f64, &support_table_strip::SupportTableStyle)> =
         match composed_cfg {
             None => None,
@@ -2195,8 +2276,8 @@ pub(crate) fn render_vertical_panel(
                 .expect("composed_cfg gate checked effective_support_table_style");
             let n_rows = support_table_strip::visual_row_count(cfg, per_series_order.len())?;
             let strip_h = support_table_strip::strip_height(strip_style, n_rows);
-            let band = BandScale::new(cat_domain.clone(), 0.0, w, band_pi, band_po);
-            let columns = strip_columns(&band, &cat_domain, time.as_ref().zip(time_axis.as_ref()), strip_period_centers.as_deref(), w, fonts)?;
+            let band = BandScale::new(cat_domain.clone(), 0.0, strip_w, band_pi, band_po);
+            let columns = strip_columns(&band, &cat_domain, time.as_ref().zip(time_axis.as_ref()), strip_period_centers.as_deref(), strip_w, fonts)?;
             // Single-series band x (the gate) is production's `sort: null`
             // data-order anchor; a temporal-detected domain is its ascending
             // anchor; a sorted category x anchors on the first carrying cell of
@@ -2258,10 +2339,10 @@ pub(crate) fn render_vertical_panel(
                 }
             }
             if strip_ordered {
-                support_table_strip::skip_strip(&r.id, &mut strip_rows, strip_labeled(w)?.as_deref(), strip_style.row.padding.horizontal);
+                support_table_strip::skip_strip(&r.id, &mut strip_rows, strip_labeled(strip_w)?.as_deref(), strip_style.row.padding.horizontal);
             }
             if val_on_right {
-                support_table_strip::clear_right_stubs(&mut strip_rows, w);
+                support_table_strip::clear_right_stubs(&mut strip_rows, strip_w);
             } else {
                 let reach = support_table_strip::composed_left_overhang(&strip_rows);
                 support_table_strip::clear_left_stubs(&mut strip_rows, reach);
@@ -2330,6 +2411,7 @@ pub(crate) fn render_vertical_panel(
             canvas: r.canvas.as_str(),
             clip_id: format!("{}-ann{}", crate::contract::scoped_id(&r.id), facet.map_or(0, |f| f.panel_ordinal)),
             occupied: Vec::new(),
+            tear: None,
         }
     };
     let plot = if shape == Shape::RailConcat {
@@ -2354,7 +2436,7 @@ pub(crate) fn render_vertical_panel(
                     unit,
                     ax_x,
                     authored_time_format,
-                    cadence_w * cadence_ratio(r)?,
+                    plot_w_in(cadence_w, max_val_w),
                     cadence_w,
                     r.style.label_usable_ratio,
                     labels_expr.as_ref(),
@@ -2549,7 +2631,7 @@ pub(crate) fn render_vertical_panel(
             let linear = Continuous::linear([v_domain_min, linear_domain_max], [ph, 0.0]);
             let cols = match &time {
                 Some(_) => columns_for(&band, pw),
-                None => Columns::Banded(BandColumns::new(band.bandwidth(), mark_band_width, r.style.mark.max_size, column_split.as_ref())),
+                None => Columns::Banded(BandColumns::new(band.bandwidth(), mark_band_width, r.style.mark.size, r.style.mark.max_size, column_split.as_ref())),
             };
             let center = |cat: &str, band_x: f64, slot: Option<usize>| {
                 let cols = cols.of(cat);
@@ -2752,14 +2834,15 @@ pub(crate) fn render_vertical_panel(
         let rail_offset_uncorrected = uncorrected_x2.ceil() + spacing;
         let canvas_w_uncorrected =
             (pad_l + pad_r + y_extent + rail_offset_uncorrected + rail_pane_w).ceil();
-        let plot_w = 2.0 * w - canvas_w_uncorrected;
+        let natural_plot_w = 2.0 * w - canvas_w_uncorrected;
+        let plot_w = capped_extent(natural_plot_w, plot_h);
         // `_correct_concat_overshoot`: a pane the width overshoot leaves with no
         // width is a bug signal, never a clamp.
-        if plot_w <= 0.0 {
+        if natural_plot_w <= 0.0 {
             return Err(Diagnostic::new(
                 &codes::ERR_CONCAT_OVERSHOOT_NONPOSITIVE,
                 [
-                    ("new_w", json!(plot_w)),
+                    ("new_w", json!(natural_plot_w)),
                     ("orig_w", json!(w)),
                     ("overshoot", json!(canvas_w_uncorrected - w)),
                     ("target_width", json!(w)),
@@ -2784,7 +2867,7 @@ pub(crate) fn render_vertical_panel(
         // that ceil'd bound did — computed as a delta rather than re-added,
         // which keeps it exactly `w` whenever nothing moves.
         let corrected_x2 = pane0_x2(plot_w);
-        let canvas_w = canvas_w_uncorrected + corrected_x2.ceil() - uncorrected_x2.ceil();
+        let canvas_w = canvas_w_uncorrected + pane0_x2(natural_plot_w).ceil() - uncorrected_x2.ceil();
         let (canvas_h, composed_rows) = if rail_strip_rows.is_some() {
             // S7: the canvas is left to overshoot the slot — summed
             // directly, the one place this arm departs from the
@@ -2854,7 +2937,7 @@ pub(crate) fn render_vertical_panel(
                         support_table_strip::clear_left_stubs(&mut composed_rows, reserved_left_reach);
                     }
                     if rail_right {
-                        composed_rows.iter_mut().for_each(|row| row.stub_dx = w - plot_w);
+                        composed_rows.iter_mut().for_each(|row| row.stub_dx = w - natural_plot_w);
                     }
                     (canvas_h, Some(composed_rows))
                 }
@@ -2894,6 +2977,7 @@ pub(crate) fn render_vertical_panel(
             }
         });
         PlotRect {
+            centering: (natural_plot_w - plot_w) / 2.0,
             plot_left: pad_l + left_margin,
             plot_top: pad_t + top_margin,
             plot_w,
@@ -2969,7 +3053,9 @@ pub(crate) fn render_vertical_panel(
             title.ink().map(|t| vega_fit::TitleInk { offset: theme_offset + correction, ..t.clone() })
         });
         let fit_err = std::cell::RefCell::new(None::<String>);
-        let mut fit = |tick_values: &[f64], primary_labels: &[String], primary_ws: &[f64], val_gutter: f64| {
+        let natural_plot_w = Cell::new(w);
+        let natural_plot_h = Cell::new(h);
+        let mut fit_at = |tick_values: &[f64], primary_labels: &[String], primary_ws: &[f64], val_gutter: f64, reserve: f64| {
             top_overhang.set(0.0);
             // The right edge of a flipped left axis paints the mirror's ghost labels.
             let flipped_ws = match ghost.as_ref().filter(|_| left_flip && !val_labels_hidden) {
@@ -3479,13 +3565,32 @@ pub(crate) fn render_vertical_panel(
                 if let Some(ink) = &strip_ink {
                     b.union(ink);
                 }
+                // The room a max thickness frees is held as ink past the plot's right edge, so the plot settles at the capped width.
+                if reserve > 0.0 {
+                    b.union(&vega_fit::Bounds::new(pw + reserve, 0.0, pw + reserve, 0.0));
+                }
             };
             if composed.is_some() {
-                vega_fit::pad_plot(w, h, &mut ink_pass, composed_title.as_ref())
+                vega_fit::pad_plot(strip_w, h, &mut ink_pass, composed_title.as_ref())
             } else if suppress_x_axis {
                 vega_fit::pad_plot(w, h, &mut ink_pass, title.ink())
             } else {
                 vega_fit::fit_plot(view_w, h, (pad_l, pad_r, pad_t, pad_b), &mut ink_pass, title.ink())
+            }
+        };
+        // A max thickness re-runs the fit with the room it frees held as ink on the right, so every fit decision is taken at the capped extent.
+        let mut fit = |tick_values: &[f64], primary_labels: &[String], primary_ws: &[f64], val_gutter: f64| {
+            let natural = fit_at(tick_values, primary_labels, primary_ws, val_gutter, 0.0);
+            if composed.is_some() {
+                return natural;
+            }
+            natural_plot_w.set(natural.plot_w);
+            natural_plot_h.set(natural.plot_h);
+            let extent = capped_extent(natural.plot_w, natural.plot_h);
+            if extent < natural.plot_w {
+                fit_at(tick_values, primary_labels, primary_ws, val_gutter, natural.right + natural.plot_w - extent)
+            } else {
+                natural
             }
         };
         let (mut tick_values, mut val_tick_labels, mut max_val_w, mut val_gutter) =
@@ -3542,7 +3647,7 @@ pub(crate) fn render_vertical_panel(
                 let pad_t = if composed_title.is_none() && !bottom_strip { pad_t + strip_h } else { pad_t };
                 (
                     pad_t,
-                    (pad_l + m.left + m.plot_w + m.right + pad_r).ceil(),
+                    (pad_l + m.left + m.plot_w + m.right + pad_r).ceil() + (natural_plot_w.get() - m.plot_w),
                     pad_t
                         + m.top
                         + m.plot_h
@@ -3557,9 +3662,10 @@ pub(crate) fn render_vertical_panel(
             (pad_l + m.left + x, pad_t + m.top + y, lg)
         });
         PlotRect {
+            centering: (natural_plot_w.get() - capped_extent(m.plot_w, natural_plot_h.get())) / 2.0,
             plot_left: pad_l + m.left,
             plot_top: pad_t + m.top,
-            plot_w: m.plot_w,
+            plot_w: capped_extent(m.plot_w, natural_plot_h.get()),
             plot_h: m.plot_h,
             title_pos: m.title_pos,
             legend: legend_pos,
@@ -3583,6 +3689,7 @@ pub(crate) fn render_vertical_panel(
         }
     };
     let PlotRect {
+        centering,
         plot_left,
         plot_top,
         plot_w,
@@ -3607,6 +3714,8 @@ pub(crate) fn render_vertical_panel(
         x_tick_len,
         label_rows,
     } = plot;
+    // The plot body is placed in the capped plot's own frame and moved right by `centering` in one piece at the end; a legend aligns to the plot the card had.
+    let natural_plot_w = plot_w + 2.0 * centering;
     let plot_right = plot_left + plot_w;
     let plot_bottom = plot_top + plot_h;
     // `independent_scale`'s "embedded value axis" effect: a facet panel's
@@ -3648,6 +3757,14 @@ pub(crate) fn render_vertical_panel(
             head.extend(crate::common::subtitle_nodes(sub_lines, title_ref, pad_l, pad_t, title_fs));
         }
     }
+    let title_len = head.len();
+    // A legend aligns to the plot the card had, in the body's frame.
+    let legend_shift = |lg: &VegaLegend| -> Result<(f64, f64), Diagnostic> {
+        let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (natural_plot_w, plot_h))?;
+        let along_x = matches!(r.legend.position.edge.as_str(), "top" | "bottom");
+        let aligns_to_card_plot = along_x && (!r.legend.position.overlay || dx != 0.0);
+        Ok((if aligns_to_card_plot { dx - centering } else { dx }, dy))
+    };
     // A `position: top` strip splices at the plot's own top — below a
     // `legend.position: top` legend, not above it (production anchors the
     // strip band to the plot, never between the title and the legend).
@@ -3778,6 +3895,7 @@ pub(crate) fn render_vertical_panel(
         LegendSymbol::Square(swatch_stroke)
     };
     let mut floating: Vec<Node> = Vec::new();
+    let mut floating_block = (0.0, 0.0);
     let mut facet_legend: Option<facet_compose::FacetLegend> = None;
     if legend_top || (legend_shown && facet.is_some()) {
         match &vega_legend {
@@ -3787,10 +3905,10 @@ pub(crate) fn render_vertical_panel(
                 facet_legend = Some(facet_compose::FacetLegend { nodes, box_w: lg.box_w, box_h: lg.box_h() });
             }
             Some((lx, ly, lg)) => {
-                let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
+                let (dx, dy) = legend_shift(lg)?;
                 let inset = crate::legend_view::Inset::below_titles(&head, pad_t, canvas_w - pad_r, canvas_h - pad_b);
                 // A floating legend paints over the plot, so it follows the marks.
-                let drawn = if r.legend.position.overlay { &mut floating } else { &mut head };
+                let drawn = if r.legend.position.overlay { floating_block = (lg.box_w, lg.box_h()); &mut floating } else { &mut head };
                 drawn.extend(drawn_symbol_legend(&legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), *lx + dx, *ly + dy, stamp_legend_series, r.canvas.as_str()));
                 drawn.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (*lx + dx, *ly + dy), r.canvas.as_str())?);
                 drawn.extend(crate::legend_view::legend_clear(lg, &legend_entries_typed, &r.legend, (*lx + dx, *ly + dy), inset, fonts)?);
@@ -3812,10 +3930,10 @@ pub(crate) fn render_vertical_panel(
     if legend_shown && !legend_top && facet.is_none() {
         match &vega_legend {
             Some((lx, ly, lg)) => {
-                let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
+                let (dx, dy) = legend_shift(lg)?;
                 let inset = crate::legend_view::Inset::below_titles(&head, pad_t, canvas_w - pad_r, canvas_h - pad_b);
                 // A floating legend paints over the plot, so it follows the marks.
-                let drawn = if r.legend.position.overlay { &mut floating } else { &mut head };
+                let drawn = if r.legend.position.overlay { floating_block = (lg.box_w, lg.box_h()); &mut floating } else { &mut head };
                 drawn.extend(drawn_symbol_legend(&legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), *lx + dx, *ly + dy, stamp_legend_series, r.canvas.as_str()));
                 drawn.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (*lx + dx, *ly + dy), r.canvas.as_str())?);
                 drawn.extend(crate::legend_view::legend_clear(lg, &legend_entries_typed, &r.legend, (*lx + dx, *ly + dy), inset, fonts)?);
@@ -4432,6 +4550,7 @@ pub(crate) fn render_vertical_panel(
 crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
 crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line], fonts },
 under,
+        None,
 )
         .map_err(|e| format!("bar: {e}"))
     };
@@ -5044,6 +5163,7 @@ under,
     let annotations = crate::annotation::AnnotationCtx { occupied, ..annotation_ctx((plot_left, plot_top), plot_w, plot_h) };
     // Built where the data marks are known, painted right after the x axis so a rule on the plot edge covers its ticks.
     let foreground_annotations = crate::annotation::nodes(&annotations, crate::annotation::Plane::Foreground)?;
+    let (corner_x, corner_y) = crate::families::legend::overlay_corner_shift(&r.legend.position, (plot_w, plot_h), floating_block, || annotations.occupied.clone());
 
     // Shaped widths, the fit arm's `cat_label_ink` measurer (Vega bounds the
     // drawn label); the title reads the same ink the margin reserves.
@@ -5435,10 +5555,17 @@ under,
             off.back(&mut tail, scene::Affine::IDENTITY, (plot_left, plot_top), fonts)?;
         }
         let mut body = head;
-        body.push(plot_group(plot));
-        body.extend(off_chart.as_mut().map(OffChart::front).unwrap_or_default());
-        body.extend(tail);
-        body.extend(floating);
+        let mut moved = body.split_off(title_len.min(body.len()));
+        moved.push(plot_group(plot));
+        moved.extend(off_chart.as_mut().map(OffChart::front).unwrap_or_default());
+        moved.extend(tail);
+        moved.extend(floating.into_iter().map(|node| if (corner_x, corner_y) == (0.0, 0.0) { node } else { node.translate(corner_x, corner_y) }));
+        // A capped column group moves as one piece: the title stays at the card's edge.
+        if centering == 0.0 {
+            body.extend(moved);
+        } else {
+            body.push(Node::group(Role::Chrome, Attrs::new().set("class", "plot-body"), moved).translate(centering, 0.0));
+        }
         frame.svg(body)
     };
 
@@ -5455,10 +5582,13 @@ under,
     } else {
         StripOutcome::Absent
     };
+    if wrap_follows_plot_h {
+        wrap_h.set(Some(plot_h));
+    }
     let drawn = Drawn {
         svg,
         canvas: Rect { x: 0.0, y: 0.0, width: canvas_w, height: canvas_h },
-        data_box: Rect { x: plot_left, y: plot_top, width: plot_w, height: plot_h },
+        data_box: Rect { x: plot_left + centering, y: plot_top, width: plot_w, height: plot_h },
         title_pos: vega_title_pos,
     };
     let geometry = cuts.map(|cuts| {

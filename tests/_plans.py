@@ -43,7 +43,7 @@ def plan_of(
     chart_queries: dict[str, ChartQueries] | None = None,
 ) -> QueryPlan:
     return {
-        "version": 1,
+        "version": 2,
         "board_id": "b",
         "time_zone": "America/New_York",
         "today": "2026-11-10",

@@ -5,7 +5,9 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, ResolvedFormat
-from dbt_charts.core.compile.models.style.resolved._marks import ResolvedPointMarkStyle
+from dbt_charts.core.compile.models.style.resolved._marks import (
+    ResolvedRingedPointMarkStyle,
+)
 from dbt_charts.core.compile.models.style.theme import PointMapChartStyle
 
 
@@ -18,7 +20,7 @@ class ResolvedPointMapStyle(BaseModel):
         default=None,
         description="Resolved point-map style from the cascade.",
     )
-    point_mark: ResolvedPointMarkStyle = Field(
+    point_mark: ResolvedRingedPointMarkStyle = Field(
         description="Baked point mark style for scatter-style points on maps.",
     )
     single_series_fill: str = Field(

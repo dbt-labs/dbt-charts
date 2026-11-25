@@ -33,21 +33,63 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, TypeVar
 
-from dbt_charts.core.compile.config import get_inspector_config
+from dbt_charts.core.compile.config import get_inspector_config, get_project_nav_order
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
     Project,
     ProjectDirectory,
     ProjectPath,
+    board_directory_candidates,
     board_namespace_for_root,
+    board_roots,
     package_board_roots,
 )
 
 # File extensions treated as renderable board files (.yml/.yaml/.md/.markdown).
 _BOARD_EXTENSIONS = frozenset(BOARD_CANDIDATE_SUFFIXES)
+
+_T = TypeVar("_T")
+
+
+def nav_ordered(
+    project: Project, url_path: str, entries: list[tuple[str, _T]]
+) -> list[_T]:
+    """*entries* (``(name, entry)`` in their default order) of the folder served
+    at *url_path*, reordered by its ``server.nav_order`` entry: listed names
+    first, in list order, then the rest in their default order.
+
+    A name is a board's file stem or a subfolder's name; one the folder holds
+    no entry, or several entries, by raises ``ERR-NAV-ORDER-INVALID``.
+    """
+    folder = url_path.strip("/")
+    if not folder:
+        folder = "."
+    orders = get_project_nav_order(project)
+    if folder not in orders:
+        return [entry for _, entry in entries]
+    nav = orders[folder]
+    by_name: dict[str, list[_T]] = {}
+    for name, entry in entries:
+        by_name.setdefault(name, []).append(entry)
+    for name, line in zip(nav.names, nav.lines, strict=True):
+        if name not in by_name:
+            held = ", ".join(sorted(by_name)) if by_name else "nothing"
+            raise nav.error(
+                line,
+                f"lists {name!r}, but the folder holds no board or subfolder by "
+                f"that name (it holds: {held})",
+            )
+        if len(by_name[name]) > 1:
+            raise nav.error(
+                line, f"lists {name!r}, but the folder holds more than one entry by it"
+            )
+    listed = set(nav.names)
+    return [by_name[name][0] for name in nav.names] + [
+        entry for name, entry in entries if name not in listed
+    ]
 
 
 @dataclass(frozen=True)
@@ -330,8 +372,68 @@ def eager_values(builtins: VariableValues) -> VariableValues:
     return {k: v for k, v in builtins.items() if not isinstance(v, _Lazy)}
 
 
+def folder_entries(
+    dir_handles: list[ProjectDirectory], url_prefix: str
+) -> list[DirEntry]:
+    """The entries a folder's listing page and sidebar show: folders first, then
+    boards, case-insensitively, before any ``server.nav_order``.
+
+    *dir_handles* are every directory the folder's URL names (host first);
+    entries merge per URL, the first directory's entry winning, so a host board
+    shadows the package board with the same slug. The project root drops
+    ``inspect/`` (its templates need query params; a bare link 500s) and adds
+    one folder per installed package that ships boards, a sibling subtree of
+    ``charts/`` that ``list_dir_entries`` cannot see.
+    """
+    project = dir_handles[0].project
+    merged: dict[str, DirEntry] = {}
+    for handle in dir_handles:
+        for found in list_dir_entries(handle, url_prefix):
+            merged.setdefault(found.url, found)
+    entries = sorted(merged.values(), key=lambda e: (not e.is_dir, e.name.lower()))
+    if dir_handles[0].relpath != project.host_charts_directory().relpath:
+        return entries
+    prefix = url_prefix.rstrip("/")
+    return [e for e in entries if not (e.is_dir and e.name == "inspect")] + [
+        DirEntry(
+            name=root.namespace,
+            url=f"{prefix}/{root.namespace}/",
+            is_dir=True,
+            ext="",
+            label=root.namespace,
+            handle=project.directory(root.relpath),
+        )
+        for root in sorted(package_board_roots(project), key=lambda r: r.namespace)
+        if f"{prefix}/{root.namespace}/" not in merged
+    ]
+
+
+def served_directories(project: Project, url_path: str) -> list[ProjectDirectory]:
+    """Every directory the folder URL *url_path* lists, host first: a host
+    folder and a package root can share one URL. The root always lists."""
+    dirs = [
+        project.directory(f"{root.relpath}/{rest}" if rest else root.relpath)
+        for root, rest in board_directory_candidates(url_path, board_roots(project))
+    ]
+    return [d for d in dirs if not url_path or project.exists(d.relpath)]
+
+
+def check_nav_order(project: Project) -> None:
+    """Raise ``ERR-NAV-ORDER-INVALID`` for a ``server.nav_order`` folder or name
+    the project does not serve."""
+    for folder, nav in get_project_nav_order(project).items():
+        url_path = "" if folder == "." else folder
+        dirs = served_directories(project, url_path)
+        if not dirs:
+            raise nav.error(nav.line, "names a folder the project does not hold")
+        prefix = f"/{url_path}" if url_path else ""
+        nav_ordered(
+            project, url_path, [(e.label, e) for e in folder_entries(dirs, prefix)]
+        )
+
+
 def directory_listing(
-    dir_handles: list[ProjectDirectory], url_path: str, project: Project
+    dir_handles: list[ProjectDirectory], url_path: str
 ) -> tuple[str, dict[str, str]]:
     """The board text and variables of a directory's listing page.
 
@@ -347,30 +449,15 @@ def directory_listing(
         listing_lines.append(f"- [../]({parent_url})")
 
     url_prefix = f"/{url_path}" if url_path else ""
-    merged: dict[str, DirEntry] = {}
-    for handle in dir_handles:
-        for found in list_dir_entries(handle, url_prefix):
-            merged.setdefault(found.url, found)
-    entries = sorted(merged.values(), key=lambda e: (not e.is_dir, e.name.lower()))
-    for entry in entries:
-        # /inspect/<template> links require ?model=...&column=... query params;
-        # advertising them as bare entries in the root listing 500s on click.
-        if entry.name == "inspect" and not url_path:
-            continue
-        if entry.is_dir:
-            listing_lines.append(f"- [{entry.name}/]({entry.url})")
-        else:
-            # list_dir_entries already restricts files to renderable board
-            # extensions, so non-board files never reach here.
-            listing_lines.append(f"- [{entry.name}]({entry.url})")
-
-    # The root listing additionally shows one virtual group per installed
-    # package that ships boards — a package root is a sibling subtree of
-    # charts/, not a child directory list_dir_entries can see.
-    if not url_path:
-        for root in sorted(package_board_roots(project), key=lambda r: r.namespace):
-            if f"/{root.namespace}/" not in merged:
-                listing_lines.append(f"- [{root.namespace}/](/{root.namespace}/)")
+    entries = nav_ordered(
+        dir_handles[0].project,
+        url_path,
+        [(e.label, e) for e in folder_entries(dir_handles, url_prefix)],
+    )
+    listing_lines += [
+        f"- [{e.name}/]({e.url})" if e.is_dir else f"- [{e.name}]({e.url})"
+        for e in entries
+    ]
 
     # ``directory_title``/``listing_markdown`` carry untrusted filenames, so they
     # reach the board only as render-time Jinja variable values below -- never

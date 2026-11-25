@@ -13,6 +13,7 @@
 
 pub mod east_asian_width;
 pub mod font_files;
+pub mod fit;
 pub mod fonts;
 pub mod reservation;
 pub mod weighted;

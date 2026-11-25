@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
+from dbt_charts.core.compile.format_value import format_table_cell_value
 from dbt_charts.core.compile.models.style.theme import FontStyle
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
@@ -653,6 +654,38 @@ class TestAreaScatterIsHouseNarrative:
             "area with alias-format label must be narrative"
         )
 
+    @pytest.mark.parametrize("chart_type", ["bar", "line", "area", "scatter"])
+    def test_label_under_authored_axis_alias_takes_the_narrative_register(
+        self, make_chart, chart_type: str
+    ) -> None:
+        """A label with no format of its own inherits the axis's spec, never its
+        analytic notation: the axis keeps ``K``, the label beside a mark prints ``k``."""
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
+        mark = {"bar": "bar", "line": "line", "area": "line", "scatter": "point"}
+        chart = make_chart(
+            chart_type,
+            x="month",
+            y="revenue",
+            style={
+                "marks": {mark[chart_type]: {"labels": {"visible": True}}},
+                "axis_y": {"labels": {"format": "currency_compact"}},
+            },
+        )
+        resolved = resolve(chart, _MILLIONS_DATA, chart_style_context=board_ctx)
+        style = resolved.style
+        assert style.axis_y.labels.format.spec == "$.3~s"
+        labels = (
+            style.mark
+            if chart_type == "bar"
+            else getattr(style, f"{mark[chart_type]}_mark")
+        ).labels
+        # Labeling every mark is a run: it drops the symbol the axis declares.
+        assert labels.format.spec == ".3~s"
+        assert labels.format.notation == "narrative"
+        assert (
+            style.line_label_is_house if chart_type == "line" else style.label_is_house
+        ) is True
+
     def test_scatter_default_si_format_is_narrative(self, make_chart) -> None:
         """Scatter chart with visible labels and no authored format: label_is_house=True."""
         _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
@@ -1289,3 +1322,513 @@ class TestDualAxisValueLabelPhantomAxis:
 # ---------------------------------------------------------------------------
 # labels.field with a NULL value
 # ---------------------------------------------------------------------------
+
+
+# =============================================================================
+# A run of line labels joins the value axis's magnitude or carries its own
+# (unit-notation rule 1)
+# =============================================================================
+
+_RUN_BASE = [412345, 398210, 421876, 405533, 389740, 430118, 417902, 372460]
+
+
+def _run_label_texts(
+    make_chart,
+    ys: list[float],
+    *,
+    series: int = 1,
+    axis_format: str = "currency_compact",
+    labels: dict[str, Any] | None = None,
+    mark: str = "line",
+    chart_type: str = "line",
+    style: dict[str, Any] | None = None,
+) -> tuple[list[str], list[str]]:
+    """``(labels, axis ticks)`` of a chart that labels every mark in one run."""
+    rows = [
+        {"month": f"m{i:02d}", "revenue": y + 1000 * s, "region": f"r{s}"}
+        for s in range(series)
+        for i, y in enumerate(ys)
+    ]
+    chart = make_chart(
+        chart_type,
+        x="month",
+        y="revenue",
+        **({"color": "region"} if series > 1 else {}),
+        style={
+            "axis_y": {"labels": {"format": axis_format}},
+            "marks": {mark: {"labels": {"visible": True, **(labels or {})}}},
+            **(style or {}),
+        },
+    )
+    board_rs, board_ctx = resolve_style_and_context(get_theme_style())
+    texts = _svg_texts(
+        render_chart_svg(
+            chart,
+            rows,
+            width=900.0,
+            height=400.0,
+            board_style=board_rs,
+            chart_style_context=board_ctx,
+        )
+    )
+    number = re.compile(r"\$?\d[\d.]*[kmKM%]?")
+    run = [t for t in texts if number.fullmatch(t)]
+    return run[: len(rows)], [t for t in texts if t not in run[: len(rows)]]
+
+
+class TestLineLabelRun:
+    def test_run_in_the_axis_magnitude_prints_bare_digits(self, make_chart) -> None:
+        run, ticks = _run_label_texts(make_chart, _RUN_BASE)
+        assert run[:3] == ["412", "398", "422"], run
+        assert any(t.startswith("$") and t.endswith("K") for t in ticks), ticks
+
+    @pytest.mark.parametrize("mark", ["line", "point"])
+    def test_point_labels_join_the_run_rule(self, make_chart, mark: str) -> None:
+        run, _ = _run_label_texts(make_chart, _RUN_BASE, mark=mark)
+        assert run[0] == "412", run
+
+    @pytest.mark.parametrize(
+        ("odd_label", "bare_exponent"),
+        [
+            # 8,040 prints 8.04 and a zero prints 0 in the axis's thousands.
+            (8040, 3),
+            (0, 3),
+            # 80 would print 0.08: the whole run keeps its own letter instead.
+            (80, None),
+        ],
+    )
+    def test_the_run_decision_is_baked_on_the_label_format(
+        self, make_chart, odd_label: float, bare_exponent: int | None
+    ) -> None:
+        # The label at the foot of the plot is not always drawn (placement),
+        # so the decision is read where resolve bakes it.
+        rows = [
+            {"month": f"m{i:02d}", "revenue": y}
+            for i, y in enumerate([*_RUN_BASE[:6], odd_label])
+        ]
+        chart = make_chart(
+            "line",
+            x="month",
+            y="revenue",
+            style={
+                "axis_y": {"labels": {"format": "currency_compact"}},
+                "marks": {"line": {"labels": {"visible": True}}},
+            },
+        )
+        _, board_ctx = resolve_style_and_context(get_theme_style())
+        fmt = resolve(
+            chart, rows, chart_style_context=board_ctx
+        ).style.line_mark.labels.format
+        assert (fmt.spec, fmt.prefix, fmt.bare and fmt.bare.exponent) == (
+            ".3~s",
+            "",
+            bare_exponent,
+        )
+        # 372 is the smallest label in the axis's thousands: whole numbers.
+        assert (fmt.bare is None) == (bare_exponent is None)
+        assert fmt.bare is None or fmt.bare.decimals == 0
+
+    def test_a_bare_run_shares_the_decimals_of_its_smallest_label(
+        self, make_chart
+    ) -> None:
+        # The stray 8,040 joins the run's whole numbers, not three digits of its own;
+        # a label below 1 keeps a single digit.
+        run, _ = _run_label_texts(
+            make_chart,
+            [*_RUN_BASE[:6], 8040, 800],
+            labels={"position": "top"},
+        )
+        assert run == ["412", "398", "422", "406", "390", "430", "8", "0.8"], run
+
+    def test_the_decimals_follow_the_smallest_label_in_the_axis_magnitude(
+        self, make_chart
+    ) -> None:
+        rows = [
+            {"month": f"m{i:02d}", "revenue": y}
+            for i, y in enumerate([45_400, 52_300, 98_100])
+        ]
+        chart = make_chart(
+            "line",
+            x="month",
+            y="revenue",
+            style={
+                "axis_y": {"labels": {"format": "currency_compact"}},
+                "marks": {"line": {"labels": {"visible": True}}},
+            },
+        )
+        _, board_ctx = resolve_style_and_context(get_theme_style())
+        fmt = resolve(
+            chart, rows, chart_style_context=board_ctx
+        ).style.line_mark.labels.format
+        # 45.4 at three significant digits needs one decimal.
+        assert (fmt.bare.exponent, fmt.bare.decimals) == (3, 1)
+
+    def test_a_run_off_the_axis_magnitude_carries_its_own_suffix(
+        self, make_chart
+    ) -> None:
+        run, ticks = _run_label_texts(make_chart, [*_RUN_BASE[:6], 1_212_000])
+        assert run[0] == "412k" and "1.21m" in run, run
+        assert not any("$" in t for t in run), run
+
+    def test_an_even_split_carries_its_own_suffixes(self, make_chart) -> None:
+        # Joining the $1M axis would print half the run below 1.
+        run, ticks = _run_label_texts(
+            make_chart, [412_000, 398_000, 1_100_000, 1_210_000]
+        )
+        assert run == ["412k", "398k", "1.1m", "1.21m"], (run, ticks)
+
+    def test_every_series_is_one_run(self, make_chart) -> None:
+        # Alone, the thousands series would carry its own k; the run's majority
+        # is millions, the axis's magnitude, so its labels join it as 0.4.
+        rows = [
+            {"month": f"m{i:02d}", "revenue": y, "region": region}
+            for region, ys in (
+                ("thousands", [412_345, 398_210, 421_876, 405_533]),
+                ("millions", [1_200_000 + 10_000 * i for i in range(8)]),
+            )
+            for i, y in enumerate(ys)
+        ]
+        chart = make_chart(
+            "line",
+            x="month",
+            y="revenue",
+            color="region",
+            style={
+                "axis_y": {"labels": {"format": "currency_compact"}},
+                "marks": {"line": {"labels": {"visible": True}}},
+            },
+        )
+        texts = _svg_texts(render_chart_svg(chart, rows, width=900.0, height=400.0))
+        assert "0.4" in texts and "1.20" in texts, texts
+        assert not any(t.endswith(("k", "m")) for t in texts), texts
+
+    @pytest.mark.parametrize("mark", ["line", "point"])
+    def test_a_numeric_label_field_is_not_the_measure_run(
+        self, make_chart, mark: str
+    ) -> None:
+        # The field paints its own column ($190), never the axis-scaled measure.
+        rows = [
+            {
+                "month": f"m{i:02d}",
+                "revenue": 190_000_000 + 1_000_000 * i,
+                "unit": 190 + i,
+            }
+            for i in range(6)
+        ]
+        chart = make_chart(
+            "line",
+            x="month",
+            y="revenue",
+            style={
+                "axis_y": {"labels": {"format": "currency_compact"}},
+                "marks": {mark: {"labels": {"visible": True, "field": "unit"}}},
+            },
+        )
+        texts = _svg_texts(render_chart_svg(chart, rows, width=900.0, height=400.0))
+        assert "$190" in texts and "0.0002" not in texts, texts
+
+    def test_an_authored_label_format_is_left_alone(self, make_chart) -> None:
+        run, _ = _run_label_texts(
+            make_chart, _RUN_BASE, labels={"format": "currency_compact"}
+        )
+        assert run[0] == "$412K", run
+
+    def test_anchored_labels_keep_their_unit(self, make_chart) -> None:
+        rows = [{"month": f"m{i:02d}", "revenue": y} for i, y in enumerate(_RUN_BASE)]
+        chart = make_chart(
+            "line",
+            x="month",
+            y="revenue",
+            style={
+                "axis_y": {"labels": {"format": "currency_compact"}},
+                "marks": {"line": {"labels": {"visible": "last"}}},
+            },
+        )
+        texts = _svg_texts(render_chart_svg(chart, rows, width=900.0, height=400.0))
+        assert "$372k" in texts, texts
+
+    def test_a_percent_run_prints_bare_percent_digits(self, make_chart) -> None:
+        run, ticks = _run_label_texts(
+            make_chart, [0.12, 0.2, 0.31, 0.4], axis_format="percent"
+        )
+        assert run == ["12", "20", "31", "40"], (run, ticks)
+
+    def test_a_percent_run_with_a_label_below_a_tenth_keeps_its_percent(
+        self, make_chart
+    ) -> None:
+        run, _ = _run_label_texts(
+            make_chart, [0.12, 0.2, 0.31, 0.0004], axis_format="percent"
+        )
+        assert run[0].endswith("%") and run[1].endswith("%"), run
+
+    def test_a_percent_run_under_an_authored_label_format_is_left_alone(
+        self, make_chart
+    ) -> None:
+        run, _ = _run_label_texts(
+            make_chart,
+            [0.12, 0.2, 0.31, 0.4],
+            axis_format="percent",
+            labels={"format": "percent"},
+        )
+        assert run[0].endswith("%"), run
+
+
+class TestTrailingZeroRule:
+    """Value labels print a trailing zero only when the run's other labels need it."""
+
+    def test_a_percent_run_of_whole_values_drops_the_place(self, make_chart) -> None:
+        run, ticks = _run_label_texts(
+            make_chart, [0.25, 0.4, 0.62], axis_format="percent"
+        )
+        assert run == ["25", "40", "62"], (run, ticks)
+
+    def test_ordinary_labels_keep_the_runs_decimals_zeros_included(
+        self, make_chart
+    ) -> None:
+        run, _ = _run_label_texts(
+            make_chart, [0.398, 0.4, 0.401], axis_format="percent"
+        )
+        assert run == ["39.8", "40.0", "40.1"], run
+
+    def test_a_run_keeping_its_percent_still_pads_ordinary_labels(
+        self, make_chart
+    ) -> None:
+        run, ticks = _run_label_texts(
+            make_chart, [0.398, 0.4, 0.401, 0.0004], axis_format="percent"
+        )
+        assert "40.0%" in [*run, *ticks], (run, ticks)
+
+    def test_a_label_outside_the_ordinary_group_trims(self, make_chart) -> None:
+        run, _ = _run_label_texts(
+            make_chart,
+            [0.398, 0.4, 0.401, 0.05],
+            axis_format="percent",
+            labels={"position": "top"},
+        )
+        assert run == ["39.8", "40.0", "40.1", "5"], run
+
+    def test_a_bare_si_run_keeps_the_places_its_labels_share(self, make_chart) -> None:
+        run, _ = _run_label_texts(
+            make_chart, [3_980_000, 4_000_000, 4_120_000, 41_200_000]
+        )
+        assert run[:4] == ["3.98", "4.00", "4.12", "41.2"], run
+
+    def test_a_bare_si_run_of_whole_values_drops_the_place(self, make_chart) -> None:
+        run, _ = _run_label_texts(make_chart, [2_000_000, 4_000_000, 6_000_000])
+        assert run == ["2", "4", "6"], run
+
+    @pytest.mark.parametrize(
+        ("axis_format", "value", "painted", "padded"),
+        [
+            ("percent", 0.4, "40%", "40.0%"),
+            ("percent", 0.405, "40.5%", "40.50%"),
+            ("percent_delta", 0.04, "+4%", "+4.0%"),
+        ],
+    )
+    def test_a_label_outside_a_run_trims_the_house_percent(
+        self, make_chart, axis_format: str, value: float, painted: str, padded: str
+    ) -> None:
+        run, ticks = _run_label_texts(
+            make_chart,
+            [0.2, 0.3, value],
+            axis_format=axis_format,
+            labels={"visible": "last"},
+        )
+        texts = [*run, *ticks]
+        assert painted in texts and padded not in texts, texts
+
+    def test_real_digits_are_never_rounded_away(self, make_chart) -> None:
+        run, _ = _run_label_texts(
+            make_chart,
+            [0.601, 0.399],
+            axis_format="percent",
+            labels={"visible": "last"},
+        )
+        assert "39.9%" in run, run
+
+    def test_a_redefined_percent_is_left_alone(self, make_chart) -> None:
+        compiled = get_theme_style().model_copy(update={"formats": {"percent": ".2%"}})
+        board_rs, board_ctx = resolve_style_and_context(compiled)
+        chart = make_chart(
+            "line",
+            x="month",
+            y="revenue",
+            style={
+                "axis_y": {"labels": {"format": "percent"}},
+                "marks": {"line": {"labels": {"visible": "last"}}},
+            },
+        )
+        rows = [{"month": f"m{i}", "revenue": y} for i, y in enumerate([0.2, 0.3, 0.4])]
+        texts = _svg_texts(
+            render_chart_svg(
+                chart,
+                rows,
+                width=900.0,
+                height=400.0,
+                board_style=board_rs,
+                chart_style_context=board_ctx,
+            )
+        )
+        assert "40.00%" in texts, texts
+
+    def test_an_authored_label_format_keeps_its_zero(self, make_chart) -> None:
+        run, _ = _run_label_texts(
+            make_chart,
+            [0.2, 0.3, 0.4],
+            axis_format="percent",
+            labels={"visible": "last", "format": "percent"},
+        )
+        assert "40.0%" in run, run
+
+    def test_a_table_cell_keeps_its_zero(self) -> None:
+        assert format_table_cell_value(0.4, "percent") == "40.0%"
+
+
+class TestBarAreaScatterLabelRun:
+    """Every family's value labels follow the rule the line chart's do."""
+
+    @pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+    def test_bar_values_join_the_measure_axis(
+        self, make_chart, orientation: str
+    ) -> None:
+        run, ticks = _run_label_texts(
+            make_chart,
+            _RUN_BASE,
+            mark="bar",
+            chart_type="bar",
+            style={"bar": {"orientation": orientation}},
+        )
+        assert "412" in run, run
+        assert not any("$" in t for t in run), run
+        assert any(t.startswith("$") and t.endswith("K") for t in ticks), ticks
+
+    def test_stacked_segments_and_totals_are_two_runs(self, make_chart) -> None:
+        # Segments of 700k sit below the $1.5M axis and carry their own letter;
+        # the 1.4M totals are in the axis's magnitude and join it.
+        rows = [
+            {
+                "month": f"m{i}",
+                "revenue": 700_000 + 1000 * i + 10_000 * s,
+                "region": f"r{s}",
+            }
+            for i in range(4)
+            for s in range(2)
+        ]
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="revenue",
+            color="region",
+            style={
+                "axis_y": {"labels": {"format": "currency_compact"}},
+                "bar": {"stack": "zero"},
+                "marks": {
+                    "bar": {
+                        "labels": {"visible": True},
+                        "total_label": {"visible": True},
+                    }
+                },
+            },
+        )
+        texts = _svg_texts(render_chart_svg(chart, rows, width=900.0, height=400.0))
+        assert "700k" in texts and "710k" in texts, texts
+        assert "1.41" in texts, texts
+        assert not any(t.startswith("$") and t.endswith("k") for t in texts), texts
+
+    def test_a_percent_stack_keeps_its_percent(self, make_chart) -> None:
+        # A share is part of its bar, not a reading of the axis.
+        rows = [
+            {"month": f"m{i}", "share": share, "plan": plan}
+            for i, shares in enumerate([(0.12, 0.2), (0.31, 0.4)])
+            for plan, share in zip("ab", shares, strict=True)
+        ]
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="share",
+            color="plan",
+            style={
+                "axis_y": {"labels": {"format": "percent"}},
+                "bar": {"stack": "normalize"},
+                "marks": {
+                    "bar": {
+                        "labels": {"visible": True},
+                        "total_label": {"visible": True},
+                    }
+                },
+            },
+        )
+        texts = _svg_texts(render_chart_svg(chart, rows, width=900.0, height=400.0))
+        assert {"12%", "20%", "31%", "40%"} <= set(texts), texts
+        assert not {"12", "20", "31", "40"} & set(texts), texts
+
+    def test_a_percent_axis_bar_prints_bare_percent_digits(self, make_chart) -> None:
+        run, ticks = _run_label_texts(
+            make_chart,
+            [0.12, 0.2, 0.31, 0.4],
+            mark="bar",
+            chart_type="bar",
+            axis_format="percent",
+        )
+        assert sorted(run) == ["12", "20", "31", "40"], (run, ticks)
+
+    def test_area_line_labels_join_the_axis(self, make_chart) -> None:
+        run, ticks = _run_label_texts(
+            make_chart, _RUN_BASE, chart_type="area", mark="line"
+        )
+        assert "412" in run and not any("$" in t for t in run), (run, ticks)
+
+    def test_scatter_labels_join_the_axis(self, make_chart) -> None:
+        run, ticks = _run_label_texts(
+            make_chart, _RUN_BASE, chart_type="scatter", mark="point"
+        )
+        assert "412" in run and not any("$" in t for t in run), (run, ticks)
+
+    def test_a_quantitative_x_does_not_vote_in_the_scatter_run(
+        self, make_chart
+    ) -> None:
+        # The labels paint y; an x around 10M must not swing the run's magnitude.
+        rows = [
+            {"x": 10_000_000 + 1_000_000 * i, "revenue": y}
+            for i, y in enumerate(_RUN_BASE)
+        ]
+        chart = make_chart(
+            "scatter",
+            x="x",
+            y="revenue",
+            style={
+                "axis_y": {"labels": {"format": "currency_compact"}},
+                "marks": {"point": {"labels": {"visible": True}}},
+            },
+        )
+        texts = _svg_texts(render_chart_svg(chart, rows, width=900.0, height=400.0))
+        assert {"412", "398", "422"} <= set(texts), texts
+
+    def test_a_stack_total_is_judged_by_its_net_not_its_positive_part(
+        self, make_chart
+    ) -> None:
+        # +3.0M and -2.95M print a 0.05M total, which must not join a $M run bare.
+        rows = [
+            {"month": month, "revenue": value, "region": region}
+            for month, pos, neg in (
+                ("m0", 3_000_000, -2_950_000),
+                ("m1", 3_100_000, -100_000),
+            )
+            for region, value in (("up", pos), ("down", neg))
+        ]
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="revenue",
+            color="region",
+            style={
+                "axis_y": {"labels": {"format": "currency_compact"}},
+                "bar": {"stack": "zero"},
+                "marks": {"bar": {"total_label": {"visible": True}}},
+            },
+        )
+        _, board_ctx = resolve_style_and_context(get_theme_style())
+        fmt = resolve(
+            chart, rows, chart_style_context=board_ctx
+        ).style.mark.total_label.format
+        assert fmt.bare is None

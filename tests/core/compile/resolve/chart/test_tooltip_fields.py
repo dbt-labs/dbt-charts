@@ -31,6 +31,8 @@ _ROWS: list[dict[str, Any]] = [
         "requests": 4,
         "closed_on": datetime.date(2024, 1, 31),
         "closed_iso": "2024-01-31",
+        "ticket": "https://tickets.example.com/1",
+        "owner": "ann+ops@example.com",
     },
     {
         "month": "Feb",
@@ -41,6 +43,8 @@ _ROWS: list[dict[str, Any]] = [
         "requests": 9,
         "closed_on": datetime.date(2024, 2, 29),
         "closed_iso": "2024-02-29",
+        "ticket": None,
+        "owner": "lee@example.com",
     },
 ]
 _FAMILY_CHARTS: dict[str, dict[str, Any]] = {
@@ -53,12 +57,20 @@ _FAMILY_CHARTS: dict[str, dict[str, Any]] = {
 
 
 def _resolved(
-    chart: dict[str, Any], formats: dict[str, str] | None = None
+    chart: dict[str, Any],
+    formats: dict[str, str] | None = None,
+    rows: list[dict[str, Any]] = _ROWS,
+    automatic_link_candidate: str | None = None,
 ) -> ResolvedChart:
     _, board_ctx = resolve_style_and_context(get_theme_style(get_default_theme_name()))
-    registry = {"q": ValuesQuery(rows=_ROWS, formats=formats or {})}
+    registry = {"q": ValuesQuery(rows=rows, formats=formats or {})}
     flat = normalize_chart("c", {"query": "q", **chart}, registry, sources={})
-    return resolve(flat, _ROWS, chart_style_context=board_ctx)
+    return resolve(
+        flat,
+        rows,
+        chart_style_context=board_ctx,
+        automatic_link_candidate=automatic_link_candidate,
+    )
 
 
 def _authored(chart: dict[str, Any]) -> AuthoredBoard:
@@ -259,3 +271,74 @@ def test_a_scatter_tooltip_beside_a_date_valued_y_is_rejected() -> None:
             _resolved(
                 {"type": "scatter", "x": "requests", "y": y, "tooltip": ["approved"]}
             )
+
+
+@pytest.mark.parametrize("family", sorted(_FAMILY_CHARTS))
+def test_a_url_or_email_entry_resolves_to_its_text_format(family: str) -> None:
+    resolved = _resolved(
+        {
+            **_FAMILY_CHARTS[family],
+            "tooltip": [{"column": "ticket", "format": "url"}, "owner"],
+        },
+        formats={"owner": "email"},
+    )
+    assert [f.format and f.format.spec for f in resolved.tooltip] == ["url", "email"]
+
+
+def test_a_url_value_that_is_not_absolute_is_rejected() -> None:
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+
+    rows = [{**_ROWS[0], "ticket": "/tickets/1"}]
+    with pytest.raises(ChartDataError, match="absolute"):
+        _resolved(
+            {
+                **_FAMILY_CHARTS["bar"],
+                "tooltip": [{"column": "ticket", "format": "url"}],
+            },
+            rows=rows,
+        )
+
+
+def test_a_url_format_on_a_number_column_is_rejected() -> None:
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+
+    with pytest.raises(ChartDataError, match="numbers"):
+        _resolved(
+            {**_FAMILY_CHARTS["bar"], "tooltip": [{"column": "cost", "format": "url"}]}
+        )
+
+
+@pytest.mark.parametrize(
+    ("entry", "formats"),
+    [({"column": "ticket", "format": "url"}, None), ("owner", {"owner": "email"})],
+)
+def test_a_chart_link_beside_a_tooltip_link_is_rejected(
+    entry: str | dict[str, str], formats: dict[str, str] | None
+) -> None:
+    from dbt_charts.core.compile.errors import CompilationError
+
+    with pytest.raises(CompilationError) as err:
+        _resolved(
+            {
+                **_FAMILY_CHARTS["bar"],
+                "link": "/detail?month={{ x }}",
+                "tooltip": [entry],
+            },
+            formats=formats,
+        )
+    assert err.value.code is not None
+    assert err.value.code.code == "ERR-TOOLTIP-LINK-BESIDE-CHART-LINK"
+
+
+def test_a_tooltip_link_takes_the_click_from_the_automatic_link() -> None:
+    candidate = "/data/q?month={{ x }}"
+    linked = _resolved(
+        {**_FAMILY_CHARTS["bar"], "tooltip": [{"column": "ticket", "format": "url"}]},
+        automatic_link_candidate=candidate,
+    )
+    plain = _resolved(
+        {**_FAMILY_CHARTS["bar"], "tooltip": ["approved"]},
+        automatic_link_candidate=candidate,
+    )
+    assert linked.link is None
+    assert plain.link == candidate

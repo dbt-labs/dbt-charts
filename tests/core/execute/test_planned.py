@@ -114,6 +114,7 @@ def test_compose_refuses_a_values_query() -> None:
                 "formats": {},
                 "depends_on": [],
                 "spec": {"rows": [{"n": 1}]},
+                "schema": {"n": {"kind": "integer", "element": None, "fields": None}},
             }
         }
     )
@@ -196,6 +197,7 @@ def test_run_planned_answers_a_values_query_in_process() -> None:
                 "formats": {},
                 "depends_on": [],
                 "spec": {"rows": [{"n": 1}, {"n": 2}]},
+                "schema": {"n": {"kind": "integer", "element": None, "fields": None}},
             }
         }
     )

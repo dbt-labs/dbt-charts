@@ -22,13 +22,14 @@ const DEFAULTS: [&str; 2] = [
 ];
 
 /// `PALETTE_FAMILIES`, in Python's scan order (a later family wins a repeated name).
-const FAMILIES: [&str; 6] = [
+const FAMILIES: [&str; 7] = [
     "sequential",
     "diverging",
     "categorical",
     "scaffold",
     "tone",
     "pattern",
+    "line",
 ];
 /// `colors.VARIANT_WORDS`.
 const VARIANT_WORDS: &[&str] = &["dark", "light", "pale", "deep"];
@@ -152,9 +153,10 @@ fn main() {
             .map(|(k, _)| k.clone())
             .collect()
     };
-    let (tones, patterns, categorical) = (
+    let (tones, patterns, lines, categorical) = (
         of_family("tone"),
         of_family("pattern"),
+        of_family("line"),
         of_family("categorical"),
     );
 
@@ -168,7 +170,7 @@ fn main() {
     }
     let stops: BTreeSet<String> = palette_names
         .iter()
-        .filter(|n| !tones.contains(*n) && !patterns.contains(*n))
+        .filter(|n| !tones.contains(*n) && !patterns.contains(*n) && !lines.contains(*n))
         .cloned()
         .collect();
     let pattern: BTreeSet<String> = patterns

@@ -9,13 +9,23 @@ use ::layout::scene_path::scene_path;
 use super::{AXIS_CRISP, label_x, FacetPanelOpts, area_paint, HALO_POINT_STROKE_W, LinePanelGeometry, LineXAxis, LineXAxisBody, PlotRect, Shape, StackColumn, X_AXIS_OFFSET, bare_label_ink, bare_label_layout, bare_label_widths, description_color_title, domain_position, flush_anchor_px, last_y_ascending_order, mirror_ghost_x, nominal_label_anchor, point_mark_reach, quantitative_x_ticks, rail_cascade_bounds, series_dash, series_fill, shape, stack_columns, stack_data, stack_extent, stacked_top_datum, tick_snap, tilted_temporal_label, with_dash, y_family, y_font_size};
 use crate::families::temporal::{interval_axis, interval_labels_allowed, labels_unpinned, BareMark, IntervalAxis};
 use super::segments::{segment_styles, style_runs, AreaStyle, LineStyle};
+use super::styles::{assign_slots, PaletteLineStyle, Trace};
 use diagnostic::Diagnostic;
 use std::collections::{HashMap, HashSet};
 
 /// The gap between a start label outside the plot and its point.
 const START_LABEL_GAP: f64 = 6.0;
+/// The ink an unstyled value label takes: its authored color, else its series'.
+fn inherited_label_ink<'a>(fill: &'a str, authored_color: Option<&str>, color: &'a str) -> &'a str {
+    if fill.is_empty() || authored_color.is_some() {
+        color
+    } else {
+        fill
+    }
+}
+
 /// How far inside the plot edge a final point may sit and still count as beside the axis.
-const AXIS_CHANNEL_REACH: f64 = 12.0;
+const AXIS_GUTTER_REACH: f64 = 12.0;
 
 use crate::families::axis_caption::{value_axis_caption, x_axis_caption};
 use crate::families::facet_compose;
@@ -32,7 +42,7 @@ use ::bind::layers::{layer_color_text, layer_color_groups, NULL_COLOR_TEXT};
 use crate::families::support_table_strip;
 use crate::families::legend::{
     drawn_symbol_legend, legend_slide, legend_title_text,
-    legend_fit_bounds, legend_from_widths, legend_origin, legend_overlay_origin, limit_legend_text, narrow_legend_entries, LegendConfig,
+    legend_fit_bounds, legend_from_widths, legend_origin, legend_overlay_origin, limit_legend_text, narrow_legend_entries, overlay_corner_shift, LegendConfig,
     vega_default_legend, LegendEntry, LegendSymbol, VegaLegend, VEGA_LEGEND_OFFSET,
 };
 use crate::families::temporal::{authored_tick_count, authored_tick_interval, bare_temporal_ticks, interval_tick_days, interval_tick_labels, none_tick_labels, resolve_vega_x_labels, temporal_label_half_width, AuthoredTimeFormat, BareTick, ResolvedVegaLabels, TemporalLabel};
@@ -63,32 +73,86 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     layout_with_plot(bound, cell, measure).map(|(laid_out, _)| laid_out)
 }
 
+/// Layouts a keyed chart may take: no key, the key the first asked for, and that key moved to the side.
+const KEY_PASSES: usize = 3;
+/// How far past its point a value label set to the point's side may reach: placement's corner
+/// offset plus a pixel or two of its pad.
+const VALUE_SIDE_STEP: f64 = 6.0;
+
 /// [`layout`] with the plot rect its negotiation settled on, which `--dump-layout` reports.
 pub(super) fn layout_with_plot(bound: &Bound, cell: Rect, measure: &Measure) -> Result<(Layout, PlotRect), Diagnostic> {
     if bound.r.multiples.is_some() {
         return Err("line: layout draws one plot; a multiples chart is composed by render".into());
     }
     crate::annotation::reserve_key(
-        || layout_once(bound, cell, measure),
+        || named_layout(bound, cell, measure),
         || {
+            // The in-plot attempt carries its own annotations, so they are numbered too.
             crate::annotation::force_numbers(&bound.r.annotations);
-            layout_once(bound, cell, measure)
+            if let Some(attempt) = &bound.overlay_attempt {
+                crate::annotation::force_numbers(&attempt.r.annotations);
+            }
+            named_layout(bound, cell, measure)
         },
         |(laid, _)| &laid.diagnostics,
     )
 }
 
-fn layout_once(bound: &Bound, cell: Rect, measure: &Measure) -> Result<(Layout, PlotRect), Diagnostic> {
+/// `bound` laid out with its series named: `key.direct.position: auto` names them inside the plot
+/// when every name finds a clear spot, and otherwise keeps the strip.
+fn named_layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<(Layout, PlotRect), Diagnostic> {
+    if let Some(attempt) = &bound.overlay_attempt {
+        let (attempted, warnings) = diagnostic::collect(|| keyed_layout(attempt, cell, measure));
+        if let Ok((laid_out, plot)) = attempted {
+            if !laid_out.diagnostics.iter().any(|d| d.code == diagnostic::codes::WARN_DIRECT_OVERLAY_COLLIDES.id) {
+                warnings.into_iter().for_each(diagnostic::warn);
+                return Ok((laid_out, plot));
+            }
+        }
+    }
+    keyed_layout(bound, cell, measure)
+}
+
+/// `bound` laid out with the series its plot cannot name listed in a key: a legend of only those
+/// series, above the plot or, where the row does not fit there, beside it.
+fn keyed_layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<(Layout, PlotRect), Diagnostic> {
+    let mut keyed: Option<Bound<'static>> = None;
+    let mut key: Vec<String> = Vec::new();
+    for _ in 0..KEY_PASSES {
+        let (laid_out, plot, unnamed) = plot_laid_out(keyed.as_ref().unwrap_or(bound), cell, measure)?;
+        // The key's series are never named in the plot, so the unnamed hold them all.
+        if unnamed.len() == key.len() {
+            return Ok((laid_out, plot));
+        }
+        key = unnamed;
+        let top = bound.keyed(&key, "top")?;
+        keyed = Some(if key_row_fits(&top, &key, cell, measure)? { top } else { bound.keyed(&key, "right")? });
+    }
+    Err(format!("line: the series {key:?} left unnamed by the plot did not settle in a key").into())
+}
+
+/// Whether the key's entries fit one row across the card.
+fn key_row_fits(top: &Bound, key: &[String], cell: Rect, measure: &Measure) -> Result<bool, Diagnostic> {
+    let cfg = &top.r.legend;
+    let text = limit_legend_text(key.iter().map(String::as_str), "", cfg, measure.fonts)?;
+    let symbols: Vec<Option<LegendSymbol>> = key.iter().map(|_| crate::families::legend::entry_symbol("#000000", None)).collect();
+    let row = legend_from_widths(&text.label_ws, &symbols, false, "", 0.0, cfg)?;
+    let room = top.payload.padding.as_ref().map_or(cell.width, |p| cell.width - p.left - p.right);
+    Ok(row.box_w <= room)
+}
+
+/// One layout of `bound`, with the series its plot left unnamed.
+fn plot_laid_out(bound: &Bound, cell: Rect, measure: &Measure) -> Result<(Layout, PlotRect, Vec<String>), Diagnostic> {
     let Some(unviewed) = &bound.r.unviewed else { return laid_out(bound, cell, measure, None) };
-    let whole = super::bind::bind(unviewed, bound.draw_areas)?;
+    let whole = bound.rebind(unviewed)?;
     let whole_box = laid_out(&whole, cell, measure, None)?.0.data_box;
     crate::legend_view::pin_plot_box(whole_box, bound.payload.padding, |padding| {
-        laid_out(bound, cell, measure, Some(padding)).map(|(laid, plot)| (laid.data_box, (laid, plot)))
+        laid_out(bound, cell, measure, Some(padding)).map(|(laid, plot, unnamed)| (laid.data_box, (laid, plot, unnamed)))
     })
 }
 
 /// `bound` laid out in `cell`, its card padded by `padding` when given.
-fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Padding>) -> Result<(Layout, PlotRect), Diagnostic> {
+fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Padding>) -> Result<(Layout, PlotRect, Vec<String>), Diagnostic> {
     let payload: std::borrow::Cow<Payload> = if padding.is_none() && (cell.width, cell.height) == (bound.payload.width, bound.payload.height) {
         std::borrow::Cow::Borrowed(&*bound.payload)
     } else {
@@ -113,7 +177,7 @@ fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Paddin
         diagnostics,
         title_pos: fitted.plot.title_pos,
     };
-    Ok((laid_out, fitted.plot))
+    Ok((laid_out, fitted.plot, fitted.unnamed))
 }
 
 /// A fitted card: the node, the box its plot occupies, the plot rect and, for a facet panel, the
@@ -128,6 +192,60 @@ pub(super) struct Fitted {
     pub(super) cuts: Option<crate::families::facet_compose::PanelInk>,
     /// The `support_table` strip could not fit its bands and drew nothing.
     pub(super) strip_hidden: bool,
+    /// The series and their traces a line palette's slots are chosen from; `None` when the chart
+    /// draws no line palette.
+    pub(super) line_traces: Option<LineTraces>,
+    /// The series an overlay chart did not name in the plot: its key lists them.
+    pub(super) unnamed: Vec<String>,
+}
+
+/// A line layer's series in the pool of a line palette, by the label its legend entry reads.
+const LAYER_POOL_PREFIX: &str = "\u{1}";
+
+/// The pool key of the series a line layer draws under `label`: per layer, so two layers reading one
+/// color value or one label stay two series.
+pub(super) fn layer_pool_key(layer: usize, label: &str) -> String {
+    format!("{LAYER_POOL_PREFIX}{layer:04}{LAYER_POOL_PREFIX}{label}")
+}
+
+/// Each legend label's slot: the base's series first, then the layers' in layer order, so a label
+/// several series read (and so one legend entry) takes the first one's style, on every run.
+pub(super) fn legend_slot_map(slots: &HashMap<String, usize>, display_label: impl Fn(&str) -> String) -> HashMap<String, usize> {
+    let mut keys: Vec<&String> = slots.keys().collect();
+    keys.sort_by_key(|key| (key.starts_with(LAYER_POOL_PREFIX), key.as_str()));
+    let mut by_label = HashMap::new();
+    for key in keys {
+        let label = match key.strip_prefix(LAYER_POOL_PREFIX) {
+            Some(layered) => layered.split_once(LAYER_POOL_PREFIX).expect("a layer key names its layer").1.to_string(),
+            None => display_label(key),
+        };
+        by_label.entry(label).or_insert(slots[key]);
+    }
+    by_label
+}
+
+/// `entries` with each line's swatch drawn in its series' line-palette style, by the label it reads
+/// (the untruncated one when the entry was cut). A swatch that is no plain stroke (a bar layer's
+/// square) stays as it is.
+fn with_line_styles<'a>(
+    entries: &[LegendEntry<'a>],
+    slots: &HashMap<String, usize>,
+    styles: &'a [PaletteLineStyle],
+    canvas: &'a str,
+) -> Vec<LegendEntry<'a>> {
+    entries
+        .iter()
+        .map(|entry| match (entry.symbol, slots.get(entry.series_key.unwrap_or(entry.label))) {
+            (Some(LegendSymbol::Stroke(_)), Some(&slot)) => LegendEntry { symbol: Some(LegendSymbol::LineStyle(&styles[slot], canvas)), ..*entry },
+            _ => *entry,
+        })
+        .collect()
+}
+
+/// The base series in slot order, and each one's vertices in this panel (absent from a panel: no trace).
+pub(super) struct LineTraces {
+    pub(super) order: Vec<String>,
+    pub(super) traces: HashMap<String, Trace>,
 }
 
 /// A patterned stacked band's outline: its top and bottom edges, the ink of its line, its width, and
@@ -315,6 +433,7 @@ pub(super) fn fit(
     // A wide (folded) line never reaches `_apply_line_color_encoding`, the only
     // place a dash palette is encoded, so it paints solid.
     let dashed = is_multi && !draw_areas && r.wide_measures.is_empty() && !r.style.dashes.is_empty();
+    let styled = bound.line_styled();
     // A colorless chart with layers names the base and every layer on the rail
     // (`layered_endpoint_rail_fires`): only when no layer splits by a color field.
     let named_layers = || overlays.iter().filter(|o| o.legend());
@@ -1163,11 +1282,10 @@ pub(super) fn fit(
         }
     } else if is_stacked {
         // A stacked area's domain is Vega-Lite's own — production bakes no
-        // `domain_max`/`domain_min` for it (a nice-rounded ladder rung would clip
-        // marks above it) and applies no headroom (single-series-only there), so
-        // the port takes the SAME `d3_nice(_, _, 10)` call the non-stacked path
-        // below uses, fed the stacked column total instead of the raw per-row
-        // max — probe-confirmed against `stacked_area`'s own reference (May's
+        // `domain_min` for it, and a `center` or `normalize` stack bakes no
+        // `domain_max` either, so the port takes the SAME `d3_nice(_, _, 10)`
+        // call the non-stacked path below uses, fed the stacked column total
+        // instead of the raw per-row max — probe-confirmed against `stacked_area`'s own reference (May's
         // 247-unit total nices to 260, not the 300 its separately-baked
         // `tick_values` cover ladder overshoots to; the existing tick-filtering
         // below already clips a ladder rung past the real domain).
@@ -1176,12 +1294,10 @@ pub(super) fn fit(
         // SHARED y scale, whose merge re-applies Vega-Lite's default `nice`
         // (`listening_streamgraph` reads 0 to 180 off `[0, 161]`). The railed
         // domain is therefore `d3_nice(0, max_column_total, 10)`: the `None` arm.
-        match authored_domain {
-            // `ax_y.domain_min`/`domain_max` (the BAKED pair) are always
-            // None on a stacked area (`resolve/chart/area.py` forces them
-            // there), so guarding on those would be unreachable code —
-            // `authored_continuous_domain()` is production's own spelling
-            // of the field that actually reaches Vega
+        let stacked = match authored_domain {
+            // `domain_min` is never baked on a stacked area, so the floor
+            // reads `authored_continuous_domain()` — production's own
+            // spelling of the field that reaches Vega
             // (`emitters/_cartesian.py`'s `authored_measure_domain`
             // branch), honored verbatim with no `nice` applied (probed).
             // Emitted in AUTHORED order (`resolve_measure_y_scale`:
@@ -1224,6 +1340,12 @@ pub(super) fn fit(
                 if unit_spec { (floor, domain_col_total) } else { d3rs::ticks::d3_nice(floor, domain_col_total, 10) }
             }
             None => d3rs::ticks::d3_nice(domain_col_floor, domain_col_total, 10),
+        };
+        // A zero stack's baked `domain_max` is its exact headroom-applied
+        // total: the top the line rule gives every other chart, rail or not.
+        match (authored_domain, ax_y.domain_max) {
+            (None, Some(top)) => (stacked.0, top),
+            _ => stacked,
         }
     } else if let Some((a, b)) = authored_domain {
         // Production's `resolve_measure_y_scale` (`_cartesian.py:1564-1575`):
@@ -1307,7 +1429,9 @@ pub(super) fn fit(
     // draws as a rung of its own and the paper bites below it. An authored domain fills the plot
     // as written, so its rungs line up with an untorn neighbor's, and tears on its own floor.
     let (y_lo, y_hi) = (y_min.min(y_max), y_min.max(y_max));
-    let tear = ax_y.grid.torn_baseline.as_ref().filter(|t| t.enabled && !draw_areas);
+    // A log axis has no zero to cut off, and a descending one is a rank axis: counting has no zero,
+    // and the edge nearest it is the top, where a tear would float through the first rank.
+    let tear = ax_y.grid.torn_baseline.as_ref().filter(|t| t.enabled && !draw_areas && !is_log && y_min <= y_max);
     let torn_edge = tear.and_then(|_| crate::torn::torn_edge_value(y_lo, y_hi));
     let padded_tear = tear.filter(|_| ax_y.authored_continuous_domain().is_none());
     let torn_floor_side = padded_tear.zip(torn_edge).map(|(t, edge)| {
@@ -1810,6 +1934,7 @@ pub(super) fn fit(
     let overlay_plan = crate::families::layers::claim_layers(&mut layer_scale, &layers, &r.field_labels)?;
     let numeric_legends =
         crate::families::bar::legend::numeric_legends_of(r.numeric_base()?, overlays.iter().zip(&overlay_plan), &r.legend, &r.id)?;
+    let widest_style_w = r.style.line_styles.iter().map(|style| style.width).fold(0.0, f64::max);
     // Vega's ordinal strokeDash scale cycles its range by domain index; an
     // empty entry is a solid line. One pattern per legend entry.
     let series_dashes: Vec<String> = legend_domain
@@ -1845,7 +1970,9 @@ pub(super) fn fit(
             .map(|((s, f), dash)| LegendEntry {
                 label: s.as_str(),
                 fill: f.as_str(),
-                symbol: dashed.then_some(LegendSymbol::Dash(dash.as_str())),
+                // Laid out as a plain stroke at the palette's widest style: the slots a line palette hands out
+                // are known only once the plot is.
+                symbol: if styled { Some(LegendSymbol::Stroke(widest_style_w)) } else { dashed.then_some(LegendSymbol::Dash(dash.as_str())) },
                 series_key: None,
                 recede: None,
                 action: None,
@@ -1853,6 +1980,12 @@ pub(super) fn fit(
             .collect()
     };
     let legend_entries = if has_layers { narrow_legend_entries(legend_entries, &r.legend) } else { legend_entries };
+    // A key lists only the series the plot does not name.
+    let legend_entries: Vec<LegendEntry> = if r.style.endpoint_labels.key.is_empty() {
+        legend_entries
+    } else {
+        legend_entries.into_iter().filter(|e| r.style.endpoint_labels.key.iter().any(|k| k == e.label)).collect()
+    };
     // ── Plot width + left margin ─────────────────────────────────────────────
     // Computed ahead of the temporal cadence choice below: neither depends on
     // bottom_margin (x-axis label row height), only on the y-axis/legend/rail
@@ -1906,7 +2039,11 @@ pub(super) fn fit(
     // legacy splice unchanged.
     let x_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     let y_limit = ax_y.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
-    let line_stroke_w = r.style.line_mark.stroke.width.unwrap_or(4.0);
+    let line_stroke_w = if styled {
+        widest_style_w
+    } else {
+        r.style.line_mark.stroke.width.ok_or_else(|| Diagnostic::from("line: style.line_mark.stroke.width is unset; resolve bakes it"))?
+    };
 
 
     // A2: `detect_time_unit` refusing a cadence does not make the axis
@@ -2296,7 +2433,7 @@ pub(super) fn fit(
     // That root legend is Vega's own default-styled one, listing the dash patterns in the stroke
     // halo's canvas color (the strokeDash scale is encoded on the halo and the line alike).
     let root_dash_legend: Option<(VegaLegend, LegendConfig, Vec<String>)> = if dash_legend_at_root {
-        let cfg = vega_default_legend(&r.legend);
+        let cfg = vega_default_legend(&r.legend, &r.canvas);
         let lt = limit_legend_text(legend_display_labels.iter().map(String::as_str), &legend_title, &cfg, fonts)?;
         let symbols: Vec<Option<LegendSymbol>> =
             series_dashes.iter().map(|dash| Some(LegendSymbol::DashCircle(dash.as_str()))).collect();
@@ -2317,6 +2454,12 @@ pub(super) fn fit(
         let lg = legend_from_widths(&lt.label_ws, &symbols, numeric_legends.unlisted_line, &lt.title, lt.title_w, &r.legend)?;
         let lg = numeric_legends.stack_onto(lg, &r.legend, fonts, (payload.width, payload.height))?;
         let drawn = crate::families::legend::with_drawn_labels(&legend_entries, &lt.labels);
+        let drawn = match bound.line_slots.get() {
+            Some(slots) if styled => {
+                with_line_styles(&drawn, &legend_slot_map(slots, display_label), &r.style.line_styles, canvas)
+            }
+            _ => drawn,
+        };
         let mut nodes: Vec<Node> = drawn_symbol_legend(&drawn, &lg, &r.legend, default_circle, 0.0, 0.0, false, r.canvas.as_str()).into_iter().collect();
         nodes.extend(numeric_legends.nodes_after(&lg, &r.legend, fonts, (payload.width, payload.height), (0.0, 0.0), r.canvas.as_str())?);
         Some(facet_compose::FacetLegend { nodes, box_w: lg.box_w, box_h: lg.box_h() })
@@ -2605,12 +2748,10 @@ pub(super) fn fit(
     } else {
         svg_w
     };
+    // The plot the slot leaves: the slot less the value axis, before the fit settles it.
+    let plot_w_estimate = (x_slot_w - ax_y.tick_len() - y_label_pad - max_y_label_w.min(y_limit)).max(1.0);
     let vega_x_labels: Option<ResolvedVegaLabels> = match detected_data_tu.or(bare_layout_tu) {
         Some(data_tu) => {
-            let label_usable_ratio = label_usable_ratio_opt.ok_or(
-                "line: label_usable_ratio absent (theme required for a temporal x axis)",
-            )?;
-            let slot_w = x_slot_w;
             let mut measure = |t: &str| ax_x.labels.measure(fonts, t, x_font_size);
             let label_unit = match label_extent {
                 Some(extent) => crate::families::temporal::label_unit_with_boundary(
@@ -2624,7 +2765,7 @@ pub(super) fn fit(
                 &label_domain,
                 data_tu,
                 label_unit,
-                slot_w * label_usable_ratio,
+                plot_w_estimate,
                 edge_labels_flushed,
                 false,
                 !x_ordinal_calendar, // continuous_temporal
@@ -2643,7 +2784,6 @@ pub(super) fn fit(
     // A time-part axis crowds the part's own band texts (`_generic_temporal_labels`).
     let part_layout: Option<crate::families::temporal::GenericLayout> = match x_part {
         Some(part) if bare_temporal => {
-            let label_usable_ratio = label_usable_ratio_opt.ok_or("line: label_usable_ratio absent (theme required for a temporal x axis)")?;
             let texts = crate::families::temporal::part_band_texts(&x.time.dates(&x_domain), part, ax_x.labels.time_unit.as_deref(), authored_time_format)
                 .map_err(|e| format!("{fam}: {e}"))?;
             let gap = ax_x.labels.font.measure_weighted(fonts, " ", x_font_size)?;
@@ -2653,7 +2793,7 @@ pub(super) fn fit(
                 .collect::<Result<Vec<_>, _>>()?;
             Some(crate::families::temporal::generic_layout(
                 &widths,
-                x_slot_w * label_usable_ratio,
+                plot_w_estimate,
                 x_overlap_skip,
                 x_overlap_tilt,
                 x_tilt_increments,
@@ -2799,8 +2939,6 @@ pub(super) fn fit(
                 && interval_labels_allowed(&ax_x.labels, x_tick_cadence.is_some(), authored_time_format.is_some()) =>
         {
             let mut measure = |t: &str| ax_x.labels.font.measure_weighted(fonts, t, x_font_size);
-            // The plot the edge slices are judged against: the slot less the value axis, before the fit settles it.
-            let plot_w_estimate = (x_slot_w - ax_y.tick_len() - y_label_pad - max_y_label_w.min(y_limit)).max(1.0);
             interval_axis(
                 extent,
                 &|day| day,
@@ -3198,10 +3336,10 @@ pub(super) fn fit(
     // The chart's own ink past the plot, set by the fit's ink closure on every
     // pass; the last write is the drawn size's.
     let annotation_reach = std::cell::Cell::new(crate::annotation::Reach::default());
-    // The annotation maps at a plot size: the scales the marks draw with.
-    let annotation_ctx = |pw: f64, ph: f64| {
-        use crate::annotation::{AnnotationCtx, AxisMap, Orientation, PlotRect};
-        let x = match label_extent {
+    // The x scale at a plot width: annotations and `key.direct.overlay_x` read their x through it.
+    let x_axis_map = |pw: f64| {
+        use crate::annotation::AxisMap;
+        match label_extent {
             // The inset range, as a widened extent over the whole plot: an open band or a rule reaches the plot edge.
             Some((lo, hi)) => {
                 let per_px = (hi - lo) / (pw - 2.0 * x_scale_pad).max(f64::MIN_POSITIVE);
@@ -3218,7 +3356,12 @@ pub(super) fn fit(
                     .collect();
                 AxisMap::Point { domain: x_domain.clone(), positions, days: annotation_ordinals.clone(), range: (0.0, pw) }
             }
-        };
+        }
+    };
+    // The annotation maps at a plot size: the scales the marks draw with.
+    let annotation_ctx = |pw: f64, ph: f64| {
+        use crate::annotation::{AnnotationCtx, AxisMap, Orientation, PlotRect};
+        let x = x_axis_map(pw);
         let [y_bottom, y_top] = y_range(ph);
         let y = if is_log {
             AxisMap::Log { domain: (y_min, y_max), range: (y_bottom, y_top) }
@@ -3240,6 +3383,7 @@ pub(super) fn fit(
             canvas,
             clip_id: format!("{}-ann{}", crate::contract::scoped_id(&r.id), facet.map_or(0, |f| f.panel_ordinal)),
             occupied: Vec::new(),
+            tear: None,
         }
     };
     // A nominal x lays its labels out by the ordinal overlap ladder, judged at the width the
@@ -5477,6 +5621,12 @@ pub(super) fn fit(
         vec![(single_fill.clone(), runs)]
     };
 
+    // The series a line palette hands styles to: the base's, then each line layer's (see `layer_pool_key`).
+    let mut line_traces = styled.then(|| LineTraces {
+        order: if is_multi { spatial_domain.clone() } else { vec![single_fill.clone()] },
+        traces: series_points.iter().map(|(series, runs)| (series.clone(), runs.iter().flatten().copied().collect())).collect(),
+    });
+
     // Stacked area's own (top, bottom) vertex pairs, per point — the
     // span the stack gives `series` at that column (`columns[i].bounds`). UNLIKE `runs_of`'s base runs law, NEITHER a
     // null measure NOR a genuinely absent (x, series) row breaks the run
@@ -5648,7 +5798,7 @@ pub(super) fn fit(
     };
 
     // Line style
-    let line_w = r.style.line_mark.stroke.width.unwrap_or(4.0);
+    let line_w = r.style.line_mark.stroke.width.ok_or_else(|| Diagnostic::from("line: style.line_mark.stroke.width is unset; resolve bakes it"))?;
     let halo_w = line_w * r.style.line_mark.halo_multiplier;
     // Shared with `layers.rs`'s disconnected step-layer overlay —
     // `common::resolve_stroke_cap`'s doc comment carries the law.
@@ -5783,6 +5933,54 @@ pub(super) fn fit(
     // Dual axis: each layer's own independent scale draws its OWN grid, painted
     // before any mark like the base's.
     let layer_linear: Vec<Continuous> = layer_axes.iter().map(|la| la.scale(plot_h)).collect();
+    // A line layer's series join the base's pool, in layer order, so each draws its own style and
+    // two that cross never share one.
+    if let Some(pool) = line_traces.as_mut() {
+        for (index, overlay) in overlays.iter().enumerate() {
+            let OverlayLayer::Line(l) = overlay else { continue };
+            let layer_rows =
+                panel_layer_rows(rows, facet.is_some(), x_is_band && l.curve_name() == Some("step"), payload, l.query_name.as_deref(), r.query_name.as_deref(), "line")
+                    .expect("validate_line_layers already confirmed this dataset exists");
+            let layer_x = l.x.as_deref().unwrap_or(x_field);
+            let mut join = |label: &str, series_rows: &[serde_json::Map<String, Value>]| {
+                let trace: Trace = series_rows
+                    .iter()
+                    .filter_map(|row| {
+                        let at = domain_position(&x_domain, row, layer_x)?;
+                        let value = row_num(row, &l.y)?;
+                        let y = if layer_linear.is_empty() { y_at(value) } else { layer_linear[index].scale(value) };
+                        Some((fit_x_at(at), y))
+                    })
+                    .collect();
+                let key = layer_pool_key(index, label);
+                pool.order.push(key.clone());
+                pool.traces.insert(key, trace);
+            };
+            match l.color.as_deref() {
+                Some(cf) => {
+                    for (value, subset) in layer_color_groups(layer_rows, cf) {
+                        join(value.as_deref().unwrap_or(NULL_COLOR_TEXT), &subset);
+                    }
+                }
+                None => join(&overlay_plan[index].label, layer_rows),
+            }
+        }
+    }
+    // A line palette's slot per series: the chart's own, or, under small multiples, the one the
+    // composer chose across every panel.
+    let line_slots: HashMap<String, usize> = match (&line_traces, bound.line_slots.get()) {
+        (None, _) => HashMap::new(),
+        (Some(_), Some(chosen)) => chosen.clone(),
+        (Some(own), None) => {
+            let panel: Vec<Trace> = own.order.iter().map(|series| own.traces.get(series).cloned().unwrap_or_default()).collect();
+            own.order.iter().cloned().zip(assign_slots(&[panel], r.style.line_styles.len())).collect()
+        }
+    };
+    let style_of = |key: &str| -> &PaletteLineStyle {
+        &r.style.line_styles[*line_slots.get(key).expect("every drawn series has a slot")]
+    };
+    // Each legend entry's slot, by the label it reads.
+    let legend_slots = legend_slot_map(&line_slots, display_label);
     for (la, ls) in layer_axes.iter().zip(&layer_linear).filter(|(la, _)| la.grid_visible) {
         let gc = crate::common::required_ink(yg.color.as_deref(), "line", "axis_y.grid.color")?;
         let gw = yg.width.unwrap_or(1.5);
@@ -5859,7 +6057,14 @@ pub(super) fn fit(
     // Annotations paint in the plot group's own frame. A fixed-margin arm
     // reserved no room for their text, so text past the plot is refused there;
     // the rail arm reserves the top (without a support_table strip).
-    let annotations = annotation_ctx(plot_w, plot_h);
+    // The tear is drawn in the plot's crisp-offset frame; annotations sit at the plot origin.
+    let annotations = crate::annotation::AnnotationCtx {
+        tear: torn.as_ref().map(|(inward, cubics)| crate::annotation::Tear {
+            cubics: cubics.iter().map(|c| c.map(|(along, across)| (along - ad, across - ad))).collect(),
+            inward: *inward,
+        }),
+        ..annotation_ctx(plot_w, plot_h)
+    };
     if shape != Shape::Fit {
         let reserved = crate::annotation::Reserved {
             top: shape == Shape::RailConcat && support_table_config.is_none(),
@@ -5933,7 +6138,7 @@ pub(super) fn fit(
                 let halo = Attrs::new()
                     .set("fill", "none")
                     .set("stroke", halo_stroke)
-                    .num("stroke-width", style.width.map_or(halo_w, |width| width * r.style.line_mark.halo_multiplier))
+                    .num("stroke-width", style.width.map_or(if styled { style_of(series).width * r.style.line_mark.halo_multiplier } else { halo_w }, |width| width * r.style.line_mark.halo_multiplier))
                     .set("stroke-linecap", cap)
                     .set("stroke-linejoin", join);
                 let halo = with_dash(halo, style.dasharray.clone().or_else(|| dash_of(series)), dash_length(&d));
@@ -6373,15 +6578,27 @@ pub(super) fn fit(
             };
             for (d, href, style) in line_spans(series, runs)? {
                 let anchor = selection.mark(r.link_open.anchor(href));
-                let line = Attrs::new()
-                    .set("fill", "none")
-                    .set("stroke", style.color.as_ref().unwrap_or(&color))
-                    .num("stroke-width", style.width.unwrap_or(line_w))
-                    .set("stroke-linecap", cap)
-                    .set("stroke-linejoin", join)
-                    .set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series));
-                let line = with_dash(line, style.dasharray.or_else(|| ink_dash.clone()).or_else(|| dash_of(series)), dash_length(&d));
-                plot.push(crate::contract::connected_group("line", "layer_3_marks", vec![crate::href::linked(anchor, Node::path(mark_of(series, None), d, line))]));
+                let stroke_color = style.color.as_ref().unwrap_or(&color);
+                // A line palette's style draws the ink, and an inline of the canvas over it; the conditional
+                // rules and an authored mark dash still outrank it.
+                let (line, inline) = if styled {
+                    let palette_style = style_of(series);
+                    let authored = style.dasharray.or_else(|| ink_dash.clone()).map(|dash| ::layout::dash::fit_pattern(&dash, d.length(), false));
+                    let ink = palette_style.ink(stroke_color, join, style.width, authored);
+                    (ink.set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series)), palette_style.inline(canvas, join))
+                } else {
+                    let line = Attrs::new()
+                        .set("fill", "none")
+                        .set("stroke", stroke_color)
+                        .num("stroke-width", style.width.unwrap_or(line_w))
+                        .set("stroke-linecap", cap)
+                        .set("stroke-linejoin", join)
+                        .set_if(is_multi, ::layout::contract::SERIES_KEY, display_label(series));
+                    (with_dash(line, style.dasharray.or_else(|| ink_dash.clone()).or_else(|| dash_of(series)), dash_length(&d)), None)
+                };
+                let mut group = vec![crate::href::linked(anchor, Node::path(mark_of(series, None), d.clone(), line))];
+                group.extend(inline.map(|attrs| Node::path(Role::Chrome, d, attrs)));
+                plot.push(crate::contract::connected_group("line", "layer_3_marks", group));
             }
         }
         if edge_is_separator && y_sides.is_none() {
@@ -6464,7 +6681,8 @@ pub(super) fn fit(
                 let Some(Some(yv)) = data.get(&(x_domain[i].clone(), data_key.clone())).copied() else {
                     continue;
                 };
-                let announce = point_size_at(data_key, i).is_none();
+                // A datum whose dot an anchor filter withholds is announced here instead.
+                let announce = point_size_at(data_key, i).is_none() || (anchored_only && !anchored.contains(&(data_key.clone(), i)));
                 let aria = if announce { Some(point_aria(data_key, i, yv)?) } else { None };
                 let label_attrs = ::layout::contract::aria_attrs(aria.as_deref(), ::layout::contract::ItemRole::Point)?;
                 let anchor = r.link_open.anchor(href_at(i, data_key));
@@ -6626,7 +6844,8 @@ pub(super) fn fit(
                     let color_promoted = domain.len() > 1;
                     let subset_marks = |rows: &[serde_json::Map<String, Value>],
                                         series_color: &str,
-                                        color_value: Option<&str>|
+                                        color_value: Option<&str>,
+                                        palette: Option<&PaletteLineStyle>|
                      -> Result<Vec<Node>, String> {
                         let series_text = crate::families::layers::layer_series_text(
                             label,
@@ -6668,6 +6887,7 @@ pub(super) fn fit(
                             crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
                             crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
                             &under,
+                            palette,
                         )
                         .map_err(|e| format!("line: {e}"))
                     };
@@ -6675,10 +6895,11 @@ pub(super) fn fit(
                         Some(cf) => {
                             for (value, subset) in layer_color_groups(layer_rows, cf) {
                                 let color = claim.group_color(&layer_scale, cf, value.as_deref(), &subset);
-                                layer_nodes.extend(subset_marks(&subset, &color, Some(value.as_deref().unwrap_or(NULL_COLOR_TEXT)))?);
+                                let group = value.as_deref().unwrap_or(NULL_COLOR_TEXT);
+                                layer_nodes.extend(subset_marks(&subset, &color, Some(group), styled.then(|| style_of(&layer_pool_key(index, group))))?);
                             }
                         }
-                        None => layer_nodes.extend(subset_marks(layer_rows, claimed_fill, None)?),
+                        None => layer_nodes.extend(subset_marks(layer_rows, claimed_fill, None, styled.then(|| style_of(&layer_pool_key(index, label))))?),
                     }
                 }
                 OverlayLayer::Bar(bl) => {
@@ -6924,7 +7145,7 @@ pub(super) fn fit(
     // production constant). `paint_value_axis: false` skips it; a facet
     // panel that isn't the last column of its row reserves the gutter but
     // never draws into it.
-    let axis: Vec<Node> = if paint_value_axis {
+    let mut axis: Vec<Node> = if paint_value_axis {
         let y_label_edge_x = if y_on_right {
             plot_w + value_axis_right_overhang + 0.5 + y_tick_eff + y_gutter
         } else {
@@ -7043,23 +7264,155 @@ pub(super) fn fit(
     } else {
         None
     };
-    // An auto label of a point on the y axis that reads its tick's text only repeats the axis.
-    let value_label_marks: Vec<_> = if value_labels.is_some_and(|ml| ml.auto) && ax_y.labels.visible.unwrap_or(true) && paint_value_axis {
-        let ticks = crate::placement::tick_labels(&[(&axis, (0.0, 0.0))]);
-        let edge_x = if y_on_right { plot_w } else { 0.0 };
-        value_label_marks
-            .into_iter()
-            .filter(|(i, _, at, text, _, _, _)| {
-                !(label_spot(*i).edge.is_none() && crate::placement::repeats_axis((fit_x_at(*i), y_at(*at)), text, edge_x, &ticks))
-            })
-            .collect()
-    } else {
-        value_label_marks
-    };
+    // Overlay: each series is named inside the plot, beside its own line or inside its own band on a
+    // stacked area. The names join `plot` as labels, so the value labels, annotations and everything
+    // after clear them.
+    let mut unnamed: Vec<String> = Vec::new();
+    if r.style.endpoint_labels.overlay && is_multi {
+        use crate::series_names::{Geometry, Name, Outcome};
+        let geometries: Vec<(&String, Geometry)> = if is_stacked {
+            stacked_series_points.iter().map(|(series, runs)| (series, Geometry::Band(crate::series_names::band_of(runs)))).collect()
+        } else {
+            series_points.iter().map(|(series, runs)| (series, Geometry::Line(runs.clone()))).collect()
+        };
+        for (series, geometry) in &geometries {
+            let xs: Vec<f64> = match geometry {
+                Geometry::Line(runs) => runs.iter().flatten().map(|p| p.0).collect(),
+                Geometry::Band(runs) => runs.iter().map(|r| r.0).collect(),
+            };
+            if xs.windows(2).any(|w| w[1] < w[0]) {
+                return Err(format!("{fam}: key.direct.position: overlay needs {series:?} to run left to right").into());
+            }
+        }
+        let (mut names, mut labels) = (Vec::new(), Vec::new());
+        for (owner, (series, geometry)) in geometries.into_iter().enumerate() {
+            if matches!(&geometry, Geometry::Line(runs) if runs.iter().all(Vec::is_empty)) || matches!(&geometry, Geometry::Band(runs) if runs.is_empty()) {
+                continue;
+            }
+            let text = display_label(series);
+            if r.style.endpoint_labels.key.contains(&text) {
+                unnamed.push(text);
+                continue;
+            }
+            let measure = |t: &str| crate::common::measure_at_css_weight(fonts, t, &sl.font_family, sl.font_size, &sl.font_weight);
+            let edges = text.char_indices().map(|(i, _)| i).chain([text.len()]).map(|i| measure(&text[..i])).collect::<Result<Vec<f64>, _>>()?;
+            let prefer_x = match r.style.endpoint_labels.overlay_x.iter().find(|a| &a.series == series) {
+                Some(a) => x_axis_map(plot_w).at(&a.x, &crate::annotation::Site { chart_id: &r.id, index: 0 })?,
+                None => None,
+            };
+            names.push(Name { owner, size: (edges[edges.len() - 1], sl.font_size), text: text.clone(), edges, geometry, prefer_x });
+            labels.push((series, text));
+        }
+        let beside: Vec<crate::placement::Frame> = vec![(axis.as_slice(), (0.0, 0.0))];
+        let mut obstacles = crate::placement::obstacles(&plot, &beside, canvas)?;
+        obstacles.extend(crate::annotation::name_obstacles(&annotations)?);
+        // A line's last value whose usual spot a gridline drawn at text contrast strikes moves to
+        // the side of its point (value-label placement); a name keeps off that spot, since the
+        // value is tied to its point and the name is not.
+        let struck = crate::placement::strikes(&plot, canvas)?;
+        let mut last: HashMap<&str, usize> = HashMap::new();
+        for (i, _, _, _, _, series, _) in &value_label_marks {
+            last.entry(series.as_str()).and_modify(|l| *l = (*l).max(*i)).or_insert(*i);
+        }
+        for (i, _, at, _, w, series, _) in &value_label_marks {
+            if last.get(series.as_str()) != Some(i) {
+                continue;
+            }
+            let (spot, x, y) = (label_spot(*i), fit_x_at(*i), y_at(*at));
+            let ink = vega_fit::text_ink(x + spot.dx, y + spot.dy, *w, value_label_size, spot.align, spot.baseline);
+            if struck.iter().any(|o| o.overlap(&ink) > 0.0) {
+                obstacles.push(crate::placement::Obstacle::label(vega_fit::Bounds::new(x - w - VALUE_SIDE_STEP, ink.y1, x, ink.y2)));
+            }
+        }
+        // A name follows its line through the data points; a stair's risers and a basis spline
+        // stand off that path, so their names stay straight.
+        use d3rs::shape::Curve;
+        let through_points = !matches!(curve, Curve::Step | Curve::StepBefore | Curve::StepAfter | Curve::Basis);
+        let place = |follow: bool| {
+            let mut field = crate::placement::Field { plot: (plot_w, plot_h), obstacles: obstacles.clone(), paths: Vec::new() };
+            crate::series_names::place_series_names(&names, &mut field, follow && through_points)
+        };
+        let outcomes = crate::series_names::follow_where_clear(place, bound.auto_attempt);
+        let mut colliding = Vec::new();
+        for (k, ((series, text), outcome)) in labels.iter().zip(outcomes).enumerate() {
+            let spot = match outcome {
+                Outcome::Placed(spot) => spot,
+                Outcome::Collides(spot) => {
+                    colliding.push(text.as_str());
+                    spot
+                }
+                // Shorter than its name, or too thin to see: the key beside the plot names it.
+                Outcome::Thin | Outcome::TooThin => {
+                    unnamed.push(text.clone());
+                    continue;
+                }
+            };
+            let ink = crate::common::series_ink(series, &palette_domain, &r.series_palette, &sl.dark_companion_palette, &sl.pin_companions, category_scale, r.patterns.ladder_ink())?;
+            let ink = if is_stacked {
+                // The band's fill over the canvas is the ground the name is read on.
+                let fill = area_paint(series, &palette_domain, r, is_multi, category_scale)?.into_color();
+                let (fr, fg, fb, _) = dbt_charts_color::parse_css_color(&fill)?;
+                let (cr, cg, cb, _) = dbt_charts_color::parse_css_color(canvas)?;
+                let (gr, gg, gb, _) = dbt_charts_color::composite_over((fr, fg, fb, area_opacity), (cr, cg, cb, 1.0));
+                let ground = dbt_charts_color::rgb01_to_hex(gr, gg, gb);
+                use crate::constants::contrast as c;
+                let (floor, stretch) = if dbt_charts_color::is_light_canvas(&ground)? {
+                    (c::SERIES_NAME_DARK_INK_MIN_CONTRAST, c::SERIES_NAME_DARK_INK_CHROMA_STRETCH)
+                } else {
+                    (c::SERIES_NAME_LIGHT_INK_MIN_CONTRAST, c::SERIES_NAME_LIGHT_INK_CHROMA_STRETCH)
+                };
+                dbt_charts_color::colorful_readable_ink(&ink, &ground, floor, stretch)?
+            } else {
+                ink
+            };
+            let fill = crate::selected::ink(selection.recede_of_series(series), &ink);
+            let attrs = Attrs::new().set(::layout::contract::SERIES_KEY, text.as_str());
+            let above = vega_fit::baseline_rise(sl.font_size, "alphabetic");
+            let label = |x: f64, y: f64, align: &str, aria: Attrs, text: &str| {
+                crate::common::value_label(x, y, align, &sl.font_family, sl.font_size, &sl.font_weight, Some(sl.font_style.as_str()), &fill, aria, text)
+            };
+            plot.push(match &spot.glyphs {
+                None => label(spot.b.x1, spot.b.y1 + above, "left", attrs, text).with_text_bounds(spot.b.into()),
+                // Along its line the name stays one `<text>`, a `<tspan>` per glyph set at the
+                // glyph's start on its baseline and turned there, so SVG, PNG and PDF draw it alike
+                // and it still reads, selects and hovers as the whole name.
+                Some(glyphs) => {
+                    let starts: Vec<(f64, f64)> = glyphs
+                        .iter()
+                        .zip(names[k].edges.windows(2))
+                        .map(|((g, _), e)| {
+                            let (sin, cos) = g.angle.to_radians().sin_cos();
+                            let half = (e[1] - e[0]) / 2.0;
+                            (g.at.0 - half * cos, g.at.1 - half * sin)
+                        })
+                        .collect();
+                    let runs = text
+                        .chars()
+                        .zip(glyphs)
+                        .zip(&starts)
+                        .map(|((c, (g, _)), &(x, y))| scene::Run::Tspan {
+                            x: Some(x),
+                            y: Some(y),
+                            dx: None,
+                            dy: None,
+                            attrs: Attrs::new().num("rotate", g.angle),
+                            runs: vec![scene::Run::Chars(scene::Chars::new(c.to_string(), scene::Escape::Attr))],
+                        })
+                        .collect();
+                    let node = label(starts[0].0, starts[0].1, "left", attrs, "");
+                    Node::new(Role::Label, node.attrs, scene::Shape::Text { at: starts[0], bounds: Some(spot.b.into()), runs })
+                }
+            });
+        }
+        crate::series_names::warn_collisions(payload.chart_id()?, &colliding);
+    }
+    let ticks = crate::placement::tick_labels(&[(&axis, (0.0, 0.0))]);
     // L6: the value-label text layer, drawn last as production layers it —
     // `y − 4` shifted by the `bottom` baseline's own font offset.
     // Points that read as one take one label, on the series painted on top.
-    let value_label_marks: Vec<_> = if value_labels.is_some_and(|ml| ml.auto) {
+    // Every series with a point where a cluster's one label stands: a tick level with it tells them all.
+    let cluster_peers: Vec<(f64, f64, String)> = value_label_marks.iter().map(|m| (fit_x_at(m.0), y_at(m.2), m.5.clone())).collect();
+    let mut value_label_marks: Vec<_> = if value_labels.is_some_and(|ml| ml.auto) {
         let rank = |series: &str| paint_order.iter().position(|s| s == series).unwrap_or(0);
         let points: Vec<(f64, f64)> = value_label_marks.iter().map(|m| (fit_x_at(m.0), y_at(m.2))).collect();
         let ranks: Vec<usize> = value_label_marks.iter().map(|m| rank(&m.5)).collect();
@@ -7068,6 +7421,8 @@ pub(super) fn fit(
     } else {
         value_label_marks
     };
+    let mut drawn_labels: HashSet<(String, usize)> = HashSet::new();
+    let mut told_points: HashSet<(String, usize)> = HashSet::new();
     if !value_label_marks.is_empty() {
         let f = value_labels.and_then(|ml| ml.font.as_ref());
         // `series` is the unset color: the label takes its series' fill.
@@ -7081,42 +7436,74 @@ pub(super) fn fit(
         let movable = value_labels.is_some_and(|ml| ml.auto);
         let mut series_ids: Vec<&str> = Vec::new();
         let mut paths: Vec<Vec<(f64, f64)>> = Vec::new();
-        let axis_channel = movable && (!show_rail || !y_on_right) && paint_value_axis && ax_y.labels.visible.unwrap_or(true);
-        let channel_width = y_label_ws.iter().copied().fold(0.0, f64::max);
-        let mut series_last: HashMap<&str, usize> = HashMap::new();
+        let axis_gutter = movable && (!show_rail || !y_on_right) && paint_value_axis && ax_y.labels.visible.unwrap_or(true);
+        let gutter_width = y_label_ws.iter().copied().fold(0.0, f64::max);
+        let mut series_last: HashMap<String, usize> = HashMap::new();
         for (i, _, _, _, _, series, _) in &value_label_marks {
-            let last = series_last.entry(series).or_insert(*i);
+            let last = series_last.entry(series.clone()).or_insert(*i);
             *last = (*last).max(*i);
         }
+        // An end point beside the value axis may read in that axis' label gutter when the plot has no room for it.
+        let gutter_at = |i: usize, series: &str, x: f64| {
+            let beside_axis = if y_on_right { series_last[series] == i && plot_w - x <= AXIS_GUTTER_REACH } else { i == 0 && several_starts && x <= AXIS_GUTTER_REACH };
+            // A value is set smaller than the ticks, so it never aligns with them: it starts flush at the gutter's plot side.
+            let (edge, align, x_span) = if y_on_right {
+                let edge = plot_w + value_axis_right_overhang + 0.5 + y_tick_eff + y_label_pad;
+                (edge, "left", (edge, edge + gutter_width))
+            } else {
+                let edge = 0.5 - y_tick_eff - y_label_pad;
+                (edge, "right", (edge - gutter_width, edge))
+            };
+            (axis_gutter && beside_axis).then_some(crate::placement::Gutter {
+                spot: CaptionSpot { edge: None, align, baseline: "middle", dx: edge - x, dy: 0.0 },
+                x: x_span,
+            })
+        };
+        // A label on the y axis, or one beside it that fits its gutter, reading the text of the drawn
+        // tick level with its point only repeats the axis: it is dropped and the tick takes its ink.
+        // The series whose dropped value each drawn tick tells, with that value label's ink.
+        let mut told_by_tick: Vec<(usize, String, usize, String)> = Vec::new();
+        let mut tell = |tick: usize, i: usize, at: f64, series: &str, fill: &str| {
+            let peers = cluster_peers.iter().filter(|(px, py, ps)| (px - fit_x_at(i)).abs() < 1.0 && (py - y_at(at)).abs() < 1.0 && ps != series);
+            told_by_tick.push((tick, series.to_string(), i, inherited_label_ink(fill, authored_color, color).to_string()));
+            if peers.count() > 0 {
+                told_by_tick.push((tick, String::new(), i, String::new()));
+            }
+        };
+        let edge_x = if y_on_right { plot_w } else { 0.0 };
+        let on_axis = |i: usize| movable && paint_value_axis && ax_y.labels.visible.unwrap_or(true) && label_spot(i).edge.is_none() && (fit_x_at(i) - edge_x).abs() < 1.0;
+        value_label_marks.retain(|(i, _, at, text, w, series, fill)| {
+            let x = label_spot(*i).edge.map_or_else(|| fit_x_at(*i), |frac| band_edge_at(*i, frac));
+            let beside = gutter_at(*i, series, x).is_some_and(|g| *w <= g.x.1 - g.x.0);
+            let tick = if on_axis(*i) || beside { crate::placement::repeats_axis(y_at(*at), text, &ticks) } else { None };
+            if let Some(tick) = tick {
+                tell(tick, *i, *at, series, fill);
+            }
+            tick.is_none()
+        });
         let reqs: Vec<crate::placement::LabelReq> = value_label_marks
             .iter()
             .map(|(i, _, at, _, w, series, _)| {
                 let preferred = label_spot(*i);
                 let x = preferred.edge.map_or_else(|| fit_x_at(*i), |frac| band_edge_at(*i, frac));
                 let anchor = (x, y_at(*at));
-                // An end point beside the value axis reads best in that axis' channel.
-                let beside_axis = if y_on_right { series_last[series.as_str()] == *i && plot_w - x <= AXIS_CHANNEL_REACH } else { *i == 0 && several_starts && x <= AXIS_CHANNEL_REACH };
-                let in_axis_channel = axis_channel && beside_axis && *w <= channel_width;
-                let preferred = if in_axis_channel {
-                    crate::common::CaptionSpot { edge: None, align: y_label_align, baseline: "middle", dx: y_label_lx - x, dy: 0.0 }
-                } else {
-                    preferred
-                };
                 let owner = series_ids.iter().position(|s| *s == series.as_str()).unwrap_or_else(|| {
                     series_ids.push(series);
                     paths.push(Vec::new());
                     series_ids.len() - 1
                 });
                 paths[owner].push(anchor);
+                let is_movable = movable && !is_stacked && preferred.edge.is_none();
                 crate::placement::LabelReq {
                     anchor,
                     width: *w,
                     preferred,
-                    movable: movable && !is_stacked && preferred.edge.is_none(),
+                    movable: is_movable,
                     owner,
                     group: owner,
                     own_radius: point_size_at(series, *i).map_or(0.0, symbol_radius),
-                    channel: in_axis_channel || (*i == 0 && start_outside),
+                    outside: *i == 0 && start_outside,
+                    gutter: if is_movable { gutter_at(*i, series, x) } else { None },
                 }
             })
             .collect();
@@ -7142,7 +7529,7 @@ pub(super) fn fit(
             label_inks.push((ink, None));
             // No authored label color: the text mark inherits the series' color, and over an
             // unstacked area's fill takes whichever of that or the canvas reads better.
-            let inherited = if fill.is_empty() || authored_color.is_some() { color } else { fill };
+            let inherited = inherited_label_ink(fill, authored_color, color);
             let text_color = if draw_areas && !is_stacked && authored_color.is_none() {
                 crate::annotation::text_over_fills(&under, canvas, &ink, inherited).map_err(|e| format!("area: {e}"))?
             } else {
@@ -7164,6 +7551,27 @@ pub(super) fn fit(
             .with_text_bounds(ink.into());
             labels.push(crate::href::linked(anchor, label));
         }
+        for ((i, _, _, _, _, series, _), spot) in value_label_marks.iter().zip(&spots) {
+            if spot.is_some() {
+                drawn_labels.insert((series.clone(), *i));
+            }
+        }
+        // A tick level with one series' dropped value reads as that series' value: it takes the label's ink.
+        // Two series on one tick leave it plain.
+        for (tick, series, i, ink) in &told_by_tick {
+            let tick = *tick;
+            let claimants: HashSet<&str> = told_by_tick.iter().filter(|c| c.0 == tick).map(|c| c.1.as_str()).collect();
+            if claimants.len() != 1 || series.is_empty() {
+                continue;
+            }
+            told_points.insert((series.clone(), *i));
+            let text = ticks[tick].2.as_str();
+            scene::for_each_mut(&mut axis, &mut |node| {
+                if node.role == Role::Axis && node.text_content().as_deref() == Some(text) {
+                    node.attrs = std::mem::take(&mut node.attrs).without(&["fill"]).set("fill", ink.as_str());
+                }
+            });
+        }
         let auto_total = reqs.iter().filter(|req| req.movable).count();
         let dropped = reqs.iter().zip(&spots).filter(|(req, spot)| req.movable && spot.is_none()).count();
         let thinned = movable && crate::placement::warn_value_labels_thinned(payload.chart_id()?, dropped, auto_total);
@@ -7182,6 +7590,23 @@ pub(super) fn fit(
         } else {
             plot.extend(labels);
         }
+    }
+    // An anchor-only dot marks the point its label names: no drawn label, no dot or halo ring.
+    // (The labels were placed against the dots, so they come out only now.)
+    // A rail that names each series beside its end already labels the dot there.
+    if anchored_only && !show_rail {
+        let at = |(series, i): &(String, usize)| {
+            let yv = data.get(&(x_domain[*i].clone(), series.clone())).copied().flatten()?;
+            let y = datum_y(series, *i, yv);
+            Some(datum_xs(*i).into_iter().map(move |x| (x.to_bits(), y.to_bits())).collect::<Vec<_>>())
+        };
+        let kept: HashSet<(u64, u64)> = drawn_labels.iter().filter_map(at).flatten().collect();
+        let gone: HashSet<(u64, u64)> = anchored.iter().filter(|key| !drawn_labels.contains(*key) && !told_points.contains(*key)).filter_map(at).flatten().filter(|xy| !kept.contains(xy)).collect();
+        let is_gone_dot = |node: &Node| {
+            matches!(node.shape, scene::Shape::Circle { .. } | scene::Shape::Path(_))
+                && matches!(node.transform.as_slice(), [scene::Transform::Translate { x, y }] if gone.contains(&(x.to_bits(), y.to_bits())))
+        };
+        scene::prune(&mut plot, &is_gone_dot);
     }
     let mut occupied = crate::annotation::DataMark::plot_marks(&plot);
     occupied.extend(crate::annotation::DataMark::labels_in(&plot, (0.0, 0.0)));
@@ -7475,6 +7900,11 @@ pub(super) fn fit(
             tail.extend(drawn_symbol_legend(&entries, legend, cfg, LegendSymbol::Circle, x, group_y, false, r.canvas.as_str()));
         }
     }
+    let legend_entries = if styled {
+        with_line_styles(&legend_entries, &legend_slots, &r.style.line_styles, canvas)
+    } else {
+        legend_entries
+    };
     // Legend (multi-series): a right/bottom column with a title, or a top
     // horizontal entry grid with none — right of the plot, below the
     // x-axis labels, or above the plot itself; coexists with the rail, see
@@ -7483,8 +7913,11 @@ pub(super) fn fit(
     // this one `drawn_symbol_legend` call is position-agnostic.
     if let Some(lg) = &vega_legend_box {
         let (lx, ly) = legend_pos;
-        let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
-        crate::families::legend::warn_overlay_legend_covers_marks(&r.id, &r.legend.position, &plot, (lx + dx, ly + dy), (lg.box_w, lg.box_h()));
+        let (slide_x, slide_y) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
+        let block = (lg.box_w, lg.box_h());
+        let (corner_x, corner_y) = overlay_corner_shift(&r.legend.position, (plot_w, plot_h), block, || annotations.occupied.clone());
+        let (dx, dy) = (slide_x + corner_x, slide_y + corner_y);
+        crate::families::legend::warn_overlay_legend_covers_marks(&r.id, &r.legend.position, &plot, (lx + dx, ly + dy), block);
         tail.extend(drawn_symbol_legend(&legend_entries, lg, &r.legend, LegendSymbol::Circle, group_x + lx + dx, group_y + ly + dy, tooltip_labels && has_layers, r.canvas.as_str()));
         tail.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (group_x + lx + dx, group_y + ly + dy), r.canvas.as_str())?);
         tail.extend(crate::legend_view::legend_clear(lg, &legend_entries, &r.legend, (group_x + lx + dx, group_y + ly + dy), crate::legend_view::Inset::below_titles(&head, pad_t, canvas_w - pad_r, canvas_h - pad_b), fonts)?);
@@ -7725,5 +8158,7 @@ pub(super) fn fit(
         geometry,
         cuts,
         strip_hidden: strip_hidden.get(),
+        line_traces,
+        unnamed,
     })
 }

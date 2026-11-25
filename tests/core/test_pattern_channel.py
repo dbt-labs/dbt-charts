@@ -28,9 +28,11 @@ from dbt_charts.core.compile.models.style.authored import (
     BarChartStylePatch,
     HeatmapChartStylePatch,
     PieChartStylePatch,
+    StylePatch,
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+from dbt_charts.core.compile.resolve.style.palette import UnknownPaletteError
 
 from ._svg_render import render_board_svg_result
 
@@ -239,6 +241,25 @@ def test_pattern_palette_name_may_replace_the_default() -> None:
         style=BarChartStylePatch(pattern={"palette": "pattern-mixed-8"}),
     ).pattern
     assert pattern is not None and pattern.scale == "category"
+
+
+def test_a_line_palette_bound_to_the_pattern_role_is_refused() -> None:
+    chart = BarChart(
+        id="t",
+        query=SqlQuery(sql="SELECT 1", source="t"),
+        query_name="q",
+        type="bar",
+        x="x_time",
+        y="value",
+        color="series",
+        pattern="series",
+    )
+    roles = StylePatch.model_validate(
+        {"palettes": {"pattern_category": "line-one-ink"}}
+    )
+    context = resolve_chart_style_context(get_theme_style(), roles)
+    with pytest.raises(UnknownPaletteError, match="line palette"):
+        resolve(chart, _SERIES, context, width=600.0)
 
 
 def test_palette_kind_must_suit_the_field() -> None:

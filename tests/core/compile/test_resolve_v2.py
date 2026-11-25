@@ -810,14 +810,14 @@ def test_kpi_resolve_family_label_override_reaches_resolved_style() -> None:
     with pytest.raises(ValidationError, match="title"):
         StylePatch.model_validate({"charts": {"kpi": {"title": {"min_height": 40}}}})
     patch = StylePatch.model_validate(
-        {"charts": {"kpi": {"label": {"overflow": "clip"}}}}
+        {"charts": {"kpi": {"label": {"max_lines": "all"}}}}
     )
     ctx = resolve_chart_style_context(theme, patch)
 
     resolved = resolve(_kpi_compiled(), _KPI_DATA, ctx)
     assert resolved.style.kpi is not None
-    assert resolved.style.kpi.label.overflow == "clip"
-    assert _default_board_style().kpi.label.overflow != "clip"
+    assert resolved.style.kpi.label.max_lines == "all"
+    assert _default_board_style().kpi.label.max_lines != "all"
 
 
 def test_kpi_resolved_style_has_palette() -> None:

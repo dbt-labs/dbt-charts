@@ -18,19 +18,45 @@
 //!   unset, a bar with `layers`) is left alone: when the data then makes the bar
 //!   horizontal, resolve refuses the key and names `axis_x.position`. A destination
 //!   already authored refuses the move.
+//! - **Every text overflow mode becomes a `max_lines` line limit, a count or `all`.**
+//!   `style.title.overflow`, `style.title.subtitle.overflow`, a KPI's `style.label.overflow`
+//!   and a table's `style.header.overflow` and `style.header_overflow` become `max_lines`
+//!   (a table's header has one limit, `header.max_lines`); a column's `header_overflow`
+//!   becomes `header_max_lines`. `truncate` is `1`, `wrap-two` is `2`, `wrap` is `all`, and
+//!   `clip` is `1`: a clipped cut now ends in an ellipsis (and the hover reveal where the
+//!   surface has one), which the notice says. A destination already authored, or a second old
+//!   spelling of it, refuses. Every tier moves through `suffix_rename_moves`, as
+//!   `style.max_lines` does.
+//! - **`style.layout.tabs.rail_max_lines` is removed**: one `Deletion`. A tab label is one line,
+//!   cut with an ellipsis and its full text on hover, in a rail as in a bar.
 //! - **`style.outliers.reveal: none` becomes `chart`**, on a chart's own style,
 //!   `style.charts.<type>` and every nested board. `chart` redraws every torn bar on
 //!   hover and `bar` only the hovered one. The move is live, so a board at any version
 //!   that still says `none` migrates with a notice.
+//! - **A variable's `input: range` becomes `input: slider`**, on the root and every nested
+//!   board. `range` drew the same one-value slider; a two-ended range is two `slider`
+//!   variables, one per bound. The move is live, so a board at any version that still says
+//!   `range` migrates with a notice.
 //! - **`style.stack_order` becomes `style.series_order`** on bar and area, at every
 //!   cascade level: it now orders a grouped bar's series too, so the name no longer
 //!   says stack.
+//! - **A table's `style.wrap`, a boolean, becomes `style.max_lines`, a line limit.**
+//!   `wrap: false` becomes `max_lines: 1` and `wrap: true` becomes `max_lines: all`, so a
+//!   board that authored either keeps its rendering. The move reaches a table's `style`,
+//!   the theme and board tiers' `charts.table`, and every nested board.
 //! - **`tabs` maps each tab's label to its board.** The `items` list becomes the
 //!   mapping itself, keyed by each item's `title`; the rest of the item is the
 //!   board. `icon`, never drawn, goes. `position` moves to
 //!   `style.layout.tabs.position`; `id` and `default` go with a notice, so the
 //!   first tab opens. Two tabs with one title refuse. One `Move` of every
 //!   board's `tabs.items` to `tabs`, run last, flattening the tabs in its panes too.
+//! - **The legend's glyph and entry spacing leaves regroup.**
+//!   - `symbol_limit` becomes `limit`.
+//!   - `symbol_shape` and `symbol_fill` become `symbol.shape` and `symbol.fill`.
+//!   - `row.swatch_width` becomes `symbol.size`. `symbol.size` must be above zero, so a
+//!     board that set `row.swatch_width: 0` cannot migrate.
+//!   - `row.entry_gap` becomes `entry_gap`. Both it and `row.swatch_width` only sized the
+//!     fit check before; migrated, they are drawn.
 //! - **A color scale's bounds move under `domain`**: a gradient or table-column scale's
 //!   `min` and `max` become `domain.min` and `domain.max` (`[min, max]` is the
 //!   shorthand), one tail rename per scale target. Its old `domain` only ever said
@@ -42,17 +68,32 @@ use std::sync::Arc;
 
 use serde_json::Value as Json;
 
-use crate::decl::{path, Declarations, Deletion, Grammars, Move, Rewrote};
+use crate::decl::{
+    bool_key, path, Declarations, Deletion, Grammars, Mapped, Move, Rewrote, ValueMap,
+};
 use crate::fields::Fields;
 use crate::pyrepr::repr_json;
 use crate::v0_12_0::{holder, value_at};
 
 const VARIABLES_VISIBLE_REASON: &str = "No renderer read it, so the variables strip drew either way. Hide one control with that variable's own `visible: false`.";
 const REVEAL_NONE_NOTICE: &str = "`style.outliers.reveal: none` became `chart`: hover now redraws the torn bars. `bar` redraws only the hovered one.";
+const RANGE_INPUT_NOTICE: &str = "`input: range` became `input: slider`: `range` was a one-value slider, never a two-ended one. A two-ended range is two `slider` variables, one per bound.";
+const WRAP_RESPELL: &[(&[&str], &[&str])] = &[(&["max_lines"], &["wrap"])];
+const OVERFLOW_RENAMES: &[(&[&str], &[&str])] = &[
+    (&["title", "max_lines"], &["title", "overflow"]),
+    (&["subtitle", "max_lines"], &["subtitle", "overflow"]),
+    (&["label", "max_lines"], &["label", "overflow"]),
+    (&["header", "max_lines"], &["header", "overflow"]),
+    (&["header", "max_lines"], &["header_overflow"]),
+    (&["header_max_lines"], &["header_overflow"]),
+];
+const TAB_LABELS_REASON: &str = "A tab label is one line, cut with an ellipsis, in a rail as in a bar.";
+const CLIP_NOTICE: &str = "`clip` is gone: the cut now ends in an ellipsis, and the hover reveal where the surface has one. Migrated to one line.";
 const SPARK_BAR_FONT_REASON: &str = "A spark bar cell draws no text, so this font styled nothing.";
 
 const TABS: [&str; 1] = ["tabs"];
 const TAB_ITEMS: [&str; 2] = ["tabs", "items"];
+const TAB_ITEMS_PANE: [&str; 3] = ["tabs", "items", "*"];
 const TAB_POSITION: [&str; 4] = ["style", "layout", "tabs", "position"];
 /// What a board must hold one of (AuthoredBoard's content rule).
 const BOARD_CONTENT: [&str; 7] = ["rows", "cols", "grid", "tabs", "text", "charts", "title"];
@@ -257,6 +298,83 @@ fn category_edge(doc: &Json, source: &[String], value: &Json) -> Result<Rewrote,
     })
 }
 
+/// The regrouped legend leaves, reaching tab items as well as nested boards.
+fn legend_moves(g: &Grammars) -> impl Iterator<Item = Move> {
+    let tabs = path(&["tabs", "items", "*"]);
+    g.suffix_rename_moves(
+        &[
+            (&["legend", "limit"], &["legend", "symbol_limit"]),
+            (&["legend", "symbol", "shape"], &["legend", "symbol_shape"]),
+            (&["legend", "symbol", "fill"], &["legend", "symbol_fill"]),
+            (&["legend", "symbol", "size"], &["legend", "row", "swatch_width"]),
+            (&["legend", "entry_gap"], &["legend", "row", "entry_gap"]),
+        ],
+        None,
+        None,
+    )
+    .into_iter()
+    .map(move |mut m| {
+        // A tab item is its own model, not a board, so the board nesting walk never
+        // steps into one; following it as a prefix reaches tabs nested to any depth.
+        let mut prefixes = (*m.sub_board_prefixes).clone();
+        prefixes.push(tabs.clone());
+        m.sub_board_prefixes = Arc::new(prefixes);
+        m
+    })
+}
+
+/// The key an overflow `source` becomes, and the other old spelling that becomes the same key.
+fn line_limit_destination(source: &[String]) -> Option<(Vec<String>, Option<Vec<String>>)> {
+    let (last, parent) = source.split_last()?;
+    let with = |tail: &[&str]| [parent, &path(tail)[..]].concat();
+    match (last.as_str(), parent.split_last()) {
+        ("header_overflow", Some((_, above))) if above.last().is_some_and(|k| k == "columns") => {
+            Some((with(&["header_max_lines"]), None))
+        }
+        ("header_overflow", _) => Some((with(&["header", "max_lines"]), Some(with(&["header", "overflow"])))),
+        ("overflow", Some((holder, above))) if holder == "header" => Some((
+            [above, &path(&["header", "max_lines"])[..]].concat(),
+            Some([above, &path(&["header_overflow"])[..]].concat()),
+        )),
+        ("overflow", _) => Some((with(&["max_lines"]), None)),
+        _ => None,
+    }
+}
+
+/// An overflow mode as the line limit it became. A destination the author already set, or a
+/// second old spelling of it, refuses: neither value may silently win.
+fn line_limit(doc: &Json, source: &[String], value: &Json) -> Result<Rewrote, String> {
+    if let Some((destination, rival)) = line_limit_destination(source) {
+        for taken in std::iter::once(&destination).chain(&rival) {
+            if value_at(doc, taken).is_some_and(|v| !v.is_null()) {
+                return Err(format!(
+                    "Cannot move `{}` to `{}`: `{}` is also set. Choose one value and migrate manually.",
+                    source.join("."),
+                    destination.join("."),
+                    taken.join(".")
+                ));
+            }
+        }
+    }
+    let (limit, notice) = match value.as_str() {
+        Some("clip") => (Json::from(1), Some(CLIP_NOTICE.to_string())),
+        Some("truncate") => (Json::from(1), None),
+        Some("wrap-two") => (Json::from(2), None),
+        Some("wrap") => (Json::from("all"), None),
+        _ => {
+            return Err(format!(
+                "`{}` is {value}, not `clip`, `truncate`, `wrap-two` or `wrap`; set `max_lines` to a line count or `all` by hand.",
+                source.join(".")
+            ))
+        }
+    };
+    Ok(Rewrote {
+        value: Some(limit),
+        notice,
+        ..Rewrote::default()
+    })
+}
+
 fn reveal_none(_doc: &Json, _source: &[String], value: &Json) -> Result<Rewrote, String> {
     if value.as_str() != Some("none") {
         return Ok(Rewrote {
@@ -284,6 +402,39 @@ fn reveal_none_moves(g: &Grammars) -> Vec<Move> {
         .map(|p| {
             let mut m = Move::new(g.source, g.target, p.clone(), p);
             m.rewrite_in_document = Some(Arc::new(reveal_none));
+            m.live = true;
+            m.sub_board_prefixes = nesting.clone();
+            m
+        })
+        .collect()
+}
+
+fn range_input(_doc: &Json, _source: &[String], value: &Json) -> Result<Rewrote, String> {
+    if value.as_str() != Some("range") {
+        return Ok(Rewrote {
+            leave: true,
+            ..Rewrote::default()
+        });
+    }
+    Ok(Rewrote {
+        value: Some(Json::from("slider")),
+        notice: Some(RANGE_INPUT_NOTICE.into()),
+        ..Rewrote::default()
+    })
+}
+
+/// One identity move per place the grammar holds a variable's `input`.
+fn range_input_moves(g: &Grammars) -> Vec<Move> {
+    let tail = path(&["variables", "*", "input"]);
+    let nesting = g.nesting_prefixes();
+    Fields::new(g.target_schema)
+        .paths(&BTreeSet::from([tail.clone()]))
+        .into_iter()
+        .filter(|p| p.ends_with(&tail))
+        .filter(|p| g.source_schema.path_exists(p, false))
+        .map(|p| {
+            let mut m = Move::new(g.source, g.target, p.clone(), p);
+            m.rewrite_in_document = Some(Arc::new(range_input));
             m.live = true;
             m.sub_board_prefixes = nesting.clone();
             m
@@ -340,6 +491,14 @@ fn data_domain_moves(g: &Grammars) -> Vec<Move> {
 }
 
 pub fn declarations(g: &Grammars) -> Declarations {
+    let wrap: Arc<ValueMap> = Arc::new(
+        [
+            (bool_key(false), Mapped::Int(1)),
+            (bool_key(true), Mapped::Str("all".into())),
+        ]
+        .into_iter()
+        .collect(),
+    );
     let moves: Vec<Move> = g
         .suffix_rename_moves(
             &[(&["axis_x", "position"], &["axis_y", "position"])],
@@ -352,7 +511,9 @@ pub fn declarations(g: &Grammars) -> Declarations {
             m.rewrite_in_document = Some(Arc::new(category_edge));
             m
         })
+        .chain(legend_moves(g))
         .chain(reveal_none_moves(g))
+        .chain(range_input_moves(g))
         .chain(data_domain_moves(g))
         .chain(g.suffix_rename_moves(
             &[
@@ -363,6 +524,23 @@ pub fn declarations(g: &Grammars) -> Declarations {
             None,
         ))
         .chain(g.suffix_rename_moves(&[(&["series_order"], &["stack_order"])], None, None))
+        .chain(g.suffix_rename_moves(WRAP_RESPELL, Some(wrap), None))
+        .chain(
+            g.suffix_rename_moves(OVERFLOW_RENAMES, None, None)
+                .into_iter()
+                .map(|mut m| {
+                    m.rewrite_in_document = Some(Arc::new(line_limit));
+                    m
+                }),
+        )
+        .map(|mut m| {
+            // The nesting walk follows the target grammar's `tabs.*` panes, but
+            // these moves run while panes still sit at `tabs.items.*`.
+            let mut prefixes = (*m.sub_board_prefixes).clone();
+            prefixes.push(path(&TAB_ITEMS_PANE));
+            m.sub_board_prefixes = Arc::new(prefixes);
+            m
+        })
         .chain(tab_moves(g))
         .collect();
     let deletion = |parts: &[&str], reason: &str, chart_type: Option<&str>| {
@@ -384,6 +562,15 @@ pub fn declarations(g: &Grammars) -> Declarations {
                 SPARK_BAR_FONT_REASON,
                 None,
             ),
+            {
+                let mut rail = deletion(
+                    &["style", "layout", "tabs", "rail_max_lines"],
+                    TAB_LABELS_REASON,
+                    None,
+                );
+                rail.early = true;
+                rail
+            },
             deletion(
                 &["style", "spark", "bar", "font"],
                 SPARK_BAR_FONT_REASON,

@@ -519,14 +519,18 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
 
     let (lx, ly) = legend_xy.get();
     if let Some(lg) = &symbol_legend {
-        let (dx, dy) = legend::legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
+        let (slide_x, slide_y) = legend::legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
+        let (corner_x, corner_y) = legend::overlay_corner_shift(&r.legend.position, (plot_w, plot_h), (lg.box_w, lg.box_h()), || crate::annotation::DataMark::plot_marks(&plot));
+        let (dx, dy) = (slide_x + corner_x, slide_y + corner_y);
         plot.extend(legend::drawn_symbol_legend(&symbol_entries, lg, &r.legend, swatch, lx + dx, ly + dy, false, r.canvas.as_str()));
     } else if let Some(color) = gradient_color {
         let at = GradientAt::new(&r.legend, r.color_format.as_ref(), color, (plot_w, plot_h))?;
         let legend = at.legend(&r.legend, color, gradient_id, &bound.legend_title, fonts)?;
         let block = (legend.box_width(at.length), legend.height(at.length));
-        let (dx, dy) = legend::slide_block(&r.id, &r.legend.position, block, (plot_w, plot_h))?;
-        plot.extend(legend.nodes(lx + dx, ly + dy, at.length));
+        let (slide_x, slide_y) = legend::slide_block(&r.id, &r.legend.position, block, (plot_w, plot_h))?;
+        let (corner_x, corner_y) = legend::overlay_corner_shift(&r.legend.position, (plot_w, plot_h), block, || crate::annotation::DataMark::plot_marks(&plot));
+        let (dx, dy) = (slide_x + corner_x, slide_y + corner_y);
+        plot.extend(legend.nodes(lx + dx, ly + dy, at.length, r.canvas.as_str()));
     }
 
     // X ticks + labels.

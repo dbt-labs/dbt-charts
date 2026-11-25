@@ -26,7 +26,9 @@
         }
         if (config === active) return;
         active = config;
-        if (window.__dbtChartsChartHoverState) styleTooltip(window.__dbtChartsChartHoverState.tooltip);
+        /*{# A pinned card keeps its own board's look until it is let go. #}*/
+        const state = window.__dbtChartsChartHoverState;
+        if (state && !state.pinned) styleTooltip(state.tooltip);
     }
 
     /*{# Role markers baked by emitters/_tooltip.py's ROLE_HEADER / ROLE_HEADER_SWATCHED / #}*/
@@ -56,6 +58,13 @@
     /*{# _tooltip.py's ROLE_EXTRA): a `label: value` row after the mark's own #}*/
     /*{# value rows. The label is resolved text, painted as written. #}*/
     const ROLE_EXTRA = '\u200D';
+    /*{# Follows ROLE_EXTRA on a row whose value is a link's href (contract.rs's #}*/
+    /*{# ROLE_LINK): a `url` or `email` column. #}*/
+    const ROLE_LINK = '\u206F';
+    /*{# Elements that own their click, so a click on them never pins a card. #}*/
+    const CLICK_CONTROLS = 'a[href], button, input, textarea, select, label, [role="button"], [data-dbt-page-target], [data-dbt-legend-var], .dbt-chart-toolbar';
+    /*{# The only hrefs a row links to; any other prints as text. #}*/
+    const LINK_HREF = /^(https?:|mailto:)/i;
     /*{# Marks a (category, series) slot a sparse stack imputes: identity only, #}*/
     /*{# no datum (contract.rs's ROLE_IMPUTED). #}*/
     const ROLE_IMPUTED = '\u034F';
@@ -152,13 +161,16 @@
                 continue;
             }
             if (marker === ROLE_EXTRA) {
-                const body = pair.slice(1);
+                let body = pair.slice(1);
+                const link = body.charAt(0) === ROLE_LINK;
+                if (link) body = body.slice(1);
                 const split = body.indexOf(':');
                 if (split === -1) continue;
                 entries.push({
                     role: 'extra',
                     label: body.substring(0, split).trim(),
                     value: body.substring(split + 1).trim().split(SEMICOLON_ESCAPE).join(';'),
+                    link: link,
                 });
                 continue;
             }
@@ -579,6 +591,17 @@
         return div.innerHTML;
     }
 
+    /*{# A link reads in the value color whatever its row's emphasis, on one #}*/
+    /*{# line cut to the card's max width, its full text on hover. An email #}*/
+    /*{# shows its address, not its mailto: href. #}*/
+    function extraValueHtml(entry, ts) {
+        if (!entry.link || !LINK_HREF.test(entry.value)) return escapeHtml(entry.value);
+        const mailto = /^mailto:/i.test(entry.value);
+        const text = escapeHtml(mailto ? decodeURIComponent(entry.value.slice('mailto:'.length)) : entry.value);
+        return '<a href="' + escapeHtml(entry.value).replace(/"/g, '&quot;') + '" title="' + text.replace(/"/g, '&quot;') +
+            '" style="color:' + ts.value.font.color + ';text-decoration:underline;display:inline-block;max-width:100%;vertical-align:bottom;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + text + '</a>';
+    }
+
     function formatFieldName(key) {
         return escapeHtml(key
             .replace(/_/g, ' ')
@@ -631,17 +654,56 @@
             document.body.appendChild(tooltip);
         }
 
-        window.__dbtChartsChartHoverState = {
+        const state = {
             activeMark: null,
             tooltip: tooltip,
+            /*{# The close button while a click holds the card open, else null. #}*/
+            pinned: null,
             /*{# `painted` maps each element the emphasis styled to the paints #}*/
             /*{# it wrote, so clearing is "put back what I touched"; `drawn` #}*/
             /*{# holds the overlay nodes it inserted, `raised` the series nodes #}*/
             /*{# it lifted out of place, and `lifted` the groups that hold them. #}*/
             emphasis: { painted: new Map(), drawn: [], raised: [], lifted: [], preview: null },
         };
+        window.__dbtChartsChartHoverState = state;
 
-        return window.__dbtChartsChartHoverState;
+        /*{# A board's own click handler decides clicks inside it. A scroll or #}*/
+        /*{# resize would leave the card beside a mark that moved. #}*/
+        const unpin = function () { if (state.pinned) hideTooltip(state); };
+        /*{# Capture, so a host's own Escape (dropping a selection) sees the key #}*/
+        /*{# spent when it closed a pinned card. #}*/
+        document.addEventListener('keydown', function (event) {
+            if (event.key !== 'Escape' || !state.pinned) return;
+            event.preventDefault();
+            unpin();
+        }, true);
+        document.addEventListener('click', function (event) {
+            const target = event.target;
+            if (target && target.closest && (target.closest('.dbt-tooltip') || target.closest('svg[data-dbt-hover-initialized]'))) return;
+            unpin();
+        });
+        window.addEventListener('scroll', unpin, true);
+        window.addEventListener('resize', unpin);
+
+        return state;
+    }
+
+    function pinTooltip(state) {
+        const ts = active.tooltipStyle;
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.setAttribute('aria-label', 'Close');
+        close.textContent = '\u00D7';
+        /*{# Sits in the card's corner padding, so pinning never reflows the rows. #}*/
+        close.style.cssText = 'position:absolute;top:1px;right:2px;border:0;background:none;padding:0;margin:0;cursor:pointer;font:inherit;line-height:1;color:' + ts.label.font.color + ';';
+        close.addEventListener('click', function (event) {
+            event.stopPropagation();
+            hideTooltip(state);
+        });
+        state.tooltip.style.pointerEvents = 'auto';
+        state.tooltip.setAttribute('role', 'dialog');
+        state.tooltip.appendChild(close);
+        state.pinned = close;
     }
 
     function positionTooltip(state, x, y) {
@@ -663,6 +725,13 @@
     }
 
     function hideTooltip(state) {
+        if (state.pinned) {
+            state.pinned.remove();
+            state.pinned = null;
+            state.tooltip.style.pointerEvents = 'none';
+            state.tooltip.setAttribute('role', 'tooltip');
+            styleTooltip(state.tooltip);
+        }
         state.activeMark = null;
         state.tooltip.style.display = 'none';
         clearHoverEmphasis(state);
@@ -1950,7 +2019,7 @@
         return (
             '<div style="' + rowStyle + '">' +
                 '<span style="display:flex;align-items:center;color:' + ts.label.font.color + ';font-weight:' + labelWeight + ';">' + (entry.swatch ? seriesSwatch(entry.swatch) : '') + (entry.role === 'extra' ? escapeHtml(entry.label) : formatFieldName(entry.label)) + '</span>' +
-                '<span style="color:' + valueColor + ';font-weight:' + ts.value.font.weight + ';text-align:right;font-variant-numeric:tabular-nums lining-nums;">' + alignedValue(entry.value, tailWidth) + '</span>' +
+                '<span style="color:' + valueColor + ';font-weight:' + ts.value.font.weight + ';text-align:right;font-variant-numeric:tabular-nums lining-nums;' + (entry.link ? 'min-width:0;' : '') + '">' + (entry.link ? extraValueHtml(entry, ts) : alignedValue(entry.value, tailWidth)) + '</span>' +
             '</div>'
         );
     }
@@ -2056,6 +2125,16 @@
     function xUnifiedExtraRow(entry, ts, hasPercent) {
         const muted = 'color:' + ts.label.font.color + ';';
         const swatchCell = xUnifiedCell('', '', '', true, false);
+        /*{# A link is too long for the value column: it takes the name and value #}*/
+        /*{# columns together. #}*/
+        if (entry.link) {
+            return swatchCell + xUnifiedCell(
+                '<span style="padding-left:12px;flex-shrink:0;">' + escapeHtml(entry.label) + '</span>' +
+                '<span style="min-width:0;text-align:right;font-weight:' + ts.value.font.weight + ';">' + extraValueHtml(entry, ts) + '</span>',
+                'grid-column:2 / -1;display:flex;justify-content:space-between;gap:' + ts.gap + 'px;' + muted,
+                '', false, true
+            );
+        }
         const nameCell = xUnifiedCell('<span style="padding-left:12px;">' + escapeHtml(entry.label) + '</span>', muted, '', false, false);
         const pctCell = hasPercent ? xUnifiedCell('', '', '', false, false) : '';
         const valueCell = xUnifiedCell(
@@ -2737,7 +2816,7 @@
             });
         };
 
-        on('mousemove', function (event) {
+        const track = function (event) {
             const target = event.target;
             /*{# The toolbar's buttons own their own popovers; the snap below #}*/
             /*{# would otherwise hand the cursor to a mark within radius. #}*/
@@ -2839,10 +2918,14 @@
             } else {
                 positionTooltip(state, event.clientX, event.clientY);
             }
+        };
+
+        on('mousemove', function (event) {
+            if (!state.pinned) track(event);
         });
 
         on('mouseleave', function () {
-            hideTooltip(state);
+            if (!state.pinned) hideTooltip(state);
         });
 
         on('mouseover', function (event) {
@@ -2877,6 +2960,28 @@
             if (!hit) return;
             event.preventDefault();
             clickHidingItem(state, hit.item);
+        });
+
+        /*{# Pinning is the lowest-priority click: it waits until every other #}*/
+        /*{# handler has run, and a click one of them claimed (preventDefault), #}*/
+        /*{# a click on a control or link, or one ending a text selection only #}*/
+        /*{# lets a pinned card go. #}*/
+        on('click', function (event) {
+            if (event.button !== 0) return;
+            const target = event.target;
+            const control = target && target.closest && target.closest(CLICK_CONTROLS);
+            const selection = window.getSelection();
+            const selecting = selection !== null && !selection.isCollapsed;
+            setTimeout(function () {
+                hideTooltip(state);
+                if (event.defaultPrevented || control || selecting) return;
+                track(event);
+                if (state.activeMark && state.tooltip.style.display !== 'none') pinTooltip(state);
+            }, 0);
+        });
+
+        on('dblclick', function () {
+            if (state.pinned) hideTooltip(state);
         });
 
         on('keydown', function (event) {

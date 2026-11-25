@@ -8,7 +8,11 @@ from pydantic import ConfigDict, Field
 
 from dbt_charts.core.compile.models.style.theme.area import AreaConditionalRule
 
-from ._cartesian import _SeriesCartesianResolvedStyle
+from ._cartesian import (
+    ResolvedAreaOverlayAttempt,
+    ResolvedLineAreaEndpointLabelsConfig,
+    _SeriesCartesianResolvedStyle,
+)
 from ._marks import ResolvedAreaLineStyle, ResolvedAreaMarkStyle, ResolvedPointMarkStyle
 
 
@@ -22,6 +26,16 @@ class ResolvedAreaStyle(_SeriesCartesianResolvedStyle):
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    endpoint_labels: ResolvedLineAreaEndpointLabelsConfig = Field(
+        description="Direct-label config: beside the plot, inside it, or neither.",
+    )
+    overlay: ResolvedAreaOverlayAttempt | None = Field(
+        description=(
+            "The style when the series names go inside the plot instead; "
+            "absent when the names are not tried there."
+        ),
+    )
 
     series_order: Literal["value", "data", "alphabetical"] | None = Field(
         default=None,

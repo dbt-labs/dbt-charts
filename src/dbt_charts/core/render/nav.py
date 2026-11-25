@@ -17,7 +17,12 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.render.dir_context import lazy_dir_context, list_dir_entries
+from dbt_charts.core.render.dir_context import (
+    folder_entries,
+    lazy_dir_context,
+    nav_ordered,
+    served_directories,
+)
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board
@@ -115,31 +120,17 @@ def _sidebar(
     current_board: str | None,
     current_folder: str | None,
 ) -> list[SidebarRow]:
-    """Rows for the sidebar of ``list_dir``: ``..`` (below the root), boards (index/overview first, then filename order), then
-    subfolders; the root adds each installed package's boards as a folder, as
-    its listing does. Empty under two rows, where the strip's file menu already covers
-    the folder."""
-    from dbt_charts.core.project import (
-        ProjectPath,
-        package_board_roots,
-        read_board_text,
-    )
+    """Rows for the sidebar of ``list_dir``: ``..`` (below the root), then the
+    names ``server.nav_order`` lists for the folder, then the rest: boards
+    (index/overview first, then filename order), then subfolders. The root adds
+    each installed package's boards as a folder, as its listing does. Empty
+    under two rows, where the strip's file menu already covers the folder."""
+    from dbt_charts.core.project import ProjectPath, read_board_text
 
-    entries = list_dir_entries(list_dir, list_url)
-    folders = [
-        (e.name, e.url)
-        for e in entries
-        if e.is_dir and not (list_url == "/" and e.name == "inspect")
-    ]
-    if list_url == "/":
-        hosted = {name for name, _ in folders}
-        folders += [
-            (r.namespace, f"/{r.namespace}/")
-            for r in sorted(
-                package_board_roots(list_dir.project), key=lambda r: r.namespace
-            )
-            if r.namespace not in hosted
-        ]
+    entries = folder_entries(
+        served_directories(list_dir.project, list_url.strip("/")), list_url
+    )
+    folders = [(e.name, e.url) for e in entries if e.is_dir]
     boards = sorted(
         ((e, e.handle) for e in entries if isinstance(e.handle, ProjectPath)),
         key=lambda pair: pair[0].label not in _LEADING_STEMS,
@@ -157,26 +148,33 @@ def _sidebar(
         if list_url != "/"
         else []
     )
-    rows = (
-        parent
-        + [
-            SidebarRow(
-                kind="board",
-                label=read_board_text(handle).label.title,
-                url=e.url,
-                current=e.label == current_board,
+    rows = parent + nav_ordered(
+        list_dir.project,
+        list_url,
+        [
+            (
+                e.label,
+                SidebarRow(
+                    kind="board",
+                    label=read_board_text(handle).label.title,
+                    url=e.url,
+                    current=e.label == current_board,
+                ),
             )
             for e, handle in boards
         ]
         + [
-            SidebarRow(
-                kind="folder",
-                label=name,
-                url=url,
-                current=name == current_folder,
+            (
+                name,
+                SidebarRow(
+                    kind="folder",
+                    label=name,
+                    url=url,
+                    current=name == current_folder,
+                ),
             )
             for name, url in folders
-        ]
+        ],
     )
     return rows if len(rows) >= 2 else []
 

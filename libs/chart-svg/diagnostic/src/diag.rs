@@ -354,6 +354,14 @@ pub fn err_dbt_target_path_invalid(origin: impl Into<Value>, detail: impl Into<V
     Diagnostic::new(&codes::ERR_DBT_TARGET_PATH_INVALID, [("origin", origin.into()), ("detail", detail.into())])
 }
 
+pub fn err_direct_overlay_unsupported(chart_id: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_DIRECT_OVERLAY_UNSUPPORTED, [("chart_id", chart_id.into()), ("reason", reason.into())])
+}
+
+pub fn err_direct_overlay_x_invalid(chart_id: impl Into<Value>, series: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_DIRECT_OVERLAY_X_INVALID, [("chart_id", chart_id.into()), ("series", series.into()), ("reason", reason.into())])
+}
+
 pub fn err_domain_open_end_independent_scale(chart_id: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_DOMAIN_OPEN_END_INDEPENDENT_SCALE, [("chart_id", chart_id.into())])
 }
@@ -934,6 +942,10 @@ pub fn err_name_invalid(kind: impl Into<Value>, name: impl Into<Value>, path: im
     Diagnostic::new(&codes::ERR_NAME_INVALID, [("kind", kind.into()), ("name", name.into()), ("path", path.into())])
 }
 
+pub fn err_nav_order_invalid(file: impl Into<Value>, line: impl Into<Value>, folder: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_NAV_ORDER_INVALID, [("file", file.into()), ("line", line.into()), ("folder", folder.into()), ("reason", reason.into())])
+}
+
 pub fn err_no_board_files(path: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_NO_BOARD_FILES, [("path", path.into())])
 }
@@ -1226,6 +1238,10 @@ pub fn err_tab_unknown(variable: impl Into<Value>, value: impl Into<Value>, slug
     Diagnostic::new(&codes::ERR_TAB_UNKNOWN, [("variable", variable.into()), ("value", value.into()), ("slugs", slugs.into())])
 }
 
+pub fn err_table_cell_cast(column: impl Into<Value>, r#type: impl Into<Value>, cell: impl Into<Value>, expected: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_TABLE_CELL_CAST, [("column", column.into()), ("type", r#type.into()), ("cell", cell.into()), ("expected", expected.into())])
+}
+
 pub fn err_table_format_kind_mismatch(fmt: impl Into<Value>, remedy: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_TABLE_FORMAT_KIND_MISMATCH, [("fmt", fmt.into()), ("remedy", remedy.into())])
 }
@@ -1394,6 +1410,10 @@ pub fn err_tool_arguments_invalid(message: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_TOOL_ARGUMENTS_INVALID, [("message", message.into())])
 }
 
+pub fn err_tooltip_link_beside_chart_link(chart: impl Into<Value>, column: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::ERR_TOOLTIP_LINK_BESIDE_CHART_LINK, [("chart", chart.into()), ("column", column.into())])
+}
+
 pub fn err_torn_outlier_unsupported(chart_id: impl Into<Value>, reason: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::ERR_TORN_OUTLIER_UNSUPPORTED, [("chart_id", chart_id.into()), ("reason", reason.into())])
 }
@@ -1558,6 +1578,10 @@ pub fn warn_axis_align_discarded(chart_id: impl Into<Value>, authored_align: imp
     Diagnostic::new(&codes::WARN_AXIS_ALIGN_DISCARDED, [("chart_id", chart_id.into()), ("authored_align", authored_align.into()), ("format_alias", format_alias.into())])
 }
 
+pub fn warn_axis_end_label_dropped(chart_id: impl Into<Value>, axis: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_AXIS_END_LABEL_DROPPED, [("chart_id", chart_id.into()), ("axis", axis.into())])
+}
+
 pub fn warn_axis_label_collision(chart_id: impl Into<Value>, field: impl Into<Value>, label_count: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_AXIS_LABEL_COLLISION, [("chart_id", chart_id.into()), ("field", field.into()), ("label_count", label_count.into())])
 }
@@ -1602,6 +1626,10 @@ pub fn warn_category_color_pin_unseen(field: impl Into<Value>, values: impl Into
     Diagnostic::new(&codes::WARN_CATEGORY_COLOR_PIN_UNSEEN, [("field", field.into()), ("values", values.into()), ("drawn", drawn.into())])
 }
 
+pub fn warn_chart_height_below_category_floor(chart_id: impl Into<Value>, n_categories: impl Into<Value>, min_height: impl Into<Value>, field: impl Into<Value>, authored_height: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_CHART_HEIGHT_BELOW_CATEGORY_FLOOR, [("chart_id", chart_id.into()), ("n_categories", n_categories.into()), ("min_height", min_height.into()), ("field", field.into()), ("authored_height", authored_height.into())])
+}
+
 pub fn warn_chart_title_truncated(chart_id: impl Into<Value>, authored_field: impl Into<Value>, authored_text: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_CHART_TITLE_TRUNCATED, [("chart_id", chart_id.into()), ("authored_field", authored_field.into()), ("authored_text", authored_text.into())])
 }
@@ -1628,6 +1656,14 @@ pub fn warn_dbt_query_columns_indeterminate(query_name: impl Into<Value>, reason
 
 pub fn warn_defaults_file_given_as_board(path: impl Into<Value>) -> Diagnostic {
     Diagnostic::new(&codes::WARN_DEFAULTS_FILE_GIVEN_AS_BOARD, [("path", path.into())])
+}
+
+pub fn warn_direct_overlay_collides(chart_id: impl Into<Value>, names: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_DIRECT_OVERLAY_COLLIDES, [("chart_id", chart_id.into()), ("names", names.into())])
+}
+
+pub fn warn_direct_overlay_x_unseen(chart_id: impl Into<Value>, names: impl Into<Value>, drawn: impl Into<Value>) -> Diagnostic {
+    Diagnostic::new(&codes::WARN_DIRECT_OVERLAY_X_UNSEEN, [("chart_id", chart_id.into()), ("names", names.into()), ("drawn", drawn.into())])
 }
 
 pub fn warn_double_header(title: impl Into<Value>, level: impl Into<Value>, heading: impl Into<Value>) -> Diagnostic {

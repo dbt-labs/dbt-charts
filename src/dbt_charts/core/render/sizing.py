@@ -1379,6 +1379,25 @@ def tab_label_measurer(resolved_style: ResolvedStyle) -> Callable[[str], float]:
     return measure
 
 
+def tab_label_fit(label: str, resolved_style: ResolvedStyle) -> tuple[str, bool]:
+    """A tab label as one line: cut with an ellipsis when wider than the cell's room.
+
+    The same law as the engine's one-line ``fit_lines``: whitespace runs collapse, a word
+    wider than the room breaks, and a label that cannot fit even one character keeps its first.
+    """
+    tabs = resolved_style.layout.tabs
+    family, size, _, _ = tab_font(resolved_style)
+    lines, cut = wrap_text_precise(
+        label,
+        tabs.max_width - 2 * tabs.padding_x,
+        size,
+        get_weighted_font_measurer(family, tabs.active_weight),
+        max_lines=1,
+        ellipsis=True,
+    )
+    return (lines[0] if lines else label), cut
+
+
 def tab_cell_width(label: str, resolved_style: ResolvedStyle) -> float:
     """One tab's width: its label plus padding, clamped to the min/max width."""
     tabs = resolved_style.layout.tabs
@@ -1391,33 +1410,6 @@ def tab_cell_width(label: str, resolved_style: ResolvedStyle) -> float:
 def tab_rail_width(labels: Sequence[str], resolved_style: ResolvedStyle) -> float:
     """A left rail's width: every tab shares the widest tab's width."""
     return max((tab_cell_width(label, resolved_style) for label in labels), default=0.0)
-
-
-def tab_rail_lines(label: str, resolved_style: ResolvedStyle) -> tuple[list[str], bool]:
-    """A rail label wrapped to ``rail_max_lines``; ``True`` when text was cut."""
-    tabs = resolved_style.layout.tabs
-    family, size, _, _ = tab_font(resolved_style)
-    return wrap_text_precise(
-        label,
-        tabs.max_width - 2 * tabs.padding_x,
-        size,
-        get_weighted_font_measurer(family, tabs.active_weight),
-        max_lines=tabs.rail_max_lines,
-        ellipsis=True,
-    )
-
-
-def tab_line_step(resolved_style: ResolvedStyle) -> float:
-    """Distance between two baselines of a wrapped tab label."""
-    _, size, _, line_height = tab_font(resolved_style)
-    return size * line_height
-
-
-def tab_rail_cell_height(line_count: int, resolved_style: ResolvedStyle) -> float:
-    """A rail cell: the bar height, plus one line step per wrapped line."""
-    return resolved_style.layout.tabs.bar_height + (line_count - 1) * tab_line_step(
-        resolved_style
-    )
 
 
 def tab_content_offset(
@@ -1441,11 +1433,8 @@ def tab_rail_extent(
     tab_titles: Sequence[str] | None, count: int, resolved_style: ResolvedStyle
 ) -> float:
     """Vertical space a left rail claims: its card-padding inset plus every cell."""
-    cells = sum(
-        tab_rail_cell_height(
-            len(tab_rail_lines(label, resolved_style)[0]), resolved_style
-        )
-        for label in tab_labels(tab_titles, count, resolved_style)
+    cells = resolved_style.layout.tabs.bar_height * len(
+        tab_labels(tab_titles, count, resolved_style)
     )
     return float(resolved_style.frame.card_padding) + cells
 

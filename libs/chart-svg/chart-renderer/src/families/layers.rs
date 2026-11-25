@@ -1008,6 +1008,8 @@ pub(crate) fn line_layer_marks(
     link: Option<&crate::href::DatumLink>,
     crowd: LabelCrowd,
     under: &[crate::annotation::DataMark],
+    // The line-palette style this layer's line draws in, when the theme binds one.
+    palette: Option<&crate::families::line::styles::PaletteLineStyle>,
 ) -> Result<Vec<Node>, String> {
     // A band step's marks are drawn from data Vega-Lite rewrites, so they carry no link; its labels still do.
     let mark_link = link.filter(|_| !(l.curve_name() == Some("step") && step_band.is_some()));
@@ -1218,27 +1220,35 @@ pub(crate) fn line_layer_marks(
     // A disconnected plateau is its own path, never joined to its neighbors.
     for ((run, run_href), plateau_label) in runs.iter().zip(&run_hrefs).zip(&plateau_labels) {
         let d = scene_path(&d3rs::shape::line_path(std::slice::from_ref(run), curve));
-        let stroke = Attrs::new()
-            .set("fill", "none")
-            .set("stroke", line_color)
-            .num("stroke-width", l.line_mark.stroke.width)
-            .set("stroke-linecap", cap)
-            .set("stroke-linejoin", join);
-        let stroke = match &dash {
-            // A disconnected plateau's pattern is already fitted to it.
-            Some(dash) if disconnected => stroke.set("stroke-dasharray", dash.as_str()),
-            Some(dash) => stroke.set("stroke-dasharray", ::layout::dash::fit_pattern(dash, d.length(), false)),
-            None => stroke,
+        let (stroke, inline) = match palette {
+            Some(style) => {
+                // A disconnected plateau's pattern is already fitted to it.
+                let fitted = dash.as_ref().map(|dash| if disconnected { dash.clone() } else { ::layout::dash::fit_pattern(dash, d.length(), false) });
+                (style.ink(line_color, join, None, fitted), style.inline(canvas, join))
+            }
+            None => {
+                let stroke = Attrs::new()
+                    .set("fill", "none")
+                    .set("stroke", line_color)
+                    .num("stroke-width", l.line_mark.stroke.width)
+                    .set("stroke-linecap", cap)
+                    .set("stroke-linejoin", join);
+                let stroke = match &dash {
+                    // A disconnected plateau's pattern is already fitted to it.
+                    Some(dash) if disconnected => stroke.set("stroke-dasharray", dash.as_str()),
+                    Some(dash) => stroke.set("stroke-dasharray", ::layout::dash::fit_pattern(dash, d.length(), false)),
+                    None => stroke,
+                };
+                (stroke, None)
+            }
         };
         let stroke = match plateau_label {
             Some(label) => stroke.set("data-dbt-plateau", label.as_str()),
             None => stroke,
         };
-        marks.push(crate::contract::connected_group(
-            "line",
-            "layer_1_marks",
-            vec![crate::href::linked(crate::href::anchor_for(mark_link, run_href), Node::path(series_mark(), d, stroke))],
-        ));
+        let mut group = vec![crate::href::linked(crate::href::anchor_for(mark_link, run_href), Node::path(series_mark(), d.clone(), stroke))];
+        group.extend(inline.map(|attrs| Node::path(Role::Chrome, d, attrs)));
+        marks.push(crate::contract::connected_group("line", "layer_1_marks", group));
     }
     // A visible point overlay only draws when `point_mark.size` is authored
     // (production's `point_size` gate, `_layers.py`); a hollow point
@@ -1533,7 +1543,7 @@ pub(crate) fn layer_value_labels(
         };
         let color = if style.series_of.is_some() {
             let ground = crate::families::bar::labels::ground_at(canvas, under, center()?)?;
-            dbt_charts_color::ensure_readable_ink(&m.caption.color, &ground, SERIES_LABEL_CONTRAST)?
+            dbt_charts_color::ensure_readable_ink(&m.caption.color, &ground, SERIES_LABEL_CONTRAST, style.font.board_ink.as_deref())?
         } else if style.authored {
             m.caption.color.clone()
         } else {
@@ -3045,9 +3055,9 @@ mod tests {
     fn a_layered_legend_titles_itself_by_its_layers_color_fields_only_when_the_base_has_none() {
         let legend = |title_visible: bool| -> LegendConfig {
             serde_json::from_value(serde_json::json!({
-                "visible": true, "position": {"edge": "right", "align": "start", "overlay": false},
+                "visible": true, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]},
                 "direction": "vertical", "columns": null,
-                "label": {"font": {"family": "x", "size": 11.0}, "padding": 8.0},
+                "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"family": "x", "size": 11.0}, "padding": 8.0},
                 "title": {"font": {"family": "x"}, "visible": title_visible},
             }))
             .unwrap()

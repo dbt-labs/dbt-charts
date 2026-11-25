@@ -41,7 +41,7 @@ use d3rs::js_math::js_number_string;
 use crate::families::heatmap::{category_legend_entries, CategoryScale};
 use crate::families::color_scale::GradientAt;
 use crate::families::legend::{color_channel_title, legend_fit_bounds, legend_origin, legend_slide, legend_title_text, slide_block, symbol_legend, vega_legend, LegendConfig, LegendSymbol, VEGA_LEGEND_SYMBOL_LIMIT};
-use ::bind::legend::{fold_symbol_limit};
+use ::bind::legend::{fold_limit};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::href::LinkOpen;
 use crate::layout::{Layout, Rect};
@@ -633,8 +633,8 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         None
     };
     let strip_h = strip.as_ref().map_or(0.0, |s| s.height);
-    // An authored `symbol_shape` takes the mark's stroke; a mark with none draws the shape fill-only.
-    let default_symbol = match (r.legend.symbol_shape.as_deref(), mark.stroke.as_ref().and_then(|s| s.color.as_deref())) {
+    // An authored `symbol.shape` takes the mark's stroke; a mark with none draws the shape fill-only.
+    let default_symbol = match (r.legend.symbol.shape.as_deref(), mark.stroke.as_ref().and_then(|s| s.color.as_deref())) {
         (None, None) => LegendSymbol::FilledCircle,
         (_, Some(stroke)) => LegendSymbol::BorderedCircle(stroke),
         (Some(_), None) => LegendSymbol::FilledShape,
@@ -649,7 +649,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
                 .map(|e| crate::families::legend::LegendEntry { symbol: Some(default_symbol), ..*e })
                 .collect();
             if let Some((kept, label)) =
-                fold_symbol_limit(entries.len(), r.legend.symbol_limit.unwrap_or(VEGA_LEGEND_SYMBOL_LIMIT) as usize)
+                fold_limit(entries.len(), r.legend.limit.unwrap_or(VEGA_LEGEND_SYMBOL_LIMIT) as usize)
             {
                 folded_label = label;
                 let folded = crate::families::legend::LegendEntry { label: &folded_label, symbol: Some(LegendSymbol::Overflow), ..entries[kept] };
@@ -830,7 +830,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             let at = GradientAt::with_ends(&r.legend, None, scale, (plot_w, plot_h), *ends)?;
             let legend = at.legend(&r.legend, scale, &grad_id, legend_title, fonts)?;
             let (dx, dy) = slide((legend.box_width(at.length), legend.height(at.length)))?;
-            nodes.extend(legend.nodes(leg_x + dx, leg_y + dy, at.length));
+            nodes.extend(legend.nodes(leg_x + dx, leg_y + dy, at.length, r.canvas.as_str()));
         }
         None => {}
     }

@@ -1358,10 +1358,10 @@ mod tests {
                 "field_labels": {}, "x": "region", "y": "category", "color": "revenue",
                 "multiples": null, "resolved_channels": {}, "layers": [],
                 "legend": {
-                    "visible": true, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
+                    "visible": true, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
                     "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600",
                                        "color": "#313233", "case": "title"}},
-                    "label": {"font": {"family": TEST_FONT, "size": 11.0, "weight": "400",
+                    "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"family": TEST_FONT, "size": 11.0, "weight": "400",
                                        "color": "#626366"}, "padding": 8.0}
                 },
                 "style": {
@@ -2069,7 +2069,7 @@ mod tests {
     /// The heatmap fixture's legend at `edge`/`direction`.
     fn edge_payload(edge: &str, direction: &str) -> Value {
         heatmap_payload(|j| {
-            j["resolved"]["legend"]["position"] = json!({"edge": edge, "align": "start", "overlay": false});
+            j["resolved"]["legend"]["position"] = json!({"edge": edge, "align": "start", "overlay": false, "corners": [{"edge": edge, "align": "start"}]});
             j["resolved"]["legend"]["direction"] = json!(direction);
         })
     }
@@ -2136,7 +2136,7 @@ mod tests {
             j["resolved"]["palette"] = json!(["#111111", "#222222", "#333333"]);
             j["resolved"]["resolved_channels"] =
                 json!({"color": {"channel": "color", "mode": "series", "data_field": "tier", "quantitative_data": false}});
-            j["resolved"]["legend"]["position"] = json!({"edge": "left", "align": "start", "overlay": false});
+            j["resolved"]["legend"]["position"] = json!({"edge": "left", "align": "start", "overlay": false, "corners": [{"edge": "left", "align": "start"}]});
         }));
         assert_eq!(attr(&text_tag(&svg, "Tier"), "x"), 16.0, "{svg}");
     }
@@ -2191,7 +2191,7 @@ mod tests {
     #[test]
     fn a_vertical_gradient_below_the_plot_renders() {
         let svg = render_json(heatmap_payload(|j| {
-            j["resolved"]["legend"]["position"] = json!({"edge": "bottom", "align": "start", "overlay": false});
+            j["resolved"]["legend"]["position"] = json!({"edge": "bottom", "align": "start", "overlay": false, "corners": [{"edge": "bottom", "align": "start"}]});
         }));
         assert!(svg.contains("fill=\"url(#"), "{svg}");
     }

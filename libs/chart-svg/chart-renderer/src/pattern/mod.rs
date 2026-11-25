@@ -73,6 +73,9 @@ pub struct PatternSpec {
     pub ground: Ground,
     #[serde(default)]
     pub inverse: bool,
+    /// The board's hex `style.roles.ink`: a motif in it is never moved toward its ground's contrast.
+    #[serde(default)]
+    pub ink: Option<String>,
 }
 
 /// How a mark is filled: its plain color, or a pattern.
@@ -468,7 +471,7 @@ impl PatternPlan {
                 (base.to_string(), ground.clone())
             }
         };
-        let motif = contrasting(&ink, &ground)?;
+        let motif = contrasting(&ink, &ground, spec.ink.as_deref())?;
         let outline = if spec.inverse { motif.clone() } else { ink };
         Ok((motif, ground, outline))
     }
@@ -732,8 +735,11 @@ pub fn tile_node(id: &str, key: &str, tile: &Tile, marks_color: &str, ground: &s
 }
 
 /// `ink` kept readable against `ground` at [`PATTERN_INK_MIN_CONTRAST`] (`dbt_charts_color::readable_ink_on_fill`,
-/// the rule label ink over a mark follows).
-fn contrasting(ink: &str, ground: &str) -> Result<String, String> {
+/// the rule label ink over a mark follows), except the board's own ink, which stays as set.
+fn contrasting(ink: &str, ground: &str, board_ink: Option<&str>) -> Result<String, String> {
+    if dbt_charts_color::is_board_ink(ink, board_ink)? {
+        return Ok(ink.to_string());
+    }
     dbt_charts_color::readable_ink_on_fill(ink, ground, PATTERN_INK_MIN_CONTRAST)
 }
 
@@ -850,6 +856,7 @@ mod tests {
             color: None,
             ground,
             inverse,
+            ink: None,
         }
     }
 
@@ -859,7 +866,7 @@ mod tests {
 
     fn ramp(scale: Scale, name: &str) -> PatternSpec {
         let steps = if scale == Scale::Sequential { 6 } else { 7 };
-        PatternSpec { field: "v".into(), scale, motifs: vec![], ladder: None, ramp: Some(name.into()), steps: Some(steps), color: None, ground: background(), inverse: false }
+        PatternSpec { field: "v".into(), scale, motifs: vec![], ladder: None, ramp: Some(name.into()), steps: Some(steps), color: None, ground: background(), inverse: false, ink: None }
     }
 
     fn plan(spec: Option<PatternSpec>) -> PatternPlan {
@@ -1060,7 +1067,7 @@ mod tests {
     fn a_ramp_steps_flat_tint_has_the_lightness_of_its_pattern() {
         let data: serde_json::Value = serde_json::from_str(include_str!("../../data/pattern_motifs.json")).unwrap();
         for (name, count) in [("hatch-crosshatch", 6), ("hatch-crosshatch", 9), ("dots", 6), ("dots", 9), ("hatch-dots", 9)] {
-            let spec = PatternSpec { field: "v".into(), scale: Scale::Sequential, motifs: vec![], ladder: None, ramp: Some(name.into()), steps: Some(count), color: None, ground: background(), inverse: false };
+            let spec = PatternSpec { field: "v".into(), scale: Scale::Sequential, motifs: vec![], ladder: None, ramp: Some(name.into()), steps: Some(count), color: None, ground: background(), inverse: false, ink: None };
             let plan = PatternPlan::new("c", Some(spec), "#ffffff").unwrap();
             let mut previous = f64::INFINITY;
             for (i, step) in data["ramps"][name][count.to_string()].as_array().unwrap().iter().enumerate() {
@@ -1077,7 +1084,7 @@ mod tests {
 
     #[test]
     fn a_tinted_plan_paints_each_step_and_slot_in_the_patterns_own_flat_tint() {
-        let ramp = PatternSpec { field: "v".into(), scale: Scale::Sequential, motifs: vec![], ladder: None, ramp: Some("dots".into()), steps: Some(6), color: Some("#2a2a2a".into()), ground: background(), inverse: false };
+        let ramp = PatternSpec { field: "v".into(), scale: Scale::Sequential, motifs: vec![], ladder: None, ramp: Some("dots".into()), steps: Some(6), color: Some("#2a2a2a".into()), ground: background(), inverse: false, ink: None };
         let patterned = PatternPlan::new("c", Some(ramp.clone()), "#fefcf9").unwrap();
         let tinted = PatternPlan::new("c", Some(ramp), "#fefcf9").unwrap().tinted();
         for i in 0..6 {
@@ -1188,6 +1195,22 @@ mod tests {
         assert!(paint.swatch("none", 0.0).fill.starts_with("url(#"), "a legend swatch always shows the tile");
     }
 
+    /// Under one ink (`palettes.fill_category` with the pattern's ink) a mark too small
+    /// for its tile draws a flat shade of that ink, never of the series hue, and series still differ.
+    #[test]
+    fn under_one_ink_a_small_mark_draws_a_shade_of_the_ink_that_tells_its_series() {
+        let ink = "#1f3a68";
+        let mut spec = category(&["hatch-45", "dots"], background(), false);
+        spec.color = Some(ink.into());
+        let plan = plan(Some(spec));
+        let small = |slot, hue| plan.category(slot, slot, 2, hue).unwrap().for_mark(1.0, "none", 0.0);
+        let (first, second) = (small(0, "#e45756"), small(1, "#4c78a8"));
+        assert!(first.fill.starts_with('#') && second.fill.starts_with('#'), "{first:?} {second:?}");
+        assert_eq!(first.fill, small(0, "#4c78a8").fill, "the shade is the ink's, not the series hue's");
+        assert_eq!((first.stroke.as_str(), second.stroke.as_str()), (ink, ink));
+        assert_ne!(first.fill, second.fill, "two series keep two shades");
+    }
+
     #[test]
     fn a_label_follows_the_tile_and_a_flat_tint_keeps_the_plain_color_rule() {
         let plan = plan(Some(category(&["hatch-45"], background(), false)));
@@ -1228,6 +1251,18 @@ mod tests {
         by_slot.category(1, 1, 3, "#4c78a8").unwrap();
         let defs = printed(&by_slot.finish(true).unwrap().unwrap());
         assert!(defs.contains("fill=\"#dbe4ee\"") && defs.contains("fill=\"#f0dede\""), "{defs}");
+    }
+
+    #[test]
+    fn the_boards_ink_is_the_motif_even_on_a_ground_below_the_contrast_floor() {
+        let ink = "#1f3a68";
+        let motif = |board_ink: Option<&str>| {
+            let spec = PatternSpec { color: Some(ink.into()), ink: board_ink.map(String::from), ..category(&["hatch-45"], Ground::Named("#161616".into()), false) };
+            plan(Some(spec.clone())).inks(&spec, Some(0), "#000000").unwrap().0
+        };
+        assert!(dbt_charts_color::wcag_contrast(ink, "#161616").unwrap() < PATTERN_INK_MIN_CONTRAST);
+        assert_eq!(motif(Some(ink)), ink);
+        assert_ne!(motif(None), ink, "any other ink under the floor is redrawn");
     }
 
     #[test]

@@ -1,5 +1,0 @@
-kind: Fixes
-body: 'On a layered chart, `y_label` titles only the y axis: the base series'' legend entry keeps its column''s field label.'
-time: 2026-11-24T04:42:59.748409798Z
-custom:
-    DbtChartsIssue: "141"

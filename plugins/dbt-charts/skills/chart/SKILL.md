@@ -30,7 +30,7 @@ These are every tool a board needs.
 
 `board (root or nested)`:
 - `title`: Heading shown at the top of the board
-- `text`: A Markdown block, as Jinja over query results: `{{ queries.totals.one.revenue }}` for a one-row query, `{{ queries.top.rows[0].name }}` for row N. A value prints raw, so format it in SQL; titles and subtitles read the same way
+- `text`: A Markdown block, as Jinja over query results: `{{ queries.totals.one.revenue }}` for a one-row query, `{{ queries.top.rows[0].name }}` for row N. A value prints raw; format it with the `format` filter, `{{ queries.totals.one.revenue | format('currency_whole') }}`, which takes a built-in format name or a `style.formats` alias. Titles and subtitles read the same way
 - `source`: Default source name for all queries in this board
 - `variables` (map of mapping|text): Named inputs that parameterize queries
 - `queries` (map of text|{}): Named result sets the charts draw from
@@ -60,7 +60,7 @@ Also exist: `ignore`, `cache`, `incremental`, `type`, `setup_sql`, `dialect`.
 Other query types: `values` (inline data authored as a list of row mappings, or inline data authored as column names plus positional row values), `schema` (dbt source schema query).
 
 Jinja helpers in query SQL:
-- `filter(column: str, value: Any, operator: str = '=', none: str = 'allow')`: Filter clause `{{ filter('col', var) }}`; when the variable is All or unset it is no constraint, so never wrap it in `{% if %}`. A date value compares the column by its calendar date, so pass a timestamp column bare (no DATE() or wrapping subquery). `none`: Fallback when value is null/empty/_NullValue. 'allow' (default) returns '1=1' (no constraint, show all rows). 'deny' returns '1=0' (zero rows).
+- `filter(column: str, value: Any, operator: str = '=', unset: str = 'allow')`: Filter clause `{{ filter('col', var) }}`; when the variable is All or unset it is no constraint, so never wrap it in `{% if %}`. A date value compares the column by its calendar date, so pass a timestamp column bare (no DATE() or wrapping subquery). `unset`: Fallback when value is null/empty/_NullValue. 'allow' (default) returns '1=1' (no constraint, show all rows). 'deny' returns '1=0' (zero rows).
 - `filter_date_range(column: str, date_range: Any, is_naive_utc: bool = False)`: Date range filter `{{ filter_date_range('col', range_var) }}`. The column may be a date or a timestamp and compares by its calendar date, so pass it bare (no DATE(), CAST or wrapping subquery). The range may be a preset name literal such as 'last_30_days'. Pass `is_naive_utc=true` only for a naive timestamp column that stores UTC, to compare by its date in the board's `regional.time_zone`. `date_range`: `[start, end]` dates, or a preset name
 
 ## Charts
@@ -165,11 +165,11 @@ A date range is one variable, not two `input: date` variables with hard-coded de
 - `default` (any): Value used when no URL param or --var sets one
 - `label`: Caption naming what this input sets
 - `required` (bool, default false): When True, a value must be provided before queries execute
-- `min` (int|number): Minimum value for number, slider and range inputs
-- `max` (int|number): Maximum value for number, slider and range inputs
-- `step` (int|number): Step size for number, slider and range inputs
+- `min` (int|number): Minimum value for number and slider inputs
+- `max` (int|number): Maximum value for number and slider inputs
+- `step` (int|number): Step size for number and slider inputs
 - `data_type` (string|number|date|boolean|array): The type of the values a select, radio or multiselect sends back
-- `input` (auto|select|multiselect|input|text|number|textarea|slider|range|date|datepicker|daterange|checkbox|radio, default auto): Control type. `auto` (the default) picks one from `options` and `data_type`: omit it except for `daterange`
+- `input` (auto|select|multiselect|input|text|number|textarea|slider|date|datepicker|daterange|checkbox|radio, default auto): Control type. `auto` (the default) picks one from `options` and `data_type`: omit it except for `daterange`
 Also exist: `notes`, `presets`, `placeholder`, `visible`, `enabled`, `query`, `operator`.
 
 `options`:
@@ -199,6 +199,12 @@ A `rows` or `cols` entry may be an inline board with its own `title`, `variables
 A `formats:` entry takes a format name, never a spec: a built-in name below, or an alias defined once under `style.formats` (`style.formats.one_decimal: ',.1f'`, then `one_decimal` as the column's value under `formats:`). `compact` keeps two significant digits (1.2M, 45K) and `currency_compact` three ($1.23M, $412K); another precision is a d3 spec in a `style.formats` alias, such as `.3~s`. Spreadsheet patterns (`#,##0.0`) are not supported.
 
 Built-in names, on 1234567.891 and 0.2534: `currency` $1.23M, `currency_whole` $1,234,568, `currency_full` $1,234,567.89, `currency_compact` $1.23M, `compact` 1.2M, `number` 1.23M, `number_full` 1,234,567.891, `integer` 1,234,568, `id` 1234568, `delta` +1,234,568, `year` 2025, `percent` 25.3%, `percent_whole` 25%, `percent_delta` +25.3%. Also exist: `percent_number`, `percent_number_delta`, `percentage_points_delta`, `duration`, `bytes`, `latitude`, `longitude`, `rating`. Date names: `date_short`, `time_short`, `date_year`, `date_quarter`, `date_month`, `date_week`. A `date_<grain>` name is the engine's own axis label, never a format you write: a date in a table, KPI or axis takes a strftime spec such as `"%b %Y"` or `"%Y"`.
+
+`text:` and titles take these names through `format`:
+
+```yaml
+title: "{{ queries.totals.one.revenue | format('currency_whole') }}"
+```
 
 ## Style
 

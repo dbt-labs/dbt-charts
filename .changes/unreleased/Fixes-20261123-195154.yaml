@@ -1,5 +1,0 @@
-kind: Fixes
-body: A table column's `font.decoration` and `font.style` now style its cells, not only when set by a conditional rule.
-time: 2026-11-23T19:51:54.913215033Z
-custom:
-    DbtChartsIssue: "130"

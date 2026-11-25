@@ -486,9 +486,9 @@ mod tests {
             ),
             "palette": ["#3164a3", "#779bc9", "#608470"],
             "legend": {
-                "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
+                "visible": false, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
                 "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600", "color": "#313233"}},
-                "label": {"font": {"family": TEST_FONT, "size": 11.0, "weight": "400", "color": "#626366"}, "padding": 8.0}
+                "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"family": TEST_FONT, "size": 11.0, "weight": "400", "color": "#626366"}, "padding": 8.0}
             },
             "style": {
                 "axis_x": axis(None),
@@ -788,7 +788,7 @@ mod tests {
         let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}, {"amount": 3.0}]);
         let mut resolved = minimal_valid_json(None, None, None);
         resolved["title_style"] =
-            serde_json::json!({"font": {"family": "Inter", "size": 18.0}, "overflow": "truncate"});
+            serde_json::json!({"font": {"family": "Inter", "size": 18.0}, "max_lines": 1});
         let untitled = render_ok(resolved.clone(), rows.clone());
         resolved["title"] = serde_json::json!("");
         resolved["subtitle"] = serde_json::json!("");

@@ -179,8 +179,8 @@ def pick_torn_break(
 class OffChartPlan(NamedTuple):
     """The break a ``variant: torn`` chart tears at, and the domain to pin for it.
 
-    ``domain`` is None when the author already pinned the axis, or when the shape
-    cannot draw an off-chart bar (the renderer then draws plain and warns).
+    ``domain`` is None when the author pinned the axis max; on a shape that cannot
+    draw an off-chart bar, the renderer then draws plain and warns.
     """
 
     break_value: float
@@ -205,7 +205,7 @@ def plan_off_chart(
     bar passes it, whatever ``median_multiplier`` says; without one the break is
     the axis the untorn bars alone would have, pinned here so the renderer needs
     no second rule. Shapes the off-chart bar cannot draw (a numeric x among them: its bars
-    sit on a linear scale, not bands) get the break but no domain.
+    sit on a linear scale, not bands) drop that automatic break: they draw plain.
     """
     continuous = ay.scale.continuous if ay.scale is not None else None
     domain = continuous.domain if continuous is not None else None
@@ -222,7 +222,7 @@ def plan_off_chart(
     )
     if torn_break is None:
         return None
-    drawable = (
+    if not (
         vertical
         and not quantitative_x
         and stack in (None, "none")
@@ -231,10 +231,11 @@ def plan_off_chart(
         and normalized.y_start is None
         and not ay.mirror
         and not (continuous is not None and continuous.zero is False)
-    )
+    ):
+        return None
     floor = min([floor, *layer_values])
     low = _headroom_floor(floor, headroom) if floor < 0 else 0.0
-    return OffChartPlan(torn_break, (low, torn_break) if drawable else None)
+    return OffChartPlan(torn_break, (low, torn_break))
 
 
 def refuse_values_past(

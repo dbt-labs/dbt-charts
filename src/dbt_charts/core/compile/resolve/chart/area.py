@@ -15,11 +15,13 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
+    ResolvedAreaOverlayAttempt,
     ResolvedAreaStyle,
     ResolvedPointLabels,
+    ResolvedPointMarkStyle,
 )
 from dbt_charts.core.compile.models.style.resolved._cartesian import (
-    ResolvedEndpointLabelsConfig,
+    ResolvedLineAreaEndpointLabelsConfig,
 )
 from dbt_charts.core.compile.models.style.theme.axis import AxisDomain
 from dbt_charts.core.compile.resolve.chart._annotations import (
@@ -27,6 +29,7 @@ from dbt_charts.core.compile.resolve.chart._annotations import (
     annotation_chart,
     point_radius,
     resolve_annotations,
+    resolve_direct_overlay_x,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
     _bake_ay_orient,
@@ -36,6 +39,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     cartesian_series_domain_values,
     cartesian_series_naming,
     cartesian_top_legend_entries,
+    direct_placement,
     estimate_cartesian_plot_height,
     estimate_left_axis_reserve_px,
 )
@@ -47,6 +51,7 @@ from dbt_charts.core.compile.resolve.chart._conditional import (
     resolve_mark_conditional,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
+    _axis_headroom,
     _bake_measure_domain,
     _bake_y_zero,
     _CartesianTickResolution,
@@ -56,6 +61,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _resolve_cartesian_ticks,
     _resolve_stacked_bar_ticks,
     _shared_y_values,
+    _unit_cap,
     _zero_anchor_floats,
     close_open_y_domain,
     resolve_y_zero,
@@ -80,6 +86,7 @@ from dbt_charts.core.compile.resolve.chart._marks import (
     _label_format_fallback,
     _measure_tooltip_format,
     _resolved_point_mark,
+    _run_axis,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
@@ -88,6 +95,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _resolved_series_label,
 )
 from dbt_charts.core.compile.resolve.chart._pattern import (
+    identity_series,
     inked_palette,
     pattern_series,
     resolve_pattern,
@@ -115,6 +123,7 @@ from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
     axis_title_cost_px,
     subtitle_cost_px,
 )
+from dbt_charts.core.compile.resolve.chart.tick_values import apply_headroom
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
@@ -259,6 +268,21 @@ def _validate_area_encoding(
         )
 
 
+def _overlay_blocker(
+    normalized: AreaChart, stack: Literal["none", "zero", "normalize", "center"]
+) -> str | None:  # type-state: optional — None when the bands can hold the names
+    """Why this area chart's plot cannot hold its series names, if it cannot."""
+    if normalized.layers:
+        return "a layered chart has no in-plot names"
+    if normalized.multiples is not None:
+        return "a faceted chart has no single plot"
+    if stack == "none":
+        return (
+            "the bands of an unstacked area overlap, so a name has no band of its own"
+        )
+    return None
+
+
 def _resolve_area(
     normalized: AreaChart,
     dataset: ChartDataset,
@@ -270,7 +294,14 @@ def _resolve_area(
     x_date_range: tuple[date, date] | None,
     rendered_at: datetime | None,
     display_text: ChartDisplayText = None,
+    overlay_attempt: bool = False,
 ) -> ResolvedAreaChart:
+    """Resolve an area chart.
+
+    ``overlay_attempt`` resolves it with its series named inside their bands: the
+    attempt a ``key.direct.position: auto`` chart carries beside its strip.
+    """
+    unpatterned = normalized
     authored_color = normalized.color
     normalized = pattern_series(normalized, normalized.x, normalized.y)
     data = dataset.all_rows()
@@ -342,25 +373,43 @@ def _resolve_area(
         single_series_fill,
         measure_quantitative=True,
     )
+    annotation_facts = (
+        annotation_chart(
+            normalized,
+            x_ch_type,
+            "quantitative",
+            resolved_stack not in (None, "none"),
+            single_series_fill,
+            False,
+            inks,
+        )
+        if rendered_at is not None
+        and (normalized.annotations or chart_local_style_context.key.direct.overlay_x)
+        else None
+    )
     annotations = (
         NO_ANNOTATIONS
-        if rendered_at is None or not normalized.annotations
+        if rendered_at is None or annotation_facts is None or not normalized.annotations
         else resolve_annotations(
             normalized.annotations,
-            annotation_chart(
-                normalized,
-                x_ch_type,
-                "quantitative",
-                resolved_stack not in (None, "none"),
-                single_series_fill,
-                False,
-                inks,
-            ),
+            annotation_facts,
             dataset,
             datasets,
             chart_local_style_context,
             rendered_at,
         )
+    )
+    direct_overlay_x, unseen_overlay_x = (
+        resolve_direct_overlay_x(
+            chart_local_style_context.key.direct.overlay_x,
+            annotation_facts,
+            dataset,
+            rendered_at,
+        )
+        if rendered_at is not None
+        and annotation_facts is not None
+        and chart_local_style_context.key.direct.overlay_x
+        else ((), ())
     )
     endpoint_label_has_layers = layered_endpoint_rail_fires(
         layered_endpoint_rail_shape(normalized.x, normalized.y),
@@ -416,8 +465,41 @@ def _resolve_area(
         # horizontal rail.
         axis_title_height_px=axis_title_cost_px(plan.axes.x.style.title),
     )
-    endpoint_labels = ResolvedEndpointLabelsConfig(
-        visible=naming.rail, label_offset=direct.offset
+    placement = (
+        "overlay"
+        if overlay_attempt
+        else direct_placement(
+            normalized.id,
+            direct.position,
+            naming.rail,
+            _overlay_blocker(normalized, resolved_stack),
+            channels,
+            wide_measure_series,
+        )
+    )
+    endpoint_labels = ResolvedLineAreaEndpointLabelsConfig(
+        visible=naming.rail and placement != "overlay",
+        overlay=placement == "overlay",
+        overlay_x=direct_overlay_x,
+        unseen_overlay_x=unseen_overlay_x,
+        label_offset=direct.offset,
+    )
+    overlay_chart = (
+        _resolve_area(
+            unpatterned,
+            dataset,
+            chart_style_context,
+            width,
+            title_width,
+            datasets,
+            automatic_link_candidate,
+            x_date_range,
+            rendered_at,
+            display_text,
+            overlay_attempt=True,
+        )
+        if placement == "auto"
+        else None
     )
     _reject_dual_axis_layered_endpoint_labels(
         normalized.id,
@@ -562,6 +644,7 @@ def _resolve_area(
     else:
         zero_anchored_area = True
     is_stacked = resolved_stack not in (None, "none")
+    stacked_domain_max: float | None = None
     x_field_area = normalized.x if isinstance(normalized.x, str) else None
     if resolved_stack == "normalize":
         # normalize-stack domain is always [0,1].
@@ -582,6 +665,16 @@ def _resolve_area(
             True,
             multiples_scale,
         )
+        # A zero stack tops at its tallest column total plus headroom, the
+        # line rule applied to the total. `center` floats columns about a
+        # centerline and `normalize` is pinned to [0, 1]: neither has a top
+        # to pad.
+        if resolved_stack == "zero" and stacked_max is not None and stacked_max > 0:
+            stacked_domain_max = apply_headroom(
+                stacked_max,
+                _axis_headroom(ay_merged),
+                cap=_unit_cap(ay_merged, 0.0, stacked_max),
+            )
         # Stacked area ladders against the cumulative column total, not the raw
         # per-series range. Without this a chart whose columns sum to 154 labels
         # an axis that stops at 70, leaving two thirds of the plot unlabeled —
@@ -617,10 +710,9 @@ def _resolve_area(
             scale=multiples_scale,
             is_quantitative=True,  # area's y is always the measure
         )
-    # domain_max/min stay None for stacked area: Vega-Lite owns the stacked
-    # domain, and baking a nice-rounded ladder rung as domainMax would clip
-    # marks above it. Headroom on area remains single-series-only.
-    area_domain_max = area_ticks.domain_max if not is_stacked else None
+    # A stacked area bakes its exact headroom-applied total, never a ladder
+    # rung (a nice-rounded rung as domainMax would clip marks above it).
+    area_domain_max = stacked_domain_max if is_stacked else area_ticks.domain_max
     area_domain_min = area_ticks.domain_min if not is_stacked else None
     # Area's x is always a bottom-orient temporal/ordinal axis — no left/right edge.
     # No tick_values on the categorical axis -- the non-compacting bake
@@ -736,6 +828,7 @@ def _resolve_area(
         axis_house_default,
         chart_style_context.formats,
         tooltip_format_values,
+        run_axis=_run_axis(line_mark_merged.labels, ay),
     )
     # Density-adaptive stroke for the overlap top-edge line and for overlay
     # layers, which are trend marks of their own.
@@ -771,6 +864,7 @@ def _resolve_area(
         area.pattern,
         single_series_fill,
         primary,
+        identity_series(authored_color, normalized.x, normalized.y),
     )
     eff_palette = inked_palette(
         _effective_palette(chart_style_context, primary), pattern
@@ -821,12 +915,16 @@ def _resolve_area(
             layers=resolved_layers,
             legend_visible=bkw["legend"].visible,
             canvas=chart_local_style_context.ink_canvas,
+            ink=chart_local_style_context.ink,
         ),
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
     area_point_mark = bake_edge_size(
         _resolved_point_mark(
-            area.marks.point, chart_style_context.formats, tooltip_format_values
+            area.marks.point,
+            chart_style_context.formats,
+            ResolvedPointMarkStyle,
+            tooltip_format_values,
         ),
         resolved_line_mark.stroke.width,
     )
@@ -853,6 +951,15 @@ def _resolve_area(
             point_mark=area_point_mark,
             conditional=area_conditional,
             endpoint_labels=endpoint_labels,
+            overlay=(
+                None
+                if overlay_chart is None
+                else ResolvedAreaOverlayAttempt(
+                    axis_y=overlay_chart.style.axis_y,
+                    line_mark=overlay_chart.style.line_mark,
+                    point_mark=overlay_chart.style.point_mark,
+                )
+            ),
             single_series_fill=single_series_fill,
             label_usable_ratio=chart_style_context.label_usable_ratio,
             dashes=chart_style_context.dashes,

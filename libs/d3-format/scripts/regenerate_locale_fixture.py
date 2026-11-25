@@ -3,6 +3,8 @@
 Run from the repo root: uv run python libs/d3-format/scripts/regenerate_locale_fixture.py
 """
 
+from __future__ import annotations
+
 import html
 import json
 import pathlib

@@ -1,3 +1,0 @@
-kind: Fixes
-body: Rendering a board with several MetricFlow queries no longer crashes with a segmentation fault.
-time: 2026-11-21T20:41:11.149211-08:00

@@ -241,6 +241,7 @@ def _resolve_heatmap(
             rhythm_slot=normalized.rhythm_slot,
         ),
         primary,
+        None,
     )
     strip_key_format, strip_key_is_house = (
         datum_format(

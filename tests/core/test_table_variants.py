@@ -850,12 +850,12 @@ class TestFitCascadeFloor:
                 "F": 33333,
             }
         ]
-        # wrap disabled: text overflow drives the cascade (wrap mode would
+        # One line per cell: text overflow drives the cascade (wrapping would
         # wrap "Alpha" instead of truncating, so the cascade wouldn't fire).
 
         es = _style_with()
         tc = es.table
-        es = dataclasses.replace(es, table=tc.model_copy(update={"wrap": False}))
+        es = dataclasses.replace(es, table=tc.model_copy(update={"max_lines": 1}))
         chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,

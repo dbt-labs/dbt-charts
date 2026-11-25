@@ -60,12 +60,15 @@ def prepare_serve(
     """Validate startup config, resolve port/dialect, and build the app and server.
 
     Returns a `Diagnostic` (not a raise) when `DCT_DEFAULT_THEME` names an
-    unknown theme — the CLI formats and exits on either return shape. A
+    unknown theme or `server.nav_order` names a folder or entry the project
+    does not hold — the CLI formats and exits on either return shape. A
     `dbt_charts.yml` validation failure (`load_config`) raises `ValidationError`
     uncaught; the CLI's own `try/except` around this call handles that,
     unchanged from before this function existed.
     """
     from dbt_charts.core.compile.config import get_default_theme_name, load_config
+    from dbt_charts.core.project import PROJECT_CONFIG_NAME
+    from dbt_charts.core.render.dir_context import check_nav_order
     from dbt_charts.core.serve.port import resolve_listener
     from dbt_charts.core.serve.server import create_server
     from dbt_charts.core.serve.shutdown import build_server
@@ -79,6 +82,10 @@ def prepare_serve(
     # Validate dbt_charts.yml wholesale: stray keys (style:, board:, theme:, etc.) are a
     # hard error here at startup rather than silently ignored.
     load_config(project)
+    try:
+        check_nav_order(project)
+    except DbtChartsError as exc:
+        return exc.to_diagnostic(file=PROJECT_CONFIG_NAME)
 
     project_dir = project.root
 

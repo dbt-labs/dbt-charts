@@ -1,5 +1,0 @@
-kind: Fixes
-body: 'A heatmap''s sort: no longer reorders a date axis, so each cell stays under the date its label shows; a sort over two date axes is now an error.'
-time: 2026-11-23T20:00:14.363888007Z
-custom:
-    DbtChartsIssue: "142"

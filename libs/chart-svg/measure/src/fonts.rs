@@ -942,6 +942,14 @@ impl FontMeasurer {
         self.ascent_raw as f64 / self.units_per_em as f64
     }
 
+    /// Height of the capitals above the baseline (the font's OS/2 `sCapHeight`), as a fraction
+    /// of em.
+    pub fn cap_height_em(&self) -> Result<f64, String> {
+        self.require_vertical_metrics();
+        let cap = self.font_handle().capital_height().ok_or_else(|| format!("font {:?} declares no capital height", self.font_path))?;
+        Ok(cap as f64 / self.units_per_em as f64)
+    }
+
     /// Descender depth below the baseline, as a positive fraction of em.
     pub fn descent_em(&self) -> f64 {
         self.require_vertical_metrics();
@@ -1229,80 +1237,6 @@ pub fn truncate_by<E>(
         return Ok(best);
     }
     Ok(chars.first().map(|c| c.to_string()).unwrap_or_default())
-}
-
-/// Wrap plain text using precise measurement only.
-///
-/// Returns `(lines, truncated)` where `truncated` is `true` when
-/// `max_lines` was set and the natural wrap produced more lines than
-/// `max_lines`.
-pub fn wrap_text_precise(
-    text: &str,
-    max_width: f64,
-    font_size: f64,
-    measurer: &FontMeasurer,
-    max_lines: Option<usize>,
-    ellipsis: bool,
-    normalize_whitespace: bool,
-) -> (Vec<String>, bool) {
-    let owned;
-    let text = if normalize_whitespace {
-        owned = d3rs::py_str::normalize_whitespace(text.trim_matches(is_py_space));
-        owned.as_str()
-    } else {
-        text
-    };
-    if text.is_empty() {
-        return (Vec::new(), false);
-    }
-
-    let measure = |v: &str| measure_text_precise(v, font_size, measurer);
-    let space_width = measure(" ");
-    let mut pieces: Vec<WrapPiece> = Vec::new();
-    let words: Vec<&str> = text.split(' ').collect();
-    for (word_index, word) in words.iter().enumerate() {
-        for (chunk_index, chunk) in split_token_precise(word, max_width, &measure)
-            .iter()
-            .enumerate()
-        {
-            let separator = if word_index > 0 && chunk_index == 0 {
-                " "
-            } else {
-                ""
-            };
-            let separator_width = if !separator.is_empty() { space_width } else { 0.0 };
-            pieces.push(WrapPiece {
-                text: chunk.clone(),
-                width: measure(chunk),
-                separator: separator.to_string(),
-                separator_width,
-                meta: None,
-                glued: false,
-            });
-        }
-    }
-
-    let lines = wrap_measured_pieces(&pieces, max_width, false);
-    if let Some(max_lines) = max_lines {
-        if lines.len() > max_lines {
-            let mut tail: Vec<WrapPiece> = Vec::new();
-            for line in &lines[max_lines - 1..] {
-                tail.extend(line.iter().cloned());
-            }
-            let mut rendered: Vec<String> =
-                lines[..max_lines - 1].iter().map(|l| pieces_to_text(l)).collect();
-            rendered.push(truncate_text_precise(
-                &pieces_to_text(&tail),
-                max_width,
-                font_size,
-                measurer,
-                ellipsis,
-                false,
-            ));
-            return (rendered, true);
-        }
-    }
-    (lines.iter().map(|l| pieces_to_text(l)).collect(), false)
 }
 
 #[cfg(test)]

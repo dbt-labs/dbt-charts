@@ -5,7 +5,7 @@
 // `test_system_font_found`/`test_system_default` (get_system_font/
 // system_default not ported — OS-detection unreached by production);
 // TestPreciseWrapper (exercises `create_precise_wrapper`, not ported —
-// covered here instead directly via `wrap_text_precise`, its callee);
+// covered here instead directly via `fit_with`, its callee);
 // TestGoogleFonts (network download, not ported); TestCachedMeasurer /
 // TestCachedMeasurerWeight (`_cached_measurer` itself IS ported, as
 // `cached_measurer` — these two classes pin `lru_cache`-specific behavior
@@ -162,13 +162,13 @@ fn test_split_token_precise_measure_calls_stay_linear() {
 }
 
 #[test]
-fn test_wrap_text_precise_snake_case_breaks_at_seam() {
+fn test_fit_lines_snake_case_breaks_at_seam() {
     let m = inter();
     let measure = |t: &str| m.measure(t, 14.0);
     let token = "top_5_destinations_by_of_qualified_customers";
     let full_width = measure(token);
     let max_width = full_width * 0.7;
-    let (lines, _) = wrap_text_precise(token, max_width, 14.0, &m, None, false, true);
+    let lines = crate::fit::fit_with(token, max_width, 14.0, &m, None).lines;
     let reassembled: String = lines.concat();
     assert_eq!(reassembled, token);
     for line in &lines {
@@ -179,8 +179,8 @@ fn test_wrap_text_precise_snake_case_breaks_at_seam() {
 #[test]
 fn test_authored_trailing_ellipsis_does_not_signal_truncation() {
     let m = inter();
-    let (lines, truncated) =
-        wrap_text_precise("Revenue…", 1000.0, 14.0, &m, Some(2), true, true);
+    let fitted = crate::fit::fit_with("Revenue…", 1000.0, 14.0, &m, Some(2));
+    let (lines, truncated) = (fitted.lines, fitted.cut);
     assert!(!truncated);
     assert!(lines.iter().any(|l| l.contains("Revenue")));
 }
@@ -189,7 +189,8 @@ fn test_authored_trailing_ellipsis_does_not_signal_truncation() {
 fn test_genuine_truncation_sets_flag() {
     let m = inter();
     let long_text = vec!["connections"; 20].join(" ");
-    let (lines, truncated) = wrap_text_precise(&long_text, 40.0, 14.0, &m, Some(2), true, true);
+    let fitted = crate::fit::fit_with(&long_text, 40.0, 14.0, &m, Some(2));
+    let (lines, truncated) = (fitted.lines, fitted.cut);
     assert!(truncated);
     assert!(lines.len() <= 2);
     assert!(lines.last().unwrap().ends_with('…'));

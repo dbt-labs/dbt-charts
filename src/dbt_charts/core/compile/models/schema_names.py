@@ -189,6 +189,7 @@ _palettes = build_palette_index(_DEFAULTS_DIR / "palettes")
 _tones = {name for name, entry in _palettes.items() if entry["family"] == "tone"}
 _categorical = [n for n, e in _palettes.items() if e["family"] == "categorical"]
 _patterns = {name for name, entry in _palettes.items() if entry["family"] == "pattern"}
+_lines = {name for name, entry in _palettes.items() if entry["family"] == "line"}
 
 # Built-in theme stems minus the private `_base` completeness floor and the
 # diagnostic-only themes.
@@ -202,8 +203,8 @@ _theme_names = [
 _palette_names = sorted(
     {*_palettes, *(f"{name}.{tier}" for name in _categorical for tier in VARIANT_WORDS)}
 )
-# A tone or a pattern palette resolves to no stops: `palette()` refuses every one.
-_stops_palette_names = sorted(set(_palette_names) - _tones - _patterns)
+# A tone, pattern or line palette resolves to no stops: `palette()` refuses every one.
+_stops_palette_names = sorted(set(_palette_names) - _tones - _patterns - _lines)
 # `style.pattern.palette` takes a pattern palette or one of the theme's pattern
 # roles, which the theme's `palettes:` map binds to one.
 _pattern_roles = ("pattern_category", "pattern_sequential", "pattern_diverging")

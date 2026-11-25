@@ -179,6 +179,67 @@ def test_chart_own_background_drives_its_knockouts(family: str, leaf: str) -> No
     assert _leaf(getattr(ctx, family), leaf) == DARK
 
 
+def _chart_context(
+    chart_type: str, style: dict[str, Any], board_style: str = ""
+) -> Any:
+    """The style context of one chart carrying `style`, on a board with `board_style`."""
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.resolve.style.chart_context import (
+        build_chart_style_context,
+    )
+
+    board = compile_board(f"extends: clarity\n{board_style}{_ROWS}")
+    assert board.success, board.errors
+    chart = TypeAdapter(Chart).validate_python(
+        {"id": "c", "type": chart_type, "style": style}
+    )
+    return build_chart_style_context(board.board.chart_style_context, chart)
+
+
+_OWN = "#334455"
+_BOARD_DARK = f"style:\n  background: '{DARK}'\n"
+
+
+@pytest.mark.parametrize(
+    ("own", "board_style"), [(None, _BOARD_DARK), (_OWN, _BOARD_DARK), (_OWN, "")]
+)
+def test_a_self_token_in_a_chart_local_style_is_that_charts_canvas(
+    own: str | None, board_style: str
+) -> None:
+    stroke = {"marks": {"area": {"stacked": {"stroke": {"color": "theme.background"}}}}}
+    legend = {"key": {"legend": {"background": "theme.background"}}}
+    ctx = _chart_context(
+        "area",
+        {**stroke, **legend, **({} if own is None else {"background": own})},
+        board_style,
+    )
+    if own is not None:
+        assert ctx.ink_canvas == own
+    assert ctx.area.marks.area.stacked.stroke.color == ctx.ink_canvas
+    assert ctx.legend.background == ctx.ink_canvas
+
+
+@pytest.mark.parametrize("own", [None, _OWN])
+def test_the_theme_default_legend_fill_is_the_charts_canvas(
+    own: str | None,
+) -> None:
+    ctx = _chart_context("bar", {} if own is None else {"background": own}, _BOARD_DARK)
+    assert ctx.legend.background == (DARK if own is None else own)
+    assert ctx.legend.background == ctx.ink_canvas
+
+
+def test_a_family_tier_legend_fill_token_is_the_charts_canvas() -> None:
+    ctx = _chart_context(
+        "bar",
+        {"background": _OWN},
+        f"{_BOARD_DARK}  charts:\n    bar:\n      key:\n        legend:\n"
+        "          background: theme.background\n",
+    )
+    assert ctx.legend.background == _OWN
+
+
 def test_palette_token_in_a_keyed_collection_resolves_on_a_board_patch() -> None:
     result = compile_board(
         "extends: clarity\nstyle:\n  charts:\n    table:\n      columns:\n"
@@ -226,3 +287,69 @@ def test_everyday_text_in_a_board_keyed_collection_is_left_alone(text: str) -> N
     assert result.success, result.errors
     columns = result.board.chart_style_context.table.columns
     assert columns["rev"].label == text
+
+
+_TOKEN_BOARD = """\
+queries:
+  q:
+    type: values
+    columns: [m, s, v]
+    values:
+      - [a, x, 1]
+      - [a, y, 2]
+      - [b, x, 3]
+      - [b, y, 1]
+charts:
+  c:
+    query: q
+    type: {family}
+    x: m
+    y: v
+    color: s
+    style:
+      background: '{own}'
+      key:
+        type: legend
+        legend:
+          position:
+            edge: top
+            overlay: true
+          background: theme.background
+rows:
+  - c
+"""
+
+
+@pytest.mark.parametrize("family", ["line", "bar"])
+def test_a_chart_local_self_token_renders_as_that_charts_canvas(family: str) -> None:
+    from ._svg_render import render_board_to_svg
+
+    svg = render_board_to_svg(_TOKEN_BOARD.format(family=family, own=_OWN))
+    boxes = [t for t in svg.split("<rect") if "role-legend-box" in t]
+    assert len(boxes) == 1, svg
+    assert f'fill="{_OWN}"' in boxes[0], boxes[0]
+
+
+_AUTHORED_FILL = "#aa2211"
+
+
+@pytest.mark.parametrize(
+    ("board_fill", "expected"), [(None, _OWN), (_AUTHORED_FILL, _AUTHORED_FILL)]
+)
+def test_a_board_level_legend_fill_wins_over_the_charts_own_canvas(
+    board_fill: str | None, expected: str
+) -> None:
+    from ._svg_render import render_board_to_svg
+
+    board = _TOKEN_BOARD.format(family="bar", own=_OWN).replace(
+        "          background: theme.background\n", ""
+    )
+    if board_fill is not None:
+        board += (
+            "style:\n  charts:\n    key:\n      legend:\n"
+            f"        background: '{board_fill}'\n"
+        )
+    svg = render_board_to_svg(board)
+    boxes = [t for t in svg.split("<rect") if "role-legend-box" in t]
+    assert len(boxes) == 1, svg
+    assert f'fill="{expected}"' in boxes[0], boxes[0]

@@ -4,6 +4,7 @@ that paints one, verbatim; `x_label`/`y_label` and `layer.label` still win."""
 from __future__ import annotations
 
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,14 @@ Rows = list[dict[str, Any]]
 
 
 from ..._engine_render import render_pie_svg
+
+
+def _texts(svg: str) -> list[str]:
+    """What each `<text>` reads, its tspans joined: a name along its line is a tspan per glyph."""
+    root = ET.fromstring(svg)
+    return [
+        "".join(t.itertext()) for t in root.iter("{http://www.w3.org/2000/svg}text")
+    ]
 
 
 def _board(
@@ -72,9 +81,12 @@ _CAPITAL = {**_WIDE, "y": ["All", "fix-linked"]}
 def test_wide_measure_entry_paints_field_label_in_svg(family: str) -> None:
     labeled = {**_WIDE, "type": family, "field_labels": {"fix-linked": "fix-linked"}}
     svg = _render(labeled, _WIDE_ROWS).output
-    assert "fix-linked<" in svg
+    texts = _texts(svg)
+    assert any(t.endswith("fix-linked") for t in texts)
     assert "Fix linked" not in svg
-    assert "Fix linked" in _render({**_WIDE, "type": family}, _WIDE_ROWS).output
+    assert not any("Fix linked" in t for t in texts)
+    unlabeled = _texts(_render({**_WIDE, "type": family}, _WIDE_ROWS).output)
+    assert any("Fix linked" in t for t in unlabeled)
 
 
 _DATE_LAYER_ROWS = [

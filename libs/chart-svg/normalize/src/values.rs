@@ -541,7 +541,6 @@ fn for_queries(d: &Declared, v: &Val, clock: &Clock) -> Result<Val, Diagnostic> 
             | InputType::Datepicker
             | InputType::Number
             | InputType::Slider
-            | InputType::Range
             | InputType::Checkbox
             | InputType::Select
             | InputType::Radio
@@ -573,7 +572,7 @@ fn for_queries(d: &Declared, v: &Val, clock: &Clock) -> Result<Val, Diagnostic> 
             d,
             format!("daterange value must be [start, end], got {}", v.repr()),
         )),
-        (InputType::Number | InputType::Slider | InputType::Range, _) => coerce_number(d, v),
+        (InputType::Number | InputType::Slider, _) => coerce_number(d, v),
         (InputType::Checkbox, _) => coerce_bool(d, v),
         _ => Ok(v.clone()),
     }

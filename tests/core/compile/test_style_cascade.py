@@ -689,11 +689,11 @@ class TestPreInheritPatchReMerge:
 
 class TestChartLocalLegendMerge:
     def test_legend_leaf_propagates(self) -> None:
-        patch = BarChartStylePatch(key={"legend": {"symbol_limit": 5}})
+        patch = BarChartStylePatch(key={"legend": {"limit": 5}})
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
         )
-        assert result.legend.symbol_limit == 5
+        assert result.legend.limit == 5
 
 
 class TestAxisScaleCascade:

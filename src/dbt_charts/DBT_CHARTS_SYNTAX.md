@@ -754,7 +754,7 @@ resolve to the same recipe, and the same error names the recipe if you guess a `
 | dual axis, combo, bar and line | layers: on a cartesian chart, with axis_y.position: right on the added layer for its own y-axis. Warns `WARN-DUAL-AXIS-COMPETING-SCALES` (independent scales mislead); prefer stacked charts, or indexing both series to a common start in the query |
 | stacked column | type: bar with style.orientation: vertical, color:, and style.stack: zero |
 | grouped column, clustered column | type: bar with style.orientation: vertical, color:, and style.stack: none |
-| lollipop | type: bar with style.marks.bar.band_width thinned to a stem, plus a layers: scatter on the same y (style.marks.bar.size is a separate fixed-pixel mode and does not thin the bar) |
+| lollipop | type: bar with style.marks.bar.band_width thinned to a stem, plus a layers: scatter on the same y (style.marks.bar.size, a fixed pixel width, thins the bar too and wins over band_width) |
 | bullet | type: bar with style.stack: zero, style.series_order: data and color: on the qualitative range column — one row per (category, band) — plus a layers: bar on the value and a layers: line on the target, both reading their own one-row-per-category source via layers[].query (sharing the ranges' rows multiplies each by the band count). Thin the value bar with style.marks.bar.band_width so the ranges stay visible, give the target style.marks.line.curve: step with connect: false for the goal tick, and set style.orientation: vertical |
 | slope | type: line with a two-category x and color: on the series column (year-shaped x values resolve to a continuous temporal scale, which fills in the span between the pair) |
 | bump | type: line on a rank column with color: on the series column (the data is entity x period x rank, so without it the rows collide on the period key) and a descending style.axis_y.scale.continuous.domain (e.g. [6, 1]) so rank 1 is on top |
@@ -1037,7 +1037,7 @@ style:
       font:
         color: "#626366" # optional; paints the headline glyph only
   label:
-    overflow: wrap       # clip | truncate | wrap-two | wrap; defaults to the chart title's
+    max_lines: all       # a line count (1 or more) | all; defaults to the chart title's
     font:
       color: "#2563eb"   # optional; paints the label only
   support:
@@ -1054,6 +1054,7 @@ style:
 # to hide a column
 type: table
 style:
+  max_lines: trim_outliers               # trim_outliers (default: cut only unusually long cells) | p1..p100 (that percentile of the column's line counts) | square | all (no limit) | a line count (1 = one line)
   column_layout:
     overflow: scroll                     # scroll (default): keep column widths, scroll sideways | fit: squeeze into the slot
     freeze: 1                            # leading visible columns pinned while scrolling (needs overflow: scroll)
@@ -1067,7 +1068,7 @@ style:
       label: Amount
       format: currency_whole
       align: right                       # left | center | right
-      header_overflow: wrap-two          # clip | truncate | wrap-two (default) | wrap
+      header_max_lines: all              # a line count (1 or more) | all; defaults to the table's header.max_lines (2)
       header_link: "/columns/amount"
       link: "/orders?id={{ order_id }}"
       background: dbt-grays.1
@@ -1634,7 +1635,7 @@ variables:
     default: US
 ```
 
-Input types (14 total):
+Input types (13 total):
 
 | Input | Widget |
 |-------|--------|
@@ -1645,8 +1646,7 @@ Input types (14 total):
 | `text` | Free-text input |
 | `textarea` | Multi-line text input |
 | `number` | Numeric input |
-| `slider` | Single-handle numeric slider |
-| `range` | Two-handle numeric slider (returns `[low, high]`) |
+| `slider` | Single-handle numeric slider; a two-ended range is two `slider` variables, one per bound |
 | `date` | Single date picker (also `datepicker`) |
 | `datepicker` | Single date picker |
 | `daterange` | Date range picker (returns `[start, end]`; takes dates or a preset name such as `last_90_days`, `previous_3_quarters`, `this_fiscal_quarter`; see Rolling presets in the variables reference) |

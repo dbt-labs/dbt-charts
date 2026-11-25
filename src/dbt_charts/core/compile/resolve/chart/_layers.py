@@ -48,6 +48,7 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
     series_colors,
 )
 from dbt_charts.core.compile.models.style.theme.line import LineChartStyle
+from dbt_charts.core.compile.models.style.theme.marks import PointMarkStyle
 from dbt_charts.core.compile.models.style.theme.scatter import ScatterChartStyle
 from dbt_charts.core.compile.resolve.chart._axes import _series_display_name
 from dbt_charts.core.compile.resolve.chart._axis_color import layer_axis_color
@@ -504,6 +505,7 @@ def _resolve_one_layer(
                     area_marks.point if area_marks is not None else None,
                 ),
                 chart_style_context.formats,
+                ResolvedPointMarkStyle,
                 _layer_values(),
             ),
             ink=layer_ink.ink,
@@ -563,8 +565,14 @@ def _resolve_one_layer(
     scatter_parent = (
         base_family_style if base_type == "scatter" else chart_style_context.scatter
     )
+    # The parent's halo rings the chart's own points; a layer draws plain ones.
     pre_fallback_scatter_point = merge_unset(
-        scatter_parent.marks.point,
+        PointMarkStyle.model_validate(
+            {
+                name: getattr(scatter_parent.marks.point, name)
+                for name in PointMarkStyle.model_fields
+            }
+        ),
         scatter_marks.point if scatter_marks is not None else None,
     )
     scatter_fmt, scatter_label_is_house = resolve_label_format(
@@ -578,7 +586,9 @@ def _resolve_one_layer(
     return ResolvedScatterLayer(
         type="scatter",
         point_mark=resolved_as(
-            ResolvedPointMarkStyle, pre_fallback_scatter_point, labels=scatter_labels
+            ResolvedPointMarkStyle,
+            pre_fallback_scatter_point,
+            labels=scatter_labels,
         ),
         ink=layer_ink.ink,
         series_inks=layer_ink.series,

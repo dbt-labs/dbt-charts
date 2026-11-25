@@ -65,6 +65,21 @@ def test_family_legend_position_inherits_the_board_general_position() -> None:
     assert (position["edge"], position["align"]) == ("bottom", "end")
 
 
+def test_legend_padding_in_the_style_tree_is_decided_with_the_placement() -> None:
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+
+    def padding(legend: dict[str, Any]) -> float:
+        patch = StylePatch.model_validate({"charts": {"key": {"legend": legend}}})
+        tree = _style_tree(
+            resolve_chart_style_context(get_theme_style("clarity"), patch)
+        )
+        return tree["charts"]["key"]["legend"]["padding"]
+
+    assert padding({"position": {"edge": "top", "overlay": True}}) == 5.0
+    assert padding({"position": {"edge": "right", "overlay": False}}) == 0.0
+    assert padding({"position": {"overlay": False}, "padding": 8}) == 8.0
+
+
 def _rendered_position(chart_def: dict[str, Any], board_patch: Any) -> tuple[Any, ...]:
     from dbt_charts.core.compile.models.query.normalized import ValuesQuery
     from dbt_charts.core.compile.normalize.charts import normalize_chart

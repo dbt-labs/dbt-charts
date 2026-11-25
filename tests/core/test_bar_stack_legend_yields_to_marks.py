@@ -391,7 +391,7 @@ def test_twenty_five_series_at_narrow_card_draws_marks_with_real_height() -> Non
 
 
 def test_a_fitted_legend_yields_when_every_entry_and_the_subtitle_are_charged() -> None:
-    """25 entries in the default fitted wrap draw 9 rows, past symbol_limit's
+    """25 entries in the default fitted wrap draw 9 rows, past limit's
     20, under a card whose subtitle takes three lines. Charging either fewer
     entries or the whole card leaves the legend up and the stack blank."""
     subtitle = (

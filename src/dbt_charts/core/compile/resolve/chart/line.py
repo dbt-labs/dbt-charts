@@ -12,15 +12,17 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedLineChart,
 )
+from dbt_charts.core.compile.models.palette import LineStyle
 from dbt_charts.core.compile.models.primitives import resolved_as
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
+    ResolvedLineOverlayAttempt,
     ResolvedLineStyle,
     ResolvedPointLabels,
     ResolvedPointMarkStyle,
 )
 from dbt_charts.core.compile.models.style.resolved._cartesian import (
-    ResolvedEndpointLabelsConfig,
+    ResolvedLineAreaEndpointLabelsConfig,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     label_anchors,
@@ -31,6 +33,7 @@ from dbt_charts.core.compile.resolve.chart._annotations import (
     annotation_chart,
     point_radius,
     resolve_annotations,
+    resolve_direct_overlay_x,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
     _bake_ay_orient,
@@ -40,6 +43,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     cartesian_series_domain_values,
     cartesian_series_naming,
     cartesian_top_legend_entries,
+    direct_placement,
     estimate_cartesian_plot_height,
     estimate_left_axis_reserve_px,
 )
@@ -82,6 +86,7 @@ from dbt_charts.core.compile.resolve.chart._marks import (
     _build_resolved_line_mark,
     _label_format_fallback,
     _measure_tooltip_format,
+    _run_axis,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
@@ -117,6 +122,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.compile.resolve.style.legend_position import (
     cascaded_key,
 )
+from dbt_charts.core.compile.resolve.style.palette import line_palette_styles
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.constants.marks import (
@@ -138,6 +144,14 @@ from dbt_charts.core.utils import (
 __all__ = [
     "_resolve_line",
 ]
+
+
+def _with_ink_width(style: LineStyle, width: float) -> LineStyle:
+    """``style`` drawn at ``width``; an inline keeps its share of the ink."""
+    inline = style.inline
+    if inline is not None:
+        inline = inline.model_copy(update={"width": inline.width * width / style.width})
+    return style.model_copy(update={"width": width, "inline": inline})
 
 
 def _check_connect(
@@ -165,6 +179,19 @@ def _check_connect(
             )
 
 
+def _overlay_blocker(
+    normalized: LineChart,
+) -> str | None:  # type-state: optional — None when the plot can hold the names
+    """Why this line chart's plot cannot hold its series names, if it cannot."""
+    if normalized.layers:
+        return "a layered chart has no in-plot names"
+    if normalized.multiples is not None:
+        return "a faceted chart has no single plot"
+    if normalized.connect is not None:
+        return "a connected line runs back and forth, so it has no left-to-right path to name"
+    return None
+
+
 def _resolve_line(
     normalized: LineChart,
     dataset: ChartDataset,
@@ -176,7 +203,13 @@ def _resolve_line(
     x_date_range: tuple[date, date] | None,
     rendered_at: datetime | None,
     display_text: ChartDisplayText = None,
+    overlay_attempt: bool = False,
 ) -> ResolvedLineChart:
+    """Resolve a line chart.
+
+    ``overlay_attempt`` resolves it with its series named inside the plot: the
+    attempt a ``key.direct.position: auto`` chart carries beside its strip.
+    """
     data = dataset.all_rows()
     multiples_scale = (
         normalized.multiples.scale if normalized.multiples is not None else "shared"
@@ -252,25 +285,43 @@ def _resolve_line(
         single_series_fill,
         measure_quantitative=True,
     )
+    annotation_facts = (
+        annotation_chart(
+            normalized,
+            x_ch_type,
+            "quantitative",
+            False,
+            single_series_fill,
+            False,
+            inks,
+        )
+        if rendered_at is not None
+        and (normalized.annotations or chart_local_style_context.key.direct.overlay_x)
+        else None
+    )
     annotations = (
         NO_ANNOTATIONS
-        if rendered_at is None or not normalized.annotations
+        if rendered_at is None or annotation_facts is None or not normalized.annotations
         else resolve_annotations(
             normalized.annotations,
-            annotation_chart(
-                normalized,
-                x_ch_type,
-                "quantitative",
-                False,
-                single_series_fill,
-                False,
-                inks,
-            ),
+            annotation_facts,
             dataset,
             datasets,
             chart_local_style_context,
             rendered_at,
         )
+    )
+    direct_overlay_x, unseen_overlay_x = (
+        resolve_direct_overlay_x(
+            chart_local_style_context.key.direct.overlay_x,
+            annotation_facts,
+            dataset,
+            rendered_at,
+        )
+        if rendered_at is not None
+        and annotation_facts is not None
+        and chart_local_style_context.key.direct.overlay_x
+        else ((), ())
     )
     endpoint_label_has_layers = layered_endpoint_rail_fires(
         layered_endpoint_rail_shape(normalized.x, normalized.y),
@@ -330,8 +381,41 @@ def _resolve_line(
         # horizontal rail.
         axis_title_height_px=axis_title_cost_px(plan.axes.x.style.title),
     )
-    endpoint_labels = ResolvedEndpointLabelsConfig(
-        visible=naming.rail, label_offset=direct.offset
+    placement = (
+        "overlay"
+        if overlay_attempt
+        else direct_placement(
+            normalized.id,
+            direct.position,
+            naming.rail,
+            _overlay_blocker(normalized),
+            channels,
+            wide_measure_series,
+        )
+    )
+    endpoint_labels = ResolvedLineAreaEndpointLabelsConfig(
+        visible=naming.rail and placement != "overlay",
+        overlay=placement == "overlay",
+        overlay_x=direct_overlay_x,
+        unseen_overlay_x=unseen_overlay_x,
+        label_offset=direct.offset,
+    )
+    overlay_chart = (
+        _resolve_line(
+            normalized,
+            dataset,
+            chart_style_context,
+            width,
+            title_width,
+            datasets,
+            automatic_link_candidate,
+            x_date_range,
+            rendered_at,
+            display_text,
+            overlay_attempt=True,
+        )
+        if placement == "auto"
+        else None
     )
     _reject_dual_axis_layered_endpoint_labels(
         normalized.id,
@@ -476,13 +560,23 @@ def _resolve_line(
         ),
     )
     axis_house_default = plan.axes.y.is_house
+    # Named inside the plot, each series' latest value sits beside its last
+    # point; labels the author set stay as they are.
+    line_labels = line.marks.line.labels
+    if (
+        endpoint_labels.overlay
+        and not line_labels.visible
+        and not line.marks.point.labels.visible
+    ):
+        line_labels = line_labels.model_copy(update={"visible": "last"})
     resolved_line_labels, line_label_is_house = _label_format_fallback(
-        line.marks.line.labels,
+        line_labels,
         ResolvedPointLabels,
         ay.labels.format,
         axis_house_default,
         chart_style_context.formats,
         tooltip_format_values,
+        run_axis=_run_axis(line_labels, ay),
     )
     line_mark_baked = line.marks.line
     # Density-adaptive stroke: bake BEFORE building the resolved mark so the
@@ -499,7 +593,20 @@ def _resolve_line(
             normalized.multiples,
             bool(ay.mirror),
         )
-    _adaptive_stroke = stroke_from_px_per_point(_px_per_point)
+    # Authored dashes win over the theme's line palette. A palette fixes widths, so the
+    # density-adaptive stroke gives way to its lead style's, but an authored width
+    # outranks the palette's.
+    line_styles = (
+        ()
+        if chart_style_context.dashes
+        else line_palette_styles(chart_style_context.palettes)
+    )
+    authored_width = line_mark_baked.stroke.width if line_mark_baked.stroke else None
+    if line_styles and authored_width:
+        line_styles = tuple(_with_ink_width(s, authored_width) for s in line_styles)
+    _adaptive_stroke = (
+        line_styles[0].width if line_styles else stroke_from_px_per_point(_px_per_point)
+    )
     line_mark_baked = _apply_line_width(
         line_mark_baked, _adaptive_stroke, STROKE_FALLBACK_WIDTH
     )
@@ -513,6 +620,7 @@ def _resolve_line(
         axis_house_default,
         chart_style_context.formats,
         tooltip_format_values,
+        run_axis=_run_axis(line.marks.point.labels, ay),
     )
     line_stroke = resolved_line_mark.stroke.width
     # Decided here, before bake_point_companions, which leaves a set size alone.
@@ -601,6 +709,7 @@ def _resolve_line(
             layers=resolved_layers,
             legend_visible=bkw["legend"].visible,
             canvas=chart_local_style_context.ink_canvas,
+            ink=chart_local_style_context.ink,
         ),
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
@@ -624,9 +733,19 @@ def _resolve_line(
             point_mark=line_point_mark,
             conditional=line_conditional,
             endpoint_labels=endpoint_labels,
+            overlay=(
+                None
+                if overlay_chart is None
+                else ResolvedLineOverlayAttempt(
+                    axis_y=overlay_chart.style.axis_y,
+                    line_mark=overlay_chart.style.line_mark,
+                    point_mark=overlay_chart.style.point_mark,
+                )
+            ),
             single_series_fill=single_series_fill,
             label_usable_ratio=chart_style_context.label_usable_ratio,
             dashes=chart_style_context.dashes,
+            line_styles=line_styles,
             title_font=_tf,
             line_label_is_house=line_label_is_house,
             point_label_is_house=point_label_is_house,

@@ -36,9 +36,16 @@ pub const SEMICOLON_ESCAPE: char = '\u{E000}'; // PRIVATE USE AREA
 /// row leads (loud, unprefixed); its raw value and grand-total rows are
 /// context, so both carry this prefix.
 pub const MUTED: char = '\u{2060}'; // WORD JOINER
+/// Follows `ROLE_EXTRA` on an authored row whose value is a link's href (a `url` or
+/// `email` column): the runtime draws it as a link a pinned card can follow.
+pub const ROLE_LINK: char = '\u{206F}'; // NOMINAL DIGIT SHAPES
 /// One authored `tooltip:` row.
 pub fn extra_row(label: &str, value: &str) -> String {
     format!("{ROLE_EXTRA}{label}: {value}")
+}
+
+pub fn link_row(label: &str, href: &str) -> String {
+    format!("{ROLE_EXTRA}{ROLE_LINK}{label}: {href}")
 }
 
 /// Brackets a value row's swatch color: `SWATCH #hex SWATCH` leads its title.

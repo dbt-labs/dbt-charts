@@ -59,6 +59,7 @@ use crate::Payload;
 use scene::{Attrs, Node, PathData, Role, Transform};
 
 pub mod bind;
+pub mod frame;
 pub mod layout;
 
 /// One rendered point: (x fraction, y fraction, color series, radius, own
@@ -374,6 +375,18 @@ struct ScatterStyle {
     /// (`common::format_mark_label`).
     #[serde(default)]
     label_is_house: bool,
+    /// `style.frame`: the axes draw as a range frame ([`frame`]).
+    frame: Frame,
+    /// `style.series_symbols`: the symbol each series of a framed chart takes.
+    #[serde(default)]
+    series_symbols: Option<Vec<crate::families::scatter_shape::SeriesSymbol>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Frame {
+    Full,
+    Range,
 }
 
 #[derive(Deserialize)]
@@ -395,7 +408,7 @@ struct PointMark {
     /// The fill of an unfilled point.
     #[serde(default)]
     fill: Option<String>,
-    /// The canvas ring a point map draws around each dot; a scatter refuses it in `bind`.
+    /// The canvas ring around each point; only a framed scatter draws it.
     #[serde(default)]
     halo: Option<f64>,
 }
@@ -531,7 +544,7 @@ fn size_legend_nodes(sl: &legend::SizeLegend, r: &ScatterResolved, x: f64, y: f6
     } else {
         legend::SizePaint::Static { fill: &r.style.single_series_fill, opacity }
     };
-    sl.nodes(&r.legend, paint, x, y)
+    sl.nodes(&r.legend, paint, x, y, r.canvas.as_str())
 }
 
 /// How a shape legend's symbols are painted (`legend/encode.ts` `symbols()`):
@@ -2018,10 +2031,15 @@ const NO_EXTENT: (f64, f64) = (f64::INFINITY, f64::NEG_INFINITY);
 /// The order a scatter lists its color series in when the board colors them by slot (so position does not
 /// decide the color): its own points' ranking by `y` (all rows, so a legend view does not reorder it). A linked legend and a wide fold keep their orders.
 fn own_series_order(r: &ScatterResolved, color_domain: &[String], rows: &[serde_json::Map<String, Value>]) -> Option<Vec<String>> {
+    let bound = crate::common::category_scale_for(&r.category_colors, r.color.as_deref()?).is_some();
+    bound.then(|| ranked_by_y(r, color_domain, rows)).flatten()
+}
+
+/// `color_domain` ranked by its series' `y` over all `rows`, whether or not the board plans the field's colors.
+fn ranked_by_y(r: &ScatterResolved, color_domain: &[String], rows: &[serde_json::Map<String, Value>]) -> Option<Vec<String>> {
     let field = r.color.as_deref()?;
-    let bound = crate::common::category_scale_for(&r.category_colors, field).is_some();
     let free = r.wide_measures.is_empty() && r.legend_view.as_ref().and_then(|view| view.series()).is_none();
-    (bound && free).then(|| ::bind::stack::ranked_series(color_domain, rows, field, &r.y, r.style.axis_y.rank_by(true)))
+    free.then(|| ::bind::stack::ranked_series(color_domain, rows, field, &r.y, r.style.axis_y.rank_by(true)))
 }
 
 /// The color legend's entries as indices into `color_domain`, in drawn order.
@@ -2427,7 +2445,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
         .unwrap_or_default();
     let shape_legend = match r.shape.as_deref().filter(|_| !merged_shape) {
         Some(field) => {
-            Some(crate::families::scatter_shape::ShapeLegend::new(fonts, payload, field.to_string(), shape_domain.clone())?)
+            Some(crate::families::scatter_shape::ShapeLegend::new(fonts, payload, legend_cfg, field.to_string(), shape_domain.clone())?)
         }
         None => None,
     };
@@ -2514,7 +2532,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
         edge: facet_compose::LegendEdge::Right,
         width: Box::new(|_, _| sl.w),
         height: Box::new(|_| sl.h),
-        paint: Box::new(|x, y, _, _| sl.nodes(x, y, shape_fill, shape_opacity)),
+        paint: Box::new(|x, y, _, _| sl.nodes(&r.legend, x, y, shape_fill, shape_opacity, r.canvas.as_str())),
     });
     // A rule layer's shape legend registers ahead of the others on the right edge.
     let shape_leads = rule_shape && legend_edge == facet_compose::LegendEdge::Right;
@@ -2546,7 +2564,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
                     .1
             }),
             paint: Box::new(|x, y, pw, ph| {
-                GradientAt::nodes(legend_cfg, r.color_format.as_ref(), scale, (&gradient_id, title), fonts, (pw, ph), (x, y))
+                GradientAt::nodes(legend_cfg, r.color_format.as_ref(), scale, (&gradient_id, title), fonts, (pw, ph), (x, y), r.canvas.as_str())
                     .expect("legend fonts are measured when the numeric legends are built")
             }),
         }))
@@ -2747,9 +2765,9 @@ mod tests {
             "palette": ["#3164a3", "#779bc9"],
             "multiples": null, "layers": [], "size": null, "shape": null,
             "legend": {
-                "visible": with_color, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
+                "visible": with_color, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
                 "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600", "color": "#313233"}},
-                "label": {"font": {"family": TEST_FONT, "size": 11.0, "weight": "400", "color": "#626366"}, "padding": 8.0}
+                "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"family": TEST_FONT, "size": 11.0, "weight": "400", "color": "#626366"}, "padding": 8.0}
             },
             "style": {
                 "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
@@ -2757,6 +2775,7 @@ mod tests {
                 "axis_y": ay,
                 "size": {"range": [4.0, 361.0], "type": "linear"},
                 "point_mark": {"size": 60.0, "opacity": 1.0, "stroke_width": 2.5},
+                "frame": "full",
                 "single_series_fill": "#23467f"
             }
         });
@@ -3193,7 +3212,7 @@ mod tests {
         assert_eq!(delta, want, "the subtitle band is reserved: plot moved {delta}, expected {want}");
     }
 
-    /// A `wrap-two` subtitle (the exact `p1_scatter_y_only` text) wraps to
+    /// A two-line subtitle (the exact `p1_scatter_y_only` text) wraps to
     /// two lines and reserves `TitleInk::with_subtitle_lines`' own `ink_h`,
     /// not a single line's.
     #[test]
@@ -3243,7 +3262,7 @@ mod tests {
         );
     }
 
-    /// A `wrap-two` TITLE (not just a subtitle) also wraps in this arm, so
+    /// A two-line TITLE (not just a subtitle) also wraps in this arm, so
     /// paint and `wrap_title_block`'s own reservation must count the same
     /// lines: both title lines paint, and the subtitle sits below the
     /// SECOND line.
@@ -3282,7 +3301,7 @@ mod tests {
         );
     }
 
-    /// A `wrap-two` title with NO subtitle takes the same
+    /// A two-line title with NO subtitle takes the same
     /// `wrap_title_block`/`emit_title_block_vega` path: both wrapped lines
     /// paint, one `fontSize + 2` apart, and the plot top moves by exactly
     /// the second line's advance over the one-line title (production's
@@ -3601,7 +3620,7 @@ mod tests {
     #[test]
     fn a_gradient_legend_slides_along_the_right_edge() {
         let at = |align: &str| {
-            text_xy(&gradient_legend_payload(serde_json::json!({"edge": "right", "align": align, "overlay": false})), "Score")
+            text_xy(&gradient_legend_payload(serde_json::json!({"edge": "right", "align": align, "overlay": false, "corners": [{"edge": "right", "align": align}]})), "Score")
         };
         let (start, center) = (at("start"), at("center"));
         assert_eq!(center.0, start.0, "sliding keeps the column");
@@ -3612,8 +3631,8 @@ mod tests {
     /// keeps the width the strip would have taken.
     #[test]
     fn a_floating_gradient_legend_reserves_no_strip() {
-        let reserved = gradient_legend_payload(serde_json::json!({"edge": "right", "align": "center", "overlay": false}));
-        let floating = gradient_legend_payload(serde_json::json!({"edge": "right", "align": "center", "overlay": true}));
+        let reserved = gradient_legend_payload(serde_json::json!({"edge": "right", "align": "center", "overlay": false, "corners": [{"edge": "right", "align": "center"}]}));
+        let floating = gradient_legend_payload(serde_json::json!({"edge": "right", "align": "center", "overlay": true, "corners": [{"edge": "right", "align": "center"}]}));
         let plot_right = |svg: &str| {
             svg.split("<line ")
                 .skip(1)
@@ -4594,7 +4613,7 @@ mod tests {
 
     fn legend_with_size(edge: &str) -> String {
         let mut json = make_scatter_payload_with_size(true);
-        json["resolved"]["legend"]["position"] = serde_json::json!({"edge": edge, "align": "start", "overlay": false});
+        json["resolved"]["legend"]["position"] = serde_json::json!({"edge": edge, "align": "start", "overlay": false, "corners": [{"edge": edge, "align": "start"}]});
         if edge != "right" {
             json["resolved"]["legend"]["direction"] = serde_json::json!("horizontal");
         }
@@ -4670,7 +4689,7 @@ mod tests {
         for (i, row) in json["rows"].as_array_mut().unwrap().iter_mut().enumerate() {
             row["region"] = serde_json::json!(["East", "West"][i % 2]);
         }
-        json["resolved"]["legend"]["position"] = serde_json::json!({"edge": "bottom", "align": "start", "overlay": false});
+        json["resolved"]["legend"]["position"] = serde_json::json!({"edge": "bottom", "align": "start", "overlay": false, "corners": [{"edge": "bottom", "align": "start"}]});
         let svg = render_json(json);
         let color_title = text_xy(&svg, "Segment");
         let shape_title = text_xy(&svg, "region");
@@ -4680,6 +4699,23 @@ mod tests {
         assert_eq!(shape_title.1, 9.0, "and opens at the top of the legend column");
         let rows = [text_xy(&svg, "East").1, text_xy(&svg, "West").1];
         assert_eq!(rows[1] - rows[0], 16.0, "one row per entry: {rows:?}");
+    }
+
+    #[test]
+    fn a_shape_legend_label_halo_sits_under_each_label_in_the_background() {
+        let halos = |halo: f64| {
+            let mut json = make_scatter_payload(true);
+            json["resolved"]["shape"] = serde_json::json!("region");
+            with_board_font(&mut json);
+            for (i, row) in json["rows"].as_array_mut().unwrap().iter_mut().enumerate() {
+                row["region"] = serde_json::json!(["East", "West"][i % 2]);
+            }
+            json["resolved"]["legend"]["background"] = "#ffd966".into();
+            json["resolved"]["legend"]["label"]["halo"] = halo.into();
+            render_json(json).matches("fill=\"#ffd966\" stroke=\"#ffd966\" stroke-width=\"3\" stroke-linejoin=\"round\"").count()
+        };
+        assert_eq!(halos(0.0), 0, "no halo by default");
+        assert_eq!(halos(3.0), 4, "one under each label of the color legend and of the shape legend");
     }
 
     /// A size cell JS reads as `NaN` drops its row like a null one: the chart
@@ -4962,7 +4998,7 @@ mod tests {
 
     /// The `!x_nominal` half of the widened title-overflow gate: a nominal-x
     /// scatter with a title/subtitle production wraps to two lines takes the
-    /// SAME fit-arm wrap-two law the nominal-y dot plot does, never the
+    /// SAME fit-arm two-line law the nominal-y dot plot does, never the
     /// legacy fallback — whose point loop reads a numeric x and would draw
     /// no marks and no category labels at all (this file's own dispatch
     /// comment). Same fixture as `nominal_x_places_marks_on_the_point_scale_
@@ -5037,9 +5073,9 @@ mod tests {
         res["style"]["axis_y"]["domain_min"] = serde_json::json!(5.0);
         res["style"]["axis_y"]["domain_max"] = serde_json::json!(75.0);
         res["legend"] = serde_json::json!({
-            "visible": true, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
+            "visible": true, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
             "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600", "color": "#313233"}},
-            "label": {"font": {"family": TEST_FONT, "size": 11.0, "weight": "400", "color": "#626366"}, "padding": 8.0}
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"family": TEST_FONT, "size": 11.0, "weight": "400", "color": "#626366"}, "padding": 8.0}
         });
         json["rows"] = serde_json::json!([
             {"team": "Alpha", "unit_price": 10.0, "total_cost": 50.0},
@@ -5736,7 +5772,7 @@ mod tests {
 
     /// The legacy arm a title-overflow scatter falls back to draws no
     /// categorical marks at all, so a dot plot instead takes the fit arm's
-    /// own wrap-two law (`common::wrap_title_block`/`emit_title_block_vega`,
+    /// own two-line law (`common::wrap_title_block`/`emit_title_block_vega`,
     /// the same shared law line/area's fit arm already uses) rather than
     /// refusing or rendering the empty plot the old legacy fallback would.
     #[test]

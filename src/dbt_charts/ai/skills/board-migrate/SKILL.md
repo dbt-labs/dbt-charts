@@ -263,8 +263,9 @@ beyond that starts from the dbt Charts default.
 Render after every tile (`{{ s_skill_chart }}` owns the build-validate loop —
 one tile at a time, never one-shot). Then render the whole board{{#if_surface cli}}
 to PNG, every tab, and put each next to its `png/` page. A render shows one
-tab: give `tabs:` an `id:` and pass each tab's slug (its label, lowercased,
-punctuation dropped, spaces and hyphens as `_`) as that variable, and fix every error on every tab:
+tab: pass each tab's slug (its label, lowercased, punctuation dropped, spaces and
+hyphens as `_`) as the board's `_tab_<board id>` variable (the board's `id:`, else
+its title slug), and fix every error on every tab:
 
 {{ s_render_png_example }}{{/if_surface}}{{#if_surface tool}} with
 `{{ s_render_board }}` and compare its chart list with the source's tiles{{/if_surface}}.
@@ -378,6 +379,11 @@ Each rule is one a reviewed migration showed being broken.
   its content, with typos fixed.
 - Wide detail tables keep every row and visible column, readable: full width,
   `max_width`s, no `LIMIT` the source lacks.
+- Long free-text columns: a table cell wraps to the lines its column's
+  ordinary cells need, and then ends in an ellipsis by default (`max_lines:
+  trim_outliers`), so one long note cannot stretch its row. Set `style:` `max_lines: 1` to
+  match a source tool that shows one line per cell (Looker does); set
+  `max_lines: all` only when the source shows the whole text.
 - A column the source renders as a hyperlink keeps its link on the same
   column: `style:` `columns:` `<col>:` `link:`. A URL joined from a fixed
   prefix and columns is a template over the query's columns

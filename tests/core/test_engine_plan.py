@@ -94,9 +94,12 @@ def planned(
 
 def test_a_plan_carries_the_queries_and_the_values_a_run_binds() -> None:
     plan = planned({"region": "west"}, False)
-    assert plan["version"] == 1
+    assert plan["version"] == 2
     assert plan["queries"]["q"]["type"] == "values"
     assert plan["queries"]["q"]["spec"] == {"rows": [{"n": 1}]}
+    assert plan["queries"]["q"]["schema"] == {
+        "n": {"kind": "integer", "element": None, "fields": None}
+    }
     assert plan["variables"]["query"]["region"] == {"kind": "text", "value": "west"}
 
 
@@ -154,8 +157,8 @@ def test_a_value_the_board_refuses_raises_with_its_code() -> None:
 
 
 def test_a_reader_refuses_another_version() -> None:
-    with pytest.raises(ValueError, match="version 2"):
-        parse_query_plan('{"version": 2}')
+    with pytest.raises(ValueError, match="version 1"):
+        parse_query_plan('{"version": 1}')
 
 
 def test_the_header_and_each_query_carry_the_board_zone_and_formats() -> None:

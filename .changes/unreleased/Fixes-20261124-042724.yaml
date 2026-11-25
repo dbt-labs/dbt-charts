@@ -1,5 +1,0 @@
-kind: Fixes
-body: A query written as one dotted token that is not a valid reference, such as 1_source.queries.sales, now reports an invalid reference instead of ERR-SOURCE-REQUIRED.
-time: 2026-11-24T04:27:24.380293908Z
-custom:
-    DbtChartsIssue: "126"

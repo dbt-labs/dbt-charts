@@ -30,7 +30,7 @@ use indexmap::IndexMap;
 use model_core::{Engine, SetLeaves, Tri};
 use serde_json::{Map, Value};
 
-use crate::derived::Placed;
+use crate::derived::{board_ink, Placed};
 use crate::formats::locale::{active_number_locale, d3_format};
 use crate::formats::{column_format, resolve_format_parts, AuthoredFormat, Formats, Kind, ResolvedFormat, Tiers};
 use crate::kpi::declared_column_format;
@@ -141,6 +141,10 @@ pub fn bind_pie(
         return Ok(Err(Failure { chart: id.clone(), diagnostic }));
     }
     refuse_unmodeled(chart, donut, placed)?;
+    let identity_color = chart.radial.color.as_ref().map(|color| color.as_str());
+    if crate::pattern::identity_series(placed.style.palettes.contains_key("fill_category"), None, identity_color, &[], false).is_some() {
+        return Err(Diagnostic::refused(refuse!("a pie patterned by `palettes.fill_category` is not supported")));
+    }
     let (Some(theta), Some(color)) = (&chart.radial.theta, &chart.radial.color) else {
         return Err(diag::err_internal("a pie without `theta:` and `color:` passed the unmodeled refusals"));
     };
@@ -215,7 +219,7 @@ pub fn bind_pie(
     let shares: Vec<f64> = thetas.iter().map(|v| v / shares_total).collect();
 
     let palette = palette(style, scope)?;
-    let companions = palette.iter().map(|c| color::mark_ink(c, &canvas)).collect::<Result<Vec<_>, _>>().map_err(diag::err_internal)?;
+    let companions = palette.iter().map(|c| color::mark_ink(c, &canvas, board_ink(placed.style))).collect::<Result<Vec<_>, _>>().map_err(diag::err_internal)?;
     // `category_scale_for`: a field the board's plan seats (shared by charts, or pinned) paints each
     // slice its board slot (`category_paint`); any other paints the row's own palette slot
     // (`palette_slot`).
@@ -267,7 +271,7 @@ pub fn bind_pie(
         let label = if kept && key.kind != KeyKind::Legend && shares[idx] > WEDGE_LABEL_MIN_SHARE {
             let lines = template.render(&scope).map_err(|e| Label::Template(e).refusal())?;
             let ink = match scale {
-                Some(scale) => category_colors::ink_at(scale, names[idx], &companions, &canvas).map_err(diag::err_internal)?,
+                Some(scale) => category_colors::ink_at(scale, names[idx], &companions, &canvas, board_ink(placed.style)).map_err(diag::err_internal)?,
                 None => companions[slot].clone(),
             };
             (!lines.is_empty()).then_some(PieLabel { lines, ink })

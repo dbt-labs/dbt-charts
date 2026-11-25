@@ -58,10 +58,6 @@ class ResolvedTableChart(_SharedResolvedChartFields):
             "to plain query columns."
         ),
     )
-    header_overflow: Literal["clip", "truncate", "wrap-two", "wrap"] | None = Field(
-        default=None,
-        description="How column headers overflow their cell.",
-    )
     column_defaults: TableColumnDefaultsConfig | None = Field(
         default=None,
         description=(

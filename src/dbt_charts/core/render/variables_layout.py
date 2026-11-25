@@ -89,7 +89,6 @@ _INPUT_TRAITS: dict[VariableInputType, InputTraits] = {
     "textarea": InputTraits("text", "none", "none", "none", "none"),
     "number": InputTraits("number", "none", "none", "authored", "none"),
     "slider": InputTraits("slider", "none", "none", "slider", "none"),
-    "range": InputTraits("slider", "none", "none", "slider", "none"),
     "checkbox": InputTraits("checkbox", "none", "none", "none", "none"),
 }
 

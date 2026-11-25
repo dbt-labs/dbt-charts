@@ -48,6 +48,18 @@ impl PathData {
         self
     }
 
+    /// Every coordinate and radius multiplied by `k`: the same outline at `k` times the size.
+    pub fn scaled(&self, k: f64) -> Self {
+        let commands = self.0.iter().map(|command| match *command {
+            PathCommand::M(x, y) => PathCommand::M(x * k, y * k),
+            PathCommand::L(x, y) => PathCommand::L(x * k, y * k),
+            PathCommand::C(x1, y1, x2, y2, x, y) => PathCommand::C(x1 * k, y1 * k, x2 * k, y2 * k, x * k, y * k),
+            PathCommand::A { rx, ry, rot, large, sweep, x, y } => PathCommand::A { rx: rx * k, ry: ry * k, rot, large, sweep, x: x * k, y: y * k },
+            PathCommand::Z => PathCommand::Z,
+        });
+        Self(commands.collect())
+    }
+
     /// The box of the drawn outline, no stroke: endpoints plus the interior
     /// extrema of every curve and arc. `None` for a path with no point.
     pub fn bounds(&self) -> Option<Bounds> {
@@ -243,4 +255,30 @@ fn arc_extrema(from: (f64, f64), rx: f64, ry: f64, rot: f64, large: bool, sweep:
         .filter(|&theta| within(theta))
         .map(|theta| arc.at(theta))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every command scales its points, an arc its radii too, and a flag or rotation stays as it was.
+    #[test]
+    fn scaled_multiplies_every_coordinate_and_arc_radius_but_no_flag() {
+        let path = PathData::new().move_to(1.0, 2.0).line_to(3.0, -4.0);
+        let path = PathData(path.0.into_iter().chain([
+            PathCommand::C(1.5, 2.5, 3.5, 4.5, 5.5, 6.5),
+            PathCommand::A { rx: 2.0, ry: 3.0, rot: 30.0, large: true, sweep: true, x: 7.0, y: 8.0 },
+            PathCommand::Z,
+        ]).collect());
+        assert_eq!(
+            path.scaled(2.5).0,
+            vec![
+                PathCommand::M(2.5, 5.0),
+                PathCommand::L(7.5, -10.0),
+                PathCommand::C(3.75, 6.25, 8.75, 11.25, 13.75, 16.25),
+                PathCommand::A { rx: 5.0, ry: 7.5, rot: 30.0, large: true, sweep: true, x: 17.5, y: 20.0 },
+                PathCommand::Z,
+            ]
+        );
+    }
 }

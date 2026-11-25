@@ -802,7 +802,11 @@ _FIT = {"column_layout": {"overflow": "fit"}}
 
 
 def test_table_text_truncation_records_the_engine_count_per_column() -> None:
-    table = {"type": "table", "query": "q", "style": {**_FIT, "wrap": False}}
+    table = {
+        "type": "table",
+        "query": "q",
+        "style": {**_FIT, "max_lines": 1},
+    }
     chart = _resolved(table, [_WIDE_ROW])
     layout = build_chart_layout(
         chart,

@@ -29,6 +29,7 @@ from __future__ import annotations
 import datetime
 import math
 import re
+from decimal import Decimal
 from typing import Any
 from urllib.parse import quote, urlsplit
 
@@ -47,6 +48,7 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_PERCENT_RANGE,
+    ERR_TABLE_CELL_CAST,
     ERR_TABLE_FORMAT_KIND_MISMATCH,
     ERR_TABLE_TEMPORAL_FORMAT_INVALID,
     ERR_URL_VALUE_NOT_ABSOLUTE,
@@ -73,7 +75,7 @@ from dbt_charts.core.text.predefined_formats import (
     SUB_UNIT_NUMBER_SPEC,
     PredefinedNumberFormat,
 )
-from dbt_charts.core.utils import is_date_like
+from dbt_charts.core.utils import coerce_numeric_cell, is_date_like
 
 # Magnitude heuristic: 0-100-shaped data stored at board value lands at 10x+
 # (27.6 for a 27.6% rate, 91.5 for a 91.5% share). Setting the threshold at
@@ -660,3 +662,75 @@ def format_table_cell_value(
     except (ValueError, TypeError):
         return str(value)
     return format_value(numeric, default_number_format(), formats)
+
+
+_CAST_EXPECTED = {
+    "text": "a scalar (boolean, json, list and struct columns take no type)",
+    "number": "a number",
+    "date": "an ISO date (YYYY-MM-DD)",
+    "datetime": "an ISO date or timestamp",
+}
+_ISO_DAY_LEAD = re.compile(r"\d{4}-\d{2}-\d{2}(?:[T ].*)?", re.ASCII | re.DOTALL)
+
+
+# An ISO-shaped day must be a real one; other date spellings are kept as written.
+_ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _reads_as_iso(text: str, column_type: str) -> bool:
+    if not _ISO_DAY_LEAD.fullmatch(text) or (column_type == "date" and len(text) != 10):
+        return False
+    try:
+        datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return False
+    return True
+
+
+def cast_table_cell(
+    value: Any,  # type-state: explicit_any — DB cell value
+    column_type: str,
+    column: str,
+) -> Any:  # type-state: explicit_any — the cell as its column's type reads it
+    """One cell of a column authored ``type:``, as the renderer's
+    ``table/column_type.rs`` reads it: the two must agree cell for cell."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    cast: Any = None  # type-state: explicit_any — the cast cell
+    if isinstance(value, (bool, list, tuple, dict)):
+        pass
+    elif column_type == "text":
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        return (
+            value.isoformat()
+            if isinstance(value, (datetime.date, datetime.datetime))
+            else str(value)
+        )
+    elif column_type == "number":
+        if isinstance(value, (int, float, Decimal)):
+            return value
+        if isinstance(value, str) and value.isascii():
+            cast = coerce_numeric_cell(value)
+    elif isinstance(value, datetime.datetime):
+        cast = value if column_type == "datetime" else None
+    elif isinstance(value, datetime.date):
+        cast = value
+    elif isinstance(value, str) and (
+        _reads_as_iso(value.strip(), column_type)
+        or (
+            column_type == "date"
+            and not _ISO_DAY.fullmatch(value.strip())
+            and is_date_like(value)
+        )
+    ):
+        cast = value.strip()
+    if cast is None:
+        raise ChartDataError.from_code(
+            ERR_TABLE_CELL_CAST,
+            column=column,
+            type=column_type,
+            cell=value,
+            expected=_CAST_EXPECTED[column_type],
+        )
+    return cast

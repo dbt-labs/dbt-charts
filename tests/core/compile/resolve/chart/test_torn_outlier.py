@@ -38,7 +38,7 @@ def _resolved(
         for i, r in enumerate(values)
     ]
     style: dict[str, Any] = {"outliers": outliers or {}}
-    style.update((chart or {}).pop("style", {}))
+    style.update((chart or {}).get("style", {}))
     raw = {
         "id": "t",
         "type": "bar",
@@ -97,8 +97,11 @@ def test_the_default_tears_off_the_chart_and_pins_the_axis_at_the_break() -> Non
 
 
 def test_the_multiplier_is_authorable() -> None:
-    assert _resolved(ONE_OUTLIER, outliers={"median_multiplier": 20}).torn_break is None
-    assert _resolved(ONE_OUTLIER, outliers={"median_multiplier": 3}).torn_break
+    for multiplier, tears in [(20, False), (3, True)]:
+        resolved = _resolved(
+            ONE_OUTLIER, outliers={"median_multiplier": multiplier}, chart=VERTICAL
+        )
+        assert (resolved.torn_break is not None) is tears
 
 
 def test_none_leaves_the_chart_plain() -> None:
@@ -167,7 +170,7 @@ def test_a_pinned_domain_no_bar_passes_beats_the_multiplier() -> None:
         {"x": "n"},
     ],
 )
-def test_a_shape_off_the_chart_cannot_draw_keeps_its_axis_but_names_the_break(
+def test_a_shape_off_the_chart_cannot_draw_is_plain_with_no_break(
     chart: dict[str, Any],
 ) -> None:
     rows = [
@@ -177,8 +180,18 @@ def test_a_shape_off_the_chart_cannot_draw_keeps_its_axis_but_names_the_break(
     chart = {**chart, "style": {"orientation": "vertical", **chart.get("style", {})}}
     plain = _resolved(rows, outliers={"median_multiplier": "none"}, chart=dict(chart))
     resolved = _resolved(rows, chart=dict(chart))
-    assert resolved.torn_break is not None
+    assert resolved.torn_break is None
     assert resolved.style.axis_y == plain.style.axis_y
+
+
+def test_a_shape_off_the_chart_cannot_draw_names_a_pinned_break() -> None:
+    pinned = {
+        "style": {
+            "orientation": "horizontal",
+            "axis_y": {"scale": {"continuous": {"domain": [0, 40]}}},
+        }
+    }
+    assert _resolved(ONE_OUTLIER, chart=pinned).torn_break == 40
 
 
 def test_a_line_layer_rides_on_the_off_chart_axis() -> None:
@@ -209,7 +222,7 @@ def test_a_value_below_zero_widens_the_off_chart_floor(extra: dict[str, Any]) ->
     assert resolved.style.axis_y.tick_values[0] <= -30
 
 
-def test_a_stacked_chart_keeps_its_axis_and_names_the_break() -> None:
+def test_a_stacked_chart_keeps_its_axis_with_no_break() -> None:
     rows = [
         {"cat": f"c{i}", "s": s, "v": v}
         for i, v in enumerate(ONE_OUTLIER)
@@ -218,7 +231,7 @@ def test_a_stacked_chart_keeps_its_axis_and_names_the_break() -> None:
     stacked = {"color": "s", "style": {"stack": "zero", "orientation": "vertical"}}
     plain = _resolved(rows, outliers={"median_multiplier": "none"}, chart=dict(stacked))
     resolved = _resolved(rows, chart=dict(stacked))
-    assert resolved.torn_break is not None
+    assert resolved.torn_break is None
     assert resolved.stacked_domain_max == plain.stacked_domain_max
 
 

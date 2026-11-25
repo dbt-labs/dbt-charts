@@ -32,7 +32,7 @@ pub fn body(text_face: &FontStyle, filters: Option<(&FontStyle, &str)>, area: Re
     if let Some((face, filters)) = filters {
         let ink = ink(face, emoji)?;
         let measured = Font { family: stand_in_family(face.family.as_ref()), size: face.size, weight: 400.0, italic: false };
-        let fitted = truncate_label(filters, area.width, |text| book.raw_advance(text, &measured).map_err(diag::err_internal))?;
+        let fitted = measure::fit::truncate_label_by(filters, area.width, |text| book.raw_advance(text, &measured).map_err(diag::err_internal))?;
         let at = (center.0, center.1 + headline.size / 2.0 + LINE_GAP + ink.size / 2.0);
         nodes.push(line(&ink, at, &fitted, "no_results_filters"));
     }
@@ -65,29 +65,4 @@ pub fn draw(chart: &bound::Chart, heading: Option<&Heading>, cell: Size, book: &
     let extent = Extent { width: cell.width, height: cell.height };
     let diagnostics = title.map_or_else(Vec::new, |(title, _)| title.diagnostics);
     Ok((vec![Node::new(Role::Chrome, Attrs::new().set("class", "marks"), Shape::Svg { extent, children })], diagnostics))
-}
-
-/// `text` whole when it measures within `limit`, else its longest prefix, trailing spaces dropped,
-/// that fits with an ellipsis after it, the ellipsis alone when none does (`common::truncate_label`,
-/// measured unshaped as production measures a width it bakes in).
-pub(crate) fn truncate_label(text: &str, limit: f64, measure: impl Fn(&str) -> Result<f64, Diagnostic>) -> Result<String, Diagnostic> {
-    if measure(text)? <= limit {
-        return Ok(text.to_string());
-    }
-    let chars: Vec<char> = text.chars().collect();
-    let (mut lo, mut hi, mut best) = (0, chars.len(), None);
-    while lo <= hi {
-        let mid = (lo + hi) / 2;
-        let prefix: String = chars[..mid].iter().collect();
-        let candidate = format!("{}\u{2026}", prefix.trim_end());
-        if measure(&candidate)? <= limit {
-            best = Some(candidate);
-            lo = mid + 1;
-        } else if mid == 0 {
-            break;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    Ok(best.unwrap_or_else(|| "\u{2026}".to_string()))
 }

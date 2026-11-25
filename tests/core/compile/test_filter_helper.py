@@ -94,55 +94,55 @@ class TestFilterHelperParameterized:
         result = fn("col", 0)
         assert result == "col = $1"
 
-    # --- none='deny' new behavior ---
+    # --- unset="deny" ---
 
-    def test_none_with_deny_gives_deny(self):
+    def test_python_none_with_deny_gives_deny(self):
         fn = _make_helper()
-        assert fn("col", None, none="deny") == "1=0"
+        assert fn("col", None, unset="deny") == "1=0"
 
     def test_empty_string_with_deny_gives_deny(self):
         fn = _make_helper()
-        assert fn("col", "", none="deny") == "1=0"
+        assert fn("col", "", unset="deny") == "1=0"
 
     def test_empty_list_with_deny_gives_deny(self):
         fn = _make_helper()
-        assert fn("col", [], none="deny") == "1=0"
+        assert fn("col", [], unset="deny") == "1=0"
 
     def test_null_value_sentinel_with_deny_gives_deny(self):
         fn = _make_helper()
-        assert fn("col", _NullValue(), none="deny") == "1=0"
+        assert fn("col", _NullValue(), unset="deny") == "1=0"
 
     def test_string_value_with_deny_returns_predicate(self):
         fn = _make_helper()
-        result = fn("col", "x", none="deny")
+        result = fn("col", "x", unset="deny")
         assert result == "col = $1"
 
     def test_falsy_integer_zero_with_deny_passes_through(self):
         fn = _make_helper()
-        result = fn("col", 0, none="deny")
+        result = fn("col", 0, unset="deny")
         assert result == "col = $1"
 
     def test_explicit_allow_same_as_default(self):
         fn = _make_helper()
-        assert fn("col", None, none="allow") == "1=1"
+        assert fn("col", None, unset="allow") == "1=1"
 
     # --- Operator + deny combo ---
 
     def test_operator_and_deny_on_null_sentinel_gives_deny(self):
         fn = _make_helper()
-        assert fn("col", _NullValue(), "!=", none="deny") == "1=0"
+        assert fn("col", _NullValue(), "!=", unset="deny") == "1=0"
 
     def test_operator_and_deny_on_value_returns_predicate(self):
         fn = _make_helper()
-        result = fn("col", "x", "!=", none="deny")
+        result = fn("col", "x", "!=", unset="deny")
         assert result == "col != $1"
 
     # --- Kwarg validation ---
 
-    def test_bogus_none_kwarg_raises_value_error(self):
+    def test_bogus_unset_kwarg_raises_value_error(self):
         fn = _make_helper()
-        with pytest.raises(ValueError, match="none"):
-            fn("col", None, none="bogus")
+        with pytest.raises(ValueError, match="unset"):
+            fn("col", None, unset="bogus")
 
     # --- _validate_operator non-string regression ---
 

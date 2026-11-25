@@ -160,7 +160,7 @@ FILTER_EQ = "{{{{ filter('{col}', v) }}}}"
 FILTER_GTE = "{{{{ filter('{col}', v, '>=') }}}}"
 FILTER_LTE = "{{{{ filter('{col}', v, '<=') }}}}"
 FILTER_NOT_IN = "{{{{ filter('{col}', v, 'not in') }}}}"
-FILTER_DENY = "{{{{ filter('{col}', v, none='deny') }}}}"
+FILTER_DENY = "{{{{ filter('{col}', v, unset='deny') }}}}"
 DATE_RANGE = "{{{{ filter_date_range('{col}', v) }}}}"
 BARE_EQ = "{col} = {{{{ v }}}}"
 BARE_QUOTED = "{col} = '{{{{ v }}}}'"
@@ -180,7 +180,6 @@ CASES: list[Case] = [
     Case("number_eq", "number", "2", FILTER_EQ, ("n",), {2}),
     Case("number_bare", "number", "2", BARE_EQ, ("n",), {2}),
     Case("slider_gte", "slider", "2.5", FILTER_GTE, ("f",), {2, 3, 4}),
-    Case("range_gte", "range", "2", FILTER_GTE, ("n",), {2, 3, 4}),
     Case("number_empty", "number", "", FILTER_EQ, ("n",), ALL),
     # --- checkbox: a URL "true" must reach SQL as a boolean.
     Case("checkbox_eq", "checkbox", "true", FILTER_EQ, ("b",), {1, 3}),

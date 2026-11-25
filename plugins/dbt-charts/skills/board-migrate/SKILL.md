@@ -336,6 +336,11 @@ Each rule is one a reviewed migration showed being broken.
   its content, with typos fixed.
 - Wide detail tables keep every row and visible column, readable: full width,
   `max_width`s, no `LIMIT` the source lacks.
+- Long free-text columns: a table cell wraps to the lines its column's
+  ordinary cells need, and then ends in an ellipsis by default (`max_lines:
+  trim_outliers`), so one long note cannot stretch its row. Set `style:` `max_lines: 1` to
+  match a source tool that shows one line per cell (Looker does); set
+  `max_lines: all` only when the source shows the whole text.
 - A column the source renders as a hyperlink keeps its link on the same
   column: `style:` `columns:` `<col>:` `link:`. A URL joined from a fixed
   prefix and columns is a template over the query's columns

@@ -1,9 +1,11 @@
 //! `style/theme/legend.py`: legend placement, entries, label and title.
 
+use crate::facet::Color;
+use crate::primitives::BorderStyle;
 use crate::rule::Auto;
 use crate::string_enum;
 use crate::style::font::{FontStyle, SymbolShape};
-use crate::unit::Px;
+use crate::unit::{Fraction, Px};
 use model_core::Engine;
 use model_derive::Model;
 
@@ -38,6 +40,9 @@ pub struct LegendLabelStyle {
     /// Maximum label width in pixels; maps to VL labelLimit.
     #[model(absent = "Vega-Lite's default")]
     pub max_width: Option<f64>,
+    /// Width in pixels of an outline in the legend's background color behind each label; 0
+    /// draws none.
+    pub halo: Px,
 }
 
 /// Legend title style.
@@ -87,16 +92,19 @@ pub struct PiePositionStyle {
     pub align: Engine<LegendAlign, Auto>,
 }
 
-/// Fixed chrome around each entry of a single-row top legend.
-///
-/// Constant regardless of mark size or entry count. The label text is measured
-/// against the real resolved label font, never estimated.
+/// The glyph each legend entry draws.
 #[derive(Debug, Clone, PartialEq, Model)]
-pub struct LegendRowStyle {
-    /// Swatch box width in pixels.
-    pub swatch_width: Px,
-    /// Gap in pixels between one entry and the next.
-    pub entry_gap: Px,
+#[model(constraint(range(size, gt = 0)))]
+pub struct LegendSymbolStyle {
+    /// Override the legend glyph shape with a Vega symbol name. 'auto' uses the
+    /// mark-aware glyph derived from the chart's mark type.
+    #[model(fill = "auto")]
+    pub shape: Engine<SymbolShape, Auto>,
+    /// When False, draws a hollow (stroke-only) legend glyph. 'auto' draws a filled symbol.
+    #[model(fill = "auto")]
+    pub fill: Engine<bool, Auto>,
+    /// Width of the glyph box in pixels. A line's stroke glyph is twice as long.
+    pub size: f64,
 }
 
 /// Every legend field except `position`, whose shape differs per family.
@@ -106,7 +114,7 @@ pub struct LegendRowStyle {
 #[model(
     constraint(range(columns, ge = 0)),
     constraint(range(compact_columns, ge = 1)),
-    constraint(range(symbol_limit, ge = 1))
+    constraint(range(limit, ge = 1))
 )]
 pub struct LegendStyleBase {
     /// Legend layout direction. 'auto' infers it from the edge: horizontal on
@@ -121,8 +129,21 @@ pub struct LegendStyleBase {
     /// top legend, or an inferred-horizontal legend too wide for one row); it
     /// takes fewer when its labels would not fit. At least 1.
     pub compact_columns: u32,
-    /// Chrome around each entry of a single-row top legend.
-    pub row: LegendRowStyle,
+    /// Gap in pixels between one entry and the next: along a row, and between grid columns.
+    pub entry_gap: Px,
+    /// Legend glyph style.
+    pub symbol: LegendSymbolStyle,
+    /// Fill behind the legend; the canvas the chart paints on by default.
+    pub background: Color,
+    /// Background fill opacity, 0 to 1.
+    pub opacity: Fraction,
+    /// Space in pixels between the entries and the background's edge. 'auto' is 5 while the
+    /// legend floats over the plot (position.overlay) and 0 otherwise; a number applies to every
+    /// legend.
+    #[model(fill = "auto")]
+    pub padding: Engine<Px, Auto>,
+    /// Legend border: width, color, radius, dash_array, line_cap.
+    pub border: BorderStyle,
     /// Legend label style.
     pub label: LegendLabelStyle,
     /// Legend title style.
@@ -130,19 +151,12 @@ pub struct LegendStyleBase {
     /// Maximum number of legend entries to display; maps to VL symbolLimit.
     /// A positive integer prevents overflow on high-cardinality series.
     #[model(absent = "no cap")]
-    pub symbol_limit: Option<u32>,
+    pub limit: Option<u32>,
     /// Explicit legend entry order/filter; each entry resolves against the real
     /// legend domain by its rendered text or its column/measure name
     /// (case/separator-insensitive).
     #[model(absent = "order from the data")]
     pub values: Option<Vec<String>>,
-    /// Override the legend glyph shape with a Vega symbol name. 'auto' uses the
-    /// mark-aware glyph derived from the chart's mark type.
-    #[model(fill = "auto")]
-    pub symbol_shape: Engine<SymbolShape, Auto>,
-    /// When False, draws a hollow (stroke-only) legend glyph. 'auto' draws a filled symbol.
-    #[model(fill = "auto")]
-    pub symbol_fill: Engine<bool, Auto>,
 }
 
 /// Legend style.

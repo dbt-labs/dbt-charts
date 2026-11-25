@@ -129,6 +129,43 @@ def test_an_authored_overlay_floats_at_its_corner_on_either_orientation(
     assert (position.edge, position.align, position.overlay) == ("top", "end", True)
 
 
+@pytest.mark.parametrize(
+    ("authored", "expected"),
+    [
+        (
+            {"overlay": True},
+            [("top", "start"), ("top", "end"), ("bottom", "start"), ("bottom", "end")],
+        ),
+        ({"overlay": True, "align": "end"}, [("top", "end"), ("bottom", "end")]),
+        ({"overlay": True, "edge": "bottom"}, [("bottom", "start"), ("bottom", "end")]),
+        ({"overlay": True, "edge": "top", "align": "end"}, [("top", "end")]),
+        ({"overlay": True, "edge": "left", "align": "center"}, [("left", "center")]),
+        ({"overlay": False}, [("right", "start")]),
+    ],
+)
+def test_an_overlaid_legend_lists_its_candidate_corners_in_search_order(
+    authored: dict[str, Any], expected: list[tuple[str, str]]
+) -> None:
+    position = decide_legend_position(
+        LegendPositionStyle.model_validate(authored), top_strip=False
+    )
+    assert [(c.edge, c.align) for c in position.corners] == expected
+    assert (position.corners[0].edge, position.corners[0].align) == (
+        position.edge,
+        position.align,
+    )
+
+
+def test_a_top_strip_fixes_the_edge_so_only_align_is_searched() -> None:
+    position = make_test_resolved_chart(
+        _bar({"overlay": True}), _ROWS, width=200.0
+    ).legend.position
+    assert [(c.edge, c.align) for c in position.corners] == [
+        ("top", "start"),
+        ("top", "end"),
+    ]
+
+
 def test_overlay_without_an_edge_anchors_to_the_top() -> None:
     position = make_test_resolved_chart(
         _bar({"overlay": True}), _ROWS, width=900.0

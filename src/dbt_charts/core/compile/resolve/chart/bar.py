@@ -73,6 +73,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     LayerDatasets,
     PanelRows,
     partition,
+    restamp,
 )
 from dbt_charts.core.compile.resolve.chart._conditional import (
     resolve_mark_conditional,
@@ -111,6 +112,7 @@ from dbt_charts.core.compile.resolve.chart._marks import (
     _label_format_fallback,
     _measure_tooltip_format,
     _resolve_authored_label_format,
+    _run_axis,
     callout_label_format,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
@@ -120,6 +122,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _resolved_series_label,
 )
 from dbt_charts.core.compile.resolve.chart._pattern import (
+    identity_series,
     inked_palette,
     pattern_series,
     resolve_pattern,
@@ -156,6 +159,7 @@ from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
 from dbt_charts.core.compile.resolve.chart.tick_values import (
     apply_headroom,
     numeric_domain_bounds,
+    stacked_category_totals,
     stacked_totals_max,
 )
 from dbt_charts.core.compile.resolve.style.axis_cascade import _family_axis_slot
@@ -655,7 +659,7 @@ def _stack_legend_should_yield(
     ):
         return False
     # Every entry is charged: a bar's legend draws them all, never folding
-    # at symbol_limit (only pie and geo keys fold).
+    # at limit (only pie and geo keys fold).
     required = legend_wrap_required_height_px(distinct_series, None, legend_columns)
     return required > plot_height
 
@@ -906,6 +910,7 @@ def _resolve_bar(
         bar.pattern,
         single_series_fill,
         primary,
+        identity_series(authored_color, normalized.x, normalized.y),
     )
     eff_palette = inked_palette(
         _effective_palette(chart_style_context, primary), pattern
@@ -1071,7 +1076,7 @@ def _resolve_bar(
     # suppressed the legend on a short layered card. The layer term belongs
     # to the legend's *height*, not to the collapse model, so it lives here.
     #
-    # This floor still caps the count at `symbol_limit`, though the bar
+    # This floor still caps the count at `limit`, though the bar
     # legend draws every entry; `_stack_legend_should_yield` charges them all.
     # A color-less overlay joins the base's color scale under its own
     # label, adding exactly one entry (_overlay.py appends it
@@ -1095,8 +1100,8 @@ def _resolve_bar(
     else:
         _floor_entry_count = 0
     _legend_entries_for_floor = (
-        min(_floor_entry_count, merged_legend.symbol_limit)
-        if merged_legend.symbol_limit
+        min(_floor_entry_count, merged_legend.limit)
+        if merged_legend.limit
         else _floor_entry_count
     )
     # Both top layouts cost height, so both are charged. `compact` (the tiny
@@ -1411,13 +1416,32 @@ def _resolve_bar(
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)
     # Total label: falls back to the axis format when none is authored.
+    # A 100% stack's share is part of its bar, read as a composition, not a
+    # reading of the axis: its labels keep their unit.
+    total_run = False
+    stack_totals = tooltip_format_values
+    if (
+        is_stacked
+        and resolved_stack != "normalize"
+        and x_field is not None
+        and bar.marks.bar.total_label.visible is True
+    ):
+        total_run = True
+        stack_totals = [
+            total
+            for panel in restamp(dataset, x_field).panels
+            for total in stacked_category_totals(
+                panel.rows, x_field, y_fields, net=True
+            )
+        ]
     resolved_total, total_label_is_house = _label_format_fallback(
         bar.marks.bar.total_label,
         ResolvedBarTotalLabel,
         ay.labels.format,
         axis_house_default,
         chart_style_context.formats,
-        tooltip_format_values,
+        stack_totals,
+        run_axis=ay if total_run else None,
     )
     if x_ch_type != "temporal" and label_anchors(bar.marks.bar.labels.visible) & {
         "first",
@@ -1471,6 +1495,9 @@ def _resolve_bar(
             axis_house_default,
             chart_style_context.formats,
             tooltip_format_values,
+            run_axis=None
+            if resolved_stack == "normalize"
+            else _run_axis(bar.marks.bar.labels, ay),
         )
     bar_mark = resolved_as(
         ResolvedBarMarkStyle,
@@ -1495,6 +1522,7 @@ def _resolve_bar(
             layers=resolved_layers,
             legend_visible=bkw["legend"].visible,
             canvas=chart_local_style_context.ink_canvas,
+            ink=chart_local_style_context.ink,
         ),
         stage_ink=ay_merged.labels.font.color
         if bar.marks.bar.ribbons.visible
@@ -1542,6 +1570,8 @@ def _resolve_bar(
                 bar_mark.labels, chart_style_context
             ),
             grouped=bar.grouped,
+            max_thickness=bar.max_thickness,
+            labels_above=bar.labels_above,
             outliers=ResolvedBarOutliersStyle.model_validate(
                 bar.outliers.model_dump(exclude={"median_multiplier"})
             ),
@@ -1732,6 +1762,8 @@ def _resolve_histogram(
                 hist_mark.labels, chart_style_context
             ),
             grouped=chart_style_context.bar.grouped,
+            max_thickness=None,
+            labels_above=None,
             outliers=ResolvedBarOutliersStyle.model_validate(
                 chart_style_context.bar.outliers.model_dump(
                     exclude={"median_multiplier"}

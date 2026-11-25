@@ -45,12 +45,12 @@ class TestLegendRowFits:
 
         def total(font_weight: str) -> float:
             measurer = get_weighted_font_measurer(legend.label.font.family, font_weight)
-            chrome = legend.row.swatch_width + legend.label.padding
+            chrome = legend.symbol.size + legend.label.padding
             row_total = sum(
                 chrome + measurer.measure(entry, legend.label.font.size)
                 for entry in entries
             )
-            return row_total + legend.row.entry_gap * (len(entries) - 1)
+            return row_total + legend.entry_gap * (len(entries) - 1)
 
         width = (total("400") + total("800")) / 2
         assert legend_row_fits(entries, width, legend) is True, (

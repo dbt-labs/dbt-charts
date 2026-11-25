@@ -9,6 +9,7 @@ here, independent of any one chart family.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pytest
@@ -33,7 +34,9 @@ from dbt_charts.core.constants.estimates import (
     LEGEND_CHROME_HEIGHT_PX,
     LEGEND_MIN_RESERVE_PX,
     LEGEND_ROW_HEIGHT_PX,
+    LEGEND_SYMBOL_STROKE_PX,
 )
+from dbt_charts.core.font_measure import get_weighted_font_measurer
 
 
 @pytest.fixture(autouse=True)
@@ -82,28 +85,84 @@ class TestLegendRowFits:
         assert legend_row_fits(long, width, _legend()) is False
 
 
+def _styled(
+    *,
+    symbol_size: float | None = None,
+    gap: float | None = None,
+    pad: float | None = None,
+) -> ResolvedLegendStyle:
+    """The theme legend with the given chrome leaves set."""
+    legend = _legend()
+    update: dict[str, Any] = {}
+    if symbol_size is not None:
+        update["symbol"] = legend.symbol.model_copy(update={"size": symbol_size})
+    if gap is not None:
+        update["entry_gap"] = gap
+    if pad is not None:
+        update["padding"] = pad
+    return legend.model_copy(update=update)
+
+
+_PAIR = ("Alpha", "Beta")
+
+
+def _drawn_row_width(legend: ResolvedLegendStyle) -> int:
+    """The renderer's one-row width for `_PAIR`: each entry's cell (glyph plus its stroke,
+    rounded up, never under the font size) and label offset, the first entry's ceiled
+    width plus the gap and the glyph's overhang left of the next cell, plus the padding."""
+    measurer = get_weighted_font_measurer(
+        legend.label.font.family, legend.label.font.weight
+    )
+    size = legend.label.font.size
+    cell = max(math.ceil(legend.symbol.size + LEGEND_SYMBOL_STROKE_PX), size)
+    overhang = math.ceil(
+        max(legend.symbol.size / 2 + LEGEND_SYMBOL_STROKE_PX - cell / 2, 0)
+    )
+    first, second = (
+        cell + legend.label.padding + measurer.measure(e, size) for e in _PAIR
+    )
+    pad = 2 * (legend.padding + legend.border.width)
+    return math.ceil(math.ceil(first) + legend.entry_gap + overhang + second) + pad
+
+
 class TestLegendRowChromeFromTheme:
-    def test_authored_row_chrome_moves_the_fit_threshold(self) -> None:
-        base = get_theme_style()
-        assert base.charts.key.legend.row.swatch_width == 10.0
-        assert base.charts.key.legend.row.entry_gap == 16.0
+    @pytest.mark.parametrize(
+        "legend",
+        [
+            _styled(symbol_size=17.0),
+            _styled(gap=13.0),
+            _styled(symbol_size=3.0, gap=21.0),
+        ],
+    )
+    def test_the_row_is_as_wide_as_the_renderer_draws_it(
+        self, legend: ResolvedLegendStyle
+    ) -> None:
+        drawn = _drawn_row_width(legend)
+        assert legend_row_fits(_PAIR, drawn, legend) is True
+        assert legend_row_fits(_PAIR, drawn - 1, legend) is False
+
+    def test_authored_chrome_moves_the_fit_threshold(self) -> None:
         entries = ("Alpha", "Beta", "Gamma")
-        default = _legend()
+        assert legend_row_fits(entries, 400.0, _legend()) is True
+        assert legend_row_fits(entries, 400.0, _styled(gap=400.0)) is False
+        assert legend_row_fits(entries, 400.0, _styled(symbol_size=400.0)) is False
 
-        def legend_with(**row: float) -> ResolvedLegendStyle:
-            legend = base.charts.key.legend.model_copy(
-                update={"row": base.charts.key.legend.row.model_copy(update=row)}
-            )
-            key = base.charts.key.model_copy(update={"legend": legend})
-            charts = base.charts.model_copy(update={"key": key})
-            style = base.model_copy(update={"charts": charts})
-            return resolve_chart_style_context(style).legend
+    def test_padding_costs_its_width_on_both_sides(self) -> None:
+        boxed = _styled(pad=7.0)
+        drawn = _drawn_row_width(boxed)
+        assert drawn == _drawn_row_width(_legend()) + 14
+        assert legend_row_fits(_PAIR, drawn, boxed) is True
+        assert legend_row_fits(_PAIR, drawn - 1, boxed) is False
 
-        wide_gap = legend_with(entry_gap=400.0)
-        assert legend_row_fits(entries, 400.0, default) is True
-        assert legend_row_fits(entries, 400.0, wide_gap) is False
-        wide_swatch = legend_with(swatch_width=400.0)
-        assert legend_row_fits(entries, 400.0, wide_swatch) is False
+    def test_a_border_costs_its_width_on_both_sides(self) -> None:
+        legend = _legend()
+        bordered = legend.model_copy(
+            update={"border": legend.border.model_copy(update={"width": 3.0})}
+        )
+        drawn = _drawn_row_width(bordered)
+        assert drawn == _drawn_row_width(legend) + 6
+        assert legend_row_fits(_PAIR, drawn, bordered) is True
+        assert legend_row_fits(_PAIR, drawn - 1, bordered) is False
 
 
 _DEPARTMENTS = tuple(f"Department number {i:02d}" for i in range(22))
@@ -128,6 +187,15 @@ class TestLegendWrapColumns:
     def test_a_label_wider_than_the_card_still_gets_one_column(self) -> None:
         assert legend_wrap_columns(_DEPARTMENTS, 20.0, _legend()) == 1
 
+    def test_a_drawn_box_takes_its_padding_off_the_width_the_columns_share(
+        self,
+    ) -> None:
+        pad = 90.0
+        plain = legend_wrap_columns(_DEPARTMENTS, 700.0, _legend())
+        boxed = legend_wrap_columns(_DEPARTMENTS, 700.0, _styled(pad=pad))
+        assert boxed == legend_wrap_columns(_DEPARTMENTS, 700.0 - 2 * pad, _legend())
+        assert boxed != plain
+
     def test_the_fitted_grid_fits_the_width_and_one_more_column_does_not(
         self,
     ) -> None:
@@ -149,21 +217,21 @@ class TestLegendWrappedRowCount:
         assert legend_wrapped_row_count(8, None, 2) == 4
         assert legend_wrapped_row_count(9, None, 2) == 5
 
-    def test_caps_at_symbol_limit_before_dividing(self) -> None:
-        """A chart with far more series than symbol_limit still shows only
-        symbol_limit entries (plus Vega-Lite's own synthetic "...N entries"
+    def test_caps_at_limit_before_dividing(self) -> None:
+        """A chart with far more series than limit still shows only
+        limit entries (plus Vega-Lite's own synthetic "...N entries"
         row) -- the row count must reflect what actually renders, not the
         raw column cardinality."""
         assert legend_wrapped_row_count(100, 6, 2) == legend_wrapped_row_count(6, 6, 2)
 
-    def test_entry_count_exactly_at_symbol_limit_matches_one_more(self) -> None:
-        """One more entry than symbol_limit must not add a row: both are
+    def test_entry_count_exactly_at_limit_matches_one_more(self) -> None:
+        """One more entry than limit must not add a row: both are
         capped to the same rendered count."""
         assert legend_wrapped_row_count(20, 20, 2) == legend_wrapped_row_count(
             21, 20, 2
         )
 
-    def test_no_symbol_limit_uses_the_raw_count(self) -> None:
+    def test_no_limit_uses_the_raw_count(self) -> None:
         assert legend_wrapped_row_count(9, None, 2) == 5
 
     def test_a_legend_that_fits_one_row_is_one_row(self) -> None:
@@ -270,7 +338,7 @@ class TestLegendWrapFitsHeightBudget:
         legend = _legend()
         entries = ("S1", "S2")
         required = legend_wrap_required_height_px(
-            len(entries), legend.symbol_limit, legend.compact_columns
+            len(entries), legend.limit, legend.compact_columns
         )
         old_boundary_plot_height = _plot_height_at_old_share_boundary(required) - 1.0
         assert _budget(entries, legend, old_boundary_plot_height) is True
@@ -419,3 +487,37 @@ class TestCartesianTopLegendEntries:
             field_labels={},
         )
         assert entries == ("Revenue",)
+
+
+def _chart_legend(
+    style: dict[str, Any], chart_type: str = "bar"
+) -> ResolvedLegendStyle:
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.resolve.style.chart_context import (
+        build_chart_style_context,
+    )
+
+    board = resolve_chart_style_context(get_theme_style())
+    chart = TypeAdapter(Chart).validate_python(
+        {"id": "c", "type": chart_type, "style": style}
+    )
+    return build_chart_style_context(board, chart).legend
+
+
+@pytest.mark.parametrize(
+    ("legend", "padding"),
+    [
+        ({"padding": 30}, 30.0),
+        ({"position": {"edge": "top", "overlay": True}}, 5.0),
+    ],
+)
+def test_the_fit_check_reads_the_padding_the_chart_draws(
+    legend: dict[str, Any], padding: float
+) -> None:
+    fit_legend = _chart_legend({"key": {"legend": legend}})
+    drawn = _drawn_row_width(fit_legend)
+    assert drawn == _drawn_row_width(_legend()) + 2 * padding
+    assert legend_row_fits(_PAIR, drawn, fit_legend) is True
+    assert legend_row_fits(_PAIR, drawn - 1, fit_legend) is False

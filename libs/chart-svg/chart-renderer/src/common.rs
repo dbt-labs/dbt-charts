@@ -8,7 +8,9 @@ use diagnostic::codes;
 use diagnostic::Diagnostic;
 use ::bind::formats::locale::active_number_locale;
 use print::xml_escape_attr;
+use measure::fit::{fit_lines, FittedText};
 use measure::FontBook;
+use board_model::primitives::LineLimit;
 use scene::{Attrs, Chars, Escape, Node, Role, Run, Shape, Transform};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -262,6 +264,11 @@ impl Font {
             ));
         }
         measure_at_css_weight(fonts, text, self.family_or("sans-serif"), size, &self.weight_str())
+    }
+    /// The height of this font's capitals at `size`, read from the face the text paints in.
+    pub fn cap_height(&self, fonts: &measure::FontBook, size: f64) -> Result<f64, String> {
+        let measurer = fonts.measurer_at_weight(measure::stand_in_family(self.family_or("sans-serif")), &self.weight_str())?;
+        Ok(measurer.cap_height_em()? * size)
     }
     pub fn size_or(&self, d: f64) -> f64 {
         self.size.unwrap_or(d)
@@ -614,9 +621,63 @@ pub struct FormatSlot {
     /// affix. A per-value painter ignores it.
     pub repeat: Option<String>,
     pub raw: Option<String>,
+    /// Set by resolve on a run of value labels that joins its value axis's unit
+    /// ([`Self::paint_bare`]). Never authored.
+    pub bare: Option<BareRun>,
+}
+
+/// A run of value labels printing bare digits in `10^exponent` units (`-2` for percent), no symbol
+/// and no letter. The run's ordinary labels (those with
+/// `ordinary_digits` integer digits) print at `pad` places, zeros included; any other label trims
+/// its zeros, up to the `decimals` ceiling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BareRun {
+    pub exponent: i32,
+    pub decimals: u32,
+    pub ordinary_digits: u32,
+    pub pad: u32,
 }
 
 impl FormatSlot {
+    /// The digits the value axis declares the unit of: `value / 10^exponent` with no currency
+    /// symbol, magnitude letter or percent sign, grouped. An ordinary label (the run's most common
+    /// integer-digit count) pads to the run's places; any other trims its trailing zeros, up to
+    /// `decimals`. A nonzero label below 1 in those units takes one significant digit instead
+    /// (`0.8`), so the shared places never print it as `0` or `1`.
+    fn paint_bare(&self, value: f64, run: BareRun) -> Result<String, String> {
+        let BareRun { exponent, decimals, ordinary_digits, pad } = run;
+        let parts = d3rs::format::parse_parts(&self.spec).map_err(|e| format!("mark label format {:?}: {e}", self.spec))?;
+        if !matches!(parts.type_, 's' | '%') {
+            return Err(format!("mark label format {:?}: a bare label needs an SI or percent spec", self.spec));
+        }
+        let sign = if parts.sign == '-' { String::new() } else { parts.sign.to_string() };
+        let scaled = if exponent >= 0 { value / 10f64.powi(exponent) } else { value * 10f64.powi(-exponent) };
+        // Half up on the shortest decimal (`0.15` -> `0.2`), which d3's binary `r` rounds down.
+        let (spec, scaled) = if scaled != 0.0 && scaled.abs() < 1.0 {
+            let shortest = format!("{:e}", scaled.abs());
+            let (mantissa, power) = shortest.split_once('e').ok_or_else(|| format!("{scaled} has no exponent form"))?;
+            let mantissa: f64 = mantissa.parse().map_err(|e| format!("{scaled}: {e}"))?;
+            let power: i32 = power.parse().map_err(|e| format!("{scaled}: {e}"))?;
+            let rounded = (mantissa + 0.5).floor() * 10f64.powi(power);
+            (format!("{sign},.{}~f", -power), rounded.copysign(scaled))
+        } else if scaled.abs().log10().floor() as i64 + 1 == i64::from(ordinary_digits) {
+            (format!("{sign},.{pad}f"), scaled)
+        } else {
+            (format!("{sign},.{decimals}~f"), scaled)
+        };
+        let painted = ::bind::formats::locale::d3_format(&spec, scaled).map_err(|e| format!("format {spec:?} on {scaled}: {e}"))?;
+        Ok(format!("{painted}{}", self.suffix))
+    }
+
+    /// The house `percent` / `percent_delta` with its zero-padding spec, as a slot that trims
+    /// (`40%`, not `40.0%`). `None` for any other slot,
+    /// including a redefined name whose spec is not the house one.
+    pub fn trimmed_house_percent(&self) -> Option<FormatSlot> {
+        let raw = self.raw.as_deref().filter(|r| matches!(*r, "percent" | "percent_delta"))?;
+        (predefined_number_spec(raw) == Some(self.spec.as_str()) && !self.has_affix())
+            .then(|| FormatSlot { spec: self.spec.replace('%', "~%"), ..self.clone() })
+    }
+
     /// The author named a predefined d3 number format (the native names never
     /// reach a d3-painted slot).
     pub fn is_house(&self) -> bool {
@@ -838,6 +899,10 @@ impl<'de> Deserialize<'de> for FormatSlot {
             other => return Err(D::Error::custom(format!("format must be a string or object, got {other}"))),
         };
         let mut slot = FormatSlot::default();
+        let (mut exponent, mut decimals, mut ordinary_digits, mut pad) = (None, None, None, None);
+        let bare_count = |val: &Value, key: &str| -> Result<u32, D::Error> {
+            val.as_u64().and_then(|e| u32::try_from(e).ok()).ok_or_else(|| D::Error::custom(format!("format {key} must be a count, got {val}")))
+        };
         for (key, val) in map {
             let text = |val: &Value| match val {
                 Value::Null => Ok(None),
@@ -849,6 +914,13 @@ impl<'de> Deserialize<'de> for FormatSlot {
                 "prefix" => slot.prefix = text(&val)?.unwrap_or_default(),
                 "suffix" => slot.suffix = text(&val)?.unwrap_or_default(),
                 "raw" => slot.raw = text(&val)?,
+                "bare_exponent" => {
+                    exponent = Some(
+                        val.as_i64()
+                            .and_then(|e| i32::try_from(e).ok())
+                            .ok_or_else(|| D::Error::custom(format!("format bare_exponent must be an integer, got {val}")))?,
+                    );
+                }
                 "notation" => {
                     slot.notation = text(&val)?;
                     if let Some(n) = &slot.notation {
@@ -864,9 +936,17 @@ impl<'de> Deserialize<'de> for FormatSlot {
                 "sign_placement" => {
                     slot.sign_placement = Option::<SignPlacement>::deserialize(val).map_err(D::Error::custom)?;
                 }
+                "bare_decimals" => decimals = Some(bare_count(&val, "bare_decimals")?),
+                "bare_ordinary_digits" => ordinary_digits = Some(bare_count(&val, "bare_ordinary_digits")?),
+                "bare_pad" => pad = Some(bare_count(&val, "bare_pad")?),
                 other => return Err(D::Error::custom(format!("unknown format key {other:?}"))),
             }
         }
+        slot.bare = match (exponent, decimals, ordinary_digits, pad) {
+            (Some(exponent), Some(decimals), Some(ordinary_digits), Some(pad)) => Some(BareRun { exponent, decimals, ordinary_digits, pad }),
+            (None, None, None, None) => None,
+            _ => return Err(D::Error::custom("format bare_exponent, bare_decimals, bare_ordinary_digits and bare_pad come together")),
+        };
         Ok(slot)
     }
 }
@@ -1044,214 +1124,48 @@ fn decimal_pad_table(digit_spec: &str, precision: usize, values: &[f64], family:
     Ok(d3rs::numeral_pad::build_decimal_pad_table(precision, &digit_unit, &dot_unit))
 }
 
-/// `truncate_text_precise`: `text` when it fits, else the longest char prefix
-/// whose `trim_end() + "…"` fits, else the first char.
-pub fn truncate_with(
-    measure: &dyn Fn(&str) -> Result<f64, String>,
-    text: &str,
-    max_width: f64,
-    ellipsis: bool,
-) -> Result<String, String> {
-    if measure(text)? <= max_width {
-        return Ok(text.to_string());
-    }
-    let suffix = if ellipsis { "\u{2026}" } else { "" };
-    let chars: Vec<char> = text.chars().collect();
-    let (mut lo, mut hi, mut best) = (0usize, chars.len(), None::<String>);
-    while lo <= hi {
-        let mid = (lo + hi) / 2;
-        let prefix: String = chars[..mid].iter().collect();
-        let cand = format!("{}{suffix}", prefix.trim_end());
-        if measure(&cand)? <= max_width {
-            best = Some(cand);
-            lo = mid + 1;
-        } else {
-            if mid == 0 {
-                break;
-            }
-            hi = mid - 1;
-        }
-    }
-    Ok(best.filter(|b| !b.is_empty()).unwrap_or_else(|| chars.first().map(|c| c.to_string()).unwrap_or_default()))
-}
-
-/// Measured word-wrap with optional line cap + ellipsis — the port of
-/// production's `wrap_text_precise` (mdsvg/fonts.py), the function
-/// `prepare_title_text` runs for title/subtitle overflow. Semantics ported
-/// exactly: whitespace-normalized; per-piece width bookkeeping (line width
-/// is the SUM of measured piece widths plus separator widths, as
-/// `wrap_measured_pieces` sums them — never a re-measure of the joined
-/// string); an over-wide token splits at the longest fitting seam-char
-/// (`_/.-?&=:`) prefix first and falls back to the longest fitting char
-/// prefix (`split_token_precise`); and when `max_lines` cuts text, every
-/// piece from the cut line onward is folded back into ONE string
-/// (word-split chunks re-glue without spaces) and char-truncated to
-/// `prefix.trim_end() + "…"` (`truncate_text_precise`, which yields the
-/// first char when nothing fits). Returns `(lines, truncated)`: `truncated`
-/// is true exactly when `max_lines` cut text. Callers measure with the family
-/// production's `get_font_measurer(None)` resolves — Inter — regardless of
-/// the family the text paints in.
-pub fn wrap_text_measured(
-    text: &str,
-    max_width: f64,
-    font_size: f64,
-    family: &str,
-    fonts: &measure::FontBook,
-    max_lines: Option<usize>,
-    ellipsis: bool,
-) -> Result<(Vec<String>, bool), String> {
-    let measure = |t: &str| fonts.measure(t, family, font_size);
-    wrap_text_with(&measure, text, max_width, max_lines, ellipsis)
-}
-
-/// [`wrap_text_measured`] over any measurer: the axis title wraps at its own
-/// painted weight, a title block in Inter.
-pub fn wrap_text_with(
-    measure: &dyn Fn(&str) -> Result<f64, String>,
-    text: &str,
-    max_width: f64,
-    max_lines: Option<usize>,
-    ellipsis: bool,
-) -> Result<(Vec<String>, bool), String> {
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.is_empty() {
-        return Ok((vec![], false));
-    }
-    let space_w = measure(" ")?;
-
-    // (text, width, has_separator) — separator is the single space that
-    // precedes a piece which starts a new word (never a split-word
-    // continuation chunk, and never the very first word).
-    struct Piece {
-        text: String,
-        width: f64,
-        has_sep: bool,
-    }
-    const SEAMS: &[char] = &['_', '/', '.', '-', '?', '&', '=', ':'];
-    let mut pieces: Vec<Piece> = Vec::new();
-    for (word_index, word) in normalized.split(' ').enumerate() {
-        let mut remaining: Vec<char> = word.chars().collect();
-        let mut chunk_index = 0usize;
-        while !remaining.is_empty() {
-            let rem_s: String = remaining.iter().collect();
-            let w = measure(&rem_s)?;
-            let cut = if w <= max_width {
-                remaining.len()
-            } else {
-                // Longest seam-terminated prefix that fits, else the longest
-                // fitting char prefix (at least one char).
-                let mut best_seam: Option<usize> = None;
-                for (i, ch) in remaining.iter().enumerate() {
-                    if i > 0 && SEAMS.contains(ch) {
-                        let cand: String = remaining[..=i].iter().collect();
-                        if measure(&cand)? <= max_width {
-                            best_seam = Some(i + 1);
-                        }
-                    }
-                }
-                match best_seam {
-                    Some(n) => n,
-                    None => {
-                        let (mut lo, mut hi, mut best) = (1usize, remaining.len(), 1usize);
-                        while lo <= hi {
-                            let mid = (lo + hi) / 2;
-                            let cand: String = remaining[..mid].iter().collect();
-                            if measure(&cand)? <= max_width {
-                                best = mid;
-                                lo = mid + 1;
-                            } else {
-                                hi = mid - 1;
-                            }
-                        }
-                        best
-                    }
-                }
-            };
-            let piece_s: String = remaining[..cut].iter().collect();
-            let piece_w = measure(&piece_s)?;
-            pieces.push(Piece {
-                text: piece_s,
-                width: piece_w,
-                has_sep: word_index > 0 && chunk_index == 0,
-            });
-            remaining.drain(..cut);
-            chunk_index += 1;
-        }
-    }
-
-    // Greedy fill by summed piece widths (wrap_measured_pieces).
-    let mut lines: Vec<Vec<&Piece>> = Vec::new();
-    let mut line: Vec<&Piece> = Vec::new();
-    let mut line_w = 0.0_f64;
-    for piece in &pieces {
-        let sep_w = if !line.is_empty() && piece.has_sep { space_w } else { 0.0 };
-        if line.is_empty() || line_w + sep_w + piece.width <= max_width {
-            line_w += sep_w + piece.width;
-            line.push(piece);
-        } else {
-            lines.push(std::mem::take(&mut line));
-            line_w = piece.width;
-            line.push(piece);
-        }
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-
-    let join = |ps: &[&Piece]| {
-        let mut out = String::new();
-        for (i, p) in ps.iter().enumerate() {
-            if i > 0 && p.has_sep {
-                out.push(' ');
-            }
-            out.push_str(&p.text);
-        }
-        out
-    };
-
-    if let Some(cap) = max_lines {
-        if lines.len() > cap {
-            let mut rendered: Vec<String> = lines[..cap - 1].iter().map(|l| join(l)).collect();
-            let tail_pieces: Vec<&Piece> = lines[cap - 1..].iter().flatten().copied().collect();
-            let tail = join(&tail_pieces);
-            let last = truncate_with(measure, &tail, max_width, ellipsis)?;
-            rendered.push(last);
-            return Ok((rendered, true));
-        }
-    }
-    Ok((lines.iter().map(|l| join(l)).collect(), false))
-}
-
-/// `resolve_title_overflow` + `prepare_title_text`: the lines a title or
-/// subtitle draws in `limit` px, and whether the line cap cut text (never for
-/// `wrap`). An unknown mode takes the wrap-two default.
-/// `prepare_title_text` returns `lines[0] if lines else text` for the
-/// single-line modes, so a whitespace-only string survives clip and truncate
-/// and Vega reserves its full band; the wrapping modes join an empty list
-/// into `""`, which reserves nothing (probe: title group origin y 49 for
-/// `"   "` against 21 for `""`).
+/// The lines a title or subtitle draws in `limit` px, and whether the line cap cut text (never
+/// for `all`). A payload that carries no limit takes two lines. A whitespace-only string survives
+/// a one-line limit, so Vega reserves its full band; the wrapping limits join an empty list into
+/// `""`, which reserves nothing (probe: title group origin y 49 for `"   "` against 21 for `""`).
+/// Callers measure with the family production's `get_font_measurer(None)` resolves — Inter —
+/// regardless of the family the text paints in.
 pub fn prepare_title_lines(
     text: &str,
-    mode: Option<&str>,
+    max_lines: Option<LineLimit>,
     limit: f64,
     font_size: f64,
     family: &str,
     fonts: &measure::FontBook,
-) -> Result<(Vec<String>, bool), String> {
-    let (cap, ellipsis) = match mode {
-        Some("clip") => (Some(1), false),
-        Some("truncate") => (Some(1), true),
-        Some("wrap") => (None, false),
-        _ => (Some(2), true),
-    };
-    let (lines, truncated) = wrap_text_measured(text, limit, font_size, family, fonts, cap, ellipsis)?;
-    Ok((if lines.is_empty() && cap == Some(1) { vec![text.to_string()] } else { lines }, truncated))
+) -> Result<FittedText, String> {
+    let limit_lines = max_lines.unwrap_or(DEFAULT_TITLE_WRAP);
+    let mut fitted = fit_lines(text, limit, &|t| fonts.measure(t, family, font_size), limit_lines.max_lines())?;
+    if fitted.lines.is_empty() && limit_lines.is_one_line() {
+        fitted.lines = vec![text.to_string()];
+    }
+    Ok(fitted)
 }
 
+/// The lines a title or subtitle takes when its payload carries no `max_lines`.
+const DEFAULT_TITLE_WRAP: LineLimit = LineLimit::Lines(std::num::NonZeroU32::new(2).unwrap());
+
 #[cfg(test)]
-mod wrap_text_measured_tests {
-    use super::wrap_text_measured;
+mod fit_lines_tests {
+    use measure::fit::fit_lines;
     use measure::FontBook;
+
+    /// `fit_lines` in `family`'s face: the lines and whether the cap cut text.
+    fn fit(
+        text: &str,
+        width: f64,
+        size: f64,
+        family: &str,
+        fonts: &FontBook,
+        max_lines: Option<usize>,
+    ) -> Result<(Vec<String>, bool), String> {
+        let fitted = fit_lines(text, width, &|t| fonts.measure(t, family, size), max_lines)?;
+        Ok((fitted.lines, fitted.cut))
+    }
 
     fn fonts() -> FontBook {
         let dir = concat!(
@@ -1266,18 +1180,18 @@ mod wrap_text_measured_tests {
     #[test]
     fn fitting_text_stays_one_line_and_normalizes_whitespace() {
         let f = fonts();
-        let lines = wrap_text_measured("hello   world", 500.0, 11.0, FAM, &f, Some(2), true).unwrap().0;
+        let lines = fit("hello   world", 500.0, 11.0, FAM, &f, Some(2)).unwrap().0;
         assert_eq!(lines, vec!["hello world"]);
     }
 
     #[test]
     fn wrap_two_splits_at_the_measured_width_and_ellipsizes_overflow() {
         let f = fonts();
-        // Narrow enough that four words need three lines — the wrap-two cap
+        // Narrow enough that four words need three lines — the two-line cap
         // keeps two, ellipsizing the second.
-        let all = wrap_text_measured("alpha beta gamma delta", 60.0, 11.0, FAM, &f, None, false).unwrap().0;
+        let all = fit("alpha beta gamma delta", 60.0, 11.0, FAM, &f, None).unwrap().0;
         assert!(all.len() >= 3, "uncapped wrap uses the width: {all:?}");
-        let two = wrap_text_measured("alpha beta gamma delta", 60.0, 11.0, FAM, &f, Some(2), true).unwrap().0;
+        let two = fit("alpha beta gamma delta", 60.0, 11.0, FAM, &f, Some(2)).unwrap().0;
         assert_eq!(two.len(), 2);
         assert!(two[1].ends_with('\u{2026}'), "cut line carries the ellipsis: {two:?}");
         let w = f.measure(&two[1], FAM, 11.0).unwrap();
@@ -1287,7 +1201,7 @@ mod wrap_text_measured_tests {
     #[test]
     fn truncate_mode_yields_one_ellipsized_line() {
         let f = fonts();
-        let lines = wrap_text_measured("a very long chart title indeed", 80.0, 14.0, FAM, &f, Some(1), true).unwrap().0;
+        let lines = fit("a very long chart title indeed", 80.0, 14.0, FAM, &f, Some(1)).unwrap().0;
         assert_eq!(lines.len(), 1);
         assert!(lines[0].ends_with('\u{2026}'), "{lines:?}");
     }
@@ -1299,20 +1213,20 @@ mod wrap_text_measured_tests {
         // the identical lines.
         let f = fonts();
         const INTER: &str = "Inter";
-        let a = wrap_text_measured("Revenue share by product line", 200.0, 18.0, INTER, &f, Some(1), true).unwrap().0;
+        let a = fit("Revenue share by product line", 200.0, 18.0, INTER, &f, Some(1)).unwrap().0;
         assert_eq!(a, vec!["Revenue share by pr\u{2026}"]);
-        let b1 = wrap_text_measured("Revenue by product category", 160.0, 14.0, INTER, &f, Some(1), true).unwrap().0;
+        let b1 = fit("Revenue by product category", 160.0, 14.0, INTER, &f, Some(1)).unwrap().0;
         assert_eq!(b1, vec!["Revenue by product c\u{2026}"]);
-        let b2 = wrap_text_measured("Share of total spend by vendor and contract type", 180.0, 14.0, INTER, &f, Some(1), true).unwrap().0;
+        let b2 = fit("Share of total spend by vendor and contract type", 180.0, 14.0, INTER, &f, Some(1)).unwrap().0;
         assert_eq!(b2, vec!["Share of total spend by v\u{2026}"]);
-        let c = wrap_text_measured("https://example.com/very/long/path/segment/here", 120.0, 11.0, INTER, &f, Some(2), true).unwrap().0;
+        let c = fit("https://example.com/very/long/path/segment/here", 120.0, 11.0, INTER, &f, Some(2)).unwrap().0;
         assert_eq!(c, vec!["https://example.com/", "very/long/path/segm\u{2026}"]);
     }
 
     #[test]
     fn over_wide_single_word_splits_at_char_granularity() {
         let f = fonts();
-        let lines = wrap_text_measured("Antidisestablishmentarianism", 40.0, 11.0, FAM, &f, None, false).unwrap().0;
+        let lines = fit("Antidisestablishmentarianism", 40.0, 11.0, FAM, &f, None).unwrap().0;
         assert!(lines.len() > 1, "long word must split: {lines:?}");
         for l in &lines[..lines.len() - 1] {
             assert!(f.measure(l, FAM, 11.0).unwrap() <= 40.0, "chunk fits: {l}");
@@ -2732,38 +2646,9 @@ pub fn truncate_label(
     fonts: &measure::FontBook,
     shaped: bool,
 ) -> Result<String, String> {
-    truncate_label_with(text, limit, |s| {
+    measure::fit::truncate_label_by(text, limit, |s| {
         if shaped { fonts.measure_shaped(s, family, size) } else { fonts.measure(s, family, size) }
     })
-}
-
-/// [`truncate_label`] over a caller-supplied measurer, for a run measured at its
-/// painted weight.
-pub fn truncate_label_with(
-    text: &str,
-    limit: f64,
-    measure: impl Fn(&str) -> Result<f64, String>,
-) -> Result<String, String> {
-    if measure(text)? <= limit {
-        return Ok(text.to_string());
-    }
-    let chars: Vec<char> = text.chars().collect();
-    let (mut lo, mut hi, mut best) = (0usize, chars.len(), None::<String>);
-    while lo <= hi {
-        let mid = (lo + hi) / 2;
-        let prefix: String = chars[..mid].iter().collect();
-        let measure_cand = format!("{}\u{2026}", prefix.trim_end());
-        if measure(&measure_cand)? <= limit {
-            best = Some(measure_cand);
-            lo = mid + 1;
-        } else {
-            if mid == 0 {
-                break;
-            }
-            hi = mid - 1;
-        }
-    }
-    Ok(best.unwrap_or_else(|| "\u{2026}".to_string()))
 }
 
 #[derive(Deserialize, Clone, Default)]
@@ -2794,11 +2679,10 @@ pub struct TitleStyle {
     /// Resolved subtitle slot (`title_style.subtitle`).
     #[serde(default)]
     pub subtitle: Option<SubtitleStyle>,
-    /// Overflow mode for the title text (`title_style.overflow`:
-    /// clip / truncate / wrap / wrap-two; production defaults to
-    /// wrap-two — title_overflow.py `DEFAULT_TITLE_OVERFLOW`).
+    /// Line limit for the title text (`title_style.max_lines`; production defaults
+    /// to two lines — title_overflow.py `DEFAULT_TITLE_OVERFLOW`).
     #[serde(default)]
-    pub overflow: Option<String>,
+    pub max_lines: Option<LineLimit>,
 }
 
 /// The title style a family should actually read.
@@ -2821,7 +2705,7 @@ pub fn effective_title_style(
         font: title_font?.clone(),
         position: title_style.and_then(|ts| ts.position.clone()),
         subtitle: title_style.and_then(|ts| ts.subtitle.clone()),
-        overflow: title_style.and_then(|ts| ts.overflow.clone()),
+        max_lines: title_style.and_then(|ts| ts.max_lines),
     })
 }
 
@@ -2839,9 +2723,9 @@ pub fn painted_title_size(titled: bool, style: Option<&TitleStyle>) -> Result<f6
 #[derive(Deserialize, Clone)]
 pub struct SubtitleStyle {
     pub font: Font,
-    /// Overflow mode for the subtitle (same vocabulary as the title's).
+    /// Line limit for the subtitle (the title's vocabulary).
     #[serde(default)]
-    pub overflow: Option<String>,
+    pub max_lines: Option<LineLimit>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -3114,6 +2998,9 @@ impl MarkLabels {
 pub fn format_mark_label(fmt: Option<&FormatSlot>, value: f64, is_house: bool) -> Result<String, String> {
     match fmt {
         Some(slot) => {
+            if let Some(run) = slot.bare {
+                return slot.paint_bare(value, run);
+            }
             let spec = slot.spec.as_str();
             // Production's `_house_register_expr` (`value_labels.py:335`) over
             // `sub_unit_guarded_vega_expr` (`numeral_expr.py:106`): an
@@ -3164,7 +3051,7 @@ pub struct TitleBlock {
 /// Production's `apply_title_overflow_to_spec`, run before the chart render:
 /// `limit = int(width − pad_l − pad_r)`, the title wrapped/truncated per its
 /// own `overflow` mode and the subtitle per its own (both default
-/// `wrap-two`), each extra line advancing the title block by
+/// two-line), each extra line advancing the title block by
 /// `fontSize + 2` — Vega's default text lineHeight.
 ///
 /// `cased_title` is the title with `font.case` already applied (production
@@ -3189,15 +3076,15 @@ pub fn wrap_title_block(
     // `compute_title_limit`: `int(width − l − r)`, and no processing at all
     // when that is non-positive.
     let limit = (avail_w.trunc() > 0.0).then(|| avail_w.trunc());
-    let wrap = |text: &str, mode: Option<&str>, font_size: f64, limit: f64| {
-        prepare_title_lines(text, mode, limit, font_size, WRAP_MEASURE_FAMILY, fonts)
+    let wrap = |text: &str, limit_lines: Option<LineLimit>, font_size: f64, limit: f64| {
+        prepare_title_lines(text, limit_lines, limit, font_size, WRAP_MEASURE_FAMILY, fonts).map(|f| (f.lines, f.cut))
     };
     let (wrap_lines, title_truncated) = match (cased_title, limit) {
         (None, _) => (vec![], false),
         (Some(text), None) => (vec![text.to_string()], false),
         (Some(text), Some(limit)) => wrap(
             text,
-            style.and_then(|ts| ts.overflow.as_deref()),
+            style.and_then(|ts| ts.max_lines),
             title_font_size,
             limit,
         )?,
@@ -3209,7 +3096,7 @@ pub fn wrap_title_block(
         (None, _) => (vec![], false),
         (Some(sub), None) => (vec![sub.to_string()], false),
         (Some(sub), Some(limit)) => {
-            wrap(sub, sub_style.and_then(|f| f.overflow.as_deref()), sub_fs, limit)?
+            wrap(sub, sub_style.and_then(|f| f.max_lines), sub_fs, limit)?
         }
     };
     let family = style.and_then(|ts| ts.font.family.as_deref()).unwrap_or("serif");
@@ -3345,7 +3232,8 @@ pub(crate) fn board_text_ink(board: Option<&crate::BoardStyle>) -> Result<String
 /// An unauthored value label's ink on `canvas`: the board's text color, lifted until it keeps
 /// [`OUTSIDE_INK_CONTRAST`] against a canvas it would vanish into.
 pub(crate) fn canvas_label_ink(board: Option<&crate::BoardStyle>, canvas: &str) -> Result<String, String> {
-    dbt_charts_color::ensure_readable_ink(&board_text_ink(board)?, canvas, OUTSIDE_INK_CONTRAST)
+    let ink = board.and_then(|b| b.ink.as_deref());
+    dbt_charts_color::ensure_readable_ink(&board_text_ink(board)?, canvas, OUTSIDE_INK_CONTRAST, ink)
 }
 
 /// The face a value label paints in: its own font, else the theme's text-mark
@@ -3447,7 +3335,7 @@ mod title_block_tests {
 
         let style: TitleStyle = serde_json::from_value(serde_json::json!({
             "font": {"family": "Inter"},
-            "overflow": "truncate"
+            "max_lines": 1
         }))
         .expect("title style");
 
@@ -3550,7 +3438,7 @@ mod title_block_tests {
         let text = "Same Chart with the Feature OFF and a Side Legend Beside It";
         let style: TitleStyle = serde_json::from_value(serde_json::json!({
             "font": {"family": "'Source Code Pro', monospace", "size": 18.0},
-            "overflow": "truncate"
+            "max_lines": 1
         }))
         .expect("title style");
         let limit = 560.0;
@@ -3802,13 +3690,13 @@ pub fn wrap_axis_title(
     let authored: Vec<&str> = text.split_whitespace().collect();
     let words = authored
         .iter()
-        .map(|w| truncate_with(&measure, w, budget, true))
+        .map(|w| measure::fonts::truncate_by(w, budget, true, &measure))
         .collect::<Result<Vec<_>, _>>()?;
-    let (lines, truncated) = wrap_text_with(&measure, &words.join(" "), budget, Some(2), true)?;
-    if lines.is_empty() {
+    let fitted = measure::fit::fit_lines(&words.join(" "), budget, &measure, Some(2))?;
+    if fitted.lines.is_empty() {
         return Ok((vec![text.to_string()], false));
     }
-    Ok((lines, truncated || words != authored))
+    Ok((fitted.lines, fitted.cut || words != authored))
 }
 
 /// `WARN-AXIS-TITLE-TRUNCATED`: production's
@@ -5666,6 +5554,7 @@ mod format_slot_tests {
                 sign_placement: Some(SignPlacement::BeforePrefix),
                 repeat: Some("every".into()),
                 raw: Some("number".into()),
+                bare: None,
             }
         );
         // `FormatConfig` dumps unset fields as null.

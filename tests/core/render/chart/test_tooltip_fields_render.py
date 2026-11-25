@@ -120,3 +120,17 @@ def test_a_semicolon_in_a_value_is_escaped_for_the_runtime() -> None:
     svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
     assert f"{EXTRA}Note: Q1\ue000 Q2" in svg
     assert "Q1;" not in svg
+
+
+def test_a_url_entry_reaches_the_card_as_a_link_row() -> None:
+    rows = [{"month": "Jan", "cost": 1, "ticket": "https://t.io/1"}]
+    svg = _svg(
+        {
+            "type": "bar",
+            "x": "month",
+            "y": "cost",
+            "tooltip": [{"column": "ticket", "format": "url"}],
+        },
+        rows,
+    )
+    assert f"{EXTRA}⁯Ticket: https://t.io/1" in svg

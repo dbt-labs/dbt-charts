@@ -466,7 +466,10 @@ class TestTimeFormatOnLegitimateDateColumnBoardLevel:
     format_table_cell_value's own date-formatting path instead."""
 
     def test_date_column_with_null_row_renders(self) -> None:
-        data: list[dict[str, object]] = [{"value": "2024-01-15"}, {"value": None}]
+        data: list[dict[str, object]] = [
+            {"value": datetime.date(2024, 1, 15)},
+            {"value": None},
+        ]
         svg = _render_table_svg(data, "%Y-%m-%d")
         assert "2024-01-15" in svg
 
@@ -478,8 +481,7 @@ class TestTimeFormatOnLegitimateDateColumnBoardLevel:
         svg = _render_table_svg(data, "date_short")
         assert "15 Mar 2024" in svg
 
-    def test_date_column_with_text_sentinel_renders(self) -> None:
+    def test_a_date_format_on_a_text_column_of_iso_dates_is_refused(self) -> None:
         data: list[dict[str, object]] = [{"value": "2024-01-15"}, {"value": "N/A"}]
-        svg = _render_table_svg(data, "%Y-%m-%d")
-        assert "2024-01-15" in svg
-        assert "N/A" in svg
+        with pytest.raises(Exception, match="type: date"):  # noqa: B017 — the engine's coded refusal
+            _render_table_svg(data, "%Y-%m-%d")

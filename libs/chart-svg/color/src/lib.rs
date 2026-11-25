@@ -569,6 +569,14 @@ pub fn is_light_canvas(canvas: &str) -> Result<bool, String> {
     Ok(wcag_contrast("#000000", canvas)? >= wcag_contrast("#ffffff", canvas)?)
 }
 
+/// Whether `color` is the board's own hex `style.roles.ink`, which is never moved.
+pub fn is_board_ink(color: &str, ink: Option<&str>) -> Result<bool, String> {
+    match ink {
+        Some(ink) => Ok(parse_css_color(color)? == parse_css_color(ink)?),
+        None => Ok(false),
+    }
+}
+
 /// `ensure_readable_ink`: the closest-to-original OKLCH lightness (hue and
 /// chroma held) that clears `min_ratio` against `background`, searching
 /// toward each of black and white that clears it and keeping the nearer
@@ -577,8 +585,9 @@ pub fn ensure_readable_ink(
     color: &str,
     background: &str,
     min_ratio: f64,
+    ink: Option<&str>,
 ) -> Result<String, String> {
-    if wcag_contrast(color, background)? >= min_ratio {
+    if is_board_ink(color, ink)? || wcag_contrast(color, background)? >= min_ratio {
         return Ok(color.to_string());
     }
     let black_contrast = wcag_contrast("#000000", background)?;
@@ -617,6 +626,49 @@ pub fn ensure_readable_ink(
     oklch_to_hex(best_l, c, h)
 }
 
+/// `colorful_readable_ink`: the most colorful ink in `color`'s hue that clears `min_ratio`
+/// against `background`, on the side `ensure_readable_ink` searches. Chroma is capped at
+/// `chroma_stretch` times `color`'s own, since a gamut-maximal ink glows (a neon mint on a
+/// green band); among equally colorful inks the one closest to `color`'s lightness wins.
+pub fn colorful_readable_ink(
+    color: &str,
+    background: &str,
+    min_ratio: f64,
+    chroma_stretch: f64,
+) -> Result<String, String> {
+    if wcag_contrast(color, background)? >= min_ratio {
+        return Ok(color.to_string());
+    }
+    let (l, c, h) = hex_to_oklch(color)?;
+    let darken = is_light_canvas(background)?;
+    let mut best: Option<(f64, f64, String)> = None;
+    for step in 0..=200 {
+        let lightness = f64::from(step) / 200.0;
+        if (darken && lightness > l) || (!darken && lightness < l) {
+            continue;
+        }
+        let ink = oklch_to_hex(lightness, c * chroma_stretch, h)?;
+        if wcag_contrast(&ink, background)? < min_ratio {
+            continue;
+        }
+        let chroma = hex_to_oklch(&ink)?.1;
+        let distance = (lightness - l).abs();
+        let better = match &best {
+            None => true,
+            Some((best_chroma, best_distance, _)) => {
+                chroma > best_chroma + 1e-3
+                    || ((chroma - best_chroma).abs() <= 1e-3 && distance < *best_distance)
+            }
+        };
+        if better {
+            best = Some((chroma, distance, ink));
+        }
+    }
+    best.map(|(_, _, ink)| ink).ok_or_else(|| {
+        format!("no ink in the hue of {color:?} clears {min_ratio}:1 contrast against background {background:?}")
+    })
+}
+
 /// Ink for text over a mark painted `fill`: `ink` itself when it keeps `min_ratio`
 /// against `fill`, else `ink`'s hue at the nearest lightness that does, else (a
 /// mid-luminance fill no lightness of any hue clears) whichever of black and white
@@ -630,7 +682,7 @@ pub fn readable_ink_on_fill(ink: &str, fill: &str, min_ratio: f64) -> Result<Str
     if wcag_contrast(&ink_hex, &fill_hex)? >= min_ratio {
         return Ok(ink.to_string());
     }
-    if let Ok(adjusted) = ensure_readable_ink(&ink_hex, &fill_hex, min_ratio) {
+    if let Ok(adjusted) = ensure_readable_ink(&ink_hex, &fill_hex, min_ratio, None) {
         return Ok(adjusted);
     }
     let pole = if is_light_canvas(&fill_hex)? { "#000000" } else { "#ffffff" };
@@ -641,7 +693,10 @@ pub fn readable_ink_on_fill(ink: &str, fill: &str, min_ratio: f64) -> Result<Str
 /// the dark step away from the canvas (toward `dark_pole` on a light
 /// canvas, clamped to darkening only; toward white on a dark one), then
 /// `ensure_readable_ink`'s floor at `label_ink_min_contrast`.
-pub fn label_ink(color: &str, canvas: &str) -> Result<String, String> {
+pub fn label_ink(color: &str, canvas: &str, ink: Option<&str>) -> Result<String, String> {
+    if is_board_ink(color, ink)? {
+        return Ok(color.to_string());
+    }
     let cfg = color_variants();
     let (l, c, h) = hex_to_oklch(color)?;
     let stepped = if is_light_canvas(canvas)? {
@@ -649,7 +704,7 @@ pub fn label_ink(color: &str, canvas: &str) -> Result<String, String> {
     } else {
         oklch_to_hex(l + (1.0 - l) * cfg.dark_k, c, h)?
     };
-    ensure_readable_ink(&stepped, canvas, cfg.label_ink_min_contrast)
+    ensure_readable_ink(&stepped, canvas, cfg.label_ink_min_contrast, None)
 }
 
 /// `_variant_cached`: a literal tier of `color`, no canvas — OKLCH lightness
@@ -719,7 +774,7 @@ pub fn ink_canvas(layers: &[&str]) -> Result<String, String> {
 /// that is not already a real color defers (passes through) for the
 /// palette-spec validator to judge; anything unparseable or fully
 /// transparent has no ink to derive and passes through unchanged too.
-pub fn mark_ink(color: &str, canvas: &str) -> Result<String, String> {
+pub fn mark_ink(color: &str, canvas: &str, ink: Option<&str>) -> Result<String, String> {
     let lowered = color.trim().to_lowercase();
     let is_real_color = matches!(lowered.as_str(), "transparent" | "none")
         || is_sanitizable_color(color)
@@ -730,10 +785,10 @@ pub fn mark_ink(color: &str, canvas: &str) -> Result<String, String> {
     let Ok((r, g, b, a)) = parse_css_color(color) else {
         return Ok(color.to_string());
     };
-    if a <= 0.0 {
+    if a <= 0.0 || is_board_ink(color, ink)? {
         return Ok(color.to_string());
     }
-    label_ink(&rgb01_to_hex(r, g, b), canvas)
+    label_ink(&rgb01_to_hex(r, g, b), canvas, ink)
 }
 
 #[cfg(test)]
@@ -797,11 +852,38 @@ mod tests {
         ];
         for (color, canvas, expected) in cases {
             assert_eq!(
-                label_ink(color, canvas).unwrap(),
+                label_ink(color, canvas, None).unwrap(),
                 expected,
                 "{color} on {canvas}"
             );
         }
+    }
+
+    #[test]
+    fn a_band_name_on_a_mid_green_band_keeps_its_green_at_the_floor() {
+        let band = "#608470";
+        let ink = colorful_readable_ink(band, band, 3.0, 1.5).unwrap();
+        let (_, c, h) = hex_to_oklch(&ink).unwrap();
+        let (l_band, c_band, h_band) = hex_to_oklch(band).unwrap();
+        assert!(wcag_contrast(&ink, band).unwrap() >= 3.0, "{ink}");
+        assert!(hex_to_oklch(&ink).unwrap().0 < l_band, "{ink} stays on the dark side");
+        assert!(c > c_band, "{ink} chroma {c} is at least the band's {c_band}");
+        assert!((h - h_band).abs() < 3.0, "{ink} keeps the band's hue");
+    }
+
+    #[test]
+    fn a_band_name_ink_never_glows_past_its_chroma_stretch() {
+        for band in ["#608470", "#40639c", "#779bc9", "#775770", "#d49656"] {
+            let ink = colorful_readable_ink(band, band, 3.0, 1.5).unwrap();
+            let c_band = hex_to_oklch(band).unwrap().1;
+            assert!(hex_to_oklch(&ink).unwrap().1 <= c_band * 1.5 + 0.005, "{band} -> {ink}");
+            assert!(wcag_contrast(&ink, band).unwrap() >= 3.0, "{band} -> {ink}");
+        }
+    }
+
+    #[test]
+    fn a_floor_no_ink_can_clear_is_an_error() {
+        assert!(colorful_readable_ink("#777777", "#777777", 21.5, 1.5).is_err());
     }
 
     fn mixed_contrast(color: &str, canvas: &str, share: f64) -> f64 {
@@ -924,20 +1006,33 @@ mod tests {
     #[test]
     fn ensure_readable_ink_nudges_toward_the_higher_contrast_pole() {
         assert_eq!(
-            ensure_readable_ink("#777777", "#ffffff", 4.5).unwrap(),
+            ensure_readable_ink("#777777", "#ffffff", 4.5, None).unwrap(),
             "#777676"
         );
         assert_eq!(
-            ensure_readable_ink("#777777", "#161616", 4.5).unwrap(),
+            ensure_readable_ink("#777777", "#161616", 4.5, None).unwrap(),
             "#7f7f7e"
         );
         assert_eq!(
-            ensure_readable_ink("#000000", "#ffffff", 4.5).unwrap(),
+            ensure_readable_ink("#000000", "#ffffff", 4.5, None).unwrap(),
             "#000000"
         );
-        assert!(ensure_readable_ink("#777777", "#808080", 6.0)
+        assert!(ensure_readable_ink("#777777", "#808080", 6.0, None)
             .unwrap_err()
             .starts_with("no ink clears 6:1 contrast"));
+    }
+
+    #[test]
+    fn the_board_ink_is_used_as_set_on_any_canvas() {
+        for canvas in ["#fefcf9", "#161616"] {
+            for ink in ["#1F3A68", "#c9d4ea"] {
+                assert_eq!(label_ink(ink, canvas, Some(ink)).unwrap(), ink, "{ink} on {canvas}");
+                assert_eq!(ensure_readable_ink(ink, canvas, 4.5, Some(&ink.to_lowercase())).unwrap(), ink);
+                assert_eq!(mark_ink(ink, canvas, Some(ink)).unwrap(), ink);
+            }
+        }
+        assert_ne!(label_ink("#1f3a68", "#161616", None).unwrap(), "#1f3a68", "a color that is not the ink still lifts");
+        assert_ne!(label_ink("#1f3a68", "#161616", Some("#c9d4ea")).unwrap(), "#1f3a68");
     }
 
     #[test]
@@ -945,7 +1040,7 @@ mod tests {
         // Black contrasts more with this blue, but the orange is nearer 3:1 lightening.
         let bg = "#0073ff";
         assert!(wcag_contrast("#000000", bg).unwrap() > wcag_contrast("#ffffff", bg).unwrap());
-        let ink = ensure_readable_ink("#fe6703", bg, 3.0).unwrap();
+        let ink = ensure_readable_ink("#fe6703", bg, 3.0, None).unwrap();
         assert!(wcag_contrast(&ink, bg).unwrap() >= 3.0);
         assert!(hex_to_oklch(&ink).unwrap().0 > hex_to_oklch("#fe6703").unwrap().0, "{ink}");
     }
@@ -972,7 +1067,7 @@ mod tests {
             ("#fff\n", "#777676"),
         ];
         for (color, expected) in cases {
-            assert_eq!(mark_ink(color, w).unwrap(), expected, "{color:?}");
+            assert_eq!(mark_ink(color, w, None).unwrap(), expected, "{color:?}");
         }
     }
 

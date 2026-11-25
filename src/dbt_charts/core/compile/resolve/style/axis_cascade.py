@@ -1023,6 +1023,7 @@ def _merge_axis_cascade(
     labeled: bool,
     temporal_band: bool = False,
     horizontal_measure: bool = False,
+    leave_auto_format: bool = False,
 ) -> tuple[AxisXStyle, float | None]: ...
 
 
@@ -1038,6 +1039,7 @@ def _merge_axis_cascade(
     labeled: bool,
     temporal_band: bool = False,
     horizontal_measure: bool = False,
+    leave_auto_format: bool = False,
 ) -> tuple[AxisYStyle, float | None]: ...
 
 
@@ -1052,6 +1054,7 @@ def _merge_axis_cascade(
     labeled: bool,
     temporal_band: bool = False,
     horizontal_measure: bool = False,
+    leave_auto_format: bool = False,
 ) -> tuple[AxisXStyle | AxisYStyle, float | None]:
     """Walk the axis cascade and return the merged, channel-typed axis, plus any
     band_position the chart's own band patch sets.
@@ -1084,6 +1087,9 @@ def _merge_axis_cascade(
 
     ``temporal_band`` is ``_axis_layers``'s flag for a band-typed axis whose
     column is a date.
+
+    ``leave_auto_format`` keeps ``labels.format: auto`` unset, for a renderer that
+    prints the axis's values by its own rule (a framed scatter's end labels).
 
     ``horizontal_measure`` says the measure axis (``axis_y``) paints along the
     bottom or top, which only the caller knows (a horizontal bar). ``axis_x`` is
@@ -1133,7 +1139,13 @@ def _merge_axis_cascade(
         base = merge_onto_base(
             base,
             BaseAxisStylePatch.model_validate(
-                {"labels": {"format": decided_axis_format(channel_type)}}
+                {
+                    "labels": {
+                        "format": None
+                        if leave_auto_format
+                        else decided_axis_format(channel_type)
+                    }
+                }
             ),
         )
 

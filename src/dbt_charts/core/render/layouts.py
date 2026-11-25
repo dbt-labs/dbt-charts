@@ -31,7 +31,6 @@ See: plans/archive/VEGA_SVG_BATCH_CONVERSION_ANALYSIS.md
 from __future__ import annotations
 
 import html
-from collections.abc import Callable
 
 from dbt_charts import _engine
 from dbt_charts.core.colors import is_light_canvas, wcag_contrast
@@ -58,11 +57,8 @@ from dbt_charts.core.render.sizing import (
     tab_cell_width,
     tab_content_offset,
     tab_font,
-    tab_label_measurer,
+    tab_label_fit,
     tab_labels,
-    tab_line_step,
-    tab_rail_cell_height,
-    tab_rail_lines,
     tab_rail_width,
     tabs_layout_height,
 )
@@ -374,18 +370,6 @@ def render_grid_layout(
 _NO_PADDING = {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
 
 
-def _fit_label(
-    label: str, measure: Callable[[str, float], float], size: float, room: float
-) -> str:
-    """``label``, or its longest prefix that fits ``room`` once "…" is appended."""
-    if measure(label, size) <= room:
-        return label
-    keep = len(label)
-    while keep > 0 and measure(label[:keep].rstrip() + "…", size) > room:
-        keep -= 1
-    return label[:keep].rstrip() + "…"
-
-
 def _ink_on_fill(ink: str, fill_canvas: str) -> str:
     """``ink`` when it reads on the opaque ``fill_canvas``, else black or white,
     whichever contrasts more."""
@@ -474,9 +458,6 @@ def render_tabs_layout(
     slugs = tab_slugs or [f"tab_{idx}" for idx in range(len(items))]
 
     family, size, _, _ = tab_font(resolved_style)
-    line_step = tab_line_step(resolved_style)
-    measure = tab_label_measurer(resolved_style)
-    label_room = tabs_config.max_width - 2 * tabs_config.padding_x
     # A rail stacks equal-width cells; a top bar lines content-width cells up.
     rail_width = tab_rail_width(labels, resolved_style) if left_rail else 0.0
     # A pane with a background carries it into its tab. An unstyled pane
@@ -497,18 +478,10 @@ def render_tabs_layout(
     active_span = (0.0, 0.0)
     for idx, (label, slug) in enumerate(zip(labels, slugs, strict=True)):
         is_active = idx == active_tab
-        # A rail has the height to wrap a long label; a top bar cuts it on one line.
-        if left_rail:
-            lines, cut = tab_rail_lines(label, resolved_style)
-            tab_width = rail_width
-            cell_height = tab_rail_cell_height(len(lines), resolved_style)
-        else:
-            shown = _fit_label(
-                label, lambda text, _size: measure(text), size, label_room
-            )
-            lines, cut = [shown], shown != label
-            tab_width = tab_cell_width(label, resolved_style)
-            cell_height = tab_bar_height
+        # A tab label is one line, cut with an ellipsis, in a rail and in a bar.
+        shown, cut = tab_label_fit(label, resolved_style)
+        tab_width = rail_width if left_rail else tab_cell_width(label, resolved_style)
+        cell_height = tab_bar_height
         if is_active:
             active_span = (
                 (tab_y, tab_y + cell_height)
@@ -524,24 +497,11 @@ def render_tabs_layout(
         text_x, anchor = (
             (tabs_config.padding_x, "start") if left_rail else (tab_width / 2, "middle")
         )
-        # The lines sit centered on the cell's middle, one line step apart.
-        baselines = [
-            cell_height / 2
-            + tabs_config.title_baseline_offset
-            + (i - (len(lines) - 1) / 2) * line_step
-            for i in range(len(lines))
-        ]
-        if len(lines) == 1:
-            text_body = html.escape(lines[0])
-        else:
-            text_body = "".join(
-                f'<tspan x="{escape_attr(text_x)}" y="{escape_attr(y)}">{html.escape(line)}</tspan>'
-                for line, y in zip(lines, baselines, strict=True)
-            )
+        baseline = cell_height / 2 + tabs_config.title_baseline_offset
         tab_svg = (
-            f'{tooltip}{boxes}<text x="{escape_attr(text_x)}" y="{escape_attr(baselines[0])}" '
+            f'{tooltip}{boxes}<text x="{escape_attr(text_x)}" y="{escape_attr(baseline)}" '
             f'text-anchor="{escape_attr(anchor)}" font-family="{escape_attr(family)}" font-size="{escape_attr(size)}" fill="{escape_attr(ink)}" '
-            f'font-weight="{escape_attr(weight)}">{text_body}</text>'
+            f'font-weight="{escape_attr(weight)}">{html.escape(shown)}</text>'
         )
         attrs = (
             f'role="tab" aria-selected="{"true" if is_active else "false"}" '

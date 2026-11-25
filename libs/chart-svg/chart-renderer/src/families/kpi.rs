@@ -4,6 +4,7 @@
 //! house number and date formats under the board's number locale.
 
 use column_types::ColumnType;
+use board_model::primitives::LineLimit;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -172,16 +173,7 @@ struct TextSlot {
 #[derive(Deserialize)]
 struct LabelStyle {
     font: FontPayload,
-    overflow: Overflow,
-}
-
-#[derive(Deserialize, Clone, Copy)]
-#[serde(rename_all = "kebab-case")]
-enum Overflow {
-    Clip,
-    Truncate,
-    WrapTwo,
-    Wrap,
+    max_lines: LineLimit,
 }
 
 #[derive(Deserialize)]
@@ -919,15 +911,10 @@ fn fit_explainer(
         return Ok(false);
     }
     let spacer = if last.text.starts_with(' ') { " " } else { "" };
-    let chars: Vec<char> = last.text.trim_start().chars().collect();
-    let mut cut = String::new();
-    for keep in (0..chars.len()).rev() {
-        let kept: String = chars[..keep].iter().collect();
-        cut = format!("{spacer}{}\u{2026}", kept.trim_end());
-        if last.font.measure(m, &cut, false)? <= room {
-            break;
-        }
-    }
+    let cut = measure::fit::truncate_label_by(last.text.trim_start(), room, |kept| {
+        last.font.measure(m, &format!("{spacer}{kept}"), false)
+    })?;
+    let cut = format!("{spacer}{cut}");
     last.text = cut;
     diagnostics.push(Diagnostic::new(
         &codes::WARN_KPI_SUPPORT_TRUNCATED,
@@ -1189,9 +1176,8 @@ fn affix_baselines(value_baseline: f64, slots: &Slots) -> (f64, f64) {
     )
 }
 
-fn vertical(b: &Bound) -> Vertical {
+fn vertical(b: &Bound, label_lines: usize) -> Vertical {
     let pad = &b.kpi.content_padding;
-    let overflow = b.kpi.label.overflow;
     let slots = &b.slots;
 
     let label_line_height = slots.label.size + 4.0;
@@ -1200,13 +1186,8 @@ fn vertical(b: &Bound) -> Vertical {
     let (prefix_baseline, glyph_baseline) = affix_baselines(value_baseline, slots);
     let label_cap_height = slots.label.size * CAP_HEIGHT_RATIO;
     let label_baseline_first = value_baseline + MINIMUM_TITLE_VALUE_GAP + label_cap_height;
-    // A single-line overflow mode reserves one label line; the mode is
-    // theme-wide, so every KPI on a board shifts by the same amount.
-    let label_slot_lines = if matches!(overflow, Overflow::Clip | Overflow::Truncate) {
-        1.0
-    } else {
-        2.0
-    };
+    // The slot holds the lines the fitted label draws, at least one; the limit only caps them.
+    let label_slot_lines = label_lines.max(1) as f64;
     let support_baseline = label_baseline_first + label_slot_lines * label_line_height;
 
     let minimum_height = if b.support.is_some() {
@@ -1254,9 +1235,10 @@ fn card_height(arrangement: Variant, vertical: &Vertical, requested: f64) -> f64
 /// The height the card draws at `width` in a cell of the theme's
 /// `default_height`, the box a card with no slot of its own takes.
 pub fn height_for_width(bound: &Bound, width: f64, measure: &Measure) -> Result<f64, Diagnostic> {
+    let (label_lines, _) = wrap_label_lines(bound, measure, width)?;
     Ok(card_height(
         arrangement(bound, measure, width)?,
-        &vertical(bound),
+        &vertical(bound, label_lines.len()),
         bound.kpi.default_height,
     ))
 }
@@ -1422,9 +1404,9 @@ fn wrap_label_lines(
     let (rendered, truncated) = if limit <= 0 || requested_width <= 0.0 {
         (b.label_text.clone(), false)
     } else {
-        prepare_title_text(&b.label_text, b.kpi.label.overflow, limit as f64, label, m)?
+        prepare_title_text(&b.label_text, b.kpi.label.max_lines, limit as f64, label, m)?
     };
-    let lines: Vec<String> = rendered.lines().take(2).map(str::to_string).collect();
+    let lines: Vec<String> = rendered.lines().map(str::to_string).collect();
     Ok((
         if lines.is_empty() {
             vec![b.label_text.clone()]
@@ -1435,38 +1417,27 @@ fn wrap_label_lines(
     ))
 }
 
-/// `prepare_title_text` (title_overflow.py:33-46, 49-82): the overflow mode's
-/// line budget over the wrap, joined with newlines.
+/// `prepare_title_text` (title_overflow.py:33-46, 49-82): the line limit over the wrap, joined
+/// with newlines; a one-line limit keeps the whole text when the wrap drew nothing.
 fn prepare_title_text(
     text: &str,
-    overflow: Overflow,
+    max_lines: LineLimit,
     limit: f64,
     label: &SlotFont,
     m: &Measure,
 ) -> Result<(String, bool), String> {
-    let (max_lines, ellipsis) = match overflow {
-        Overflow::Clip => (Some(1), false),
-        Overflow::Truncate => (Some(1), true),
-        Overflow::Wrap => (None, false),
-        Overflow::WrapTwo => (Some(2), true),
-    };
-    let (lines, truncated) = wrap_label(
+    let fitted = wrap_label(
         m.fonts,
         measure::stand_in_family(&label.family),
         &label.weight,
         text,
         limit,
         label.size,
-        max_lines,
-        ellipsis,
+        max_lines.max_lines(),
     )?;
-    Ok(match overflow {
-        Overflow::Clip | Overflow::Truncate => (
-            lines.first().cloned().unwrap_or_else(|| text.to_string()),
-            truncated,
-        ),
-        Overflow::Wrap => (lines.join("\n"), false),
-        Overflow::WrapTwo => (lines.join("\n"), truncated),
+    Ok(match fitted.lines.first() {
+        None if max_lines.is_one_line() => (text.to_string(), fitted.cut),
+        _ => (fitted.lines.join("\n"), fitted.cut),
     })
 }
 
@@ -1857,7 +1828,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             ],
         ));
     }
-    let vertical = vertical(bound);
+    let vertical = vertical(bound, label_lines.len());
     let height = card_height(arrangement, &vertical, cell.height);
     let stack = Stack {
         width: cell.width,
@@ -2280,7 +2251,7 @@ mod render_tests {
                 },
                 "label": {
                     "font": slot(SANS, 11.0, json!(500.0), None),
-                    "overflow": "truncate"
+                    "max_lines": 1
                 },
                 "support": {
                     "font": slot(SANS, 11.0, json!(500.0), None),
@@ -2699,20 +2670,10 @@ mod render_tests {
     }
 
     #[test]
-    fn clip_paints_one_line_without_an_ellipsis() {
-        let mut p = kpi_payload("stacked", 120.0);
-        set(&mut p, "/label", json!(LONG));
-        set(&mut p, "/style/kpi/label/overflow", json!("clip"));
-        let lines = tspans_in_label(&svg_of(&p));
-        assert_eq!(lines.len(), 1);
-        assert!(!lines[0].ends_with('…') && LONG.starts_with(lines[0].as_str()), "{lines:?}");
-    }
-
-    #[test]
     fn wrap_two_paints_two_lines_and_reserves_a_second_label_slot() {
         let mut p = with_support(kpi_payload("stacked", 120.0));
         set(&mut p, "/label", json!(LONG));
-        set(&mut p, "/style/kpi/label/overflow", json!("wrap-two"));
+        set(&mut p, "/style/kpi/label/max_lines", json!(2));
         set(&mut p, "/style/kpi/content_padding/bottom", json!(8.0));
         p.height = 10.0;
         let svg = svg_of(&p);
@@ -2726,12 +2687,32 @@ mod render_tests {
     }
 
     #[test]
-    fn wrap_paints_every_line_but_the_stacked_card_keeps_two() {
-        let mut p = kpi_payload("stacked", 70.0);
-        set(&mut p, "/label", json!(LONG));
-        set(&mut p, "/style/kpi/label/overflow", json!("wrap"));
-        let lines = tspans_in_label(&svg_of(&p));
-        assert_eq!(lines.len(), 2, "{lines:?}");
+    fn wrap_all_paints_every_line_and_a_count_caps_them() {
+        let lines = |wrap: serde_json::Value| {
+            let mut p = kpi_payload("stacked", 70.0);
+            set(&mut p, "/label", json!(LONG));
+            set(&mut p, "/style/kpi/label/max_lines", wrap);
+            tspans_in_label(&svg_of(&p))
+        };
+        let all = lines(json!("all"));
+        assert!(all.len() > 3, "{all:?}");
+        let four = lines(json!(4));
+        assert_eq!(four.len(), 4, "{four:?}");
+        assert!(four[3].ends_with('…'), "{four:?}");
+        assert_eq!(lines(json!(2)).len(), 2);
+    }
+
+    #[test]
+    fn the_label_slot_grows_with_the_fitted_lines() {
+        let height = |wrap: serde_json::Value| {
+            let mut p = with_support(kpi_payload("stacked", 70.0));
+            set(&mut p, "/label", json!(LONG));
+            set(&mut p, "/style/kpi/label/max_lines", wrap);
+            p.height = 10.0;
+            let svg = svg_of(&p);
+            svg.split("height=\"").nth(1).unwrap().split('"').next().unwrap().parse::<f64>().unwrap()
+        };
+        assert!(height(json!(4)) > height(json!(2)));
     }
 
     #[test]

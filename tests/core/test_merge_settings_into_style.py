@@ -1,7 +1,7 @@
 """Tests for merging ChartSettings into ChartStylePatch.
 
 Validates that after the merge:
-- ChartStylePatch accepts orientation, columns, header_overflow, stack, palette,
+- ChartStylePatch accepts orientation, columns, stack, palette,
   and spark-bar fields
 - Chart no longer has a settings field
 - chart_settings_types.py no longer exists
@@ -38,11 +38,6 @@ class TestChartStylePatchHasSettingsFields:
         patch = TableChartStylePatch(columns={"name": {"width": 200}})
         assert patch.columns is not None
         assert len(patch.columns) == 1
-
-    def test_header_overflow_in_table_family(self) -> None:
-        # Header overflow is a table-family style property
-        patch = TableChartStylePatch(header_overflow="wrap-two")
-        assert patch.header_overflow == "wrap-two"
 
     def test_stack_none_in_bar_family(self) -> None:
         """style.bar.stack: none maps to VL encoding.y.stack: null (no stacking)."""

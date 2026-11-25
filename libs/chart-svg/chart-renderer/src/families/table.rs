@@ -46,12 +46,15 @@ use measure::Measure;
 use print::print;
 use serde::Deserialize;
 use serde_json::Value;
+use board_model::primitives::LineLimit;
+use board_model::style::table::TableMaxLines;
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 pub mod bind;
+mod column_type;
 pub mod layout;
 mod text_format;
 pub mod width;
@@ -136,10 +139,6 @@ struct Resolved {
     row_role: Option<String>,
     #[serde(default)]
     column_defaults: Option<ColumnDefaults>,
-    // Chart-level header overflow, promoted from the authored patch
-    // (`ResolvedChart.header_overflow`).
-    #[serde(default)]
-    header_overflow: Option<String>,
     #[serde(default)]
     spanners: Option<Vec<Spanner>>,
 }
@@ -174,7 +173,7 @@ struct ColumnDefaults {
 struct TableTitleStyle {
     font: Font,
     #[serde(default)]
-    overflow: Option<String>,
+    max_lines: Option<LineLimit>,
     #[serde(default)]
     subtitle: Option<TableSubtitleStyle>,
 }
@@ -183,7 +182,7 @@ struct TableTitleStyle {
 struct TableSubtitleStyle {
     font: Font,
     #[serde(default)]
-    overflow: Option<String>,
+    max_lines: Option<LineLimit>,
 }
 
 #[derive(Deserialize)]
@@ -252,20 +251,15 @@ struct TableTheme {
     /// Only the natural-width measure reads it, to refuse.
     #[serde(default)]
     transpose: bool,
-    /// `TableChartStyle.header_overflow`, the board-level override of
-    /// `header.overflow`.
-    #[serde(default)]
-    header_overflow: Option<String>,
     text_baseline_offset: f64,
     // "all" or "anchors" — `symbol_mode`, a required field with
     // no default. "anchors" limits the
     // currency prefix / unit suffix on numeric cells to the first row and
     // any summary/total row; every other row shows the bare number.
     symbol_mode: String,
-    // `style.wrap` (theme default `true`);
-    // false clips long text cells to a single line instead of wrapping.
-    #[serde(default = "default_wrap")]
-    wrap: bool,
+    // `style.max_lines`: how many lines a text cell wraps to before it is cut.
+    #[serde(deserialize_with = "wrap_from_resolved")]
+    max_lines: TableMaxLines,
     // The zero-row text (`table.empty_state`); read only by the empty render.
     #[serde(default)]
     empty_state: Option<EmptyState>,
@@ -426,8 +420,9 @@ fn default_header_visible() -> bool {
     true
 }
 
-fn default_wrap() -> bool {
-    true
+fn wrap_from_resolved<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<TableMaxLines, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    TableMaxLines::from_resolved(&value).map_err(serde::de::Error::custom)
 }
 
 #[derive(Deserialize, Default)]
@@ -444,10 +439,10 @@ struct HeaderTheme {
     visible: bool,
     height: f64,
     font: Font,
-    /// `table.header.overflow`: the theme's overflow mode for a label that
+    /// `table.header.max_lines`: the theme's line limit for a label that
     /// does not fit its column.
     #[serde(default)]
-    overflow: Option<String>,
+    max_lines: Option<LineLimit>,
     /// The line between the header and the body — `TableChartStyle.header.divider`.
     divider: TableDivider,
     /// `table.header.font_compact`: its `weight` replaces the header's when
@@ -707,6 +702,9 @@ struct PaginatorTheme {
 #[derive(Deserialize, Default)]
 struct ColConfig {
     label: Option<String>,
+    /// `style.columns.<col>.type`: already applied to the cells by `column_type::lower`; read
+    /// again only to keep a default format of another kind off the column.
+    r#type: Option<column_type::CellType>,
     #[serde(default)]
     decimal_pad_table: Vec<String>,
     shared_scale: Option<SharedScale>,
@@ -770,9 +768,9 @@ struct ColConfig {
     // line. A live table opens each row's lists on demand.
     #[serde(default)]
     list: Option<bool>,
-    // Per-column header overflow mode (`TableColumnConfig.header_overflow`).
+    // Per-column header line limit (`TableColumnConfig.header_max_lines`).
     #[serde(default)]
-    header_overflow: Option<String>,
+    header_max_lines: Option<LineLimit>,
     // Resolved column alignment ("left"/"right"/"center"), baked once at
     // resolve time (`classify_date_column_align` / explicit author value).
     // Only "right" is consulted here, to gate the date lane (invariant #11).
@@ -1318,6 +1316,17 @@ struct SparkLayout<'a> {
     negative_tone: Option<&'a str>,
 }
 
+/// A text cell drawn on several lines; `cut` when `max_lines` ended its last
+/// line early with an ellipsis. `warns` when an authored line count made the cut,
+/// so WARN-TABLE-TEXT-TRUNCATED counts it; a `trim_outliers`, `pNN` or `square` cut is the
+/// designed look and only reveals its whole text on hover.
+#[derive(Clone)]
+struct WrappedCell {
+    lines: Vec<String>,
+    cut: bool,
+    warns: bool,
+}
+
 /// One table's resolved body — everything `render_data_rows` paints a
 /// page from, built once per table. `rows`/`row_roles`/`row_heights`/
 /// `wrapped_lines` are the shared, GLOBAL per-table arrays (sized
@@ -1347,7 +1356,7 @@ struct TableBody<'a> {
     rn_w: f64,
     row_numbers: &'a RowNumbersTheme,
     row_number_ink: Option<&'a str>,
-    wrapped_lines: &'a [Vec<Option<Vec<String>>>],
+    wrapped_lines: &'a [Vec<Option<WrappedCell>>],
     prefix_xs: &'a [f64],
     glyph_xs: &'a [f64],
     number_xs: &'a [f64],
@@ -1463,7 +1472,7 @@ struct EmptyState {
 /// One column's header as `resolve_wrapped_headers` lays it out.
 struct WrappedHeader {
     lines: Vec<String>,
-    /// Text was cut (wrap-two past two lines): the full label rides in a
+    /// Text was cut (two-line past two lines): the full label rides in a
     /// `<title>`.
     truncated: bool,
     /// Lines the label needs in the column's content area wrapped with no cap,
@@ -1719,11 +1728,12 @@ pub(crate) mod tests {
 
     pub(crate) fn base_table_theme() -> Value {
         json!({
+            "max_lines": "all",
             "border": {"radius": 0.0},
             "font": {"family": "Inter, sans-serif", "size": 11.0},
             "header": {
                 "height": 39.0,
-                "overflow": "wrap-two",
+                "max_lines": 2,
                 "font": {"family": "Inter, sans-serif", "size": 11.0, "weight": "600", "case": "title"},
                 "divider": table_divider(true, "#222222", 1.0)
             },
@@ -3965,6 +3975,8 @@ pub(crate) mod tests {
         payload.rows[1]["note"] = json!("2025-09-11T23:30:00");
         payload.rows[2]["note"] = Value::Null;
         payload.rows[3]["note"] = json!("");
+        payload.schema.rows =
+            std::mem::take(&mut payload.schema.rows).with("note", column_types::ColumnType::Datetime);
         let svg = render(&payload, &test_fonts()).expect("renders");
         assert!(header_tag(&svg, "Note").contains("data-dbt-sort-type=\"date\""), "{svg}");
         assert!(row_group(&svg, 0).contains("data-dbt-sort=\"2025-09-10\" data-dbt-day=\"2025-09-10\""), "{svg}");
@@ -4842,7 +4854,7 @@ pub(crate) mod tests {
             let mut payload = live(make_payload(columns, rows, None, 20));
             payload.height = 0.0;
             if let Value::Object(th) = &mut payload.resolved["style"]["table"] {
-                th.insert("wrap".into(), json!(false));
+                th.insert("max_lines".into(), json!(1));
             }
             visible(&render(&payload, &test_fonts()).expect("renders"))
         };
@@ -5113,13 +5125,13 @@ pub(crate) mod tests {
     /// line `font_size + 2` apart, and the band grows by the extra lines. The
     /// full text rides in an inner `<title>` when text was cut.
     #[test]
-    fn a_long_title_and_subtitle_wrap_by_their_overflow_modes() {
+    fn a_long_title_and_subtitle_wrap_by_their_line_limits() {
         let long_title = "Quarterly revenue by region and product family for every market";
         let long_sub = "A subtitle that keeps going and going well past the width of this small table so wrap-two must cut it with an ellipsis at the end of line two";
         let rows = vec![json!({"company": "Acme"})];
         let mut theme = base_table_theme();
         theme["title_row"] = json!({"height": 20.0});
-        let payload = |title_overflow: &str| -> Payload {
+        let payload = |title_wrap: Value| -> Payload {
             crate::test_payload(json!({
                 "resolved": {
                     "link_open": "page",
@@ -5127,10 +5139,10 @@ pub(crate) mod tests {
                     "subtitle": long_sub,
                     "title_style": {
                         "font": {"family": "Inter", "size": 18.0, "color": "#494A4C", "weight": "500"},
-                        "overflow": title_overflow,
+                        "max_lines": title_wrap,
                         "subtitle": {
                             "font": {"family": "Inter", "size": 11.0, "color": "#8A8C8F"},
-                            "overflow": "wrap-two",
+                            "max_lines": 2,
                         },
                     },
                     "columns": {"company": {"label": "Company"}},
@@ -5142,7 +5154,7 @@ pub(crate) mod tests {
             }))
         };
         let fonts = test_fonts();
-        let svg = render(&payload("wrap-two"), &fonts).expect("renders");
+        let svg = render(&payload(json!(2)), &fonts).expect("renders");
         let texts: Vec<&str> = svg.split("<text ").skip(1).collect();
         let title = texts[0];
         let sub = texts[1];
@@ -5158,18 +5170,15 @@ pub(crate) mod tests {
         assert_eq!(sy.len(), 2, "{svg}");
         assert_eq!(sy[1] - sy[0], 13.0, "subtitle line height is size + 2");
         assert!(sub.contains("\u{2026}</tspan>"), "wrap-two ends in an ellipsis:\n{sub}");
-        let title_tspans = |mode: &str| {
-            let svg = render(&payload(mode), &fonts).expect("renders");
+        let title_tspans = |wrap: Value| {
+            let svg = render(&payload(wrap), &fonts).expect("renders");
             let title = svg.split("<text ").nth(1).unwrap().to_string();
             (title.matches("<tspan").count(), svg)
         };
-        let (n, truncated) = title_tspans("truncate");
+        let (n, truncated) = title_tspans(json!(1));
         assert_eq!(n, 1);
         assert!(truncated.contains("\u{2026}</tspan>"));
-        let (n, clipped) = title_tspans("clip");
-        assert_eq!(n, 1);
-        assert!(!clipped.split("<text ").nth(1).unwrap().contains('\u{2026}'), "clip never adds an ellipsis");
-        let (n, wrapped) = title_tspans("wrap");
+        let (n, wrapped) = title_tspans(json!("all"));
         assert!(n >= 2, "wrap never cuts: {wrapped}");
         assert!(!wrapped.split("<text ").nth(1).unwrap().contains('\u{2026}'));
     }
@@ -7547,7 +7556,7 @@ pub(crate) mod tests {
             .map(|i| json!({"n": format!("r{i}"), "l": ["v1", "v2", "v3", "v4"], "m": []}))
             .collect();
         let mut payload = make_paginated_payload_with_id("t1", list_columns(), rows, 20, 260.0);
-        payload.resolved["style"]["table"]["wrap"] = json!(false);
+        payload.resolved["style"]["table"]["max_lines"] = json!(1);
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(svg.contains("data-paginator-role"), "a paged table:\n{svg}");
         let pager = pager_baseline_y(&svg);
@@ -7601,20 +7610,20 @@ pub(crate) mod tests {
         assert_eq!(svg_height(&with_pad), svg_height(&without), "{with_pad}");
     }
 
-    /// Under `wrap: false` an overflowing text cell drives the fit cascade like
+    /// Under `max_lines: 1` an overflowing text cell drives the fit cascade like
     /// a numeric one: padding steps down to 6 before the cell is cut.
     #[test]
     fn an_unwrapped_text_cell_that_overflows_steps_the_padding_down() {
         let rows = vec![json!({"name": "A very long name that cannot fit", "value": 1.0})];
         let columns = json!({"name": {"label": "Name", "width": 60}, "value": {"label": "Value"}});
         let mut theme = base_table_theme();
-        theme["wrap"] = json!(false);
+        theme["max_lines"] = json!(1);
         let payload = plain_payload(theme.clone(), columns.clone(), rows.clone(), 300.0, 400.0);
         let svg = render(&payload, &test_fonts()).expect("renders");
         // The header rule starts at outer + the effective padding.
         assert!(svg.contains("<rect x=\"18\""), "padding stepped down before the cut:\n{svg}");
         assert!(svg.contains('\u{2026}'), "{svg}");
-        theme["wrap"] = json!(true);
+        theme["max_lines"] = json!("all");
         let wrapped = render(&plain_payload(theme, columns, rows, 300.0, 400.0), &test_fonts()).unwrap();
         assert!(wrapped.contains("<rect x=\"20\""), "a wrapping table's text cells never drive the cascade:\n{wrapped}");
     }
@@ -7627,10 +7636,209 @@ pub(crate) mod tests {
         let rows = vec![json!({"name": long, "value": 1.0}), json!({"name": "Ann", "value": 2.0})];
         let columns = json!({"name": {"label": "Name", "width": 60}, "value": {"label": "Value"}});
         let mut theme = base_table_theme();
-        theme["wrap"] = json!(false);
+        theme["max_lines"] = json!(1);
         let svg = render(&plain_payload(theme, columns, rows, 300.0, 400.0), &test_fonts()).unwrap();
         assert_eq!(svg.matches("data-dbt-full=").count(), 1, "{svg}");
         assert!(svg.contains("data-dbt-full=\"A very long name that cannot fit &amp; more\""), "{svg}");
+    }
+
+    /// Renders a one-column-of-notes table under `max_lines: setting` with the notes
+    /// column pinned to `note_width`; returns the SVG and the WARN codes.
+    fn render_notes(setting: Value, notes: &[&str], note_width: f64, page_rows: usize) -> (String, Vec<&'static str>) {
+        let mut theme = base_table_theme();
+        theme["max_lines"] = setting;
+        theme["pagination"]["page_rows"] = json!(page_rows);
+        theme["more_rows"] = json!({"font": {"size": 11.0, "color": "#626366", "style": "italic"}});
+        let rows = notes.iter().enumerate().map(|(i, note)| json!({"id": format!("r{i}"), "note": note})).collect();
+        let columns = json!({"id": {"label": "Id"}, "note": {"label": "Note", "width": note_width}});
+        let mut payload = plain_payload(theme, columns, rows, 300.0, 0.0);
+        payload.resolved["id"] = json!("notes");
+        let (svg, warnings) = diagnostic::collect(|| render(&payload, &test_fonts()));
+        (svg.expect("renders"), warnings.iter().map(|w| w.code).collect())
+    }
+
+    /// Each notes-column cell's `<text>` element, in row order.
+    fn note_cells(svg: &str) -> Vec<String> {
+        svg.split("<text")
+            .filter(|t| t.contains("data-dct-role=\"table-cell\"") && t.contains("data-col=\"1\""))
+            .map(|t| t[..t.find("</text>").unwrap()].to_string())
+            .collect()
+    }
+
+    const SHORT: &str = "ok";
+    const NOTE: &str = "alpha beta gamma delta epsilon zeta eta theta iota";
+    const WALL: &str = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega";
+    const LINE_HEIGHT: f64 = 15.0;
+    const CELL_PADDING: f64 = 8.0;
+
+    /// `trim_outliers` ignores an outlier: one wall-of-text cell in a column of short cells is
+    /// cut to the one line everyone else draws, revealed on hover, and raises no warning.
+    #[test]
+    fn trim_outliers_cuts_an_outlier_to_the_lines_the_column_needs() {
+        let (svg, codes) = render_notes(json!("trim_outliers"), &[SHORT, SHORT, WALL, SHORT], 90.0, 20);
+        let cells = note_cells(&svg);
+        assert_eq!(cells.len(), 4);
+        assert!(cells.iter().all(|c| c.matches("<tspan").count() <= 1), "every row stays one line:\n{svg}");
+        assert!(cells[2].contains('\u{2026}'), "{}", cells[2]);
+        assert!(cells[2].contains(&format!("data-dbt-full=\"{WALL}\"")), "{}", cells[2]);
+        assert_eq!(svg.matches("data-dbt-full=").count(), 1, "{svg}");
+        assert!(!codes.contains(&"WARN-TABLE-TEXT-TRUNCATED"), "{codes:?}");
+        let (all, _) = render_notes(json!("all"), &[SHORT, SHORT, WALL, SHORT], 90.0, 20);
+        assert!(svg_height(&svg) < svg_height(&all), "the outlier no longer stretches its row");
+    }
+
+    /// A column of mostly long notes keeps the four lines its quartiles show.
+    #[test]
+    fn trim_outliers_keeps_the_lines_a_mostly_long_column_needs() {
+        let (svg, codes) = render_notes(json!("trim_outliers"), &[NOTE, NOTE, NOTE, SHORT, WALL], 90.0, 20);
+        let counts: Vec<usize> = note_cells(&svg).iter().map(|c| c.matches("<tspan").count()).collect();
+        assert_eq!(counts, [4, 4, 4, 0, 4], "{svg}");
+        assert!(!codes.contains(&"WARN-TABLE-TEXT-TRUNCATED"), "{codes:?}");
+    }
+
+    /// A column narrower than three lines are tall has a square cap below three, and
+    /// `trim_outliers` obeys it.
+    #[test]
+    fn trim_outliers_never_exceeds_the_square_cap() {
+        let width = 50.0;
+        let cap = ((width - 2.0 * CELL_PADDING) / LINE_HEIGHT).floor() as usize;
+        assert_eq!(cap, 2);
+        let (svg, _) = render_notes(json!("trim_outliers"), &[WALL, WALL, WALL], width, 20);
+        for cell in note_cells(&svg) {
+            assert_eq!(cell.matches("<tspan").count(), cap, "{cell}");
+        }
+    }
+
+    /// `square` lets a wide column wrap past three lines, up to as many as keep a cell no
+    /// taller than its column is wide.
+    #[test]
+    fn square_allows_more_than_three_lines_up_to_the_square_cap() {
+        let width = 130.0;
+        let cap = ((width - 2.0 * CELL_PADDING) / LINE_HEIGHT).floor() as usize;
+        let (svg, codes) = render_notes(json!("square"), &[SHORT, WALL], width, 20);
+        let cell = &note_cells(&svg)[1];
+        assert_eq!(cell.matches("<tspan").count(), cap, "{cell}");
+        assert!(cap > 3);
+        assert!(cell.contains(&format!("data-dbt-full=\"{WALL}\"")), "{cell}");
+        assert!(!codes.contains(&"WARN-TABLE-TEXT-TRUNCATED"), "{codes:?}");
+    }
+
+    /// A line count fixes every cell's limit and its cuts warn; 1 is the unwrapped cell
+    /// and `all` draws every line.
+    #[test]
+    fn a_line_count_is_the_limit_and_all_is_unbounded() {
+        let notes = [SHORT, WALL];
+        let (two, two_codes) = render_notes(json!(2), &notes, 90.0, 20);
+        assert_eq!(note_cells(&two)[1].matches("<tspan").count(), 2, "{two}");
+        assert!(two_codes.contains(&"WARN-TABLE-TEXT-TRUNCATED"), "{two_codes:?}");
+
+        let (one, one_codes) = render_notes(json!(1), &notes, 90.0, 20);
+        let one_cell = &note_cells(&one)[1];
+        assert_eq!(one_cell.matches("<tspan").count(), 0, "{one_cell}");
+        assert!(one_cell.contains('\u{2026}') && one_cell.contains("data-dbt-full="), "{one_cell}");
+        assert!(one_codes.contains(&"WARN-TABLE-TEXT-TRUNCATED"), "{one_codes:?}");
+
+        let (all, all_codes) = render_notes(json!("all"), &notes, 90.0, 20);
+        let all_cell = &note_cells(&all)[1];
+        assert!(all_cell.matches("<tspan").count() > 5, "{all_cell}");
+        assert!(!all_cell.contains("data-dbt-full") && !all_cell.contains('\u{2026}'), "{all_cell}");
+        assert!(all_codes.is_empty() || !all_codes.contains(&"WARN-TABLE-TEXT-TRUNCATED"), "{all_codes:?}");
+    }
+
+    /// The limit reads every row of the result, not the page: a long cell on page 1 is
+    /// cut as it is when the whole result is one page.
+    #[test]
+    fn the_trim_outliers_limit_is_the_same_on_every_page() {
+        let notes = [WALL, SHORT, SHORT, SHORT, SHORT, SHORT];
+        let (paged, _) = render_notes(json!("trim_outliers"), &notes, 90.0, 3);
+        let (whole, _) = render_notes(json!("trim_outliers"), &notes, 90.0, 20);
+        assert_eq!(note_cells(&paged)[0], note_cells(&whole)[0]);
+        assert_eq!(note_cells(&whole)[0].matches("<tspan").count(), 1);
+    }
+
+    /// `lines` is a column's natural line counts; the cap `setting` gives in a column wide enough
+    /// that the square cap (100) never binds, unless `content_w` says so.
+    fn cap(setting: TableMaxLines, lines: &[usize], content_w: f64) -> Option<usize> {
+        layout::column_max_lines(setting, lines, content_w, 15.0)
+    }
+
+    fn percentile(n: u8) -> TableMaxLines {
+        TableMaxLines::Percentile(n)
+    }
+
+    /// Q1 = 1 and Q3 = 1 (nearest rank over 9 rows), so the fence is 1 and the one 12-line cell is cut.
+    #[test]
+    fn the_fence_cuts_a_single_outlier_in_a_short_column() {
+        let lines = [1, 1, 1, 1, 1, 1, 1, 1, 12];
+        assert_eq!(cap(TableMaxLines::TrimOutliers, &lines, 1500.0), Some(1));
+        assert_eq!(cap(percentile(75), &lines, 1500.0), Some(1));
+    }
+
+    /// Q1 = 2, Q3 = 4, so the fence is floor(4 + 1.5 * 2) = 7: the 6-line maximum is not an outlier.
+    #[test]
+    fn the_fence_cuts_nothing_in_an_even_spread() {
+        let lines = [1, 2, 2, 3, 3, 4, 5, 6];
+        assert_eq!(cap(TableMaxLines::TrimOutliers, &lines, 1500.0), Some(7));
+        assert_eq!(cap(percentile(75), &lines, 1500.0), Some(4));
+    }
+
+    /// Q1 = 9, Q3 = 12 (nearest rank over 7 rows), so the fence is floor(12 + 1.5 * 3) = 16: only 40 is cut.
+    #[test]
+    fn the_fence_is_q3_plus_one_and_a_half_iqr() {
+        let lines = [8, 9, 10, 10, 11, 12, 40];
+        assert_eq!(cap(TableMaxLines::TrimOutliers, &lines, 1500.0), Some(16));
+        assert_eq!(cap(percentile(75), &lines, 1500.0), Some(12));
+    }
+
+    /// A column too narrow for 16 lines is held to its square cap: 45px / 15px is 3.
+    #[test]
+    fn the_square_cap_binds_below_the_fence() {
+        let lines = [8, 9, 10, 10, 11, 12, 40];
+        assert_eq!(cap(TableMaxLines::TrimOutliers, &lines, 45.0), Some(3));
+        assert_eq!(cap(percentile(100), &lines, 45.0), Some(3));
+        assert_eq!(cap(TableMaxLines::Square, &lines, 45.0), Some(3));
+    }
+
+    #[test]
+    fn p100_is_the_maximum_and_p1_the_minimum() {
+        let lines = [8, 9, 10, 10, 11, 12, 40];
+        assert_eq!(cap(percentile(100), &lines, 1500.0), Some(40));
+        assert_eq!(cap(percentile(1), &lines, 1500.0), Some(8));
+        assert_eq!(cap(percentile(100), &lines, 150.0), Some(10));
+    }
+
+    #[test]
+    fn an_empty_column_is_one_line_and_a_count_or_all_ignores_the_data() {
+        assert_eq!(cap(TableMaxLines::TrimOutliers, &[], 1500.0), Some(1));
+        assert_eq!(cap(percentile(90), &[], 1500.0), Some(1));
+        assert_eq!(cap(TableMaxLines::Limit(LineLimit::lines(2).unwrap()), &[9, 9], 1500.0), Some(2));
+        assert_eq!(cap(TableMaxLines::Limit(LineLimit::All), &[9, 9], 1500.0), None);
+    }
+
+    /// The resolved theme spells the setting as the grammar does.
+    #[test]
+    fn the_resolved_setting_deserializes_as_authored() {
+        let read = |value: Value| TableMaxLines::from_resolved(&value);
+        assert!(read(json!("trim_outliers")).unwrap() == TableMaxLines::TrimOutliers);
+        assert!(read(json!("p90")).unwrap() == percentile(90));
+        assert!(read(json!("p100")).unwrap() == percentile(100));
+        assert!(read(json!(3)).unwrap() == TableMaxLines::Limit(LineLimit::lines(3).unwrap()));
+        for bad in [json!("p0"), json!("p101"), json!("p7.5"), json!("P75"), json!("typical"), json!(true), json!(false), json!(0)] {
+            assert!(read(bad.clone()).is_err(), "{bad}");
+        }
+    }
+
+    /// Only an authored line count warns when it cuts; the designed cuts of the other settings are silent.
+    #[test]
+    fn only_a_line_count_warns_when_it_cuts() {
+        let notes = [SHORT, SHORT, SHORT, WALL];
+        for setting in [json!("trim_outliers"), json!("p50"), json!("p90"), json!("square")] {
+            let (svg, codes) = render_notes(setting.clone(), &notes, 90.0, 20);
+            assert!(svg.contains("data-dbt-full="), "{setting}: {svg}");
+            assert!(!codes.contains(&"WARN-TABLE-TEXT-TRUNCATED"), "{setting}: {codes:?}");
+        }
+        let (_, codes) = render_notes(json!(2), &notes, 90.0, 20);
+        assert!(codes.contains(&"WARN-TABLE-TEXT-TRUNCATED"), "{codes:?}");
     }
 
     /// A title-less table needs no subtitle family.
@@ -7791,9 +7999,9 @@ pub(crate) mod tests {
             "company": {"label": "Company"},
             "revenue": {"format": "currency_full"},
         });
-        let build = |wrap: bool| -> Payload {
+        let build = |mode: &str| -> Payload {
             let mut theme = base_table_theme();
-            theme["wrap"] = json!(wrap);
+            theme["max_lines"] = if mode == "wrap" { json!("all") } else { json!(1) };
             let resolved = json!({
                 "link_open": "page",
                 "title": null,
@@ -7814,7 +8022,7 @@ pub(crate) mod tests {
             crate::test_payload(payload_json)
         };
         let fonts = test_fonts();
-        let svg = render(&build(true), &fonts).expect("renders");
+        let svg = render(&build("wrap"), &fonts).expect("renders");
         assert!(
             svg.contains(">Apex</tspan>") && svg.contains(">Technologies</tspan>"),
             "long company name wraps onto two lines:\n{svg}"
@@ -7823,8 +8031,8 @@ pub(crate) mod tests {
         // With wrap disabled, the same board's first row stays single-line —
         // the second row's y must sit strictly higher than in the wrapped
         // render, proving the wrapped row actually grew.
-        let svg_unwrapped = render(&build(false), &fonts).expect("renders");
-        assert!(!svg_unwrapped.contains(">Apex</tspan>"), "wrap: false keeps the cell single-line:\n{svg_unwrapped}");
+        let svg_unwrapped = render(&build("truncate"), &fonts).expect("renders");
+        assert!(!svg_unwrapped.contains(">Apex</tspan>"), "wrap: 1 keeps the cell single-line:\n{svg_unwrapped}");
 
         let second_row_y = |s: &str| -> f64 {
             let before = s.split("Bright</text>").next().expect("Bright cell found");
@@ -9065,7 +9273,7 @@ mod conditional_formatting_tests {
 
     fn cf_theme() -> Value {
         let mut theme = super::tests::base_table_theme();
-        theme["wrap"] = json!(true);
+        theme["max_lines"] = json!("all");
         theme
     }
 
@@ -10584,11 +10792,7 @@ mod date_like_tests {
     }
 
     #[test]
-    fn non_iso_date_like_cells_render_verbatim_in_a_date_lane() {
-        // Production formats only true temporal values (full ISO) to the
-        // default date display; US/short/quarter/year-month shapes of a
-        // `string` column pass through verbatim (format_table_cell_value's
-        // str fallthrough), in a right-aligned date lane.
+    fn date_shaped_string_cells_render_verbatim_as_text() {
         let rows = vec![
             json!({"event": "Launch", "us": "03/15/2024", "ym": "2024-03", "q": "Q1 2024"}),
         ];
@@ -10620,15 +10824,11 @@ mod date_like_tests {
         for cell in ["03/15/2024", "2024-03", "Q1 2024"] {
             assert!(svg.contains(cell), "{cell} rendered verbatim:\n{svg}");
         }
-        // Date lanes render like numeric columns: centered header,
-        // end-anchored cells (production invariant #11).
+        // Text aligns like text: no date lane centers the header.
         let us_header_at = svg.find(">US</text>").expect("US header");
         let before = &svg[..us_header_at];
         let anchor = before.rsplit("text-anchor=\"").next().unwrap();
-        assert!(
-            anchor.starts_with("middle"),
-            "a recognized date lane centers its header:\n{svg}"
-        );
+        assert!(anchor.starts_with("start"), "a text column's header is not centered:\n{svg}");
     }
 
     #[test]

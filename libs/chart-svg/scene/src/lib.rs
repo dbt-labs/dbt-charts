@@ -434,6 +434,33 @@ impl Node {
     }
 }
 
+/// `nodes` and everything beneath them without the nodes `drop` names; a link whose only
+/// content went goes with it.
+pub fn prune(nodes: &mut Vec<Node>, drop: &impl Fn(&Node) -> bool) {
+    nodes.retain(|node| !drop(node));
+    nodes.retain_mut(|node| match &mut node.shape {
+        Shape::Group(children) => {
+            prune(children, drop);
+            true
+        }
+        Shape::Link(children) => {
+            prune(children, drop);
+            !children.is_empty()
+        }
+        _ => true,
+    });
+}
+
+/// `visit` on every node under `nodes`, parents before children.
+pub fn for_each_mut(nodes: &mut [Node], visit: &mut impl FnMut(&mut Node)) {
+    for node in nodes {
+        visit(node);
+        if let Shape::Group(children) | Shape::Link(children) = &mut node.shape {
+            for_each_mut(children, visit);
+        }
+    }
+}
+
 /// The extent of the document root when `nodes` is exactly that one root.
 pub fn root_extent(nodes: &[Node]) -> Option<Extent> {
     match nodes {

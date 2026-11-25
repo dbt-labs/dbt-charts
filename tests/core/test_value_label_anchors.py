@@ -80,6 +80,14 @@ def _style(mark: str, visible: str, extra: str = "") -> str:
 {extra}"""
 
 
+def _end_style(visible: str) -> str:
+    """A line's labels beside the end-of-line strip, which `auto` may move into the plot."""
+    return _style("line", visible).replace(
+        "    style:\n",
+        "    style:\n      key:\n        direct:\n          position: end\n",
+    )
+
+
 @pytest.mark.parametrize("mark", ["line", "point"])
 def test_single_series_labels_only_the_last_value(mark: str) -> None:
     svg = _render(_style(mark, "last"), _ROWS)
@@ -107,7 +115,7 @@ def test_each_series_gets_its_own_last_value() -> None:
 
 
 def test_a_rail_that_already_names_the_value_is_not_labeled_twice() -> None:
-    svg = _render("    color: s\n" + _style("line", "last"), _MULTI_ROWS)
+    svg = _render("    color: s\n" + _end_style("last"), _MULTI_ROWS)
     assert _labels(svg) == 0
     assert ">8 A<" in svg and ">28 B<" in svg
 
@@ -426,7 +434,7 @@ def test_each_series_gets_its_own_anchors() -> None:
 
 
 def test_the_rail_keeps_the_last_value_and_labels_keep_the_rest() -> None:
-    svg = _render("    color: s\n" + _style("line", "[first, last]"), _MULTI_ROWS)
+    svg = _render("    color: s\n" + _end_style("[first, last]"), _MULTI_ROWS)
     assert _labels(svg) == 2
     assert ">5<" in svg and ">25<" in svg
     assert ">8 A<" in svg and ">28 B<" in svg

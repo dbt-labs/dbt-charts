@@ -1,5 +1,0 @@
-kind: Fixes
-body: 'A map placed beside another chart in a cols: row now appears in PNG and PDF exports.'
-time: 2026-11-23T20:10:16.3243053Z
-custom:
-    DbtChartsIssue: "138"

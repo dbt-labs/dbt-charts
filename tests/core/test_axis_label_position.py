@@ -244,7 +244,7 @@ rows:
     assert 0 < len(reaching) == len(labels) < len(horizontal)
 
 
-def test_a_paper_left_axis_keeps_its_house_ruler_and_endpoint_precision() -> None:
+def test_a_paper_left_axis_keeps_its_house_ruler_and_endpoint_digits() -> None:
     svg = render_board_to_svg(
         """
 theme: paper
@@ -267,6 +267,9 @@ charts:
     y: revenue
     color: series
     style:
+      key:
+        direct:
+          position: end
       axis_y:
         labels:
           format: currency
@@ -280,7 +283,7 @@ rows:
     ]
     assert "$180K" in texts
     assert not [text for text in texts if re.fullmatch(r"\$1[4-7]0k", text)]
-    assert "$155.5K Core" in texts
+    assert "$156k Core" in texts
 
 
 def _paper_value_axis(is_quantitative: bool):

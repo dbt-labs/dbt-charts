@@ -10,7 +10,7 @@ from .._results import rows_result
 
 import dataclasses
 import json
-from datetime import datetime
+from datetime import date, datetime
 from unittest.mock import MagicMock
 
 from dbt_charts.core.compile.compiler import CompileResult
@@ -675,8 +675,8 @@ rows:
         """Row-preview cells go through the column's format, so a missing or
         wrong format is visible in the text render."""
         data = [
-            {"region": "EMEA", "revenue": 1200000.5, "ordered_on": "2026-01-01"},
-            {"region": "APAC", "revenue": 3400.0, "ordered_on": "2026-02-01"},
+            {"region": "EMEA", "revenue": 1200000.5, "ordered_on": date(2026, 1, 1)},
+            {"region": "APAC", "revenue": 3400.0, "ordered_on": date(2026, 2, 1)},
         ]
         chart = make_chart(
             "table",
@@ -1435,6 +1435,31 @@ class TestTextSummaryFidelity:
         summary = _data_summary(chart, data, {})
         assert "a: 1–3" in summary
         assert "b: 10–20" in summary
+
+    def test_heatmap_list_y_names_and_summarizes_each_measure(self) -> None:
+        output = _render_yaml_text(
+            f"""\
+title: T
+{_ONE_QUERY}
+charts:
+  grid:
+    query: q
+    type: heatmap
+    x: month
+    y: [a, b]
+rows:
+  - grid
+""",
+            [
+                {"month": "2024-01", "a": 1, "b": 10},
+                {"month": "2024-02", "a": 3, "b": 20},
+            ],
+        )
+
+        assert "y: a, b" in output
+        assert "a: 1–3" in output
+        assert "b: 10–20" in output
+        assert "['a', 'b']" not in output
 
     def test_kpi_heading_uses_authored_label(self) -> None:
         output = _render_yaml_text(

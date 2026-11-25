@@ -523,6 +523,7 @@ impl GradientAt {
     }
 
     /// The legend at `(x, y)`, sized for a unit `(pw, ph)`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn nodes(
         legend: &LegendConfig,
         color_format: Option<&FormatSlot>,
@@ -531,9 +532,10 @@ impl GradientAt {
         fonts: &FontBook,
         unit: (f64, f64),
         (x, y): (f64, f64),
+        canvas: &str,
     ) -> Result<Vec<Node>, String> {
         let at = Self::new(legend, color_format, color, unit)?;
-        Ok(at.legend(legend, color, id, title, fonts)?.nodes(x, y, at.length))
+        Ok(at.legend(legend, color, id, title, fonts)?.nodes(x, y, at.length, canvas))
     }
 
     pub(crate) fn legend<'a>(
@@ -655,7 +657,7 @@ impl<'a> NumericLegends<'a> {
     ) -> Result<Vec<Node>, String> {
         let part = &self.parts[index];
         if part.gradient {
-            return GradientAt::nodes(cfg, part.format, part.color, (&part.id, &part.title), fonts, unit, (x, y));
+            return GradientAt::nodes(cfg, part.format, part.color, (&part.id, &part.title), fonts, unit, (x, y), canvas);
         }
         let (legend, ladder) = part.symbol_legend(cfg, fonts)?;
         let entries: Vec<_> = ladder
@@ -710,7 +712,7 @@ impl<'a> NumericLegends<'a> {
         fonts: &FontBook,
         unit: (f64, f64),
     ) -> Result<crate::families::legend::VegaLegend, String> {
-        let own = (base.box_w, base.title_band + base.grid.box_h);
+        let own = base.block;
         let stack = self.stack(own, cfg, fonts, unit)?;
         base.box_w = stack.size.0;
         base.stack = Some(stack);
@@ -896,8 +898,12 @@ impl VerticalGradient<'_> {
             .iter()
             .zip(&placed)
             .zip(visible)
-            .map(|((text, &(baseline, y)), shown)| {
-                Node::text(Role::Label, (label_x, y + baseline_shift(baseline, label_size)), Attrs::new().set("text-anchor", "start").vega("font-family", label_family).num("font-size", label_size).quick_some("font-style", label_font.style.as_deref()).set("font-weight", label_weight.clone()).set("fill", label_color).set_if(!shown, "opacity", "0"), text.as_str())
+            .flat_map(|((text, &(baseline, y)), shown)| {
+                let at = (label_x, y + baseline_shift(baseline, label_size));
+                let face = Attrs::new().set("text-anchor", "start").vega("font-family", label_family).num("font-size", label_size).quick_some("font-style", label_font.style.as_deref()).set("font-weight", label_weight.clone());
+                let halo = cfg.label_halo(Role::Label, at, face.clone(), text).filter(|_| shown);
+                let label = Node::text(Role::Label, at, face.set("fill", label_color).set_if(!shown, "opacity", "0"), text.as_str());
+                halo.into_iter().chain([label])
             })
             .collect();
         nodes.push(Node::group(Role::Legend, ::layout::contract::legend_label_attrs(None, false), labels));
@@ -1197,6 +1203,16 @@ mod tests {
         assert!(python_color("hsl(0 80% 50% / 50%)").is_some_and(|c| c.a == 0.5));
     }
 
+    fn gradient_cfg(edge: &str, direction: &str) -> LegendConfig {
+        serde_json::from_value(serde_json::json!({
+            "visible": true, "position": {"edge": edge, "align": "start", "overlay": false, "corners": [{"edge": edge, "align": "start"}]},
+            "direction": direction,
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"family": "'Q', \"R\"", "size": 11.0}, "padding": 8.0},
+            "title": {"font": {"family": "'Inter Variable', Inter, sans-serif"}, "visible": true},
+        }))
+        .unwrap()
+    }
+
     /// The gradient legends in every orientation, a titled one with
     /// characters that need escaping, a one-value domain, a date legend and a
     /// resolved-stops bar, as bytes: their markup is pinned across the move
@@ -1206,33 +1222,24 @@ mod tests {
             let manifest = env!("CARGO_MANIFEST_DIR");
             FontBook::load_dir(&format!("{manifest}/../../../src/dbt_charts/core/render/fonts")).unwrap()
         };
-        let cfg = |edge: &str, direction: &str| -> LegendConfig {
-            serde_json::from_value(serde_json::json!({
-                "visible": true, "position": {"edge": edge, "align": "start", "overlay": false},
-                "direction": direction,
-                "label": {"font": {"family": "'Q', \"R\"", "size": 11.0}, "padding": 8.0},
-                "title": {"font": {"family": "'Inter Variable', Inter, sans-serif"}, "visible": true},
-            }))
-            .unwrap()
-        };
         let mut svg = String::new();
         let scale = ContinuousColor::blues(2.5, 20.0);
         for (edge, direction, title) in [("right", "vertical", "Ti<&'\"tle"), ("top", "horizontal", "Title"), ("top", "horizontal", "")] {
-            let cfg = cfg(edge, direction);
-            svg.push_str(&print(&GradientAt::nodes(&cfg, None, &scale, ("g<'1", title), &fonts, (300.0, 200.0), (5.0, 7.5)).unwrap()));
+            let cfg = gradient_cfg(edge, direction);
+            svg.push_str(&print(&GradientAt::nodes(&cfg, None, &scale, ("g<'1", title), &fonts, (300.0, 200.0), (5.0, 7.5), "#ffffff").unwrap()));
         }
         let flat = ContinuousColor::blues(5.0, 5.0);
-        svg.push_str(&print(&GradientAt::nodes(&cfg("right", "vertical"), None, &flat, ("flat", "T"), &fonts, (300.0, 200.0), (1.0, 2.0)).unwrap()));
+        svg.push_str(&print(&GradientAt::nodes(&gradient_cfg("right", "vertical"), None, &flat, ("flat", "T"), &fonts, (300.0, 200.0), (1.0, 2.0), "#ffffff").unwrap()));
         let dates = ContinuousColor::dates(&BLUES, 0.0, 152.0, false);
-        svg.push_str(&print(&GradientAt::nodes(&cfg("right", "vertical"), None, &dates, ("dates", "D"), &fonts, (300.0, 200.0), (1.0, 2.0)).unwrap()));
+        svg.push_str(&print(&GradientAt::nodes(&gradient_cfg("right", "vertical"), None, &dates, ("dates", "D"), &fonts, (300.0, 200.0), (1.0, 2.0), "#ffffff").unwrap()));
         let stops: Vec<String> = ["#ffffcc", "#41b6c4", "#0c2c84"].map(String::from).to_vec();
         let labels = ["0".to_string(), "5".to_string()];
         for (edge, direction) in [("right", "vertical"), ("top", "horizontal")] {
-            let cfg = cfg(edge, direction);
+            let cfg = gradient_cfg(edge, direction);
             let legend = GradientLegend::over(&cfg, GradientPaint::Stops(&stops), "st<ops", (0.0, 5.0, &[0.0, 5.0]), &labels, &fonts).unwrap();
-            svg.push_str(&print(&legend.nodes(3.0, 4.0, 120.0)));
+            svg.push_str(&print(&legend.nodes(3.0, 4.0, 120.0, "#ffffff")));
         }
-        let vertical = cfg("right", "vertical");
+        let vertical = gradient_cfg("right", "vertical");
         let bar = VerticalGradient {
             gradient_id: "vg",
             title: "VG",
@@ -1255,12 +1262,33 @@ mod tests {
             length: 20.0,
         };
         svg.push_str(&print(&crowded.nodes(&vertical, 0.0, 0.0).unwrap()));
-        let horizontal = cfg("top", "horizontal");
+        let horizontal = gradient_cfg("top", "horizontal");
         let labels: Vec<String> = (0..6).map(|i| format!("{i}000000")).collect();
         let values = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
         let legend = GradientLegend::over(&horizontal, GradientPaint::Stops(&stops), "hh", (0.0, 5.0, &values), &labels, &fonts).unwrap();
-        svg.push_str(&print(&legend.nodes(0.0, 0.0, 60.0)));
+        svg.push_str(&print(&legend.nodes(0.0, 0.0, 60.0, "#ffffff")));
         svg
+    }
+
+    #[test]
+    fn a_gradient_legend_label_halo_sits_under_each_drawn_label_in_the_background() {
+        let _en = ::bind::time_locale::en_us_scope();
+        let fonts = FontBook::load_dir(&format!("{}/../../../src/dbt_charts/core/render/fonts", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let stops: Vec<String> = ["#ffffcc", "#0c2c84"].map(String::from).to_vec();
+        let labels = ["0".to_string(), "5".to_string()];
+        let halos = |halo: f64| {
+            let draw = |edge: &str, direction: &str| {
+                let mut cfg = gradient_cfg(edge, direction);
+                cfg.background = "#ffd966".into();
+                cfg.label.halo = halo;
+                let legend = GradientLegend::over(&cfg, GradientPaint::Stops(&stops), "g", (0.0, 5.0, &[0.0, 5.0]), &labels, &fonts).unwrap();
+                let bar = VerticalGradient { gradient_id: "vg", title: "", range: (0.0, 5.0), values: &[0.0, 5.0], labels: &labels, length: 90.0 };
+                [print(&legend.nodes(0.0, 0.0, 120.0, "#ffffff")), print(&bar.nodes(&cfg, 0.0, 0.0).unwrap())]
+            };
+            [draw("top", "horizontal"), draw("right", "vertical")].concat().iter().map(|svg| svg.matches("fill=\"#ffd966\" stroke=\"#ffd966\" stroke-width=\"3\" stroke-linejoin=\"round\"").count()).collect::<Vec<_>>()
+        };
+        assert_eq!(halos(0.0), [0, 0, 0, 0], "no halo by default");
+        assert_eq!(halos(3.0), [2, 2, 2, 2], "one under each of the two labels, horizontal and vertical");
     }
 
     #[test]

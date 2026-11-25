@@ -64,11 +64,11 @@ class TestLegendMergeContract:
         assert result.legend is board.legend
 
     def test_visible_patch_only_inherits_all_other_fields(self) -> None:
-        """A patch with only symbol_limit inherits position, direction, label, title from base."""
+        """A patch with only limit inherits position, direction, label, title from base."""
         base = _board().legend
-        merged = _merge_line({"symbol_limit": 3})
+        merged = _merge_line({"limit": 3})
 
-        assert merged.symbol_limit == 3
+        assert merged.limit == 3
         assert merged.position == base.position
         assert merged.direction == base.direction
         # Nested element style fields inherited
@@ -92,12 +92,12 @@ class TestLegendMergeContract:
         assert merged.direction == base.direction
         assert merged.visible == base.visible
 
-    def test_symbol_limit_patch_is_applied(self) -> None:
-        """symbol_limit override is applied; other fields inherited."""
+    def test_limit_patch_is_applied(self) -> None:
+        """limit override is applied; other fields inherited."""
         base = _board().legend
-        merged = _merge_line({"symbol_limit": 10})
+        merged = _merge_line({"limit": 10})
 
-        assert merged.symbol_limit == 10
+        assert merged.limit == 10
         assert merged.position == base.position
         assert merged.label.font.family == base.label.font.family
 
@@ -118,20 +118,20 @@ class TestLegendMergeContract:
         assert merged.direction == base.direction
         assert merged.position == base.position
 
-    def test_omitted_symbol_limit_inherits_family_value(self) -> None:
+    def test_omitted_limit_inherits_family_value(self) -> None:
         board = _board()
-        legend = board.legend.model_copy(update={"symbol_limit": 17})
+        legend = board.legend.model_copy(update={"limit": 17})
         customized = dataclasses.replace(board, legend=legend)
 
         merged = _merge_line({}, customized)
 
-        assert merged.symbol_limit == 17
+        assert merged.limit == 17
 
-    def test_explicit_none_clears_family_symbol_limit(self) -> None:
+    def test_explicit_none_clears_family_limit(self) -> None:
         board = _board()
-        legend = board.legend.model_copy(update={"symbol_limit": 17})
+        legend = board.legend.model_copy(update={"limit": 17})
         customized = dataclasses.replace(board, legend=legend)
 
-        merged = _merge_line({"symbol_limit": None}, customized)
+        merged = _merge_line({"limit": None}, customized)
 
-        assert merged.symbol_limit is None
+        assert merged.limit is None

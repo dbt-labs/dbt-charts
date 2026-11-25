@@ -23,7 +23,7 @@
 
 use bind::bound::{CellLink, NumberCell, Table, TableCell, TableColumn};
 use board_model::style::style::Style;
-use board_model::style::table::{CellAlign, ColumnOverflow, HeaderOverflow, PaginationConfig, PaginationMode, TableChartStyle};
+use board_model::style::table::{CellAlign, TableMaxLines, ColumnOverflow, PaginationConfig, PaginationMode, TableChartStyle};
 use d3rs::py_float::py_float_sum;
 use diagnostic::{diag, refuse, Diagnostic};
 use measure::shaped::{Font, FontBook};
@@ -76,6 +76,33 @@ const HEADER_LINE_LIMIT: usize = 2;
 
 /// layout.rs:`TALL_CELL_MIN_LINES`: fewest lines a wrapped cell takes before it can warn as a tower.
 const TALL_CELL_MIN_LINES: usize = 4;
+/// layout.rs:`TUKEY_FENCE`: how far past a column's interquartile range a cell may run before it is an outlier.
+const TUKEY_FENCE: f64 = 1.5;
+
+/// layout.rs:`nearest_rank`: the nearest-rank `percent`th percentile of `sorted`; an empty column is one line.
+fn nearest_rank(sorted: &[usize], percent: f64) -> usize {
+    let rank = (percent / 100.0 * sorted.len() as f64).ceil() as usize;
+    rank.checked_sub(1).and_then(|at| sorted.get(at)).copied().unwrap_or(1)
+}
+
+/// layout.rs:`column_max_lines`: the lines a text column's cells may draw under `setting`, `None` for no limit.
+/// `natural` is every body row's line count wrapped without a limit; the square cap is the bound
+/// WARN-TABLE-CONTENT-TALLER-THAN-WIDE checks.
+fn column_max_lines(setting: TableMaxLines, natural: &[usize], content: f64, line_height: f64) -> Option<usize> {
+    let square = ((content / line_height).floor() as usize).max(1);
+    let mut sorted = natural.to_vec();
+    sorted.sort_unstable();
+    match setting {
+        TableMaxLines::Limit(limit) => limit.max_lines(),
+        TableMaxLines::Square => Some(square),
+        TableMaxLines::Percentile(percent) => Some(nearest_rank(&sorted, f64::from(percent)).min(square)),
+        TableMaxLines::TrimOutliers => {
+            let (q1, q3) = (nearest_rank(&sorted, 25.0), nearest_rank(&sorted, 75.0));
+            let fence = (q3 as f64 + TUKEY_FENCE * (q3 - q1) as f64).floor() as usize;
+            Some(fence.min(square))
+        }
+    }
+}
 
 /// The two text faces a table paints: its cells' and its header's.
 #[derive(Debug, Clone, PartialEq)]
@@ -171,7 +198,7 @@ fn table_title(text: &str, style: &TableChartStyle, placed: &Style, width: f64) 
     let font = &placed.charts.title.font;
     let (size, weight, family) = chart_title_spec(placed, width)?;
     let cased = display_text::case::apply_case(text, font.case.as_str()).map_err(diag::err_internal)?;
-    // `wrap_text_with` collapses every run of whitespace to one space before it measures and paints.
+    // `fit_lines` collapses every run of whitespace to one space before it measures and paints.
     let drawn = cased.split_whitespace().collect::<Vec<_>>().join(" ");
     Ok(TableTitle { full: (drawn != cased).then(|| text.to_string()), text: drawn, face: Face::of(&family, size, &weight, font.color.as_str(), &placed.font.emoji), slant: font.style.as_str().to_string() })
 }
@@ -373,7 +400,7 @@ fn sanitize_color(color: &str) -> Result<Option<String>, Diagnostic> {
 fn refuse_unmodeled(style: &TableChartStyle) -> Result<(), Diagnostic> {
     let unmodeled = [
         (style.row_numbers.visible, "row numbers"),
-        (!style.wrap, "`style.wrap: false`"),
+        (!style.max_lines.wraps(), "`style.max_lines: 1`"),
         (style.background.is_some(), "a `style.background`"),
         (style.header.font_compact.is_some(), "a compact header font"),
         (!style.header.divider.continuous && style.header.divider.divider.visible, "a header divider under each column"),
@@ -711,7 +738,7 @@ fn column_widths(pins: &[Option<f64>], inputs: &[Column], law: Widths, table_wid
     pins.iter().map(|pin| pin.unwrap_or_else(|| auto_widths.next().expect("an allocated width per auto column"))).collect()
 }
 
-/// layout.rs:`two_line_width`. The narrowest content width that holds `header` on two lines, as `wrap_text_with` sums
+/// layout.rs:`two_line_width`. The narrowest content width that holds `header` on two lines, as `fit_lines` sums
 /// a line: its words' widths plus a space between each. Infinite for a one-word header, which has no second line.
 /// `wrapped_headers` truncates the content area, so a fraction would wrap the header onto a third line.
 fn two_line_width(header: &str, measure: &Measurer, size: f64) -> Result<f64, Diagnostic> {
@@ -746,8 +773,8 @@ fn scroll_plan(card: &TableCard, measure: &Measurer, inputs: &[Column], pins: &[
         return Ok(None);
     }
     let one_line: Vec<f64> = columns.iter().map(|c| c.header_demand + 2.0 * law.pad).collect();
-    let header_mode = style.header_overflow.unwrap_or(style.header.overflow);
-    if style.header.visible && matches!(header_mode, HeaderOverflow::Wrap | HeaderOverflow::WrapTwo) {
+    let header_limit = style.header.max_lines;
+    if style.header.visible && !header_limit.is_one_line() {
         for (column, &i) in columns.iter_mut().zip(&auto) {
             let header = &card.table.columns[i].header;
             if header.chars().count() > SHORT_HEADER_CHARS {
@@ -869,7 +896,7 @@ fn plan_empty(card: &TableCard, filters: Option<&str>, book: &FontBook, width: f
         .map(|line| {
             let family = measure::stand_in_family(&paint_family(&faces.filters.family)).to_string();
             let measured = Font { family: &family, size: faces.filters.size, weight: 400.0, italic: false };
-            crate::plot::empty::truncate_label(line, width, |text| book.raw_advance(text, &measured).map_err(diag::err_internal))
+            measure::fit::truncate_label_by(line, width, |text| book.raw_advance(text, &measured).map_err(diag::err_internal))
         })
         .transpose()?;
     let line_height = filters.as_ref().map_or(0.0, |_| faces.filters.size + EMPTY_LINE_GAP);
@@ -1066,8 +1093,8 @@ pub fn plan(card: &TableCard, book: &FontBook, width: f64, slot: Option<f64>, sh
     // area takes another line, and the row grows.
     let header_measurer = book.production_measurer(&measure.header);
     let body_measurer = book.production_measurer(&measure.body);
-    let wrap = |measurer: &measure::fonts::FontMeasurer, text: &str, width: f64, size: f64| measure::fonts::wrap_text_precise(text, width, size, measurer, None, false, true).0;
-    let header_mode = style.header_overflow.unwrap_or(style.header.overflow);
+    let wrap = |measurer: &measure::fonts::FontMeasurer, text: &str, width: f64, size: f64| measure::fit::fit_with(text, width, size, measurer, None).lines;
+    let header_limit = style.header.max_lines;
     let mut header_lines: Vec<Vec<String>> = Vec::new();
     if style.header.visible {
         for (column, &w) in card.table.columns.iter().zip(&widths) {
@@ -1076,10 +1103,10 @@ pub fn plan(card: &TableCard, book: &FontBook, width: f64, slot: Option<f64>, sh
                 header_lines.push(vec![column.header.clone()]);
                 continue;
             }
-            // layout.rs:`wrapped_headers` caps a header by its overflow mode (`prepare_title_lines`): a
-            // single-line mode cuts it with a tooltip, and a header past two lines raises
+            // layout.rs:`wrapped_headers` caps a header by its line limit (`fit_lines`): a
+            // one-line limit cuts it with a tooltip, and a header past two lines raises
             // WARN-TABLE-HEADER-EXTRA-WRAP, neither of which is modeled.
-            if matches!(header_mode, HeaderOverflow::Clip | HeaderOverflow::Truncate) {
+            if header_limit.is_one_line() {
                 return Err(Diagnostic::refused(refuse!("a table header cut to one line is not supported")));
             }
             let lines = wrap(&header_measurer, &column.header, content, header_size.trunc());
@@ -1090,7 +1117,7 @@ pub fn plan(card: &TableCard, book: &FontBook, width: f64, slot: Option<f64>, sh
         }
     }
     // layout.rs:`lay_out`'s text wrapping: a text cell wider than the column's content area word-wraps
-    // (`wrap_text_measured`) and its row grows to the tallest wrapped cell. A number, a date or a swatch never wraps.
+    // (`fit_lines`) and its row grows to the tallest wrapped cell. A number, a date or a swatch never wraps.
     let line_height = font_size + style.text_baseline_offset;
     let mut row_heights = vec![row_height; n_rows];
     let mut cell_lines: Vec<Vec<Option<Vec<String>>>> = Vec::new();
@@ -1105,13 +1132,23 @@ pub fn plan(card: &TableCard, book: &FontBook, width: f64, slot: Option<f64>, sh
                 }
                 let lines = wrap(&body_measurer, &text, content, font_size);
                 if lines.len() > 1 {
-                    // WARN-TABLE-CONTENT-TALLER-THAN-WIDE is not modeled.
-                    if lines.len() >= TALL_CELL_MIN_LINES && lines.len() as f64 * line_height > content {
-                        return Err(Diagnostic::refused(refuse!("a table text block taller than its column is wide is not supported")));
-                    }
-                    row_heights[row] = row_heights[row].max((lines.len() as f64 * line_height - style.text_baseline_offset + 2.0 * pad).round_ties_even());
                     lines_of[row] = Some(lines);
                 }
+            }
+            // layout.rs caps a cell by `style.max_lines`: a cell past the limit is cut with a tooltip
+            // (and counted into WARN-TABLE-TEXT-TRUNCATED when the limit is authored), none of which is modeled.
+            let natural: Vec<usize> = lines_of.iter().map(|lines| lines.as_ref().map_or(1, Vec::len)).collect();
+            let limit = column_max_lines(style.max_lines, &natural, content, line_height);
+            for (row, lines) in lines_of.iter().enumerate() {
+                let Some(lines) = lines else { continue };
+                if limit.is_some_and(|limit| lines.len() > limit) {
+                    return Err(Diagnostic::refused(refuse!("a table cell cut to a line limit is not supported")));
+                }
+                // WARN-TABLE-CONTENT-TALLER-THAN-WIDE is not modeled.
+                if lines.len() >= TALL_CELL_MIN_LINES && lines.len() as f64 * line_height > content {
+                    return Err(Diagnostic::refused(refuse!("a table text block taller than its column is wide is not supported")));
+                }
+                row_heights[row] = row_heights[row].max((lines.len() as f64 * line_height - style.text_baseline_offset + 2.0 * pad).round_ties_even());
             }
         }
         cell_lines.push(lines_of);
@@ -1630,6 +1667,7 @@ fn num_full(v: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use board_model::primitives::LineLimit;
 
     #[test]
     fn scroll_numbers_print_as_production_svg_writes_them() {
@@ -1648,6 +1686,28 @@ mod tests {
     fn strip_js_comments_leaves_plain_comments_untouched() {
         let source = "// a plain comment\nconst x = 1; /* also plain */";
         assert_eq!(strip_js_comments(source), source);
+    }
+
+    /// The same cases as chart-renderer's `column_max_lines` tests: the port must give the renderer's caps.
+    #[test]
+    fn the_line_limit_is_the_renderers_law() {
+        let cap = |setting, lines: &[usize], content| column_max_lines(setting, lines, content, 15.0);
+        let lines = [1, 1, 1, 1, 1, 1, 1, 1, 12];
+        assert_eq!(cap(TableMaxLines::TrimOutliers, &lines, 1500.0), Some(1));
+        assert_eq!(cap(TableMaxLines::Percentile(75), &lines, 1500.0), Some(1));
+        let even = [1, 2, 2, 3, 3, 4, 5, 6];
+        assert_eq!(cap(TableMaxLines::TrimOutliers, &even, 1500.0), Some(7));
+        assert_eq!(cap(TableMaxLines::Percentile(75), &even, 1500.0), Some(4));
+        let spread = [8, 9, 10, 10, 11, 12, 40];
+        assert_eq!(cap(TableMaxLines::TrimOutliers, &spread, 1500.0), Some(16));
+        assert_eq!(cap(TableMaxLines::Percentile(75), &spread, 1500.0), Some(12));
+        assert_eq!(cap(TableMaxLines::TrimOutliers, &spread, 45.0), Some(3));
+        assert_eq!(cap(TableMaxLines::Percentile(100), &spread, 1500.0), Some(40));
+        assert_eq!(cap(TableMaxLines::Percentile(1), &spread, 1500.0), Some(8));
+        assert_eq!(cap(TableMaxLines::TrimOutliers, &[], 1500.0), Some(1));
+        assert_eq!(cap(TableMaxLines::Limit(LineLimit::lines(2).unwrap()), &spread, 1500.0), Some(2));
+        assert_eq!(cap(TableMaxLines::Limit(LineLimit::All), &spread, 1500.0), None);
+        assert_eq!(cap(TableMaxLines::Square, &spread, 45.0), Some(3));
     }
 
     /// `has_room` compares what the pins leave with the natural widths. The width, one pin and a natural total one

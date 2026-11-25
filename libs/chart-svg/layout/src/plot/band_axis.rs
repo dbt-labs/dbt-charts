@@ -183,7 +183,7 @@ impl BandAxis {
         let mut drawn = Vec::with_capacity(labels.text.len());
         let (mut ascent, mut descent) = (0.0_f64, 0.0_f64);
         for text in labels.text {
-            let (cut, _) = book.truncate(text, &labels.font, labels.limit)?;
+            let cut = book.truncate(text, &labels.font, labels.limit)?;
             let run = book.run(&cut, &labels.font)?;
             ascent = ascent.max(run.ascent);
             descent = descent.max(run.descent);

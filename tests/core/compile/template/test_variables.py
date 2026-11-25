@@ -190,7 +190,6 @@ class TestCoerceNumber:
             ("number", "5", 5),
             ("number", "5.5", 5.5),
             ("slider", "42", 42),
-            ("range", "3.14", 3.14),
             ("number", 7, 7),
             ("number", 7.0, 7.0),
         ],

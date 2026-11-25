@@ -40,11 +40,15 @@ _BUILT_IN_THEMES = user_facing_theme_names()
 # Exempt from the container-link rule: gradient presence switches the color
 # channel to gradient mode, so an author writing it supplies a palette; tints
 # presence switches a map's or heatmap's fills to the pattern ramp's flat tints,
-# so an author writing it supplies the ramp.
+# so an author writing it supplies the ramp; a max_thickness presence turns the
+# cap on, so an author writing it supplies both ceilings, and a labels_above
+# presence moves long names above their bars.
 _SWITCH_SLOTS = (
     "Style.charts.color.gradient",
     "Style.charts.geoshape.tints",
     "Style.charts.point_map.tints",
+    "Style.charts.bar.max_thickness",
+    "Style.charts.bar.labels_above",
 )
 
 

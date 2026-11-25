@@ -95,18 +95,31 @@ def test_v2_table_svg_conditional_formatting() -> None:
     assert "#fee2e2" in svg
 
 
-def test_v2_table_svg_header_overflow() -> None:
-    """Authored style.header_overflow drives header wrapping.
+def test_v2_table_svg_header_wrap() -> None:
+    """Authored style.header.max_lines drives header wrapping.
 
-    Width is narrow enough that "wrap" actually changes the rendered header
-    (more <tspan> lines) versus the default overflow mode.
+    Width is narrow enough that "all" actually changes the rendered header
+    (more <tspan> lines) versus the default two-line limit.
     """
     data = [
         {"a_very_long_column_name_indeed": 1, "another_rather_long_column": 2},
     ]
-    style = {"header_overflow": "wrap"}
+    style = {"header": {"max_lines": "all"}}
     svg = _render(style=style, data=data, width=150)
     assert svg.count("<tspan") > 2
+
+
+def test_v2_table_svg_column_header_wrap_beats_table_header_wrap() -> None:
+    """A column's own `header_max_lines` overrides the table's `header.max_lines`."""
+    data = [{"a_very_long_column_name_indeed": 1, "another_rather_long_column": 2}]
+    table_wide = {"header": {"max_lines": "all"}}
+    one_column_capped = {
+        **table_wide,
+        "columns": {"a_very_long_column_name_indeed": {"header_max_lines": 1}},
+    }
+    wide = _render(style=table_wide, data=data, width=150)
+    capped = _render(style=one_column_capped, data=data, width=150)
+    assert capped.count("<tspan") < wide.count("<tspan")
 
 
 def test_v2_table_svg_pagination_override() -> None:

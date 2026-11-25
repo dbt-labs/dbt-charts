@@ -17,6 +17,7 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
+    model_validator,
 )
 
 from dbt_charts.core.compile.models.conditional_predicate import (
@@ -54,6 +55,7 @@ from dbt_charts.core.compile.models.primitives import (
     ColumnFontStyle,
     FormatConfig,
     GlyphText,
+    LineLimit,
     Link,
     ScaleTargetConfig,
     ToneLiteral,
@@ -64,6 +66,7 @@ from dbt_charts.core.compile.models.style.theme import (
     TableChartStyle,
     TableRowStyle,
 )
+from dbt_charts.core.text.format_d3 import format_spec_kind
 from dbt_charts.core.utils import classify_date_column_align
 
 
@@ -112,7 +115,7 @@ class TableColumnDefaultsConfig(BaseModel):
 
     Only fields that are meaningful as uniform defaults are included.
     Data-dependent fields (link, header_link, spark, scale, glyph, glyph_color,
-    header_overflow) are excluded — they depend on per-column data shape or
+    header_max_lines) are excluded — they depend on per-column data shape or
     interaction intent.
     """
 
@@ -302,6 +305,25 @@ class ColumnScaleConfig(BaseModel):
     )
 
 
+TableColumnType = Literal["text", "number", "date", "datetime"]
+
+TYPE_FORMAT_KIND: dict[str, Literal["text", "time", "number"]] = {
+    "text": "text",
+    "number": "number",
+    "date": "time",
+    "datetime": "time",
+}
+
+
+def _format_kind(
+    format: str | FormatConfig | None,
+) -> Literal["text", "time", "number"] | None:
+    """The kind an authored ``format:`` writes, ``None`` when it names none
+    (an affix-only block, an unresolved alias)."""
+    spec = format.spec if isinstance(format, FormatConfig) else format
+    return format_spec_kind(spec) if isinstance(spec, str) and spec else None
+
+
 class TableColumnConfig(ConstrainedModel):
     """Configuration for a single table column."""
 
@@ -363,6 +385,16 @@ class TableColumnConfig(ConstrainedModel):
             '"First year"). Alias in SQL instead.'
         ),
     )
+    type: TableColumnType | None = Field(
+        default=None,
+        description=(
+            "Print this column as text, number, date or datetime whatever its "
+            "source type. `text` prints every cell as stored; `number` reads a "
+            "text cell as a number, and `date` / `datetime` as an ISO date or "
+            "timestamp. A cell that does not read as the type is an error. "
+            "Default: the column's source type decides."
+        ),
+    )
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
         description="How the number is written: a D3 spec, a preset name, or a format block.",
@@ -398,9 +430,9 @@ class TableColumnConfig(ConstrainedModel):
     align: Literal["left", "center", "right"] | None = Field(
         default=None, description="Text alignment in cells (left, center, right)."
     )
-    header_overflow: Literal["clip", "truncate", "wrap-two", "wrap"] | None = Field(
+    header_max_lines: LineLimit | None = Field(
         default=None,
-        description="What happens to header text too wide for its column (clip, truncate, wrap-two, wrap).",
+        description="Lines this column's header takes before an ellipsis (1 = no wrapping, 3 = wraps twice); or 'all'.",
     )
     header_link: Annotated[str | Link | None, Url()] = Field(
         default=None,
@@ -468,6 +500,20 @@ class TableColumnConfig(ConstrainedModel):
             "rule applies only when no other rule matched."
         ),
     )
+
+    @model_validator(mode="after")
+    def _format_matches_type(self) -> TableColumnConfig:
+        if self.type is None:
+            return self
+        kind = _format_kind(self.format)
+        want = TYPE_FORMAT_KIND[self.type]
+        if kind is not None and kind != want:
+            raise ValueError(
+                f"TableColumnConfig: 'type: {self.type}' takes a {want} 'format', "
+                f"but 'format' is a {kind} format. Change 'type', or change or "
+                "remove 'format'."
+            )
+        return self
 
     @field_validator("spark", mode="before")
     @classmethod
@@ -651,11 +697,26 @@ def fill_table_column_defaults(
             and not (name in _SIZING_FIELDS and sizing_claimed)
         ):
             value = getattr(defaults, name)
+            if (
+                name == "format"
+                and source is not None
+                and source.type is not None
+                and _format_kind(value) not in (None, TYPE_FORMAT_KIND[source.type])
+            ):
+                value = None
         fields[name] = value
     if fields["label"] is None and fallback_label is not None:
         fields["label"] = fallback_label
+    # The declared `type:` decides a typed column's verdict: a date right-aligns, text
+    # aligns as text, and number and datetime keep their own lanes' defaults.
     if fields["align"] is None:
-        fields["align"] = classify_date_column_align(values)
+        fields["align"] = (
+            classify_date_column_align(values)
+            if fields["type"] is None
+            else "right"
+            if fields["type"] == "date"
+            else None
+        )
     if fields["link"] is None and link_override is not None:
         fields["link"] = link_override
     # A column consumed as a style input (another column's background /

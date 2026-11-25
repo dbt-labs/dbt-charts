@@ -104,13 +104,10 @@ class TestIsDateLike:
 
 
 class TestClassifyDateColumnAlign:
-    def test_uniform_short_month_names_right(self) -> None:
-        assert classify_date_column_align(["15 Jan 2024", "3 Feb 2024"]) == "right"
-
-    def test_mixed_month_name_length_no_verdict(self) -> None:
-        # One cell spelled with the full month name breaks the unanimous
-        # match — the column must not right-align on a per-cell majority.
-        assert classify_date_column_align(["30 March 2024", "9 May 2024"]) is None
+    def test_text_never_earns_a_verdict(self) -> None:
+        # dbt-labs/dbt-charts#135: text aligns like text, however date-shaped.
+        assert classify_date_column_align(["15 Jan 2024", "3 Feb 2024"]) is None
+        assert classify_date_column_align(["2024-01-15", "2024-02-03"]) is None
 
     def test_numeric_values_no_verdict(self) -> None:
         # Numeric columns already right-align unconditionally elsewhere;
@@ -118,14 +115,8 @@ class TestClassifyDateColumnAlign:
         assert classify_date_column_align([1, 2, 3]) is None
 
     def test_null_values_ignored(self) -> None:
-        assert (
-            classify_date_column_align(["15 Jan 2024", None, "3 Feb 2024"]) == "right"
-        )
-
-    def test_blank_string_ignored(self) -> None:
-        assert (
-            classify_date_column_align(["15 Jan 2024", "  ", "3 Feb 2024"]) == "right"
-        )
+        jan, feb = datetime.date(2024, 1, 15), datetime.date(2024, 2, 3)
+        assert classify_date_column_align([jan, None, feb]) == "right"
 
     def test_all_null_no_verdict(self) -> None:
         assert classify_date_column_align([None, None]) is None

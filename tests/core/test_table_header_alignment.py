@@ -926,15 +926,12 @@ class TestDateColumnMixedSpellingPerCellBug:
                 f"align: left must win for {value!r}, got anchor={anchor!r}"
             )
 
-    def test_explicit_align_right_on_mixed_content_folds_every_cell_into_one_lane(
+    def test_explicit_align_right_on_mixed_content_right_aligns_every_cell_as_text(
         self, make_chart
     ) -> None:
-        """An authored ``align: right`` on the mixed-spelling column (some
-        cells individually date-like — "9 May 2026" — others not — "30
-        March 2026") trusts the resolved ``align`` and, because the column
-        does have date-like content, folds every remaining cell into one
-        lane — not just the detector-matching subset. Every cell shares one
-        anchor and the header centers on that same lane, never a mix.
+        """An authored ``align: right`` on the mixed-spelling text column
+        right-aligns every cell at one edge, whichever spellings look like
+        dates. Text earns no date lane, so the header stays start-anchored.
         """
         from ._engine_render import render_table_svg
 
@@ -963,19 +960,12 @@ class TestDateColumnMixedSpellingPerCellBug:
             x, anchor = result
             assert anchor == "end", f"align: right must win for {value!r}"
             xs.add(round(x, 1))
-        assert len(xs) == 1, (
-            f"Every cell must share one lane number_x (the widest cell — "
-            f'"20 April 2026" — sets it); got {xs}'
-        )
+        assert len(xs) == 1, f"Every cell must share one right edge; got {xs}"
 
         header = _find_header(svg, "Last Close")
         assert header is not None
         _header_x, header_anchor = header
-        assert header_anchor == "middle", (
-            "The column has date-like content and align: right, so it "
-            "earns a lane — the header must center on it, matching the "
-            "cells."
-        )
+        assert header_anchor == "start", "A text column earns no centered header."
 
     def test_explicit_align_right_text_column_stays_inside_the_svg(self) -> None:
         """The transpose "__value__" column (align="right", non-date

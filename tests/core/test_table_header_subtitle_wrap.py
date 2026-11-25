@@ -133,7 +133,7 @@ class TestHeaderWrap:
     def test_headers_are_never_abbreviated(self, make_chart):
         """No header label is cut short with an ellipsis at this width.
 
-        The theme ships ``charts.table.header.overflow: wrap-two``; the renderer
+        The theme ships ``charts.table.header.wrap: 2``; the renderer
         must honor it rather than inheriting the board title's ``truncate``.
         """
         svg = _render(make_chart, width=_SHORT_WIDTH)

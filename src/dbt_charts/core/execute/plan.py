@@ -588,8 +588,16 @@ def cache_key(
 
 
 def _spec_text(entry: PlannedQuery) -> str:
-    assert entry["type"] != "sql"
-    return json.dumps(entry["spec"], sort_keys=True, default=str)
+    """A values or schema query's identity; a values query's declared types are part
+    of it (a quoted and an unquoted date spell the same JSON)."""
+    match entry["type"]:
+        case "values":
+            keyed_by = {"spec": entry["spec"], "schema": entry["schema"]}
+        case "schema":
+            keyed_by = entry["spec"]
+        case "sql":
+            raise AssertionError("a SQL query keys by its text")
+    return json.dumps(keyed_by, sort_keys=True, default=str)
 
 
 def cache_ref_upstream(

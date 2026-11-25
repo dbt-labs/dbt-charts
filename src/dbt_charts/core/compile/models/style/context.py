@@ -300,6 +300,8 @@ class ChartStyleContext:
     # override) still want ink_canvas. kw_only, not defaulted, same reason
     # as ink_canvas.
     board_canvas: str = dataclasses.field(kw_only=True)
+    # The board's hex `style.roles.ink` where a leaf draws in it, else None.
+    ink: str | None = dataclasses.field(kw_only=True)
 
     # Board-wide value→color scales, one per bound categorical field — the
     # PLANNED output the planner builds from ``category_color_pins`` plus

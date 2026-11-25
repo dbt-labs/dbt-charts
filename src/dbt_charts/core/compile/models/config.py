@@ -278,11 +278,36 @@ class ServerConfig(ConfigNode):
 
     debug: bool
     nav: bool
+    # Folder (a served URL path below the boards folder, "." for the root) to
+    # the names listed first in its sidebar and listing page.
+    nav_order: dict[str, list[str]]
     port: int | None = None  # None = use deterministic project-path port
     # When True, non-board frontmatter keys in .md files are rendered as a
     # metadata table at the top of the page.  Off by default so AGENTS.md,
     # README, and other prose files don't suddenly acquire header tables.
     markdown_metadata_table: bool
+
+    @field_validator("nav_order")
+    @classmethod
+    def _nav_order_names(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        for folder, names in value.items():
+            parts = folder.split("/")
+            if folder != "." and any(p in ("", ".", "..") for p in parts):
+                raise ValueError(
+                    f"nav_order folder {folder!r} must be '.' (the boards folder) "
+                    "or a path below it such as 'sales/emea', with no leading or "
+                    "trailing '/'"
+                )
+            seen: set[str] = set()
+            for name in names:
+                if not name:
+                    raise ValueError(f"nav_order[{folder!r}] lists an empty name")
+                if name in seen:
+                    raise ValueError(
+                        f"nav_order[{folder!r}] lists {name!r} more than once"
+                    )
+                seen.add(name)
+        return value
 
 
 class ProjectCacheConfig(CachePatch, ConstrainedModel):
@@ -440,7 +465,7 @@ class Config(ConfigMappingBase):
     warnings: WarningsConfig | None = None
     # Nothing reads this field: Project.locked_schema_version reads it raw per
     # project. It must stay declared anyway -- Config is extra="forbid" and
-    # validates the whole file. None = no lock.
+    # validates the whole file. None = latest.
     locked_schema_version: str | None = None
     # None = exposure emission not configured; `dct exposures` refuses to run.
     exposures: ExposuresConfig | None = None

@@ -7,6 +7,8 @@ Public API:
     D3FormatError
 """
 
+from __future__ import annotations
+
 from d3_format.errors import D3FormatError
 from d3_format.format import (
     EN_US,

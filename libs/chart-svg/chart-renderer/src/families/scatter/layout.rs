@@ -8,6 +8,7 @@ use measure::Measure;
 use scene::{Attrs, Node, PathData, Role};
 
 use super::bind::Bound;
+use super::Frame;
 use super::{BarX, LogX, NominalRound, PlainXPaint, FacetX, LayeredLegend, LegendStack, LinearX, LogAxis, NO_EXTENT, PlainXAxis, PointDatum, RULE_POINT_SIZE, RuleFires, ScatterPanelOpts, XFrame, XLayers, YScale, category_text, color_legend_glyph_names, color_legend_layout, column_extent, date_axis, finite_frac, kept_reading, legend_entry_order, legend_gradient_id, linear_x_scale, log_x_axis, x_edge_pad, needs_band, plain_x_axis, point_glyph, point_scale_domain, point_x_padding, point_x_scale, quantitative_color, reads_chart_rows, rows_at, rule_aria, rule_point, shape_legend_fill, shape_merges_into_color, shape_scale_domain, size_legend, size_legend_nodes, unfilled_stroke, visible_tick_labels, x_has_nan_years, y_when_x_invalid};
 use crate::{Padding, Payload};
 use crate::common::{AxisStyle, format_y_label, symbol_radius};
@@ -70,6 +71,9 @@ fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Paddin
     } else {
         Cow::Owned(Payload { width: cell.width, height: cell.height, padding: padding.or(bound.payload.padding), ..Payload::clone(&bound.payload) })
     };
+    if bound.r.style.frame == Frame::Range {
+        return super::frame::layout(bound, &payload, measure);
+    }
     let (fitted, diagnostics) = diagnostic::collect(|| fit(bound, &payload, measure.fonts, None, None));
     let fitted = fitted?;
     Ok(Layout {
@@ -1080,7 +1084,7 @@ pub(super) fn fit(
     let x_title_extra = crate::common::x_title_extra(&ax_x.title, &x_title_text);
 
     // ── Title (width-resolved font slot) ────────────────────────────────
-    // An over-wide title or subtitle takes the wrap-two law on every channel shape.
+    // An over-wide title or subtitle takes the two-line law on every channel shape.
     // A facet panel carries no title: the composite owns it.
     let title_plan = if panel.is_some() {
         None
@@ -1154,6 +1158,7 @@ pub(super) fn fit(
         Some(shape_field) => Some(crate::families::scatter_shape::ShapeLegend::new(
             fonts,
             payload,
+            &r.legend,
             shape_field.to_string(),
             shape_domain.clone(),
         )?),
@@ -1520,6 +1525,7 @@ pub(super) fn fit(
             canvas: bg,
             clip_id: format!("{}-ann{}", crate::contract::scoped_id(&r.id), panel.map_or(0, |o| o.panel_ordinal)),
             occupied: Vec::new(),
+            tear: None,
         })
     };
     if !r.annotations.is_empty() {
@@ -2389,7 +2395,7 @@ pub(super) fn fit(
                 .iter()
                 .cloned()
                 .zip(value_label_texts.iter().cloned())
-                .filter(|((cx, cy, ..), (text, _))| !crate::placement::repeats_axis((*cx, *cy), text, edge_x, &ticks))
+                .filter(|((cx, cy, ..), (text, _))| !((cx - edge_x).abs() < 1.0 && crate::placement::repeats_axis(*cy, text, &ticks).is_some()))
                 .unzip()
         } else {
             (value_label_marks.clone(), value_label_texts.clone())
@@ -2410,7 +2416,8 @@ pub(super) fn fit(
                 owner,
                 group: 0,
                 own_radius: *mark_r,
-                channel: false,
+                outside: false,
+                gutter: None,
             })
             .collect();
         let obstacles = crate::placement::obstacles(&plot, &[(&value_axis_nodes, (0.0, 0.0))], &r.canvas)?;
@@ -2516,6 +2523,7 @@ pub(super) fn fit(
                         crate::families::layers::layer_link(datum_link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
                         crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
                         &under,
+        None,
                     )
                     .map_err(|e| format!("scatter: {e}"))
                 };
@@ -2844,6 +2852,18 @@ pub(super) fn fit(
     } else {
         (0.0, 0.0)
     };
+    // A shape legend stays on the right strip, so only a stack of floating color and size legends searches for a free corner.
+    let block = rects.iter().fold((0.0_f64, 0.0_f64), |(w, h), &(x, y, rw, rh)| (w.max(x + rw - base.0), h.max(y + rh - base.1)));
+    let corner = if shape_legend.is_none() {
+        legend::overlay_corner_shift(&r.legend.position, (plot_w, plot_h), block, || {
+            let mut occupied = crate::annotation::DataMark::plot_marks(&plot);
+            occupied.extend(crate::annotation::DataMark::labels_in(&plot, (0.0, 0.0)));
+            occupied
+        })
+    } else {
+        (0.0, 0.0)
+    };
+    let slide = (slide.0 + corner.0, slide.1 + corner.1);
     if let Some((_, lg)) = color_legend.as_ref().filter(|_| layered) {
         let (x, y) = (base.0 + color_off.0 + slide.0, base.1 + color_off.1 + slide.1);
         plot.extend(legend::drawn_symbol_legend(&layered_entries, lg, &r.legend, base_glyph, x, y, false, r.canvas.as_str()));
@@ -2900,12 +2920,12 @@ pub(super) fn fit(
 
     if let (Some(scale), Some(title)) = (&color_scale, &gradient_title) {
         let at = (base.0 + color_off.0 + slide.0, base.1 + color_off.1 + slide.1);
-        plot.extend(GradientAt::nodes(&r.legend, r.color_format.as_ref(), scale, (&gradient_id, title), fonts, (plot_w, plot_h), at)?);
+        plot.extend(GradientAt::nodes(&r.legend, r.color_format.as_ref(), scale, (&gradient_id, title), fonts, (plot_w, plot_h), at, r.canvas.as_str())?);
     }
 
     if let Some(sl) = &shape_legend {
         let fill = shape_legend_fill(r, &fires);
-        plot.extend(sl.nodes(shape_x + slide.0, shape_y + slide.1, fill, mark_opacity));
+        plot.extend(sl.nodes(&r.legend, shape_x + slide.0, shape_y + slide.1, fill, mark_opacity, r.canvas.as_str()));
     }
 
     if let Some(sl) = &size_legend {

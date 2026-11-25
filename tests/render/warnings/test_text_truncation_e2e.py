@@ -116,7 +116,7 @@ rows:
 
 
 def test_kpi_label_wrap_draws_every_line(tmp_path, local_project) -> None:
-    """`overflow: wrap` draws the whole label, so nothing is cut and nothing warns."""
+    """`max_lines: all` draws the whole label, so nothing is cut and nothing warns."""
     from dbt_charts.core.board import render_dashboard
     from dbt_charts.core.diagnostics import WARN_KPI_LABEL_TRUNCATED
     from dbt_charts.core.project import InMemoryBoard
@@ -137,7 +137,7 @@ charts:
     label: "{words} LASTWORD"
     style:
       label:
-        overflow: wrap
+        max_lines: all
 rows:
   - k
 """,
@@ -622,7 +622,7 @@ charts:
     width: 1400
     style:
       title:
-        overflow: clip
+        max_lines: 1
 rows:
   - c
 """,

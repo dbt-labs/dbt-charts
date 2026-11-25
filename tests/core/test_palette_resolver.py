@@ -1013,7 +1013,7 @@ class TestMarkInk:
     def test_six_digit_hex_inks_normally(self):
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        ink = mark_ink("#0073c2", "#ffffff")
+        ink = mark_ink("#0073c2", "#ffffff", None)
         assert ink != "#0073c2"
         assert is_sanitizable_color(ink)
 
@@ -1021,19 +1021,19 @@ class TestMarkInk:
         """#fff used to crash inside hex_to_oklch (int('', 16))."""
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        ink = mark_ink("#fff", "#161616")
+        ink = mark_ink("#fff", "#161616", None)
         assert is_sanitizable_color(ink)
 
     def test_eight_digit_hex_with_alpha_inks_normally(self):
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        ink = mark_ink("#4e79a7ff", "#ffffff")
+        ink = mark_ink("#4e79a7ff", "#ffffff", None)
         assert is_sanitizable_color(ink)
 
     def test_rgb_function_inks_normally(self):
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        ink = mark_ink("rgb(10, 20, 30)", "#ffffff")
+        ink = mark_ink("rgb(10, 20, 30)", "#ffffff", None)
         assert is_sanitizable_color(ink)
 
     def test_malformed_five_digit_hex_falls_back_unchanged(self):
@@ -1043,12 +1043,12 @@ class TestMarkInk:
         authored rather than raising."""
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        assert mark_ink("#12345", "#ffffff") == "#12345"
+        assert mark_ink("#12345", "#ffffff", None) == "#12345"
 
     def test_css_keyword_name_inks_against_its_real_hex(self):
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        white_ink = mark_ink("white", "#161616")
+        white_ink = mark_ink("white", "#161616", None)
         # "white" resolves to #ffffff first, then label_ink()'s dark move
         # toward white (the pole, on this dark canvas) -- already there,
         # so it legitimately inks to #ffffff exactly, unmoved.
@@ -1057,13 +1057,13 @@ class TestMarkInk:
     def test_color_token_shape_passes_through_unresolved(self):
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        assert mark_ink("category[2]", "#ffffff") == "category[2]"
-        assert mark_ink("chrome[11]", "#ffffff") == "chrome[11]"
+        assert mark_ink("category[2]", "#ffffff", None) == "category[2]"
+        assert mark_ink("chrome[11]", "#ffffff", None) == "chrome[11]"
 
     def test_bare_identifier_passes_through_unresolved(self):
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        assert mark_ink("category", "#ffffff") == "category"
+        assert mark_ink("category", "#ffffff", None) == "category"
 
     def test_currentcolor_falls_back_unchanged_not_deferred(self):
         """`currentColor` is bare-identifier-shaped like a candidate role
@@ -1076,7 +1076,7 @@ class TestMarkInk:
         general fallback."""
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        assert mark_ink("currentColor", "#ffffff") == "currentColor"
+        assert mark_ink("currentColor", "#ffffff", None) == "currentColor"
 
     def test_transparent_mark_passes_through_unchanged(self):
         """A fully transparent mark has no ink to derive against any
@@ -1085,13 +1085,13 @@ class TestMarkInk:
         raising."""
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        assert mark_ink("transparent", "#ffffff") == "transparent"
-        assert mark_ink("none", "#ffffff") == "none"
+        assert mark_ink("transparent", "#ffffff", None) == "transparent"
+        assert mark_ink("none", "#ffffff", None) == "none"
 
     def test_garbage_falls_back_unchanged(self):
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
-        assert mark_ink("not-a-color!!!", "#ffffff") == "not-a-color!!!"
+        assert mark_ink("not-a-color!!!", "#ffffff", None) == "not-a-color!!!"
 
 
 def test_palette_index_and_spine_use_iterdir_and_read_text_not_glob_or_open(

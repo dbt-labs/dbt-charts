@@ -108,7 +108,7 @@ impl OffChart {
         let size = font.size;
         let normal_ink = match &font.color {
             Some(color) => color.clone(),
-            None => dbt_charts_color::ensure_readable_ink(&font.ink, &r.canvas, crate::common::OUTSIDE_INK_CONTRAST)?,
+            None => dbt_charts_color::ensure_readable_ink(&font.ink, &r.canvas, crate::common::OUTSIDE_INK_CONTRAST, font.board_ink.as_deref())?,
         };
         let face = Face { family: &font.family, size };
         let mut nodes = Vec::new();
@@ -121,7 +121,7 @@ impl OffChart {
             let at = ((bar.x.0 + bar.x.1) / 2.0 + measure::baseline_shift("middle", size), end);
             // A bar narrower than the type keeps its label legible on the card's color instead.
             let narrow = bar.x.1 - bar.x.0 < size + 2.0;
-            let ink = if narrow { normal_ink.clone() } else { dbt_charts_color::ensure_readable_ink(&r.canvas, &bar.ink, MIN_CONTRAST)? };
+            let ink = if narrow { normal_ink.clone() } else { dbt_charts_color::ensure_readable_ink(&r.canvas, &bar.ink, MIN_CONTRAST, None)? };
             if narrow {
                 let halo = Shape::Rect { x: at.0 - size, y: end - 1.0, w: size + 3.0, h: length + 2.0, rx: 3.0 };
                 nodes.push(Node::new(Role::Chrome, Attrs::new().set("fill", &r.canvas), halo));

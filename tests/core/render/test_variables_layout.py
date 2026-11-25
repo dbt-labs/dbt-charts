@@ -401,7 +401,7 @@ def test_a_date_field_reserves_room_for_its_calendar(input_type: str) -> None:
 
 @pytest.mark.parametrize(
     "input_type",
-    ["auto", "input", "text", "number", "textarea", "slider", "range", "checkbox"],
+    ["auto", "input", "text", "number", "textarea", "slider", "checkbox"],
 )
 def test_every_other_input_draws_no_ornament(input_type: str) -> None:
     """The mirror, and the half a fall-through gets right by accident. Stated so

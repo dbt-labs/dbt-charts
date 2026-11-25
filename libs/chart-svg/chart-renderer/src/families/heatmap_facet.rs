@@ -877,6 +877,8 @@ pub(crate) struct GradientLegend<'a> {
     color: &'a str,
     weight: String,
     legend: &'a LegendConfig,
+    /// The padding around the legend's content.
+    pad: f64,
     /// A vertical gradient (`legend.direction`): a bar beside its labels.
     vertical: bool,
     /// Each ladder label's shaped width (Vega measures them itself).
@@ -938,6 +940,10 @@ impl<'a> GradientLegend<'a> {
     /// The box width: a horizontal bar is `bar_len` wide, a vertical one is as
     /// wide as its bar, offset and widest label; the title can widen either.
     pub(crate) fn box_width(&self, bar_len: f64) -> f64 {
+        self.content_width(bar_len) + 2.0 * self.pad
+    }
+
+    fn content_width(&self, bar_len: f64) -> f64 {
         if self.vertical {
             return self.vertical_box(bar_len).0;
         }
@@ -1006,6 +1012,7 @@ impl<'a> GradientLegend<'a> {
             color: font.color.as_deref().unwrap_or("#626366"),
             weight: font.weight_str(),
             legend,
+            pad: legend.inset(),
             vertical: legend.direction == "vertical",
             label_widths,
             max_label_w,
@@ -1025,10 +1032,12 @@ impl<'a> GradientLegend<'a> {
     /// The box height: a horizontal bar sits over one label row; a vertical
     /// one is `bar_len` tall.
     pub(crate) fn height(&self, bar_len: f64) -> f64 {
-        if self.vertical {
-            return self.vertical_box(bar_len).1;
-        }
-        self.title_band() + VEGA_GRADIENT_THICKNESS + self.label_offset + self.font_size
+        let content = if self.vertical {
+            self.vertical_box(bar_len).1
+        } else {
+            self.title_band() + VEGA_GRADIENT_THICKNESS + self.label_offset + self.font_size
+        };
+        content + 2.0 * self.pad
     }
 
     fn title_band(&self) -> f64 {
@@ -1037,7 +1046,17 @@ impl<'a> GradientLegend<'a> {
 
     /// The legend's nodes with the bar `length` long and the group's top-left
     /// at `(x, y)`.
-    pub(crate) fn nodes(&self, x: f64, y: f64, length: f64) -> Vec<Node> {
+    pub(crate) fn nodes(&self, x: f64, y: f64, length: f64, canvas: &str) -> Vec<Node> {
+        let mut nodes = Vec::new();
+        if self.legend.draws_background(canvas) {
+            nodes.push(crate::families::legend::legend_box_node(self.legend, (self.box_width(length), self.height(length)), (x, y)));
+        }
+        let (x, y) = (x + self.pad, y + self.pad);
+        nodes.extend(self.content_nodes(x, y, length));
+        nodes
+    }
+
+    fn content_nodes(&self, x: f64, y: f64, length: f64) -> Vec<Node> {
         if self.vertical {
             let bar = VerticalGradient {
                 gradient_id: self.grad_id,
@@ -1106,20 +1125,16 @@ impl<'a> GradientLegend<'a> {
             .iter()
             .zip(&placed)
             .zip(visible)
-            .map(|((text, &(anchor, px)), shown)| {
-                Node::text(
-                    Role::Legend,
-                    (px, label_y),
-                    Attrs::new()
-                        .set("text-anchor", anchor)
-                        .vega("font-family", self.family)
-                        .num("font-size", self.font_size)
-                        .quick_some("font-style", self.legend.label.font.style.as_deref())
-                        .set("font-weight", self.weight.clone())
-                        .set("fill", self.color)
-                        .set_if(!shown, "opacity", "0"),
-                    text.as_str(),
-                )
+            .flat_map(|((text, &(anchor, px)), shown)| {
+                let face = Attrs::new()
+                    .set("text-anchor", anchor)
+                    .vega("font-family", self.family)
+                    .num("font-size", self.font_size)
+                    .quick_some("font-style", self.legend.label.font.style.as_deref())
+                    .set("font-weight", self.weight.clone());
+                let halo = self.legend.label_halo(Role::Legend, (px, label_y), face.clone(), text).filter(|_| shown);
+                let label = Node::text(Role::Legend, (px, label_y), face.set("fill", self.color).set_if(!shown, "opacity", "0"), text.as_str());
+                halo.into_iter().chain([label])
             })
             .collect();
         nodes.push(Node::group(Role::Legend, ::layout::contract::legend_label_attrs(None, false), labels));
@@ -1455,7 +1470,7 @@ fn render_facet(
                 edge: legend_edge,
                 width: Box::new(|panel_w, panel_h| legend.box_width(legend.bar_len(panel_w, panel_h))),
                 height: Box::new(|panel_h| legend.height(legend.bar_len(0.0, panel_h))),
-                paint: Box::new(|x, y, panel_w, panel_h| legend.nodes(x, y, legend.bar_len(panel_w, panel_h))),
+                paint: Box::new(|x, y, panel_w, panel_h| legend.nodes(x, y, legend.bar_len(panel_w, panel_h), r.canvas.as_str())),
             })
             .into_iter()
             .chain(dates.as_ref().map(|scale| LegendChrome {
@@ -1471,7 +1486,7 @@ fn render_facet(
                         .1
                 }),
                 paint: Box::new(|x, y, panel_w, panel_h| {
-                    GradientAt::nodes(&r.legend, None, scale, (&grad_id, &legend_title), fonts, (panel_w, panel_h), (x, y))
+                    GradientAt::nodes(&r.legend, None, scale, (&grad_id, &legend_title), fonts, (panel_w, panel_h), (x, y), r.canvas.as_str())
                         .expect("probed at both length extremes")
                 }),
             }))

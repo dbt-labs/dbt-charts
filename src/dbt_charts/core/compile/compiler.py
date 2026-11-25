@@ -328,6 +328,34 @@ def _own_format_names(yaml_content: str) -> frozenset[str]:
     return frozenset(formats) if isinstance(formats, dict) else frozenset()
 
 
+def _own_category_pin_fields(yaml_content: str) -> frozenset[str]:
+    """Fields the board file's own text pins under ``style.charts.category_colors``.
+
+    Read from the unmerged text, nested boards included, so a pin inherited
+    through meta.yml or extends is a shared default and is not judged here.
+    """
+    fields: set[str] = set()
+
+    def walk(node: YamlValue) -> None:
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+            return
+        if not isinstance(node, dict):
+            return
+        style = node.get("style")
+        charts = style.get("charts") if isinstance(style, dict) else None
+        pins = charts.get("category_colors") if isinstance(charts, dict) else None
+        if isinstance(pins, dict):
+            fields.update(pins)
+        for value in node.values():
+            walk(value)
+
+    if yaml_content:
+        walk(load_yaml_mapping(yaml_content))
+    return frozenset(fields)
+
+
 def compile_authored_board(
     authored: AuthoredBoard,
     base_dir: ProjectDirectory | None = None,
@@ -351,9 +379,11 @@ def compile_authored_board(
             cascade, threaded per compile rather than read from the process
             global (see `normalize_query`'s `cache_root`). None means no project
             is attached, whose root is the shipped default.
-        _yaml_content: Original YAML text, used only to produce richer
-            ``format_validation_errors_structured`` output on PydanticValidationError.
-            Pass the empty string (default) for programmatically-generated boards.
+        _yaml_content: Original YAML text, used for richer
+            ``format_validation_errors_structured`` output on PydanticValidationError
+            and to tell the format names and color pins the board wrote from the ones
+            it inherited. Pass the empty string (default) for programmatically-generated
+            boards.
         file: The board's project-relative path, when known at call time.
             Passed straight through to every ``Diagnostic`` construction below
             so file and line are always resolved together — never ``None`` for
@@ -587,7 +617,12 @@ def compile_authored_board(
     attach_chart_styles_tree(compiled)
 
     warnings.extend(
-        detect_board_warnings(compiled, _own_format_names(_yaml_content), chart_styles)
+        detect_board_warnings(
+            compiled,
+            _own_format_names(_yaml_content),
+            _own_category_pin_fields(_yaml_content),
+            chart_styles,
+        )
     )
     warnings.extend(tree_restated(compiled))
     authored_queries = authored.queries

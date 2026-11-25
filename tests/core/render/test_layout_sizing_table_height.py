@@ -999,7 +999,7 @@ class TestSizingProbeRecordsNoWarnings:
                 "table": {
                     "pagination": {"mode": "pages", "page_rows": 2},
                     "columns": {"col": {"width": 40}},
-                    "wrap": False,
+                    "max_lines": 1,
                 }
             }
         )

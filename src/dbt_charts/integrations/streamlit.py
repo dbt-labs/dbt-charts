@@ -299,7 +299,7 @@ def st_project(project_dir: str | Path, session: SnowparkSession | None = None) 
                 ),
             )
         else:
-            board_text, listing = directory_listing(page, url.strip("/"), project)
+            board_text, listing = directory_listing(page, url.strip("/"))
             compiled = compile(board_text)
             result = ps.render_board(
                 InMemoryBoard(board_text, path=None),

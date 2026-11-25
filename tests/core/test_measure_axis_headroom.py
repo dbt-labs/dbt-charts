@@ -268,6 +268,26 @@ def test_authored_domain_beats_the_percent_cap() -> None:
     assert max(ay.tick_values) == 1.1
 
 
+def test_stacked_area_tops_the_axis_at_the_stacked_total_headroom() -> None:
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "mix",
+            "type": "area",
+            "x": "month",
+            "y": "signups",
+            "color": "channel",
+            "style": {"stack": "zero"},
+        }
+    )
+    rows = [
+        {"month": m, "channel": c, "signups": v}
+        for m, parts in (("2026-01-01", (90, 40, 18)), ("2026-02-01", (146, 63, 38)))
+        for c, v in zip(("Organic", "Paid", "Partner"), parts, strict=True)
+    ]
+    ay = resolve(chart, rows, chart_style_context=_BOARD_CTX).style.axis_y
+    assert ay.domain_max == pytest.approx(247 * (1 + _HEADROOM))
+
+
 def test_percent_zero_anchored_bar_stops_headroom_at_100() -> None:
     assert _axis_y("bar", [0.4, 0.8, 1.0]).domain_max == 1.0
 

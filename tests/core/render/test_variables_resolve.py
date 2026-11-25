@@ -169,7 +169,7 @@ def test_refined_slider_bounds_travel_with_the_control() -> None:
 
     resolved = resolve_controls({"limit": var}, {}, executor, _vs())
 
-    assert resolved[0].input in ("slider", "range")
+    assert resolved[0].input == "slider"
     assert resolved[0].slider_min == 10
     assert resolved[0].slider_max == 50
 

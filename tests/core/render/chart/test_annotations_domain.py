@@ -116,12 +116,11 @@ def test_a_one_day_band_on_the_last_day_of_a_daily_line_shows_its_left_half_and_
     assert line is not None
     xs = [x for x, _ in path_vertices(line.group(1))]
     step = xs[1] - xs[0]
-    band = re.search(
-        r'<rect x="([\d.]+)" y="0" width="([\d.]+)" height="[\d.]+" fill="[^"]*" opacity',
-        svg,
-    )
+    # The daily line tears its baseline, so the band's bottom follows the tear: a path.
+    band = re.search(r'<path d="(M[^"]*)" fill="[^"]*" opacity', svg)
     assert band is not None
-    x, width = float(band.group(1)), float(band.group(2))
+    band_xs = [x for x, _ in path_vertices(band.group(1))]
+    x, width = min(band_xs), max(band_xs) - min(band_xs)
     # The last mark sits one edge pad (a 4px stroke's point radius plus 2px) inside the plot edge.
     edge_pad = 1.7 * 4 / 2 + 2
     assert x == pytest.approx(xs[-1] - step / 2, abs=0.05)

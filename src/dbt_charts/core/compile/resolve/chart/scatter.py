@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+from functools import partial
 
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import column_format, declared_column_format
+from dbt_charts.core.compile.format import (
+    column_format,
+    declared_column_format,
+)
 from dbt_charts.core.compile.models.chart.normalized import (
     ScatterChart,
 )
@@ -17,7 +21,7 @@ from dbt_charts.core.compile.models.primitives import resolved_as
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPointLabels,
-    ResolvedPointMarkStyle,
+    ResolvedRingedPointMarkStyle,
     ResolvedScatterStyle,
 )
 from dbt_charts.core.compile.resolve.chart._annotations import (
@@ -77,6 +81,7 @@ from dbt_charts.core.compile.resolve.chart._layers import (
 from dbt_charts.core.compile.resolve.chart._marks import (
     _label_format_fallback,
     _measure_tooltip_format,
+    _run_axis,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
@@ -171,7 +176,8 @@ def _resolve_scatter(
     scatter_conditional = resolve_mark_conditional(
         chart_local_style_context.scatter.conditional, data, y=normalized.y
     )
-    plan = plan_cartesian(
+    plan_axes = partial(
+        plan_cartesian,
         normalized,
         data,
         chart_style_context,
@@ -186,8 +192,14 @@ def _resolve_scatter(
         y_type_defaulted=y_type_defaulted,
         horizontal=False,
     )
+    plan = plan_axes()
     primary = plan.primary
     scatter = merge_unset(board_family_style(chart_style_context, normalized), primary)
+    if scatter.frame == "range":
+        # The ends are the data's own values, which the board's default tick
+        # format would round; an unformatted axis leaves them to the renderer's
+        # range-end rule.
+        plan = plan_axes(leave_auto_format=True)
     channels = plan.channels
     channels, wide_measure_series = resolve_wide_measure_channels(
         normalized, channels, "scatter"
@@ -425,10 +437,13 @@ def _resolve_scatter(
         ay.labels.format,
         axis_house_default,
         chart_style_context.formats,
-        tooltip_format_values,
+        quantitative_channel_values(data, normalized.y),
+        run_axis=_run_axis(scatter.marks.point.labels, ay),
     )
     scatter_point_mark = resolved_as(
-        ResolvedPointMarkStyle, scatter.marks.point, labels=resolved_scatter_labels
+        ResolvedRingedPointMarkStyle,
+        scatter.marks.point,
+        labels=resolved_scatter_labels,
     )
     resolved_layers = _resolve_layer_list(
         normalized.layers,
@@ -500,6 +515,8 @@ def _resolve_scatter(
         style=ResolvedScatterStyle(
             point_mark=scatter_point_mark,
             size=scatter.size,
+            frame=scatter.frame,
+            series_symbols=scatter.series_symbols,
             conditional=scatter_conditional,
             single_series_fill=single_series_fill,
             title_font=_tf,

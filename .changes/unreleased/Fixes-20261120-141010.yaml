@@ -1,3 +1,0 @@
-kind: Fixes
-body: A query that inlines another query reading `{{ queries.X.cache }}` now runs over the cached rows instead of failing on an unknown `__dct_cache_ref__` table.
-time: 2026-11-20T14:10:10.209934-08:00

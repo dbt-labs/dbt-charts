@@ -79,33 +79,8 @@ fn measure(book: &FontBook, style: &Style, text: &str) -> Result<f64, Diagnostic
         .map_err(diag::err_internal)
 }
 
-/// `layouts.py::_fit_label`: `label`, or its longest prefix that fits `room` once "…" is appended.
-fn fit_label(
-    label: &str,
-    room: f64,
-    width: &dyn Fn(&str) -> Result<f64, Diagnostic>,
-) -> Result<String, Diagnostic> {
-    if width(label)? <= room {
-        return Ok(label.to_string());
-    }
-    let chars: Vec<char> = label.chars().collect();
-    let mut keep = chars.len();
-    while keep > 0
-        && width(&format!(
-            "{}…",
-            chars[..keep].iter().collect::<String>().trim_end()
-        ))? > room
-    {
-        keep -= 1;
-    }
-    Ok(format!(
-        "{}…",
-        chars[..keep].iter().collect::<String>().trim_end()
-    ))
-}
-
 /// The strip of tabs titled `titles`: `tab_labels` (the tab case applied), `tab_cell_width` (label plus
-/// padding, whole pixels, within `min_width` and `max_width`) and `_fit_label` for each.
+/// padding, whole pixels, within `min_width` and `max_width`) and a one-line `fit_lines` for each.
 pub fn tab_strip(
     style: &Style,
     titles: &[&str],
@@ -125,7 +100,7 @@ pub fn tab_strip(
     for title in titles {
         let label = display_text::case::apply_case(title, tabs.font.case.as_str())
             .map_err(diag::err_internal)?;
-        let shown = fit_label(&label, room, &width_of)?;
+        let shown = measure::fit::fit_lines(&label, room, &width_of, Some(1))?.lines.into_iter().next().unwrap_or_else(|| label.clone());
         let width = (width_of(&label)? + 2.0 * tabs.padding_x)
             .ceil()
             .max(tabs.min_width)

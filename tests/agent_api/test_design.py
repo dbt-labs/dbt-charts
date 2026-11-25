@@ -2737,7 +2737,6 @@ def test_bounds_are_withheld_where_the_renderer_reads_none(body: str) -> None:
     "body",
     [
         "    input: slider\n",
-        "    input: range\n",
         "    input: number\n",
         # `auto` resolves to a slider from the authored bounds.
         "    min: 0\n    max: 500\n",
@@ -2790,7 +2789,7 @@ def test_a_boolean_default_keeps_the_numeric_inputs_off_its_list() -> None:
     )
     offered = _flat(build_design_target(checkbox, "variables.flag"))["input"]
     assert offered.enum_values is not None
-    assert not {"number", "slider", "range"} & set(offered.enum_values)
+    assert not {"number", "slider"} & set(offered.enum_values)
     # Still a real list, not an empty one — `text` takes a bool's string form
     # and `radio` takes any scalar, so the control is narrowed, not withheld.
     assert "checkbox" in offered.enum_values

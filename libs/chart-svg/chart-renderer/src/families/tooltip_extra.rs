@@ -2,11 +2,12 @@
 //!
 //! Python resolve decides each entry's label and format (`resolve_tooltip`);
 //! this paints a row's value with them, and refuses a value that does not fit.
+//! A `url` or `email` format makes the row a link to the href its value implies.
 
 use column_types::ColumnTypes;
 use ::bind::table_dates::{is_time_format, parse_temporal, strftime, TemporalError};
-use crate::common::{format_mark_label, FormatSlot};
-use crate::contract::{extra_row, SEMICOLON_ESCAPE};
+use crate::common::{format_mark_label, is_text_format, FormatSlot};
+use crate::contract::{extra_row, link_row, SEMICOLON_ESCAPE};
 use d3rs::native::NULL_DISPLAY;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -22,9 +23,22 @@ pub(crate) struct TooltipField {
 }
 
 impl TooltipField {
-    fn value(&self, row: &Map<String, Value>, types: &ColumnTypes) -> Result<String, String> {
+    fn row(&self, row: &Map<String, Value>, types: &ColumnTypes) -> Result<String, String> {
         let wrong = |e: String| format!("tooltip column {:?}: {e}", self.column);
         let cell = row.get(&self.column).ok_or_else(|| wrong("missing from the row".into()))?;
+        if let Some(format) = self.format.as_ref().filter(|f| is_text_format(&f.spec)) {
+            let href = ::bind::kpi::text_format_link(&format.spec, cell, &format!("tooltip column {:?}", self.column))
+                .map_err(|e| wrong(e.to_string()))?;
+            return match href {
+                Some(href) => Ok(link_row(&self.label, &escaped(href).map_err(wrong)?)),
+                None => Ok(extra_row(&self.label, if cell.is_null() { NULL_DISPLAY } else { "" })),
+            };
+        }
+        Ok(extra_row(&self.label, &escaped(self.value(cell, types)?).map_err(wrong)?))
+    }
+
+    fn value(&self, cell: &Value, types: &ColumnTypes) -> Result<String, String> {
+        let wrong = |e: String| format!("tooltip column {:?}: {e}", self.column);
         let text = match (cell, &self.format) {
             (Value::Null, _) => NULL_DISPLAY.to_string(),
             (Value::Number(n), Some(format)) if !is_time_format(&format.spec) => {
@@ -42,16 +56,21 @@ impl TooltipField {
             (Value::Number(_) | Value::Bool(_), None) => cell.to_string(),
             (_, None) => return Err(wrong(format!("{cell} is not a scalar"))),
         };
-        if text.contains(SEMICOLON_ESCAPE) {
-            return Err(wrong(format!("{text:?} holds the character reserved to escape ';'")));
-        }
-        Ok(text.replace(';', &SEMICOLON_ESCAPE.to_string()))
+        Ok(text)
     }
+}
+
+/// `text` with each `;` escaped, since the runtime splits rows on `;`.
+fn escaped(text: String) -> Result<String, String> {
+    if text.contains(SEMICOLON_ESCAPE) {
+        return Err(format!("{text:?} holds the character reserved to escape ';'"));
+    }
+    Ok(text.replace(';', &SEMICOLON_ESCAPE.to_string()))
 }
 
 /// The authored rows of one datum, in authored order.
 pub(crate) fn rows_for(fields: &[TooltipField], row: &Map<String, Value>, types: &ColumnTypes) -> Result<Vec<String>, String> {
-    fields.iter().map(|field| Ok(extra_row(&field.label, &field.value(row, types)?))).collect()
+    fields.iter().map(|field| field.row(row, types)).collect()
 }
 
 #[cfg(test)]
@@ -168,6 +187,38 @@ mod tests {
         assert!(e.contains("tooltip column \"n\""), "{e}");
         let e = err(json!([{"column": "n", "label": "N", "format": null}]), json!({"n": [1]}));
         assert!(e.contains("tooltip column \"n\""), "{e}");
+    }
+
+    #[test]
+    fn a_url_or_email_value_is_a_link_row_to_its_href() {
+        let out = rows(
+            json!([
+                {"column": "ticket", "label": "Ticket", "format": {"spec": "url", "raw": "url"}},
+                {"column": "owner", "label": "Owner", "format": "email"}
+            ]),
+            json!({"ticket": " https://t.io/1;a ", "owner": "ann+ops@x.io"}),
+        );
+        assert_eq!(out, ["\u{200D}\u{206F}Ticket: https://t.io/1\u{E000}a", "\u{200D}\u{206F}Owner: mailto:ann%2Bops@x.io"]);
+    }
+
+    #[test]
+    fn an_empty_link_cell_is_a_plain_row() {
+        let out = rows(
+            json!([
+                {"column": "a", "label": "A", "format": "url"},
+                {"column": "b", "label": "B", "format": "email"}
+            ]),
+            json!({"a": null, "b": ""}),
+        );
+        assert_eq!(out, ["\u{200D}A: \u{2014}", "\u{200D}B: "]);
+    }
+
+    #[test]
+    fn a_link_value_that_cannot_link_refuses() {
+        let e = err(json!([{"column": "a", "label": "A", "format": "url"}]), json!({"a": "/tickets/1"}));
+        assert!(e.contains("tooltip column \"a\""), "{e}");
+        let e = err(json!([{"column": "a", "label": "A", "format": "url"}]), json!({"a": 3}));
+        assert!(e.contains("tooltip column \"a\""), "{e}");
     }
 
     #[test]

@@ -10,13 +10,15 @@ from pydantic import ValidationError
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.models.anchor import (
+    ResolvedCategoryAnchor,
+    ResolvedValueAnchor,
+)
 from dbt_charts.core.compile.models.chart.authored import BarChart as AuthoredBar
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.chart.resolved._annotation import (
     ResolvedAnnotation,
-    ResolvedCategoryAnchor,
     ResolvedRangeAnchor,
-    ResolvedValueAnchor,
 )
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.style.authored import StylePatch

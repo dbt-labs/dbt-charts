@@ -134,6 +134,7 @@ html_policy_ceiling: trusted-raw
 server:
   debug: true
   nav: true
+  nav_order: {}
   port: null
   markdown_metadata_table: false
 

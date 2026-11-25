@@ -164,8 +164,8 @@ mod tooltip_order_domain_tests {
         let series_order =
             vec!["Electronics".to_string(), "Accessories".to_string(), "Tools".to_string()];
         let legend: LegendConfig = serde_json::from_value(serde_json::json!({
-            "visible": true, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-            "label": {"font": {"size": 11.0}}, "title": {"font": {}},
+            "visible": true, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"size": 11.0}}, "title": {"font": {}},
         }))
         .unwrap();
         let domain =
@@ -183,8 +183,8 @@ mod tooltip_order_domain_tests {
         let series_order =
             vec!["Electronics".to_string(), "Accessories".to_string(), "Tools".to_string()];
         let legend: LegendConfig = serde_json::from_value(serde_json::json!({
-            "visible": true, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-            "label": {"font": {"size": 11.0}}, "title": {"font": {}},
+            "visible": true, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"size": 11.0}}, "title": {"font": {}},
         }))
         .unwrap();
         let domain =

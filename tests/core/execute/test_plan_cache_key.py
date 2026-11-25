@@ -35,7 +35,7 @@ HTTP_PATH = "/sql/1.0/warehouses/abc123"
 
 def plan_with(declaration: dict[str, object]) -> QueryPlan:
     return {
-        "version": 1,
+        "version": 2,
         "board_id": "b",
         "time_zone": "UTC",
         "today": "2026-11-10",
@@ -133,3 +133,30 @@ def test_an_identity_field_still_changes_a_key() -> None:
     )
 
     assert key_of(declared(config)) != key_of(declared(config, host="other-host"))
+
+
+def test_values_queries_differing_only_by_a_date_literal_key_apart() -> None:
+    """A quoted and an unquoted date spell the same `spec` JSON; only the plan's
+    declared schema tells them apart, so it is part of the key."""
+    board = compile(BOARD).board
+    assert board is not None
+    env = scripted_env(ScriptedBackend())
+
+    def key(kind: str) -> tuple[str, str, str]:
+        plan = plan_with({})
+        plan["queries"]["q"] = {  # type: ignore[typeddict-item] — wire JSON built untyped by the test
+            "type": "values",
+            "source": None,
+            "cache": {"enabled": True, "ttl": None, "prefetch": False},
+            "formats": {},
+            "depends_on": [],
+            "spec": {"columns": ["d"], "values": [["2026-04-10"]]},
+            "schema": {"d": {"kind": kind, "element": None, "fields": None}},
+        }
+        planned = Planned(
+            engine_compile(None, content="title: hand built\n", project=env.project),
+            plan,
+        )
+        return cache_key(make_context(board, planned, env), "q", lambda: None)
+
+    assert key("date") != key("string")

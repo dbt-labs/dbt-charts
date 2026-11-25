@@ -39,7 +39,7 @@ pub use layout::{
     items, GridItem, GridLayout, Layout, LayoutItem, NestedBoard, Placement,
 };
 use model_derive::Model;
-pub use value::{Extends, Length, SingleRowBoolProbe, Visible, Width};
+pub use value::{Extends, HorizontalCap, Length, SingleRowBoolProbe, VerticalCap, Visible, Width};
 
 string_enum!(
     /// How HTML in a board's body text renders.

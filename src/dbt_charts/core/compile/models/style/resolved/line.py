@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from pydantic import ConfigDict, Field
 
+from dbt_charts.core.compile.models.palette import LineStyle
 from dbt_charts.core.compile.models.style.theme.line import LineConditionalRule
 
-from ._cartesian import _SeriesCartesianResolvedStyle
+from ._cartesian import (
+    ResolvedLineAreaEndpointLabelsConfig,
+    ResolvedLineOverlayAttempt,
+    _SeriesCartesianResolvedStyle,
+)
 from ._marks import ResolvedLineMarkStyle, ResolvedPointMarkStyle
 
 
@@ -20,6 +25,16 @@ class ResolvedLineStyle(_SeriesCartesianResolvedStyle):
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    endpoint_labels: ResolvedLineAreaEndpointLabelsConfig = Field(
+        description="Direct-label config: beside the plot, inside it, or neither.",
+    )
+    overlay: ResolvedLineOverlayAttempt | None = Field(
+        description=(
+            "The style when the series names go inside the plot instead; "
+            "absent when the names are not tried there."
+        ),
+    )
 
     line_mark: ResolvedLineMarkStyle = Field(
         description="Cascade-merged line mark geometry (stroke, halo, labels).",
@@ -38,6 +53,12 @@ class ResolvedLineStyle(_SeriesCartesianResolvedStyle):
         description=(
             "Ordered strokeDash arrays for categorical line encoding; [] = no dash "
             "emission. Baked from board_style.charts.dashes at resolve time."
+        ),
+    )
+    line_styles: tuple[LineStyle, ...] = Field(
+        description=(
+            "The stroke styles of the theme's line palette (`palettes.line_category`), in slot "
+            "order; () = plain lines. Always () when `dashes` is set: authored dashes win."
         ),
     )
     line_label_is_house: bool = Field(

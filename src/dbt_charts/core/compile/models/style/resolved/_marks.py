@@ -92,6 +92,14 @@ class ResolvedPointMarkStyle(PointMarkStyle):
     )
 
 
+class ResolvedRingedPointMarkStyle(ResolvedPointMarkStyle):
+    halo: float | None = Field(
+        default=None,
+        ge=0,
+        description="Width in pixels of the canvas-color ring around each point.",
+    )
+
+
 class ResolvedStrokeStyle(BaseModel):
     """Stroke with width required — guaranteed by the resolve stage.
 

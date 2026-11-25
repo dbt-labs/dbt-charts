@@ -220,15 +220,14 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
         crate::point_conditional::axis_label_rules("scatter", r.style.conditional.as_ref(), &r.x)
             .refuse_all("a scatter's non-date x axis draws its labels per tick")?;
     }
-    if r.style.point_mark.halo.is_some() {
-        return Err(diagnostic::refuse!("scatter: `marks.point.halo` is not supported").into());
-    }
+    let shape = Shape { x_dates, x_nominal, y_nominal, y_measure };
+    super::frame::refuse_shape(&r, &overlays, &shape)?;
     Ok(Bound {
         payload: prepared,
         r,
         overlays,
         wide_series,
-        shape: Shape { x_dates, x_nominal, y_nominal, y_measure },
+        shape,
         time,
         drawn,
         color_domain,

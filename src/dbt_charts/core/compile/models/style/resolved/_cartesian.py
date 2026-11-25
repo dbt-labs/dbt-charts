@@ -19,10 +19,19 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from dbt_charts.core.compile.models.anchor import (
+    ResolvedCategoryAnchor,
+    ResolvedValueAnchor,
+)
 from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, ResolvedFormat
 
 from ._base import ResolvedAxisStyle
-from ._marks import ResolvedSeriesLabelStyle
+from ._marks import (
+    ResolvedAreaLineStyle,
+    ResolvedLineMarkStyle,
+    ResolvedPointMarkStyle,
+    ResolvedSeriesLabelStyle,
+)
 
 
 class _CartesianResolvedStyle(BaseModel):
@@ -71,6 +80,31 @@ class ResolvedBarEndpointLabelsConfig(ResolvedEndpointLabelsConfig):
     )
 
 
+class ResolvedDirectOverlayX(BaseModel):
+    """One series' preferred x for its name inside the plot."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    series: str = Field(description="The series name, as the key names it.")
+    x: ResolvedValueAnchor | ResolvedCategoryAnchor = Field(
+        description="The x the name prefers, on the chart's x axis."
+    )
+
+
+class ResolvedLineAreaEndpointLabelsConfig(ResolvedEndpointLabelsConfig):
+    """A line's or area's direct-label config, which may name series inside the plot."""
+
+    overlay: bool = Field(
+        description="Whether the series names print inside the plot beside their marks."
+    )
+    overlay_x: tuple[ResolvedDirectOverlayX, ...] = Field(
+        description="Series whose name prefers an x inside the plot."
+    )
+    unseen_overlay_x: tuple[str, ...] = Field(
+        description="`overlay_x` keys naming a series this render never draws; a warning input."
+    )
+
+
 class _SeriesCartesianResolvedStyle(_CartesianResolvedStyle):
     """Shared resolved fields for the series cartesian families: bar, line, area.
 
@@ -96,9 +130,41 @@ class _SeriesCartesianResolvedStyle(_CartesianResolvedStyle):
     )
 
 
+class _OverlayAttempt(BaseModel):
+    """The style a chart takes when its series names go inside the plot."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    axis_y: ResolvedAxisStyle = Field(
+        description="The value axis when series names go inside the plot.",
+    )
+    point_mark: ResolvedPointMarkStyle = Field(
+        description="The point mark, with its value labels, in that arrangement.",
+    )
+
+
+class ResolvedLineOverlayAttempt(_OverlayAttempt):
+    """A line chart's style when its series names go inside the plot."""
+
+    line_mark: ResolvedLineMarkStyle = Field(
+        description="The line mark, with its value labels, in that arrangement.",
+    )
+
+
+class ResolvedAreaOverlayAttempt(_OverlayAttempt):
+    """An area chart's style when its series names go inside the plot."""
+
+    line_mark: ResolvedAreaLineStyle = Field(
+        description="The edge line, with its value labels, in that arrangement.",
+    )
+
+
 __all__ = [
+    "ResolvedAreaOverlayAttempt",
     "ResolvedBarEndpointLabelsConfig",
     "ResolvedEndpointLabelsConfig",
+    "ResolvedLineAreaEndpointLabelsConfig",
+    "ResolvedLineOverlayAttempt",
     "_CartesianResolvedStyle",
     "_SeriesCartesianResolvedStyle",
 ]

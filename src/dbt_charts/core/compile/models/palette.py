@@ -49,7 +49,31 @@ PatternMotif = Literal[
 ]
 PatternRamp = Literal["hatch-crosshatch", "hatch-dots", "dots"]
 PatternLadder = Literal["one-ink"]
-PatternPaletteKind = Literal["categorical", "sequential", "diverging"]
+PaletteKind = Literal["categorical", "sequential", "diverging", "line"]
+
+
+class LineStyleInline(BaseModel):
+    """A canvas-colored stroke drawn over a line's ink, cutting a hollow or beaded look."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    width: Annotated[float, Field(gt=0)]
+    dash: tuple[float, ...]
+    cap: Literal["butt", "round"] = "butt"
+    offset: float = 0
+
+
+class LineStyle(BaseModel):
+    """One stroke style of a line palette: how a series' line is drawn without color."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    width: Annotated[float, Field(gt=0)]
+    # Empty is a solid line.
+    dash: tuple[float, ...] = ()
+    cap: Literal["butt", "round"] = "butt"
+    # Most styles draw no inline stroke.
+    inline: LineStyleInline | None = None
 
 
 class Palette(BaseModel):
@@ -62,11 +86,13 @@ class Palette(BaseModel):
     description: str | None = None
     # Pattern palettes: a categorical one lists motifs or names a ladder (fills
     # chosen by the chart's series count), a sequential or diverging one names a ramp.
-    kind: PatternPaletteKind | None = None
+    # A line palette lists stroke styles in slot order.
+    kind: PaletteKind | None = None
     motifs: tuple[PatternMotif, ...] | None = None
     ladder: PatternLadder | None = None
     ramp: PatternRamp | None = None
     steps: Annotated[int, Field(ge=3, le=9)] | None = None
+    styles: tuple[LineStyle, ...] | None = None
     # Authoring-aid / metadata fields; declared explicitly so extra="forbid"
     # doesn't reject them.
     family: str | None = None
@@ -74,18 +100,33 @@ class Palette(BaseModel):
     r8_validation: dict[str, Any] | None = None
 
     @model_validator(mode="after")
-    def _pattern_shape(self) -> Palette:
+    def _kind_shape(self) -> Palette:
         if self.kind is None:
             if (
                 self.motifs is not None
                 or self.ladder is not None
                 or self.ramp is not None
                 or self.steps is not None
+                or self.styles is not None
             ):
                 raise ValueError(
-                    f"palette '{self.name}' names motifs, a ladder or a ramp without a pattern kind."
+                    f"palette '{self.name}' names motifs, a ladder, a ramp or styles without a kind."
+                )
+        elif self.kind == "line":
+            if self.colors is not None:
+                raise ValueError(f"line palette '{self.name}' draws no colors.")
+            if not self.styles or any(
+                v is not None for v in (self.motifs, self.ladder, self.ramp, self.steps)
+            ):
+                raise ValueError(
+                    f"line palette '{self.name}' needs `styles:` and no `motifs:`, "
+                    "`ladder:`, `ramp:` or `steps:`."
                 )
         else:
+            if self.styles is not None:
+                raise ValueError(
+                    f"{self.kind} pattern palette '{self.name}' takes no `styles:`."
+                )
             if self.colors is not None:
                 raise ValueError(f"pattern palette '{self.name}' draws no colors.")
             if self.kind == "categorical":
@@ -126,7 +167,7 @@ class Palette(BaseModel):
 
 
 PaletteFamily = Literal[
-    "sequential", "diverging", "categorical", "scaffold", "tone", "pattern"
+    "sequential", "diverging", "categorical", "scaffold", "tone", "pattern", "line"
 ]
 PALETTE_FAMILIES: tuple[PaletteFamily, ...] = get_args(PaletteFamily)
 

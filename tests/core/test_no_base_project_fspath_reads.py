@@ -130,16 +130,16 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/project_session.py", 315): (
         'ProjectSession.charts_dir: cast("FilesystemProject", self.project)-narrowed'
     ),
-    ("agent_api/serve.py", 83): (
+    ("agent_api/serve.py", 90): (
         "prepare_serve(project: FilesystemProject) — already FS-typed"
     ),
     ("core/serve/server.py", 1353): (
         "health: create_server's FilesystemProject parameter, closed over"
     ),
-    ("agent_api/serve.py", 489): (
+    ("agent_api/serve.py", 496): (
         "start_detached(project: FilesystemProject) — already FS-typed"
     ),
-    ("agent_api/serve.py", 166): (
+    ("agent_api/serve.py", 173): (
         "prepare_serve(project: FilesystemProject), already FS-typed "
         "(dbt_root, dialect inference reads the linked dbt project directory)"
     ),

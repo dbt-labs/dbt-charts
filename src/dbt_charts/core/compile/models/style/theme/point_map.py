@@ -22,7 +22,7 @@ from dbt_charts.core.compile.models.style.theme._chart_base import (
     _GeoChartStyle,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
-    PointMarkStyle,
+    RingedPointMarkStyle,
 )
 
 
@@ -31,8 +31,8 @@ class PointMapChartMarksStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    point: PointMarkStyle = Field(
-        default_factory=PointMarkStyle,
+    point: RingedPointMarkStyle = Field(
+        default_factory=RingedPointMarkStyle,
         description="Point mark overrides; inherits from global.",
     )
 

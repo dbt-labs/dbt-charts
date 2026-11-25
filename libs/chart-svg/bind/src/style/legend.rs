@@ -17,12 +17,12 @@ pub fn legend_ladder<'a>(tiers: &Tiers<'a>) -> Ladder<Rung<'a, LegendStyleBase>>
     )
 }
 
-/// The board's total legend with every leaf this slot walks (`symbol_limit`, and the leaves the
+/// The board's total legend with every leaf this slot walks (`limit`, and the leaves the
 /// engine decides per chart: `direction`, `title.visible`) taken from the walk.
 pub fn walked_legend(tiers: &Tiers<'_>) -> Option<LegendStyleBase> {
     let ladder = legend_ladder(tiers);
     let mut base = tiers.charts.key.legend.base.clone();
-    base.symbol_limit = ladder.leaf(|p| p.symbol_limit.as_ref(), |t| absent(&t.symbol_limit)).copied();
+    base.limit = ladder.leaf(|p| p.limit.as_ref(), |t| absent(&t.limit)).copied();
     base.title.visible = ladder.leaf(|p| sparse(&p.title.visible), |t| Tri::Value(&t.title.visible))?.clone();
     base.direction = ladder.leaf(|p| sparse(&p.direction), |t| Tri::Value(&t.direction))?.clone();
     Some(base)

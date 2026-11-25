@@ -388,6 +388,12 @@ _SERIES_LABEL_D = {
 }
 _ENDPOINT_LABELS_D = {"visible": False, "label_offset": 8.0}
 _BAR_ENDPOINT_LABELS_D = {**_ENDPOINT_LABELS_D, "height": 20.0}
+_LINE_AREA_ENDPOINT_LABELS_D = {
+    **_ENDPOINT_LABELS_D,
+    "overlay": False,
+    "overlay_x": [],
+    "unseen_overlay_x": [],
+}
 # Table style has many required nested fields — dump the real cascade rather
 # than hand-enumerate them (TableChartStyle isn't constructible from {}).
 _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
@@ -405,6 +411,8 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                     "series_label": _SERIES_LABEL_D,
                     "mark": {},
                     "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
+                    "max_thickness": None,
+                    "labels_above": None,
                     "endpoint_labels": _BAR_ENDPOINT_LABELS_D,
                     "single_series_fill": "#4C72B0",
                     "tooltip_format": "",
@@ -431,11 +439,13 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                     "series_label": _SERIES_LABEL_D,
                     "line_mark": _LINE_MARK_D,
                     "point_mark": {},
-                    "endpoint_labels": _ENDPOINT_LABELS_D,
+                    "endpoint_labels": _LINE_AREA_ENDPOINT_LABELS_D,
+                    "overlay": None,
                     "single_series_fill": "#4C72B0",
                     "tooltip_format": "",
                     "label_usable_ratio": 0.8,
                     "dashes": [],
+                    "line_styles": [],
                     "axis_x": _LINE_AX_D,
                     "axis_y": _LINE_AY_D,
                 },
@@ -453,7 +463,8 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                     "area_mark": _AREA_MARK_D,
                     "line_mark": _AREA_LINE_MARK_D,
                     "point_mark": _AREA_POINT_MARK_D,
-                    "endpoint_labels": _ENDPOINT_LABELS_D,
+                    "endpoint_labels": _LINE_AREA_ENDPOINT_LABELS_D,
+                    "overlay": None,
                     "single_series_fill": "#4C72B0",
                     "tooltip_format": "",
                     "label_usable_ratio": 0.8,
@@ -473,6 +484,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                 "style": {
                     "point_mark": {},
                     "size": {"range": [4, 361], "type": "linear"},
+                    "frame": "full",
                     "single_series_fill": "#4C72B0",
                     "tooltip_format": "",
                     "label_usable_ratio": 0.8,
@@ -769,11 +781,9 @@ def test_table_has_column_configs(table_style: ResolvedTableStyle) -> None:
     c = ResolvedTableChart(
         id="t",
         chart_type="table",
-        header_overflow="truncate",
         style=table_style,
         **_B,
     )
-    assert c.header_overflow == "truncate"
     assert c.columns is None
 
 

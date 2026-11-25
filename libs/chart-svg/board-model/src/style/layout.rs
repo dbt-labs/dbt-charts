@@ -46,7 +46,6 @@ pub struct GridLayoutStyle {
 
 /// Tabs layout style.
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(constraint(range(rail_max_lines, ge = 1)))]
 pub struct TabsStyle {
     /// Which edge the tab bar sits on.
     pub position: TabPosition,
@@ -60,11 +59,8 @@ pub struct TabsStyle {
     pub font: FontStyle,
     /// Minimum tab width in pixels.
     pub min_width: f64,
-    /// Maximum tab width in pixels. A longer label wraps in a left rail (up to
-    /// `rail_max_lines`) and is otherwise cut with an ellipsis.
+    /// Maximum tab width in pixels. A longer label is cut with an ellipsis.
     pub max_width: f64,
-    /// Lines a left-rail tab label wraps to before it is cut with an ellipsis.
-    pub rail_max_lines: u32,
     /// Horizontal padding between a tab's edge and its label in pixels.
     pub padding_x: f64,
     /// Font weight for the active tab label.

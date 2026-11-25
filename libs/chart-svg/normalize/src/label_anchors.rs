@@ -73,7 +73,7 @@ pub fn label_anchor_error(id: &str, chart: &C) -> Option<Diagnostic> {
     let own = match chart {
         C::Scatter(c) => first([
             (LINE, &None),
-            (POINT, &c.style.marks.point.labels.base.visible),
+            (POINT, &c.style.marks.point.point.labels.base.visible),
             (BAR, &None),
         ])
         .map(|p| (format!("charts.{id}.style.{p}"), "a scatter chart")),

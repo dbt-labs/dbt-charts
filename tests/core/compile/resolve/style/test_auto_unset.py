@@ -64,7 +64,7 @@ def test_every_unset_leaf_is_total_in_the_theme(path: str) -> None:
 @pytest.mark.parametrize(
     ("patch", "field"),
     [
-        ({"charts": {"key": {"legend": {"symbol_shape": "blob"}}}}, "symbol_shape"),
+        ({"charts": {"key": {"legend": {"symbol": {"shape": "blob"}}}}}, "shape"),
         ({"charts": {"marks": {"point": {"shape": "M0,0L1,1"}}}}, "shape"),
         ({"title": {"position": {"baseline": "sideways"}}}, "baseline"),
     ],
@@ -79,7 +79,7 @@ def test_a_named_value_leaf_rejects_an_unknown_value_naming_the_field(
 @pytest.mark.parametrize(
     "patch",
     [
-        {"charts": {"key": {"legend": {"symbol_shape": "auto"}}}},
+        {"charts": {"key": {"legend": {"symbol": {"shape": "auto"}}}}},
         {"charts": {"marks": {"point": {"shape": "diamond"}}}},
         {"title": {"position": {"baseline": "line-top"}}},
     ],

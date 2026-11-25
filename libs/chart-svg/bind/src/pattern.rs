@@ -5,6 +5,7 @@
 use diagnostic::{py_str_repr as r, Diagnostic};
 
 use crate::column_kind::{channel_type, ChannelType, ColumnKind, Role};
+use crate::wide::WIDE_LABEL_FIELD;
 
 /// The scale a pattern field draws on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,25 @@ pub struct PatternInput<'a> {
 /// authors no `color:`: the pattern alone splits the series, so it is the color field.
 pub fn series_field<'a>(pattern: Option<&'a str>, color: Option<&'a str>, axes: &[&str]) -> Option<&'a str> {
     color.or(pattern.filter(|field| !axes.contains(field)))
+}
+
+/// The series a theme that binds `palettes.fill_category` (`fill_bound`) patterns a chart that authors no `pattern:` by:
+/// its `color:` field where no drawn axis names it, else the measure name of
+/// several `y:` columns, which the wide fold labels. Hue tells the series apart otherwise.
+pub fn identity_series<'a>(
+    fill_bound: bool,
+    pattern: Option<&str>,
+    color: Option<&'a str>,
+    axes: &[&str],
+    many_measures: bool,
+) -> Option<&'a str> {
+    if !fill_bound || pattern.is_some() {
+        return None;
+    }
+    match color {
+        Some(color) => (!axes.contains(&color)).then_some(color),
+        None => many_measures.then_some(WIDE_LABEL_FIELD),
+    }
 }
 
 /// The scale a pattern over a column of kind `kind` draws on: a number or boolean ramps,
@@ -136,6 +156,17 @@ mod tests {
         assert_eq!(series_field(Some("tier"), None, &["region", "sales"]), Some("tier"));
         assert_eq!(series_field(Some("region"), None, &["region", "sales"]), None);
         assert_eq!(series_field(Some("tier"), Some("tier"), &["region"]), Some("tier"));
+    }
+
+    #[test]
+    fn a_pattern_identity_patterns_by_the_series_a_chart_authors_no_pattern_for() {
+        let axes = ["region", "sales"];
+        assert_eq!(identity_series(true, None, Some("tier"), &axes, false), Some("tier"));
+        assert_eq!(identity_series(true, None, None, &axes, true), Some(WIDE_LABEL_FIELD));
+        assert_eq!(identity_series(true, None, Some("region"), &axes, false), None);
+        assert_eq!(identity_series(true, None, None, &axes, false), None);
+        assert_eq!(identity_series(true, Some("tier"), Some("tier"), &axes, false), None);
+        assert_eq!(identity_series(false, None, Some("tier"), &axes, false), None);
     }
 
     #[test]

@@ -18,6 +18,7 @@ from dbt_charts.core.diagnostics import (
     WARN_ANNOTATION_RULE_LABELS_NUMBERED,
     WARN_BAR_BAND_WIDTH_TOO_NARROW,
     WARN_BAR_GROUPED_SERIES_COINCIDE,
+    WARN_DIRECT_OVERLAY_COLLIDES,
     WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM,
     WARN_LAYOUT_MIN_EXCEEDS_HEIGHT,
     WARN_LEGEND_OVERLAY_COVERS_MARKS,
@@ -34,6 +35,7 @@ from dbt_charts.core.render.warnings import (
     annotation_rule_labels_numbered,
     bar_band_width_too_narrow,
     bar_grouped_series_coincide,
+    direct_overlay_collides,
     facet_panel_width_below_minimum,
     layout_min_exceeds_height,
     legend_overlay_covers_marks,
@@ -87,6 +89,7 @@ def test_a_chart_the_engine_raised_nothing_for_has_no_diagnostic() -> None:
         annotation_rule_labels_numbered,
         bar_band_width_too_narrow,
         bar_grouped_series_coincide,
+        direct_overlay_collides,
         facet_panel_width_below_minimum,
         layout_min_exceeds_height,
         value_labels_crowd_width,
@@ -292,3 +295,14 @@ def test_outliers_torn_unsupported_names_the_cap_variant() -> None:
     )
     assert diagnostic.code == WARN_OUTLIERS_TORN_UNSUPPORTED.code
     assert diagnostic.fix is not None and "torn_with_cap" in diagnostic.fix
+
+
+def test_colliding_series_names_name_the_series_and_recommend_auto() -> None:
+    diagnostic = _only(
+        direct_overlay_collides.detect(
+            _ctx(WARN_DIRECT_OVERLAY_COLLIDES, {"names": "EMEA, APAC"})
+        )
+    )
+    assert diagnostic.path == "charts.c1.style.key.direct.position"
+    assert "EMEA, APAC" in diagnostic.message
+    assert diagnostic.fix is not None and "auto" in diagnostic.fix

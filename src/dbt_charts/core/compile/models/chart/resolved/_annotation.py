@@ -10,25 +10,18 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field
+from pydantic import ConfigDict, Discriminator, Field
 
+from dbt_charts.core.compile.models.anchor import (
+    Frozen,
+    ResolvedCategoryAnchor,
+    ResolvedScalar,
+    ResolvedValueAnchor,
+)
 from dbt_charts.core.compile.models.style.theme.legend import LegendAlign, LegendEdge
 
-# A number, or an ISO date (`YYYY-MM-DD`, `YYYY-MM-DDTHH:MM[:SS]`). Dates are
-# never numbers.
-ResolvedScalar = float | str
 
-
-class _Frozen(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class ResolvedValueAnchor(_Frozen):
-    kind: Literal["value"] = Field(description="A single value on the axis.")
-    value: ResolvedScalar = Field(description="Where the annotation sits.")
-
-
-class ResolvedRangeAnchor(_Frozen):
+class ResolvedRangeAnchor(Frozen):
     model_config = ConfigDict(frozen=True, extra="forbid", serialize_by_alias=True)
 
     kind: Literal["range"] = Field(description="A span on the axis.")
@@ -40,22 +33,17 @@ class ResolvedRangeAnchor(_Frozen):
     )
 
 
-class ResolvedCategoryAnchor(_Frozen):
-    kind: Literal["category"] = Field(description="One slot on a discrete axis.")
-    value: str = Field(description="The category whose slot is filled.")
-
-
 ResolvedAnchor = Annotated[
     ResolvedValueAnchor | ResolvedRangeAnchor | ResolvedCategoryAnchor,
     Discriminator("kind"),
 ]
 
 
-class ResolvedLayerAxis(_Frozen):
+class ResolvedLayerAxis(Frozen):
     layer: int = Field(description="Position of the layer whose y scale is read.")
 
 
-class ResolvedTrend(_Frozen):
+class ResolvedTrend(Frozen):
     line: tuple[tuple[ResolvedScalar, float], ...] = Field(
         min_length=2, description="Fitted points, x ascending."
     )
@@ -64,7 +52,7 @@ class ResolvedTrend(_Frozen):
     )
 
 
-class ResolvedAnnotationStroke(_Frozen):
+class ResolvedAnnotationStroke(Frozen):
     color: str = Field(
         description="Stroke color; a rule's may be `auto`, picked from the rule's ladder."
     )
@@ -74,7 +62,7 @@ class ResolvedAnnotationStroke(_Frozen):
     )
 
 
-class ResolvedAnnotationRule(_Frozen):
+class ResolvedAnnotationRule(Frozen):
     opacity: float = Field(description="Rule opacity.")
     stroke: ResolvedAnnotationStroke = Field(description="Rule stroke.")
     ladder: tuple[str, ...] = Field(
@@ -88,7 +76,7 @@ class ResolvedAnnotationRule(_Frozen):
     )
 
 
-class ResolvedAnnotationRect(_Frozen):
+class ResolvedAnnotationRect(Frozen):
     opacity: float = Field(description="Fill opacity.")
     fill: str = Field(description="Fill color.")
     stroke: ResolvedAnnotationStroke | None = Field(
@@ -99,7 +87,7 @@ class ResolvedAnnotationRect(_Frozen):
     )
 
 
-class ResolvedAnnotationLine(_Frozen):
+class ResolvedAnnotationLine(Frozen):
     opacity: float = Field(description="Line opacity.")
     curve: Literal["linear", "natural"] = Field(description="How points are joined.")
     stroke: ResolvedAnnotationStroke = Field(description="Line stroke.")
@@ -108,12 +96,12 @@ class ResolvedAnnotationLine(_Frozen):
     )
 
 
-class ResolvedAnnotationArea(_Frozen):
+class ResolvedAnnotationArea(Frozen):
     opacity: float = Field(description="Fill opacity.")
     fill: str = Field(description="Fill color.")
 
 
-class ResolvedAnnotationCircle(_Frozen):
+class ResolvedAnnotationCircle(Frozen):
     opacity: float = Field(description="Circle opacity.")
     radius: float = Field(description="Circle radius in pixels.")
     point_radius: float = Field(
@@ -123,7 +111,7 @@ class ResolvedAnnotationCircle(_Frozen):
     stroke: ResolvedAnnotationStroke = Field(description="Circle stroke.")
 
 
-class ResolvedAnnotationFont(_Frozen):
+class ResolvedAnnotationFont(Frozen):
     family: tuple[str, ...] = Field(description="Font families, first match wins.")
     size: float = Field(description="Font size in pixels.")
     weight: float = Field(description="Font weight.")
@@ -132,12 +120,12 @@ class ResolvedAnnotationFont(_Frozen):
     color: str = Field(description="Text color.")
 
 
-class ResolvedAnnotationBoxStroke(_Frozen):
+class ResolvedAnnotationBoxStroke(Frozen):
     color: str = Field(description="Outline color.")
     width: float = Field(description="Outline width in pixels.")
 
 
-class ResolvedAnnotationBox(_Frozen):
+class ResolvedAnnotationBox(Frozen):
     visible: bool = Field(description="Whether a box is drawn behind the text.")
     fill: str = Field(description="Box fill.")
     opacity: float = Field(description="Box opacity.")
@@ -148,7 +136,7 @@ class ResolvedAnnotationBox(_Frozen):
     )
 
 
-class ResolvedAnnotationPosition(_Frozen):
+class ResolvedAnnotationPosition(Frozen):
     edge: LegendEdge = Field(description="Side of the geometry the text sits on.")
     align: LegendAlign = Field(description="Where along that side.")
     overlay: bool = Field(description="On or inside the geometry, rather than outside.")
@@ -166,7 +154,7 @@ class ResolvedAnnotationPosition(_Frozen):
     )
 
 
-class ResolvedAnnotationText(_Frozen):
+class ResolvedAnnotationText(Frozen):
     font: ResolvedAnnotationFont = Field(description="Text font.")
     halo: float = Field(description="Canvas-colored outline width in pixels.")
     halo_opacity: float = Field(description="Opacity of the halo as a whole, 0 to 1.")
@@ -187,7 +175,7 @@ class ResolvedAnnotationText(_Frozen):
     )
 
 
-class ResolvedAnnotationStyle(_Frozen):
+class ResolvedAnnotationStyle(Frozen):
     """The marks the annotation's type draws; the rest are empty."""
 
     rule: ResolvedAnnotationRule | None = Field(
@@ -208,14 +196,14 @@ class ResolvedAnnotationStyle(_Frozen):
     text: ResolvedAnnotationText = Field(description="Text style.")
 
 
-class ResolvedAnnotationGap(_Frozen):
+class ResolvedAnnotationGap(Frozen):
     """An annotation that draws nothing in some scope; the chart still renders."""
 
     index: int = Field(description="Position in the authored list.")
     reason: str = Field(description="Which scopes are empty, and why.")
 
 
-class ResolvedAnnotation(_Frozen):
+class ResolvedAnnotation(Frozen):
     index: int = Field(description="Position in the authored list.")
     type: Literal["rule", "band", "note", "trend"] = Field(description="What is drawn.")
     plane: Literal["background", "foreground"] = Field(

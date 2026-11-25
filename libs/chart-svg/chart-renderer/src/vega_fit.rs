@@ -466,7 +466,7 @@ impl TitleInk {
     /// per extra 11px subtitle line, at any of the probed sizes).
     pub const LINE_ADVANCE_EXTRA: f64 = 2.0;
 
-    /// `single`, wrapped onto `lines` lines (wrap-two overflow).
+    /// `single`, wrapped onto `lines` lines (two-line overflow).
     pub fn with_lines(font_size: f64, lines: usize, offset: f64, width: f64) -> Self {
         let mut t = Self::single(font_size, offset, width);
         t.ink_h += (lines.max(1) - 1) as f64 * (font_size + Self::LINE_ADVANCE_EXTRA);

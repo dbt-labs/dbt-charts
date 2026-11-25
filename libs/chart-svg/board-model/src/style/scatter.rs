@@ -8,20 +8,49 @@ use crate::chart::conditional_formatting::Predicate;
 use crate::style::axis::AxisXConditional;
 use crate::style::bar::misplaced_defaults;
 use crate::style::marks::{
-    PointMarkStyle, PointMarkStyleConditional, TextMarkStyle, TextMarkStyleConditional,
+    PointMarkStyle, RingedPointMarkStyle, RingedPointMarkStyleConditional, TextMarkStyle, TextMarkStyleConditional,
 };
 use crate::primitives::SizeScaleStyle;
+use crate::string_enum;
 use diagnostic::Diagnostic;
 use indexmap::IndexMap;
-use model_core::{Authored, Tri};
+use model_core::{Authored, Cx, FromNode, Leaf, Merge, Node, ReadScalar, Tri, TypeExpr};
 use model_derive::Model;
+
+string_enum!(
+    /// How a scatter draws its axes at rest.
+    ScatterFrame { Full = "full", Range = "range" }
+);
+string_enum!(
+    /// A series symbol of a framed scatter.
+    ScatterSeriesSymbol {
+        HollowCircle = "hollow_circle", Plus = "plus", OpenTriangle = "open_triangle", Cross = "cross",
+        Diamond = "diamond", Tripod = "tripod", Square = "square", Asterisk = "asterisk"
+    }
+);
+
+crate::style::axis::non_empty_list!(
+    /// The symbols a framed scatter's series take: at least one, none twice.
+    ScatterSeriesSymbols,
+    ScatterSeriesSymbol,
+    distinct
+);
 
 /// Scatter-family mark overrides.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct ScatterChartMarksStyle {
     /// Point mark overrides; inherits from global.
-    pub point: PointMarkStyle,
+    pub point: RingedPointMarkStyle,
     /// Text mark overrides; inherits from global.
+    pub text: TextMarkStyle,
+}
+
+/// Scatter-layer mark overrides: plain points, which carry no halo.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct ScatterLayerMarksStyle {
+    /// Point mark overrides; inherits from the scatter family.
+    pub point: PointMarkStyle,
+    /// Text mark overrides; inherits from the scatter family.
     pub text: TextMarkStyle,
 }
 
@@ -30,7 +59,7 @@ pub struct ScatterChartMarksStyle {
 pub struct ScatterChartMarksStyleConditional {
     /// Point mark overrides; inherits from global.
     #[model(absent = "the point mark's own style")]
-    pub point: Option<PointMarkStyleConditional>,
+    pub point: Option<RingedPointMarkStyleConditional>,
     /// Text mark overrides (the value labels); inherits from global.
     #[model(absent = "the text mark's own style")]
     pub text: Option<TextMarkStyleConditional>,
@@ -67,7 +96,7 @@ pub struct ScatterChartStyleConditional {
 #[model(complete)]
 pub struct ScatterLayerStyle {
     /// Mark overrides for this scatter layer.
-    pub marks: ScatterChartMarksStyle,
+    pub marks: ScatterLayerMarksStyle,
 }
 
 /// Scatter chart style: chart-level fields + marks sub-block.
@@ -86,6 +115,11 @@ pub struct ScatterChartStyle {
     pub marks: ScatterChartMarksStyle,
     /// Area range and scale type of the `size:` channel.
     pub size: SizeScaleStyle,
+    /// How the axes draw: in full, or as a range frame over the data.
+    pub frame: ScatterFrame,
+    /// Each series' symbol, in series order, under a range frame.
+    #[model(absent = "the point mark's own shape")]
+    pub series_symbols: Option<ScatterSeriesSymbols>,
     /// Rules that restyle a point by its row's value, keyed by column name. Each rule is one condition (eq, ne, lt, lte, gt, gte, between, in, is_null, or default) plus the style it applies: marks.point color, fill, filled, size, shape, opacity and stroke_width, and marks.text font color and weight. A rule size or shape overrides a `size:` or `shape:` channel for the points it matches; the legend is unchanged. Every matching rule applies; where two set the same key the later one wins, so list the more specific rule last. A `default: true` rule applies only when no other rule matched. Two columns cannot patch the same property. Rules style the base layer, not `layers:`.
     #[model(fill = fill_empty)]
     pub conditional: IndexMap<String, Vec<ScatterChartStyleConditional>>,

@@ -459,15 +459,15 @@ impl TimeX {
         &self,
         r: &BarResolved,
         svg_w: f64,
+        plot_w: f64,
         title_text: String,
         title_key: Option<crate::contract::LabelKey>,
         fonts: &FontBook,
     ) -> Result<TemporalXAxis, String> {
-        let usable = r.style.label_usable_ratio.ok_or("bar: label_usable_ratio absent (theme required for a date x axis)")?;
         let mut axis = TemporalXAxis::resolve(
             &DateColumn { edge_pad: 0.0, ladder: &self.ladder, kept: &self.kept, law: self.law, band_layer: false, indexed: self.indexed, bucket_aligned: true, timed: &self.timed, chart_width: svg_w, extra_days: &[], folded: matches!(self.law.grain, Grain::Part(_)), time: &self.axis },
             &self.scale_ax,
-            svg_w * usable,
+            plot_w,
             title_text,
             title_key,
             fonts,
@@ -501,6 +501,16 @@ impl TimeX {
     /// Whether the x scale is discrete: value labels make it a point or band scale over the dates.
     pub(super) fn is_discrete(&self) -> bool {
         self.indexed.is_some()
+    }
+
+    /// Whether a bar's width grows with the plot's: a share of its calendar bucket, or the law over the spacing of its
+    /// closest neighbors. A point scale's step, an authored size and a lone instant do not.
+    pub(super) fn widens_with_plot(&self) -> bool {
+        match &self.sizing {
+            Sizing::Bucket { size, .. } => size.is_none(),
+            Sizing::Instant { width, closest } => closest.is_some() && !width.has_authored_size(),
+            Sizing::Stepped { .. } | Sizing::Band { .. } => false,
+        }
     }
 
     /// Whether the bars sit on the axis's band scale rather than at positions of their own.

@@ -124,7 +124,7 @@ def _one_line_title_width(
 ) -> float:
     """Width ``chart`` needs to draw its title uncut on one line, chrome included; 0 when none.
 
-    Only a mark family's title whose overflow cuts it to one line counts. A
+    Only a mark family's title whose `max_lines` limits it to one line counts. A
     title templated on variables or data has no text to measure before a render.
     ``width`` picks the title's width tier.
     """
@@ -135,7 +135,7 @@ def _one_line_title_width(
     if "{{" in title or "{%" in title:
         return 0.0
     ctx = build_chart_style_context(chart_style_context, chart)
-    if ctx.title.overflow not in ("truncate", "clip"):
+    if ctx.title.max_lines != 1:
         return 0.0
     font = resolve_title_font(ctx, width)
     text = apply_case(title, font.case)

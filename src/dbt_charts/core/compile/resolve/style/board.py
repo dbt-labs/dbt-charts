@@ -45,6 +45,7 @@ from dbt_charts.core.compile.models.style.authored import (
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedChartDefaults,
     ResolvedLegendElementStyle,
+    ResolvedLegendLabelStyle,
     ResolvedLegendStyle,
     ResolvedStyle,
 )
@@ -92,6 +93,7 @@ from dbt_charts.core.compile.resolve.style.inherit_resolver import (
 )
 from dbt_charts.core.compile.resolve.style.legend_position import (
     decide_legend_direction,
+    decide_legend_padding,
     decide_legend_position,
 )
 from dbt_charts.core.compile.resolve.style.palette import (
@@ -106,6 +108,9 @@ from dbt_charts.core.compile.resolve.style.tokens import (
     _append_emoji_family,
     _resolve_self_tokens,
     _resolve_tokens_on_patch,
+    board_ink,
+    charts_draw_in_ink,
+    draws_in_ink,
 )
 from dbt_charts.core.compile.resolve.style.typography import (
     concrete_title_style,
@@ -202,16 +207,21 @@ def _build_resolved_legend(
         direction=decide_legend_direction(legend.direction, position.edge),
         columns=legend.columns,
         compact_columns=legend.compact_columns,
-        row=legend.row,
+        entry_gap=legend.entry_gap,
+        symbol=legend.symbol,
+        background=legend.background,
+        opacity=legend.opacity,
+        # Seeds charts with no key style; `merge_chart_style` re-decides the rest.
+        padding=decide_legend_padding(legend.padding, overlay=position.overlay),
+        border=legend.border,
         visible=visible,
-        symbol_limit=legend.symbol_limit,
+        limit=legend.limit,
         values=legend.values,
-        symbol_shape=legend.symbol_shape,
-        symbol_fill=legend.symbol_fill,
-        label=ResolvedLegendElementStyle(
+        label=ResolvedLegendLabelStyle(
             font=resolve_cascaded_font(legend.label.font),
             padding=legend.label.padding,
             max_width=legend.label.max_width,
+            halo=legend.label.halo,
             visible=True,
         ),
         title=ResolvedLegendElementStyle(
@@ -333,6 +343,7 @@ def _build_chart_style_context(
     card_padding: float,
     heading_sizes: list[float],
     section_sizes: list[float],
+    ink: str | None,
     formats: FormatTable | None = None,
 ) -> ChartStyleContext:
     # Deferred: a module-level import here would cycle back through
@@ -382,6 +393,7 @@ def _build_chart_style_context(
         "dark_companion_palette",
         "ink_canvas",
         "board_canvas",
+        "ink",
         "single_series_palette",
         "warned_palette",
         "axis_overrides_global",
@@ -444,10 +456,11 @@ def _build_chart_style_context(
         **passthrough,
         palette=resolved_palette,
         dark_companion_palette=tuple(
-            mark_ink(c, chart_canvas) for c in resolved_palette
+            mark_ink(c, chart_canvas, ink) for c in resolved_palette
         ),
         ink_canvas=chart_canvas,
         board_canvas=board_canvas,
+        ink=ink,
         single_series_palette=resolved_single_series_palette,
         warned_palette=_categorical_obj.warned_palette,
         dashes=charts.dashes if charts.dashes is not None else [],
@@ -610,6 +623,7 @@ def _finalize_chart_style_context(
     canvas_token_charts: ChartsStyle,
     base_background: str,
     currency: CurrencyCode | None,
+    ink: str | None,
 ) -> ChartStyleContext:
     """Build ChartStyleContext from an already-seeded, already-cascaded Style.
 
@@ -643,6 +657,7 @@ def _finalize_chart_style_context(
         pre_style=pre_style,
         canvas_token_charts=canvas_token_charts,
         cascaded=cascaded,
+        ink=ink,
         formats=_format_table(cascaded, currency),
         card_padding=cascaded.frame.card_padding,
         heading_sizes=pre_style.heading_ramp(),
@@ -830,6 +845,10 @@ def _finalize_style(
     if settled(token_style.charts.title).font.size is None:
         token_style = merge_onto_base(token_style, _CHART_TITLE_AUTO_SIZE)
     pre_style = _resolve_canvas_tokens(base, token_style, base_background)
+    # A hex `style.roles.ink` only where a leaf draws in it: the exemption and
+    # the warning share this one predicate.
+    ink = board_ink(token_style)
+    ink = ink if draws_in_ink(token_style, ink) else None
     cascaded = apply_inherit(pre_style, get_inherit_graph())
     cascaded = _seed_spark_colors(cascaded)
     cascaded = _bake_theme_words(cascaded, language)
@@ -844,6 +863,7 @@ def _finalize_style(
         token_style.charts,
         base_background,
         currency,
+        ink,
     )
     # ResolvedChartDefaults is exactly ChartStyleContext minus its sparse/
     # cascade-only fields (see the class docstring) — every remaining field
@@ -884,6 +904,9 @@ def _finalize_style(
         "secondary_color",
         "numeral_family",
         "canvas_tone",
+        "ink",
+        "draws_in_ink",
+        "charts_draw_in_ink",
     }
     passthrough = {
         name: getattr(cascaded, name)
@@ -895,6 +918,9 @@ def _finalize_style(
         **passthrough,
         font=resolved_root_font,
         secondary_color=cascaded.secondary_ink(),
+        ink=ink,
+        draws_in_ink=draws_in_ink(token_style, ink, outside_charts=True),
+        charts_draw_in_ink=charts_draw_in_ink(cascaded, ink),
         numeral_family=cascaded.numeral_family(),
         canvas_tone=canvas_tone(chart_context.board_canvas),
         emoji_mode=cascaded.font.emoji,

@@ -18,6 +18,10 @@ from dbt_charts.core.compile.config import (
     user_facing_theme_names,
 )
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.models.anchor import (
+    ResolvedCategoryAnchor,
+    ResolvedValueAnchor,
+)
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
@@ -26,9 +30,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.models.chart.resolved._annotation import (
     ResolvedAnnotation,
-    ResolvedCategoryAnchor,
     ResolvedRangeAnchor,
-    ResolvedValueAnchor,
 )
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
@@ -1526,6 +1528,48 @@ def test_a_zero_row_query_draws_nothing_and_says_why() -> None:
     assert chart.annotations == ()
     [gap] = chart.annotation_gaps
     assert gap.index == 0 and "no plotted rows" in gap.reason
+
+
+def test_a_zero_row_query_draws_no_literal_anchor_rather_than_refusing_it() -> None:
+    # No rows leave no values to type the x column from, so a date anchor would
+    # read against a guessed category axis; the chart shows "No results" instead.
+    chart = _scatter([{"type": "rule", "x": "2026-01-15", "text": "Change"}], rows=[])
+    assert chart.annotations == ()
+    [gap] = chart.annotation_gaps
+    assert gap.index == 0 and "no plotted rows" in gap.reason
+
+
+@pytest.mark.parametrize(
+    ("chart", "match"),
+    [
+        (
+            lambda: _area([{"type": "trend", "fit": "linear()"}], rows=[], y="revenue"),
+            "trend on an area",
+        ),
+        (
+            lambda: _scatter([{"type": "rule", "x": 3, "series": "each"}], rows=[]),
+            "series applies only",
+        ),
+        (
+            lambda: _scatter([{"type": "rule", "x": "{{ day }}"}], rows=[]),
+            "is a template",
+        ),
+    ],
+)
+def test_a_zero_row_query_still_refuses_an_annotation_no_data_could_fix(
+    chart: Any, match: str
+) -> None:
+    with pytest.raises(CompilationError, match=match):
+        chart()
+
+
+def test_a_zero_row_query_has_no_series_to_refuse_a_listed_one() -> None:
+    chart = _line(
+        [{"type": "rule", "y": "max()", "series": ["EMEA"]}], rows=[], color="region"
+    )
+    assert chart.annotations == ()
+    [gap] = chart.annotation_gaps
+    assert "no plotted rows" in gap.reason
 
 
 def test_a_listed_series_a_panel_lacks_draws_nothing_while_the_others_draw() -> None:

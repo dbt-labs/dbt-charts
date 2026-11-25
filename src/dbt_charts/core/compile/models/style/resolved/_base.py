@@ -57,7 +57,7 @@ from dbt_charts.core.compile.models.style.theme import (
     LegendAlign,
     LegendDirection,
     LegendEdge,
-    LegendRowStyle,
+    LegendSymbolStyle,
     LineChartStyle,
     PaddingStyle,
     PieChartStyle,
@@ -586,14 +586,33 @@ class ResolvedLegendElementStyle(BaseModel):
     visible: bool | None = None
 
 
+class ResolvedLegendLabelStyle(ResolvedLegendElementStyle):
+    """The outline width behind each label; the title has none."""
+
+    halo: float
+
+
+class ResolvedLegendCorner(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    edge: LegendEdge
+    align: LegendAlign
+
+
 class ResolvedLegendPosition(BaseModel):
-    """Concrete legend placement; radial families never overlay."""
+    """Concrete legend placement; radial families never overlay.
+
+    ``corners`` are the placements a floating legend may take, in search order:
+    the renderer uses the first whose box covers no marks. ``corners[0]`` is
+    ``(edge, align)``; a placement nobody left to the engine has one entry.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     edge: LegendEdge
     align: LegendAlign
     overlay: bool
+    corners: list[ResolvedLegendCorner]
 
 
 class ResolvedLegendStyle(BaseModel):
@@ -615,21 +634,20 @@ class ResolvedLegendStyle(BaseModel):
     # type(base).model_validate) — an authored compact_columns: 0 must fail
     # loudly here, not surface as a resolve-time ZeroDivisionError.
     compact_columns: int = Field(ge=1)
-    row: LegendRowStyle
-    label: ResolvedLegendElementStyle
+    entry_gap: float
+    symbol: LegendSymbolStyle
+    background: str
+    opacity: float
+    # Decided per chart (`decide_legend_padding`).
+    padding: float
+    border: BorderStyle
+    label: ResolvedLegendLabelStyle
     title: ResolvedLegendElementStyle
     visible: bool
-    symbol_limit: int | None = None
+    limit: int | None = None
     # Cascade-managed sentinel: None = renderer infers entry order from the
     # color domain; a list pins explicit legend.values order (author surface).
     values: list[str] | None = None
-    # Author override for the legend glyph shape (VL symbolType). None = let
-    # the renderer pick the mark-aware glyph; non-None wins over the mark-derived
-    # Vega expression and is emitted as a constant string.
-    symbol_shape: str | None = None
-    # Author override for symbol fill. False → symbolFillColor='transparent'
-    # in the emitted VL legend, producing hollow glyphs. None = VL default.
-    symbol_fill: bool | None = None
     # Internal, resolved-only fact — never authored, absent from every patch
     # model (LegendStyle/LegendStylePatch declare no such field). Set to the
     # author's own `position.edge` (a side), or `direct` for `type: direct`, when the tiny-width
@@ -750,6 +768,14 @@ class ResolvedStyle:
     """
 
     background: str
+    # The hex `style.roles.ink` as set (None when unset): used exactly, never moved.
+    ink: str | None
+    # Whether a leaf of this scope is that ink: only then is `ink` checked
+    # against the scope's canvas by the contrast warning.
+    draws_in_ink: bool
+    # Whether `ink` reaches the charts' own leaves, directly or by inheritance:
+    # only then is a chart's card checked against it.
+    charts_draw_in_ink: bool
     # Light or dark: the tone of the board canvas (`background` composited
     # over the canvas beneath it). Derived at resolve, never authored.
     canvas_tone: CanvasTone
@@ -819,6 +845,7 @@ __all__ = [
     "ResolvedChartDefaults",
     "ResolvedErrorTileStyle",
     "ResolvedLegendElementStyle",
+    "ResolvedLegendLabelStyle",
     "ResolvedLegendPosition",
     "ResolvedLegendStyle",
     "ResolvedScaleContinuousStyle",

@@ -305,7 +305,7 @@ impl LegendBox {
     fn nodes(&self, entries: &[LegendEntry], cfg: &LegendConfig, x: f64, y: f64, canvas: &str) -> Vec<Node> {
         match self {
             LegendBox::Vega(lg) => drawn_symbol_legend(entries, lg, cfg, LegendSymbol::Circle, x, y, false, canvas).into_iter().collect(),
-            LegendBox::Shape(lg) => lg.nodes(x, y, SymbolFill::Static("#000"), 1.0),
+            LegendBox::Shape(lg) => lg.nodes(cfg, x, y, SymbolFill::Static("#000"), 1.0, canvas),
         }
     }
 }
@@ -589,7 +589,7 @@ pub(crate) fn render(
         .iter()
         .zip(&legend_entries)
         .map(|(lg, entries)| match lg.kind {
-            LegendKind::Shape => ShapeLegend::new(fonts, payload, lg.title.clone(), Vec::new()).map(LegendBox::Shape),
+            LegendKind::Shape => ShapeLegend::new(fonts, payload, &extra.legend, lg.title.clone(), Vec::new()).map(LegendBox::Shape),
             LegendKind::Color | LegendKind::Size => {
                 vega_legend(entries, lg.mixed_marks, &lg.title, &extra.legend, fonts).map(LegendBox::Vega)
             }

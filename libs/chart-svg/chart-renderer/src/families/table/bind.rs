@@ -9,6 +9,7 @@ use super::sanitize_color;
 use ::bind::table::sanitized_color;
 use super::svg_font_family;
 use super::text_format;
+use super::column_type;
 use super::Blank;
 use super::BoardFormats;
 use super::Bound;
@@ -1123,13 +1124,12 @@ pub(super) fn is_numeric_cell(col: &ColMeta, raw: Option<&Value>) -> bool {
     }
 }
 
-/// A non-blank cell of a declared `date` column, or a date-shaped cell of a
-/// `string` column: the text the date lane right-aligns and paints in the
-/// tabular face. Any other declared kind holds no date text.
+/// A non-blank cell of a declared `date` column: the text the date lane
+/// right-aligns and paints in the tabular face. Any other declared kind holds no
+/// date text: a `string` column's cell is text, however date-shaped.
 pub(crate) fn is_date_text(kind: &ColumnType, raw: Option<&Value>) -> bool {
     match (kind, raw) {
         (ColumnType::Date, Some(Value::String(s))) => !s.trim().is_empty(),
-        (ColumnType::String, Some(Value::String(s))) => column_types::is_date_like(s),
         _ => false,
     }
 }
@@ -1162,9 +1162,9 @@ pub(super) fn temporal_spec(format: Option<&FormatSlot>) -> Result<String, Strin
     Ok(board_alias(name)?.unwrap_or_else(|| engine_spec.to_string()))
 }
 
-/// `format_table_cell_value`'s temporal path for a
-/// string cell: an ISO date or timestamp paints through the strftime spec,
-/// `Ok(None)` for any other string (verbatim, `str(value)`). A non-strftime
+/// `format_table_cell_value`'s temporal path for a cell of a declared date or
+/// timestamp column: it paints through the strftime spec. `Ok(None)` (verbatim)
+/// for any other cell: a `string` column's text prints as the source spelled it. A non-strftime
 /// spec meeting a temporal value is production's
 /// `ERR_TABLE_FORMAT_KIND_MISMATCH`; a directive `table_dates::strftime` does
 /// not reach errs by name.
@@ -1174,6 +1174,9 @@ pub(super) fn format_temporal_cell(
     name: &str,
     s: &str,
 ) -> Result<Option<String>, Diagnostic> {
+    if !kind.is_temporal() {
+        return Ok(None);
+    }
     let spec_owned = temporal_spec(format)?;
     let spec = spec_owned.as_str();
     let refuse = |why: String| format!("table: column '{name}' format {spec:?}: {why}");
@@ -2331,8 +2334,10 @@ pub(super) fn visible_columns<'a>(
             // column_defaults fills each field independently (never gated on
             // another field).
             if let Some(defaults) = &r.column_defaults {
-                if cfg.format.is_none() {
-                    cfg.format = defaults.format.clone();
+                if let (None, Some(format)) = (&cfg.format, &defaults.format) {
+                    if column_type::format_fits(cfg.r#type, format)? {
+                        cfg.format = Some(format.clone());
+                    }
                 }
                 if cfg.width.is_none() && cfg.max_width.is_none() {
                     cfg.width = defaults.width.clone();
@@ -2351,6 +2356,20 @@ pub(super) fn visible_columns<'a>(
             // A pivot leaf is built at render time, so its align verdict is too:
             // `classify_date_column_align` (right for a declared `date` column).
             let kind = types.get(name)?;
+            // A string column's text prints as stored, so a date format over ISO-dated text
+            // would change nothing: it is refused rather than ignored, whether the column
+            // authored it or inherited it from `column_defaults`.
+            if let (ColumnType::String, None, Some(format)) = (kind, cfg.r#type, &cfg.format) {
+                let dated = rows.iter().any(|row| {
+                    matches!(row.get(name), Some(Value::String(s)) if matches!(table_dates::parse_iso(s.trim()), Ok(Some(_))))
+                });
+                if dated && column_type::format_fits(Some(column_type::CellType::Date), format)? {
+                    return Err(format_kind_mismatch(
+                        &format.spec,
+                        &format!("column '{name}' holds text, so the format would not apply: add `type: date` (or `datetime`) to the column, or cast it in SQL"),
+                    ));
+                }
+            }
             if is_leaf && cfg.align.is_none() {
                 let mut values = rows
                     .iter()
@@ -2400,6 +2419,7 @@ pub(super) fn visible_columns<'a>(
                 .filter(|v| !v.is_null() && !matches!(v, Value::String(s) if s.trim().is_empty()))
                 .peekable();
             let is_day = !is_numeric
+                && kind.is_temporal()
                 && filled.peek().is_some()
                 && filled.all(|v| iso_day(Some(v)).is_some());
 
@@ -2443,7 +2463,7 @@ pub(super) fn visible_columns<'a>(
                 }),
             })
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, Diagnostic>>()?;
 
     let visible_flags: Vec<bool> = cols.iter().map(|c| c.cfg.visible != Some(false)).collect();
     let (pivot_n_row_dims, pivot_levels_visible): (usize, Vec<Vec<PivotLevel>>) = match &pivot {
@@ -2555,6 +2575,11 @@ pub(super) fn bind_chart(src: Source) -> Result<Chart, Diagnostic> {
             ..src
         });
     }
+    let typed = column_type::lower(src.resolved, src.rows, src.types, src.cell_text)?;
+    let src = match &typed {
+        Some((rows, types)) => Source { rows, types, ..src },
+        None => src,
+    };
     let r: Resolved =
         Deserialize::deserialize(src.resolved).map_err(|e| format!("table payload: {e}"))?;
     check_row_role(&r, src.rows)?;

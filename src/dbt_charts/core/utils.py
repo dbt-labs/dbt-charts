@@ -364,42 +364,22 @@ def is_date_like(value: Any) -> bool:
 
 
 def classify_date_column_align(values: Sequence[Any]) -> Literal["right"] | None:
-    """Return "right" iff every non-null value in a table column is
-    date-like, else None (no verdict).
+    """Return "right" iff every non-null value in a table column is a
+    declared date, else None (no verdict).
 
-    A table column is not a set of independently-aligned cells: a per-cell
-    date match is not sufficient to right-align the whole column, because
-    the same column can mix formats a date detector only partially
-    recognizes (e.g. "9 May 2026" matches, "30 March 2026" doesn't) and a
-    per-cell decision then renders one column with two different
-    text-anchors. Only a unanimous match earns a verdict; anything else
-    (mixed content, non-date content, an empty column) returns None and
-    the caller's normal alignment default applies.
-
-    Null/blank cells don't count against the verdict — the caller renders
-    them as a placeholder regardless of column alignment.
-
-    ``values`` are the raw executor rows resolve holds; render normalizes a
-    non-JSON-native scalar (``normalize_scalar_for_json``, applied before
-    any of render's own per-cell checks run) by calling ``str()`` on it. A
-    bare ``datetime.date`` stringifies to a clean ISO date and still
-    matches; a ``datetime.datetime`` always stringifies with a time
-    component (even at midnight), which the date patterns below don't
-    match. Classifying a raw ``datetime.datetime`` as date-like without
-    accounting for that would right-align a column whose cells render
-    non-tabular, proportional-font text — this pre-stringifies exactly the
-    values render will also stringify, so the two can't disagree on a value
-    that renders as plain text once normalized.
+    Rows arrive in their declared form, so a date column's cells are
+    ``datetime.date`` objects and a text column's are ``str``: text aligns
+    like text, however date-shaped. A ``datetime.datetime`` paints as a
+    timestamp in the body font, so it earns no verdict either. Only a
+    unanimous match earns one; anything else (mixed content, an empty
+    column) returns None and the caller's normal alignment default applies.
+    Null cells don't count against the verdict.
     """
-    non_null = [
-        v
-        for v in values
-        if v is not None and not (isinstance(v, str) and not v.strip())
-    ]
+    non_null = [v for v in values if v is not None]
     if not non_null:
         return None
-    normalized = [str(v) if isinstance(v, datetime) else v for v in non_null]
-    return "right" if all(is_date_like(v) for v in normalized) else None
+    dated = all(isinstance(v, date) and not isinstance(v, datetime) for v in non_null)
+    return "right" if dated else None
 
 
 def format_error_summary(errors: list[str]) -> str:

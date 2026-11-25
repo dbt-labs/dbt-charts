@@ -633,6 +633,18 @@ ERR_MULTIPLES_ENDPOINT_LABELS = REGISTRY.register(
     )
 )
 
+ERR_DIRECT_OVERLAY_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DIRECT-OVERLAY-UNSUPPORTED",
+        domain="render",
+        title="Direct labels cannot go inside this plot",
+        message_template="Chart {chart_id!r}: `key.direct.position: overlay` names series inside the plot of a single-panel line chart or a stacked area chart, and {reason}. Set `key.direct.position: auto` or `end` on this chart.",
+        doc="Fired when a chart names its series with direct labels under `key.direct.position: overlay` where in-plot names are not drawn: an unstacked area chart, a layered chart, a connected line, or a chart with `multiples`. `auto` keeps the names beside the plot on these charts instead.",
+        summary="Fired when `key.direct.position: overlay` is set on a chart that cannot draw in-plot series names.",
+        docs_topic="charts",
+    )
+)
+
 ERR_MIRROR_ENDPOINT_LABELS = REGISTRY.register(
     ErrorCode(
         code="ERR-MIRROR-ENDPOINT-LABELS",
@@ -966,6 +978,19 @@ WARN_LAYER_X_DOMAIN_PAINT_ORDER = REGISTRY.register(
     )
 )
 
+WARN_CHART_HEIGHT_BELOW_CATEGORY_FLOOR = REGISTRY.register(
+    WarningCode(
+        code="WARN-CHART-HEIGHT-BELOW-CATEGORY-FLOOR",
+        domain="render",
+        title="Chart's own height cap is below its category floor",
+        message_template="Chart {chart_id!r} has {n_categories} category bands, which need at least {min_height:.0f}px to stay readable, but its {field} caps it at {authored_height:.0f}px. The chart rendered at {min_height:.0f}px anyway: the {field} you wrote was not honored.",
+        fix_template="Remove or raise the field named in the message, or return fewer categories from the query (top N, with the rest in an `Other` row) so the readable minimum fits inside it.",
+        doc="Fires when a horizontal bar chart's category count forces a minimum height (one readable band per category) that exceeds a cap its author wrote on the chart itself, its own `height`, else its own `style.max_height`. The engine expands the chart to the computed minimum regardless (squashing labels past legibility to honor an impossible cap would be worse), so the cap silently loses. A theme or board `style.charts.max_height` default never fires this, since every long list would. A row/tile height warns as WARN-LAYOUT-MIN-EXCEEDS-HEIGHT.",
+        summary="Fires when a horizontal bar chart's categories need more height than the chart's own `height` or `style.max_height` allows.",
+        docs_topic="charts",
+    )
+)
+
 WARN_LAYOUT_MIN_EXCEEDS_HEIGHT = REGISTRY.register(
     WarningCode(
         code="WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
@@ -1290,6 +1315,19 @@ WARN_TOO_MANY_X_CATEGORIES = REGISTRY.register(
     )
 )
 
+WARN_DIRECT_OVERLAY_COLLIDES = REGISTRY.register(
+    WarningCode(
+        code="WARN-DIRECT-OVERLAY-COLLIDES",
+        domain="render",
+        title="Series names could not all find a clear spot in the plot",
+        message_template="Chart {chart_id!r}: series names with no clear spot in the plot are drawn where they overlap the least: {names}.",
+        fix_template="Set `key.direct.position: auto` to name the series beside the plot when they do not fit inside it, or widen the chart.",
+        doc="Fired when `key.direct.position: overlay` is set and a series' name has no spot in the plot that clears every line, the plot's sides and the other names. The name is drawn at its least-overlapping spot. `auto` names the series beside the plot instead, and never warns.",
+        summary="Fired when `key.direct.position: overlay` leaves a series name overlapping the chart.",
+        docs_topic="charts",
+    )
+)
+
 WARN_VALUE_LABELS_CROWD_WIDTH = REGISTRY.register(
     WarningCode(
         code="WARN-VALUE-LABELS-CROWD-WIDTH",
@@ -1349,6 +1387,18 @@ WARN_AXIS_TITLE_TRUNCATED = REGISTRY.register(
         message_template="Chart {chart_id!r}: {authored_field!r} was truncated: the authored text {authored_text!r} did not fit within two lines at the available extent.",
         fix_template="Shorten the axis title, or widen the chart so the title has more room.",
         doc="Fires when an axis title is pre-wrapped to at most two lines (so a long title cannot collapse the plot) and the authored text is still too long: the last line is cut with a Unicode ellipsis (…) and the remainder of the title is lost. The title text in the message is the full authored text before truncation, so you can see exactly what was cut.",
+        docs_topic="charts",
+    )
+)
+
+WARN_AXIS_END_LABEL_DROPPED = REGISTRY.register(
+    WarningCode(
+        code="WARN-AXIS-END-LABEL-DROPPED",
+        domain="render",
+        title="A framed axis dropped its lower end label, which would have overlapped the higher one",
+        message_template="Chart {chart_id!r}: the two end labels of {axis} would overlap, so only the higher end is labeled.",
+        fix_template="Widen the chart, or turn the axis zero off (`scale.continuous.zero: false`) so the data fills it.",
+        doc="Fires when a `frame: range` scatter axis would print its two end labels closer together than the labels are wide (x) or tall (y), which happens when the data runs over a short span far from the domain edge. The lower end's label is dropped and its tick is kept; the higher end's label stays.",
         docs_topic="charts",
     )
 )
@@ -1468,7 +1518,7 @@ WARN_TABLE_HEADER_EXTRA_WRAP = REGISTRY.register(
         title="Table column header needs more than two lines",
         message_template="Table {chart_id!r}: the {column!r} column header {header!r} needs {lines} lines. Two lines are fine; more is too much. Only {column_width:.0f}px were allocated for this column, in a table of {column_count} columns and {table_width:.0f}px total width.",
         fix_template="Shorten the header, or give the column more space: set `style.columns.{column}.width`, drop columns, or widen the table.",
-        doc="Fires once per column whose header, wrapped with no line cap in the column's content area, needs more than two lines. Two lines are the theme default and never warn, so a header that fits in two does not fire however many columns share the table. A `wrap-two` header is cut at two lines with an ellipsis and a `wrap` header draws every line; both fire. The width is the column's own: a header that needs three lines in a 90px column is a column problem, not a table-width problem.",
+        doc="Fires once per column whose header, wrapped with no line cap in the column's content area, needs more than two lines. Two lines are the theme default and never warn, so a header that fits in two does not fire however many columns share the table. A `header.max_lines: 2` header is cut at two lines with an ellipsis and an `all` header draws every line; both fire. The width is the column's own: a header that needs three lines in a 90px column is a column problem, not a table-width problem.",
         docs_topic="charts",
     )
 )
@@ -1480,7 +1530,7 @@ WARN_TABLE_CONTENT_TALLER_THAN_WIDE = REGISTRY.register(
         title="Table text wrapped into a block taller than its column is wide",
         message_template="Table {chart_id!r}: text in the {column!r} column wraps into blocks taller than the column is wide, which usually means it wrapped too much. The worst cell takes {max_lines} lines and {cell_count} cell(s) are that tall, in {column_width:.0f}px allocated to the column.",
         fix_template="Give the column more space with `style.columns.{column}.width`, shorten the text, or drop columns from the table.",
-        doc="Fires once per text column when a wrapped body cell's block of lines is taller than the column's content area is wide and wraps onto at least the engine's minimum line count, so three short words in a thin column stay quiet. Text cells wrap without a line cap and the row grows to fit, so a squeezed column turns into a tower that pushes every other cell in its row down with it. Numbers and dates never wrap and are not measured. The warning names the column and counts cells; it never prints their values.",
+        doc="Fires once per text column when a wrapped body cell's block of lines is taller than the column's content area is wide and wraps onto at least the engine's minimum line count, so three short words in a thin column stay quiet. It can only fire when `style.max_lines` is `all` or a line count large enough to reach it, since `trim_outliers`, `p75` and `square` stop a cell before it is taller than its column is wide, and `1` draws one line. Then text cells wrap without that cap and the row grows to fit, so a squeezed column turns into a tower that pushes every other cell in its row down with it. Numbers and dates never wrap and are not measured. The warning names the column and counts cells; it never prints their values.",
         docs_topic="charts",
     )
 )
@@ -1492,7 +1542,7 @@ WARN_TABLE_TEXT_TRUNCATED = REGISTRY.register(
         title="Table cell text was truncated",
         message_template="Chart {chart_id!r}: truncated text in column(s) {authored_field}: {truncation_count} value(s) were cut with an ellipsis.",
         fix_template="Widen the column, shorten the values, or increase the chart width.",
-        doc="Fires when one or more table cell values are clipped with an ellipsis because they exceed the column width. One warning fires per table; each truncated column is a related location. Headers are not counted: a header that needs more than two lines is WARN-TABLE-HEADER-EXTRA-WRAP.",
+        doc="Fires when one or more table cell values are clipped with an ellipsis because they exceed the column width, or because an authored line count in the `max_lines` style ends them early (1 included). A cut made by `trim_outliers`, a percentile or `square` is the designed look, shown whole on hover, and does not fire. One warning fires per table; each truncated column is a related location. Headers are not counted: a header that needs more than two lines is WARN-TABLE-HEADER-EXTRA-WRAP.",
         docs_topic="charts",
     )
 )
@@ -1555,6 +1605,19 @@ WARN_CATEGORY_COLOR_PIN_UNSEEN = REGISTRY.register(
         fix_template="Write the pin exactly as one of the drawn values is spelled, or remove the pin if no chart draws that value. A narrowed `--chart` layout can also leave a pinned value undrawn.",
         doc="Fires when a value pinned under `style.charts.category_colors.<field>` names something none of the charts on this render actually draw for that field, and the absence is definite: either a chart drawing the field has a query that reads no board variable (so no variable filter can have hidden the value), or the pin is a near miss of a drawn value (a likely typo, named in the message). The pin is skipped rather than seated - seating it would claim a palette slot for a category nothing draws and push every real value along one. A pin absent only from charts whose queries read a board variable stays silent: another selection of the variable may draw it, which is what pins are for. A narrowed `dct render --chart` layout can still make a pin unseen on a variable-free chart.",
         summary="Fired when a category_colors pin names a value none of the charts on this render draw, and no board variable could be hiding it.",
+        docs_topic="charts",
+    )
+)
+
+WARN_DIRECT_OVERLAY_X_UNSEEN = REGISTRY.register(
+    WarningCode(
+        code="WARN-DIRECT-OVERLAY-X-UNSEEN",
+        domain="render",
+        title="A style.key.direct.overlay_x entry names a series this render never draws",
+        message_template="Chart {chart_id!r}: `style.key.direct.overlay_x` names {names}, which this render does not draw; the entry was skipped. This render draws {drawn}.",
+        fix_template="Write each key exactly as a drawn series is spelled (a wide chart's column name), or remove the entry.",
+        doc="Fires when a key under `style.key.direct.overlay_x` matches no series the chart draws: a value of the `color:` column, or a column of a wide `y: [...]` list. The entry is skipped and the series is named by the usual search.",
+        summary="Fired when a `style.key.direct.overlay_x` key names a series the chart does not draw.",
         docs_topic="charts",
     )
 )
@@ -1655,6 +1718,17 @@ ERR_TABLE_FORMAT_KIND_MISMATCH = REGISTRY.register(
         title="a table column's format spec does not match its cell values",
         message_template="table column format {fmt!r} does not match its cell values. {remedy}",
         doc="Fired when a table column's `format:` spec is the wrong kind for the values it formats: a strftime-style time spec (a predefined name like `time_short`, or an explicit string containing a `%`-prefixed directive such as `%B` or `%W`) applied to a numeric value, or a d3 numeric spec applied to a date/datetime value. `format:` is kind-agnostic at compile time, so `dct validate` accepts either mismatch; this is caught per cell at render time instead, once the actual value kind is known.",
+        docs_topic="charts",
+    )
+)
+
+ERR_TABLE_CELL_CAST = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-CELL-CAST",
+        domain="render",
+        title="a table cell does not cast to its column's type",
+        message_template="table column {column!r} has type {type}, but cell {cell!r} is not {expected}.",
+        doc="Fired when a table column authors `type: number`, `date` or `datetime` and a non-blank cell does not read as that type: a number is a string Python's `float()` reads (finite), a date an ISO `YYYY-MM-DD`, a datetime an ISO date or timestamp. The cell is never printed as written under the wrong type; fix the value in the query, or drop `type:` to let the table decide. NULL and blank cells stay blank.",
         docs_topic="charts",
     )
 )
@@ -1907,8 +1981,8 @@ WARN_LOW_TEXT_CONTRAST = REGISTRY.register(
         title="Text ink has too little contrast against its background",
         message_template="{element} is painted {ink} on {background} -- {ratio:.1f}:1 contrast, below the {floor:.1f}:1 floor for {size} text.",
         fix_template="Set {key} to a color with more contrast against {background}.",
-        doc="Fires when a text block's heading or body ink clears less than the WCAG 2.1 AA contrast ratio (4.5:1, or 3:1 under WCAG's own large-text exception) against the opaque background it paints on. The common case is a row's own default ink left unchanged after authoring a `style.background` on that row; the fix names the key that governs that element's ink today (`style.title.font.color` for a heading, `style.font.color` for body text). The engine never repaints -- the color pair is still painted exactly as written.",
-        summary="Fired when a text block's ink has too little contrast against its background.",
+        doc="Fires when a text block's heading or body ink clears less than the WCAG 2.1 AA contrast ratio (4.5:1, or 3:1 under WCAG's own large-text exception) against the opaque background it paints on. The common case is a row's own default ink left unchanged after authoring a `style.background` on that row; the fix names the key that governs that element's ink today (`style.title.font.color` for a heading, `style.font.color` for body text). The engine never repaints -- the color pair is still painted exactly as written. It also fires once per board scope whose hex `style.roles.ink` is drawn in (any leaf set to `ink`) and clears less than 4.5:1 against that scope's opaque canvas, naming `style.roles.ink`; an ink nothing draws in never fires it.",
+        summary="Fired when a text block's ink, or a board scope's `style.roles.ink`, has too little contrast against its background.",
         docs_topic="board",
     )
 )
@@ -2250,10 +2324,10 @@ WARN_OUTLIERS_TORN_UNSUPPORTED = REGISTRY.register(
         code="WARN-OUTLIERS-TORN-UNSUPPORTED",
         domain="render",
         title="Bars past the axis cannot be torn off the chart on this chart",
-        message_template="Chart {chart_id!r}: a bar is far enough past the rest to tear, but `style.outliers.variant: torn` cannot draw this chart shape, so the chart is drawn plain.",
-        fix_template="On a horizontal or stacked chart, set style.outliers.variant to torn_with_cap to cap the long bar. Otherwise set style.outliers.median_multiplier to none to stop tearing bars automatically; a bar past a pinned axis_y domain maximum still tears until the pin is raised.",
-        doc="Fires when a bar tears (it is at least `style.outliers.median_multiplier` times the median bar, or passes a pinned `axis_y` domain maximum) on a chart where `variant` is `torn` and the chart is horizontal, stacked, normalized, has a bar layer, small multiples, ranged (`y_start`) or has a mirrored value axis. Torn bars run off the top of a vertical card, so these shapes draw every bar at its true length instead; the chart is never switched to the cap variant for you.",
-        summary="Fired when a bar would tear but the chart shape cannot draw an off-the-chart bar.",
+        message_template="Chart {chart_id!r}: a bar passes the pinned `axis_y` domain maximum, but `style.outliers.variant: torn` cannot draw this chart shape, so the chart is drawn plain.",
+        fix_template="On a horizontal or stacked chart, set style.outliers.variant to torn_with_cap to cap the long bar. Otherwise raise the axis_y domain maximum past the bar.",
+        doc="Fires when a bar passes a pinned `axis_y` domain maximum on a chart where `variant` is `torn` and the chart is horizontal, stacked, normalized, has a bar layer, small multiples, ranged (`y_start`) or has a mirrored value axis. Torn bars run off the top of a vertical card, so these shapes draw every bar at its true length instead; the chart is never switched to the cap variant for you. A bar only `median_multiplier` would tear draws plain on these shapes, without a warning.",
+        summary="Fired when a bar passes a pinned axis maximum but the chart shape cannot draw an off-the-chart bar.",
         docs_topic="charts",
     )
 )

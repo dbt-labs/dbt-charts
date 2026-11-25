@@ -83,21 +83,21 @@ def test_support_glyph_font_inherits_from_support_font() -> None:
     assert kpi.label.font.size != 15
 
 
-def test_board_title_overflow_reaches_the_kpi_label() -> None:
-    kpi, _ = _kpi({"charts": {"title": {"overflow": "clip"}}})
-    assert kpi.label.overflow == "clip"
+def test_the_kpi_label_wraps_to_two_lines_whatever_the_title_limit() -> None:
+    kpi, _ = _kpi({"charts": {"title": {"max_lines": 1}}})
+    assert kpi.label.max_lines == 2
 
 
-def test_kpi_label_overflow_overrides_the_title_overflow() -> None:
+def test_kpi_label_wrap_is_its_own_setting() -> None:
     kpi, _ = _kpi(
         {
             "charts": {
-                "title": {"overflow": "clip"},
-                "kpi": {"label": {"overflow": "wrap"}},
+                "title": {"max_lines": 1},
+                "kpi": {"label": {"max_lines": "all"}},
             }
         }
     )
-    assert kpi.label.overflow == "wrap"
+    assert kpi.label.max_lines == "all"
 
 
 def test_kpi_style_has_no_title_or_flat_slots() -> None:

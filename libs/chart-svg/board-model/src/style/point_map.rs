@@ -3,7 +3,7 @@
 use crate::style::chart_base::GeoChartStyle;
 use crate::chart::conditional_formatting::Predicate;
 use crate::style::bar::misplaced_defaults;
-use crate::style::marks::{PointMarkStyle, PointMarkStyleConditional};
+use crate::style::marks::{RingedPointMarkStyle, RingedPointMarkStyleConditional};
 use crate::primitives::SizeScaleStyle;
 use diagnostic::Diagnostic;
 use indexmap::IndexMap;
@@ -21,7 +21,7 @@ string_enum!(
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct PointMapChartMarksStyle {
     /// Point mark overrides; inherits from global.
-    pub point: PointMarkStyle,
+    pub point: RingedPointMarkStyle,
 }
 
 /// The part of [`PointMapChartMarksStyle`] a conditional rule may set.
@@ -29,7 +29,7 @@ pub struct PointMapChartMarksStyle {
 pub struct PointMapChartMarksStyleConditional {
     /// Point mark overrides; inherits from global.
     #[model(absent = "the point mark's own style")]
-    pub point: Option<PointMarkStyleConditional>,
+    pub point: Option<RingedPointMarkStyleConditional>,
 }
 
 /// The part of [`PointMapChartStyle`] a conditional rule may set: one predicate plus the mark style

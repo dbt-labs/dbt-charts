@@ -1159,9 +1159,14 @@ def _render_board_svg(
     board_background = resolved_style.background
     # The root board has no ancestor, so its own background IS the painted
     # canvas everything inside it starts from.
-    from dbt_charts.core.render.contrast_warning import composite_over_canvas
+    from dbt_charts.core.render.contrast_warning import (
+        check_ink_contrast,
+        composite_over_canvas,
+    )
 
     painted_canvas = composite_over_canvas(resolved_style.background, None)
+    if resolved_style.draws_in_ink:
+        check_ink_contrast(resolved_style.ink, painted_canvas)
     # Board config is baked into ResolvedBoard, so no config lookup here. These are
     # None only on nested boards, which render through render_nested_board; on the
     # root path build_resolved_board sets all three unconditionally. Falling back
@@ -1627,7 +1632,10 @@ def render_nested_board(
     Returns:
         (svg_string, actual_height) — actual_height is derived from rendered content.
     """
-    from dbt_charts.core.render.contrast_warning import composite_over_canvas
+    from dbt_charts.core.render.contrast_warning import (
+        check_ink_contrast,
+        composite_over_canvas,
+    )
 
     resolved_style = board.style  # ResolvedBoard.style is the ResolvedStyle
     # style.background is CSS background-color: not inherited -- an
@@ -1636,6 +1644,8 @@ def render_nested_board(
     # every board scope gets its own resolve, never a verbatim reused
     # object), so this can composite unconditionally.
     own_canvas = composite_over_canvas(resolved_style.background, painted_canvas)
+    if resolved_style.draws_in_ink:
+        check_ink_contrast(resolved_style.ink, own_canvas)
 
     gap = resolved_style.gap if resolved_style.gap is not None else 0.0
     ep = _effective_padding(resolved_style)

@@ -3,7 +3,7 @@
 //! - Every KPI text slot's font is [`SingleLineFontStyle`]: a KPI paints one line.
 //! - `KpiSupportFontStyle` is a copy of it whose `color` also takes `auto`: a flatten
 //!   cannot retype a field.
-//! - A `None` that only meant "not authored" is a total field (`border`, `label.overflow`);
+//! - A `None` that only meant "not authored" is a total field (`border`, `label.max_lines`);
 //!   one that is a state is `Option<T>` with `absent` (`format`, `align`).
 
 use crate::chart::conditional_formatting::Predicate;
@@ -12,7 +12,7 @@ use crate::facet::{Color, FontFamily, FontWeightValue};
 use crate::primitives::{BorderStyle, FormatSpec, SpacingValues, Tone};
 use crate::rule::Auto;
 use crate::string_enum;
-use crate::style::board::OverflowMode;
+use crate::primitives::LineLimit;
 use crate::style::board::PaddingStyle;
 use crate::style::font::{FontSlant, LetterCase, SingleLineFontStyle, TextDecoration};
 use indexmap::IndexMap;
@@ -98,9 +98,8 @@ pub struct KpiLabelStyle {
     /// Label font.
     #[model(inherit_slot = "Style.charts.kpi.font")]
     pub font: SingleLineFontStyle,
-    /// How a label too wide for the card is fit.
-    #[model(inherit = "Style.charts.title.overflow")]
-    pub overflow: OverflowMode,
+    /// Lines a label takes before an ellipsis (1 = no wrapping, 3 = wraps twice); or 'all'.
+    pub max_lines: LineLimit,
 }
 
 /// The support row and glyph font. `color` also takes `auto`.

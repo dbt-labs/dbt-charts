@@ -6,7 +6,12 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dbt_charts.core.compile.models.markers import InheritSlot, SkipInheritSlots
+from dbt_charts.core.compile.models.anchor import AnchorScalar
+from dbt_charts.core.compile.models.markers import (
+    ChartLocal,
+    InheritSlot,
+    SkipInheritSlots,
+)
 from dbt_charts.core.compile.models.style.theme.legend import (
     LegendStyle,
     PieLegendStyle,
@@ -18,10 +23,11 @@ from dbt_charts.core.compile.models.style.theme.marks import SeriesLabelFontStyl
 # take `KeyType` without `direct`.
 KeyType = Literal["auto", "legend", "direct"]
 LegendOnlyKeyType = Literal["auto", "legend"]
+DirectPosition = Literal["auto", "end", "overlay"]
 
 
-class LineAreaDirectKeyStyle(BaseModel):
-    """The direct-key leaves a line or area reads."""
+class _DirectKeyStyleBase(BaseModel):
+    """The direct-key leaves every family that names series on the chart reads."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -35,8 +41,28 @@ class LineAreaDirectKeyStyle(BaseModel):
     )
 
 
+class LineAreaDirectKeyStyle(_DirectKeyStyleBase):
+    """The direct-key leaves a line or area reads."""
+
+    position: DirectPosition = Field(
+        description="Beside the lines' end, over the plot, or `auto` to pick."
+    )
+    overlay_x: Annotated[dict[str, AnchorScalar], ChartLocal()] = Field(
+        default_factory=dict,
+        description="Where each series prefers its name inside the plot, by series name.",
+    )
+
+
+class BarDirectKeyStyle(_DirectKeyStyleBase):
+    """The direct-key leaves a bar reads."""
+
+    height: float = Field(
+        description="Height in pixels of the label strip above a horizontal stacked bar."
+    )
+
+
 class DirectKeyStyle(LineAreaDirectKeyStyle):
-    """Every direct-key leaf: the board-wide style, and a bar's own."""
+    """Every direct-key leaf: the board-wide style each family reads its own from."""
 
     height: float = Field(
         description="Height in pixels of the label strip above a horizontal stacked bar."
@@ -77,7 +103,7 @@ class BarKeyStyle(BaseModel):
         description="Legend, direct labels, or `auto` to let the engine pick."
     )
     legend: LegendStyle = Field(description="Legend style.")
-    direct: Annotated[DirectKeyStyle, SkipInheritSlots()] = Field(
+    direct: Annotated[BarDirectKeyStyle, SkipInheritSlots()] = Field(
         description="Direct label style."
     )
 

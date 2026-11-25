@@ -44,7 +44,7 @@ use crate::contract;
 use diagnostic::{warn, Diagnostic};
 use crate::families::color_scale::{ContinuousColor, GradientAt};
 use crate::families::legend::{color_channel_title, legend_fit_bounds, legend_origin, stack_legends, symbol_legend, vega_default_legend, vega_legend, LegendConfig, LegendEntry, LegendSymbol, SizeLegend, SizePaint, SizeRows, SizeScale, SizeScaleType, VEGA_LEGEND_SYMBOL_LIMIT};
-use ::bind::legend::{fold_symbol_limit, legend_order};
+use ::bind::legend::{fold_limit, legend_order};
 use crate::families::heatmap::date_cell_day;
 use ::bind::temporal::{infer_vega_type, VegaType};
 use crate::frame::{ChartFrame, FrameTitle};
@@ -860,9 +860,9 @@ fn circle_glyph(area: f64) -> PathData {
 pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &FontBook) -> Result<Layout, Diagnostic> {
     let r = &bound.resolved;
     let fit = bound.fit;
-    let legend_cfg = vega_default_legend(&r.legend);
+    let legend_cfg = vega_default_legend(&r.legend, &r.canvas);
     // A gradient legend's labels sit Vega's `gradientLabelOffset` (2) off the bar, not a symbol legend's 4.
-    let mut gradient_cfg = vega_default_legend(&r.legend);
+    let mut gradient_cfg = vega_default_legend(&r.legend, &r.canvas);
     gradient_cfg.label.padding = Some(2.0);
     let basemap = bound.basemap.as_ref().map(|features| {
         GeoJson::FeatureCollection(FeatureCollection {
@@ -902,7 +902,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
                 .into_iter()
                 .map(|i| LegendEntry { label: &domain[i], fill: &fills[i], symbol: Some(LegendSymbol::FilledCircle), series_key: None, recede: None, action: None })
                 .collect();
-            if let Some((kept, label)) = fold_symbol_limit(entries.len(), VEGA_LEGEND_SYMBOL_LIMIT as usize) {
+            if let Some((kept, label)) = fold_limit(entries.len(), VEGA_LEGEND_SYMBOL_LIMIT as usize) {
                 folded_label = label;
                 let folded = LegendEntry { label: &folded_label, symbol: Some(LegendSymbol::Overflow), ..entries[kept] };
                 entries.truncate(kept);
@@ -1186,7 +1186,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             let at = gradient_at(plot_w, plot_h)?.expect("a gradient coloring");
             let legend = at.legend(&gradient_cfg, scale, &grad_id, title, fonts)?;
             let off = offsets.next().expect("one block per legend");
-            nodes.extend(legend.nodes(leg_x, leg_y + off, at.length));
+            nodes.extend(legend.nodes(leg_x, leg_y + off, at.length, r.canvas.as_str()));
         }
         None => {}
     }
@@ -1198,7 +1198,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         } else {
             SizePaint::Static { fill: &r.style.single_series_fill, opacity }
         };
-        nodes.extend(legend.nodes(&legend_cfg, paint, leg_x, leg_y + off));
+        nodes.extend(legend.nodes(&legend_cfg, paint, leg_x, leg_y + off, r.canvas.as_str()));
     }
 
     let clip = |id: &String| {

@@ -1,5 +1,0 @@
-kind: Fixes
-body: A chart or variable reference whose file name starts with a digit, such as 1_source.charts.revenue, now reports an invalid reference instead of ERR-WRONG-SHAPE.
-time: 2026-11-23T19:49:15.285471299Z
-custom:
-    DbtChartsIssue: "126"

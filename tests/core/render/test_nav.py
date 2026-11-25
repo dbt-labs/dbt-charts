@@ -615,9 +615,11 @@ class TestSidebar:
         show_sidebar: bool,
         nav_dir: str = "charts",
         folders: tuple[str, ...] = ("regions",),
+        config: str = "",
     ) -> str:
         boards = tmp_path / "charts"
         boards.mkdir(parents=True)
+        (tmp_path / "dbt_charts.yml").write_text(config)
         for folder in folders:
             (boards / folder).mkdir()
             (boards / folder / "east.yml").write_text("title: East\n")
@@ -659,6 +661,82 @@ class TestSidebar:
             for stem in ("index", "overview", "alpha", "Bravo", "zeta")
         ]
         assert order == sorted(order)
+
+    def test_nav_order_leads_then_today_s_order(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(
+            tmp_path,
+            local_project,
+            self._two(
+                **{
+                    "Bravo.yml": "title: Bravo\n",
+                    "index.yml": "title: Home\n",
+                }
+            ),
+            "zeta",
+            True,
+            config="server:\n  nav_order:\n    .: [zeta, regions, Bravo]\n",
+        )
+        sidebar = html[html.index('class="dbt-sidebar"') :]
+        order = [
+            sidebar.index(f'href="/{name}')
+            for name in ("zeta", "regions/", "Bravo", "index", "alpha")
+        ]
+        assert order == sorted(order)
+
+    def test_nav_order_can_place_index(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        html = self._nav(
+            tmp_path,
+            local_project,
+            self._two(
+                **{
+                    "index.yml": "title: Home\n",
+                }
+            ),
+            "zeta",
+            True,
+            config="server:\n  nav_order:\n    .: [zeta, index]\n",
+        )
+        sidebar = html[html.index('class="dbt-sidebar"') :]
+        order = [
+            sidebar.index(f'href="/{stem}"') for stem in ("zeta", "index", "alpha")
+        ]
+        assert order == sorted(order)
+
+    def test_nav_order_sees_a_package_folder_s_boards_beside_a_host_copy(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        """A host `charts/pkg_a/` and package `pkg_a` share one URL: the sidebar
+        lists both, as the listing page and the startup check do."""
+        host = tmp_path / "charts" / "pkg_a"
+        host.mkdir(parents=True)
+        (host / "local.yml").write_text("title: Local\n")
+        pkg = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg.mkdir(parents=True)
+        (pkg / "shipped.yml").write_text("title: Shipped\n")
+        (tmp_path / "dbt_charts.yml").write_text(
+            "server:\n  nav_order:\n    pkg_a: [shipped, local]\n"
+        )
+        project = local_project(tmp_path)
+
+        html = render_nav_html(
+            project.directory("charts/pkg_a"),
+            "charts",
+            "local",
+            None,
+            "",
+            show_download=True,
+            show_actions=True,
+            show_sidebar=True,
+        )
+
+        sidebar = html[html.index('class="dbt-sidebar"') :]
+        assert sidebar.index('href="/pkg_a/shipped"') < sidebar.index(
+            'href="/pkg_a/local"'
+        )
 
     def test_labels_are_titles_with_humanized_stem_fallback(
         self, tmp_path: Path, local_project: Callable[..., Project]

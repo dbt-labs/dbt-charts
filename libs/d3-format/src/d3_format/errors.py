@@ -1,5 +1,7 @@
 """D3FormatError — raised for unsupported or invalid format specs."""
 
+from __future__ import annotations
+
 
 class D3FormatError(ValueError):
     """Raised when a format spec is invalid or uses an unsupported feature.

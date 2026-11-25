@@ -1,4 +1,4 @@
-"""Junk spacing, border, gap, header_overflow and theme values raise instead of coercing."""
+"""Junk spacing, border, gap, header_max_lines and theme values raise instead of coercing."""
 
 from __future__ import annotations
 
@@ -109,8 +109,9 @@ def test_kpi_content_padding_junk_raises() -> None:
         AUTHORED_BOARD_ADAPTER.validate_python(board)
 
 
-def test_header_overflow_requires_canonical_spelling() -> None:
-    def board(value: str) -> dict[str, Any]:
+@pytest.mark.parametrize("value", [0, -1, 1.5, True, "wrap-two", "truncate", "ALL"])
+def test_header_max_lines_requires_a_count_or_all(value: Any) -> None:
+    def board(value: Any) -> dict[str, Any]:
         return {
             "title": "t",
             "queries": {"q": {"sql": "select 1 as a"}},
@@ -118,15 +119,54 @@ def test_header_overflow_requires_canonical_spelling() -> None:
                 "c": {
                     "query": "q",
                     "type": "table",
-                    "style": {"columns": {"a": {"header_overflow": value}}},
+                    "style": {"columns": {"a": {"header_max_lines": value}}},
                 }
             },
             "rows": ["c"],
         }
 
-    with pytest.raises(ValidationError, match="header_overflow"):
-        AUTHORED_BOARD_ADAPTER.validate_python(board("WRAP_TWO"))
-    AUTHORED_BOARD_ADAPTER.validate_python(board("wrap-two"))
+    with pytest.raises(ValidationError, match="header_max_lines"):
+        AUTHORED_BOARD_ADAPTER.validate_python(board(value))
+    for ok in (1, 2, "all"):
+        AUTHORED_BOARD_ADAPTER.validate_python(board(ok))
+
+
+@pytest.mark.parametrize("key", ["header_wrap", "header_max_lines"])
+def test_a_table_wide_header_limit_key_is_not_a_field(key: str) -> None:
+    """A table's header line limit is `style.header.max_lines`; only a column has `header_max_lines`."""
+    for style in ({key: 2}, {"header": {"max_lines": 2}, key: 2}):
+        board = {
+            "title": "t",
+            "queries": {"q": {"sql": "select 1 as a"}},
+            "charts": {"c": {"query": "q", "type": "table", "style": style}},
+            "rows": ["c"],
+        }
+        with pytest.raises(ValidationError, match=key):
+            AUTHORED_BOARD_ADAPTER.validate_python(board)
+    with pytest.raises(ValidationError, match=key):
+        StylePatch.model_validate({"charts": {"table": {key: 2}}})
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0, -1, 1.5, "wrap-three", "truncate", "ALL", "wrap", "typical"]
+    + [True, False, "p0", "p101", "p7.5", "P75", "p075", "p", "p-5"],
+)
+def test_wrap_requires_a_keyword_or_a_positive_count(value: Any) -> None:
+    def board(mode: Any) -> dict[str, Any]:
+        return {
+            "title": "t",
+            "queries": {"q": {"sql": "select 1 as a"}},
+            "charts": {
+                "c": {"query": "q", "type": "table", "style": {"max_lines": mode}}
+            },
+            "rows": ["c"],
+        }
+
+    with pytest.raises(ValidationError, match="max_lines"):
+        AUTHORED_BOARD_ADAPTER.validate_python(board(value))
+    for mode in ("trim_outliers", "p1", "p75", "p100", "square", "all", 1, 3):
+        AUTHORED_BOARD_ADAPTER.validate_python(board(mode))
 
 
 @pytest.mark.parametrize("theme", [None, ["paper"], 3])
@@ -138,9 +178,10 @@ def test_theme_must_be_a_string(theme: Any) -> None:
 
 
 @pytest.mark.parametrize("slot", ["title", "subtitle"])
-def test_title_overflow_requires_canonical_spelling(slot: str) -> None:
-    style = {"title": {"overflow": "WRAP_TWO"}}
+@pytest.mark.parametrize("value", [0, True, "WRAP_TWO", "truncate"])
+def test_title_wrap_requires_a_count_or_all(slot: str, value: Any) -> None:
+    style = {"title": {"max_lines": value}}
     if slot == "subtitle":
-        style = {"title": {"subtitle": {"overflow": "WRAP_TWO"}}}
-    with pytest.raises(ValidationError, match="overflow"):
+        style = {"title": {"subtitle": {"max_lines": value}}}
+    with pytest.raises(ValidationError, match="max_lines"):
         StylePatch.model_validate(style)

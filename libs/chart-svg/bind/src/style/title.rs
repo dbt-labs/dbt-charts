@@ -14,14 +14,14 @@ pub fn title_ladder<'a>(tiers: &Tiers<'a>) -> Ladder<Rung<'a, ChartTitleStyle>> 
     Rung::ladder([tiers.own.title, tiers.family.title], &tiers.charts.title)
 }
 
-/// The board's total title with the leaves this slot walks (`min_height`, `subtitle.overflow`)
+/// The board's total title with the leaves this slot walks (`min_height`, `subtitle.max_lines`)
 /// taken from the walk.
 pub fn walked_title(tiers: &Tiers<'_>) -> Option<ChartTitleStyle> {
     let ladder = title_ladder(tiers);
     let mut title = tiers.charts.title.clone();
     title.base.min_height = *ladder.leaf(|p| sparse(&p.base.min_height), |t| Tri::Value(&t.base.min_height))?;
-    title.base.subtitle.overflow = ladder
-        .leaf(|p| sparse(&p.base.subtitle.overflow), |t| Tri::Value(&t.base.subtitle.overflow))
+    title.base.subtitle.max_lines = ladder
+        .leaf(|p| sparse(&p.base.subtitle.max_lines), |t| Tri::Value(&t.base.subtitle.max_lines))
         .cloned()
         ?;
     Some(title)

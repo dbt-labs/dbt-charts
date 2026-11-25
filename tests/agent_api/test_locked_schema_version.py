@@ -55,14 +55,24 @@ def _validate(
     return validate(Path(relpath), project=project)
 
 
-def test_lock_reads_a_released_version_and_defaults_to_none(tmp_path: Path) -> None:
-    assert _project(tmp_path, {}).locked_schema_version == _LOCK
-    assert _project(tmp_path, {}, lock=None).locked_schema_version is None
+_LATEST = load_yaml_schema_catalog().latest_released.version
+
+
+@pytest.mark.parametrize(
+    ("lock", "resolved"),
+    [(_LOCK, _LOCK), ("latest", _LATEST), (None, _LATEST), ("preview", None)],
+)
+def test_lock_resolves_to_a_released_version_or_none_for_dev(
+    tmp_path: Path, lock: str | None, resolved: str | None
+) -> None:
+    assert _project(tmp_path, {}, lock=lock).locked_schema_version == resolved
 
 
 @pytest.mark.parametrize("bad", ["9.9.9", load_yaml_schema_catalog().dev.version])
 def test_lock_must_name_a_released_version(bad: str) -> None:
-    with pytest.raises(CompilationError, match=r"released versions: 0\.3\.0"):
+    with pytest.raises(
+        CompilationError, match=r"'latest', 'preview', or a released version: 0\.3\.0"
+    ):
         validate_project_config_data(
             {"locked_schema_version": bad}, filename="dbt_charts.yml"
         )
@@ -71,7 +81,7 @@ def test_lock_must_name_a_released_version(bad: str) -> None:
 def test_validate_rejects_dev_only_grammar_under_the_lock(tmp_path: Path) -> None:
     board = {"charts/b.yaml": _BOARD.format(extra=_DEV_ONLY_CHART)}
 
-    unlocked = _validate(_project(tmp_path / "a", board, lock=None))
+    unlocked = _validate(_project(tmp_path / "a", board, lock="preview"))
     locked = _validate(_project(tmp_path / "b", board))
 
     assert unlocked.success
@@ -181,7 +191,7 @@ def test_lock_silences_warnings_newer_than_it(tmp_path: Path) -> None:
     catalog = load_yaml_schema_catalog()
     newer = catalog.warnings_newer_than("0.3.0")
 
-    unlocked = _project(tmp_path / "u", {}, lock=None)
+    unlocked = _project(tmp_path / "u", {}, lock="preview")
     locked = _project(tmp_path / "l", {}, lock="0.3.0")
 
     assert unlocked.warnings_ignore == frozenset()
@@ -212,3 +222,36 @@ def test_migrate_leaves_a_board_newer_than_the_lock_unchanged(tmp_path: Path) ->
     )
 
     assert summary.current == [PurePosixPath("charts/a.yaml")]
+
+
+def test_validate_accepts_yaml_dates_under_the_lock(tmp_path: Path) -> None:
+    dated = "    annotations:\n      - type: rule\n        x: 2026-08-01\n"
+    board = {"charts/b.yaml": _BOARD.format(extra=dated)}
+
+    assert _validate(_project(tmp_path, board, lock="latest")).success
+
+
+def test_lock_checks_an_old_board_with_flow_style_mappings(tmp_path: Path) -> None:
+    board = """
+queries:
+  q:
+    sql: SELECT a FROM t
+    source: s
+charts:
+  c:
+    type: table
+    query: q
+    conditional_formatting:
+      a:
+        when:
+          - gt: 0
+            font: { color: red }
+    style:
+      columns:
+        a: { label: A, format: integer }
+rows:
+  - c
+"""
+    project = _project(tmp_path, {"charts/b.yaml": board}, lock="latest")
+
+    assert _validate(project).success

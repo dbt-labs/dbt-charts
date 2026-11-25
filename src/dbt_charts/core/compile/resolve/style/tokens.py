@@ -66,6 +66,56 @@ _RESOLUTION_CONTEXT_FIELDS = frozenset({"palettes", "roles"})
 _COLOR_FIELD_NAMES = frozenset({"color", "background", "null_color", "glyph_color"})
 
 
+def board_ink(style: Style) -> str | None:
+    """The board's ink: ``style.roles.ink`` where it is a hex, which no derived
+    mark or label ink moves. A themed role (a palette token) is no board ink."""
+    assert style.roles is not None, "the theme seeds style.roles"
+    target = style.roles.get("ink")
+    return target if target is not None and target.startswith("#") else None
+
+
+def _holds_color(
+    node: Any,  # type-state: explicit_any — recursive walk over heterogeneous Style nodes
+    color: str,
+) -> bool:
+    """Whether a leaf under ``node`` is ``color``, in ``substitute_tokens``' walk."""
+    if isinstance(node, BaseModel):
+        return any(
+            _holds_color(value, color)
+            for name, value in node
+            if not (isinstance(node, Style) and name in _RESOLUTION_CONTEXT_FIELDS)
+        )
+    if isinstance(node, list | dict):
+        return any(
+            _holds_color(value, color)
+            for value in (node if isinstance(node, list) else node.values())
+        )
+    return isinstance(node, str) and node.lower() == color.lower()
+
+
+def draws_in_ink(
+    style: Style, ink: str | None, *, outside_charts: bool = False
+) -> bool:
+    """Whether a leaf of ``style`` is ``ink``; ``outside_charts`` leaves out the
+    ``charts`` subtree, whose text paints on each chart's own canvas."""
+    return ink is not None and any(
+        _holds_color(value, ink)
+        for name, value in style
+        if name not in _RESOLUTION_CONTEXT_FIELDS
+        and not (outside_charts and name == "charts")
+    )
+
+
+def charts_draw_in_ink(cascaded: Style, ink: str | None) -> bool:
+    """Whether the cascaded ``charts`` subtree holds ``ink``, directly or by
+    inheritance (``font.color``). The chart title is left out: it inherits the
+    board title's ink whether or not a chart draws one, so a titled chart is
+    checked on its own."""
+    return ink is not None and any(
+        _holds_color(value, ink) for name, value in cascaded.charts if name != "title"
+    )
+
+
 def _self_token_replacement(token: str, canvas: str) -> str:
     """Look up a theme-self token's replacement value.
 
@@ -605,7 +655,12 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
     from dbt_charts.core.diagnostics.codes_compile import ERR_COLOR_TOKEN
 
     palettes = base.palettes
+    # The patch's own roles override the theme's: a board that sets `roles.ink`
+    # draws every `ink` leaf of its own style in it.
     roles = base.roles
+    if patch.roles:
+        assert roles is not None
+        roles = {**roles, **patch.roles}
     authored_single_series = (
         base.charts.color.categorical.single_series_palette
         if base.charts.color.categorical is not None
@@ -731,6 +786,9 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
 
 
 __all__ = [
+    "board_ink",
+    "charts_draw_in_ink",
+    "draws_in_ink",
     "expand_palette_refs",
     "apply_emoji_to_family",
     "insert_emoji_family",

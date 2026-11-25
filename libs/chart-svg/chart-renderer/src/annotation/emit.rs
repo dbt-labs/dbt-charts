@@ -119,6 +119,17 @@ fn hits(ctx: &AnnotationCtx, items: &[Placed]) -> Option<Node> {
     (!lines.is_empty()).then(|| Node::group(Role::Annotation, Attrs::new().set("class", "annotations-hits").set("aria-hidden", "true"), lines).translate(ctx.plot.x, ctx.plot.y))
 }
 
+/// A band whose value span runs to the tear: the rect's fill with its torn edge.
+fn torn_band(cubics: &[crate::torn::Cubic], far: f64, style: &Style) -> Node {
+    let d = crate::torn::torn_fill(cubics, far, false);
+    let attrs = Attrs::new().set("fill", style.rect().fill.as_str()).num("opacity", style.rect().opacity);
+    let attrs = match &style.rect().stroke {
+        Some(stroke) => stroked(attrs, stroke, d.length(), true),
+        None => attrs,
+    };
+    Node::path(Role::Annotation, d, attrs)
+}
+
 /// One mark in the style slot its kind reads: a segment is the rule, a rect
 /// the band or enclosure rect, a polyline the trend line, an area its
 /// interval, a circle the enclosure.
@@ -249,7 +260,11 @@ pub(crate) fn nodes(ctx: &AnnotationCtx, items: &[Placed], plane: Plane) -> Resu
             continue;
         }
         let whole = p.enclosure.is_none() && p.connector.is_none() && p.mark.as_ref().is_none_or(tint);
-        marks.push(item(ctx, p, whole && p.text.is_none(), false, tints.into_iter().map(|m| mark(m, p.style)).collect())?);
+        let nodes = tints.into_iter().map(|m| match (&p.torn, m) {
+            (Some((cubics, far)), Mark::Rect { .. }) => torn_band(cubics, *far, p.style),
+            _ => mark(m, p.style),
+        });
+        marks.push(item(ctx, p, whole && p.text.is_none(), false, nodes.collect())?);
     }
     for p in &mine {
         let Some(lines) = p.mark.as_ref().filter(|m| !tint(m)) else { continue };

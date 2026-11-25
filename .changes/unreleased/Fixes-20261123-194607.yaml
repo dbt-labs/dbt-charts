@@ -1,5 +1,0 @@
-kind: Fixes
-body: Bar direct labels now show each series' display label, including field_labels, matching the legend.
-time: 2026-11-23T19:46:07.770344195Z
-custom:
-    DbtChartsIssue: "108"

@@ -1,5 +1,0 @@
-kind: Fixes
-body: A line or area chart on a numeric x column now shows the column's format in the hover card header.
-time: 2026-11-21T16:52:49.589497-08:00
-custom:
-    DbtChartsIssue: "104"

@@ -48,6 +48,9 @@ pub(crate) struct Placed<'a> {
     pub stem: Option<[(f64, f64); 2]>,
     /// The circled rule number, then its entry in the key, when crowded labels were numbered.
     pub badges: Vec<(f64, f64)>,
+    /// The tear a band's unset value span ends on, in place of its flat rect edge, and the flat
+    /// edge's coordinate.
+    pub torn: Option<(Vec<crate::torn::Cubic>, f64)>,
     /// The rule's number, one-based, when crowded labels were numbered.
     pub number: Option<usize>,
 }
@@ -220,10 +223,20 @@ fn screen(o: Orientation, a: f64, b: f64) -> (f64, f64) {
     }
 }
 
-fn span_or_full(map: &AxisMap, anchor: &Option<Anchor>, site: &Site) -> Result<Option<(f64, f64)>, Diagnostic> {
+/// An unset span runs the plot's full extent, not the scale's range: a torn baseline pads the
+/// value scale's range short of the plot edge where the tear is drawn.
+fn span_or_full(map: &AxisMap, anchor: &Option<Anchor>, full: (f64, f64), site: &Site) -> Result<Option<(f64, f64)>, Diagnostic> {
     match anchor {
         Some(a) => map.span(a, site),
-        None => Ok(Some(map.range_px())),
+        None => Ok(Some(full)),
+    }
+}
+
+/// The plot's full extent along the value channel.
+fn value_extent(ctx: &AnnotationCtx) -> (f64, f64) {
+    match ctx.orientation {
+        Orientation::Vertical => (0.0, ctx.plot.h),
+        Orientation::Horizontal => (0.0, ctx.plot.w),
     }
 }
 
@@ -247,11 +260,18 @@ fn rule_shape(ann: &Annotation, ctx: &AnnotationCtx, b_map: &AxisMap, site: &Sit
     // runs along the other channel.
     let (at, span) = if on_y {
         let Some(at) = b_map.at(point_of(&ann.y), site)? else { return Ok(None) };
-        let Some(span) = span_or_full(&ctx.x, &ann.x, site)? else { return Ok(None) };
+        let Some(span) = span_or_full(&ctx.x, &ann.x, ctx.x.range_px(), site)? else { return Ok(None) };
         (at, span)
     } else {
         let Some(at) = ctx.x.at(point_of(&ann.x), site)? else { return Ok(None) };
-        let Some(span) = span_or_full(b_map, &ann.y, site)? else { return Ok(None) };
+        let full = match &ctx.tear {
+            Some(tear) => {
+                let across = crate::torn::torn_across_at(&tear.cubics, at);
+                if tear.inward < 0.0 { (0.0, across) } else { (across, ctx.plot.h) }
+            }
+            None => value_extent(ctx),
+        };
+        let Some(span) = span_or_full(b_map, &ann.y, full, site)? else { return Ok(None) };
         (at, span)
     };
     // A y rule on a vertical chart, or an x rule on a horizontal one, runs across.
@@ -275,7 +295,7 @@ fn band_shape(ann: &Annotation, ctx: &AnnotationCtx, b_map: &AxisMap, site: &Sit
         None => Some(ctx.x.range_px()),
     };
     let Some(sa) = sa else { return Ok(None) };
-    let Some(sb) = span_or_full(b_map, &ann.y, site)? else { return Ok(None) };
+    let Some(sb) = span_or_full(b_map, &ann.y, value_extent(ctx), site)? else { return Ok(None) };
     let (x0, y0) = screen(ctx.orientation, sa.0, sb.0);
     let (x1, y1) = screen(ctx.orientation, sa.1, sb.1);
     let (Some((x0, x1)), Some((y0, y1))) = (clip(x0, x1, ctx.plot.w), clip(y0, y1, ctx.plot.h)) else {
@@ -757,6 +777,7 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
         settled: false,
         stem: None,
         badges: Vec::new(),
+        torn: None,
         number: None,
     };
     let mut anchor_point = None;
@@ -789,6 +810,12 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
                 None => rule_shape(ann, ctx, b_map, &site)?,
             };
             let Some((mark, geom)) = shape else { return Ok(None) };
+            placed.torn = match (&mark, &ctx.tear) {
+                (Some(Mark::Rect { x, w, .. }), Some(tear)) if ann.kind == Kind::Band && ann.y.is_none() => {
+                    Some((crate::torn::torn_slice(&tear.cubics, *x, x + w, 0.0), if tear.inward < 0.0 { 0.0 } else { ctx.plot.h }))
+                }
+                _ => None,
+            };
             placed.mark = mark;
             placed.slide = match geom {
                 Some(Geom::HSeg { .. }) => Slide::Y,
@@ -1045,6 +1072,7 @@ mod tests {
             canvas: "#fff",
             clip_id: "c-ann0".into(),
             occupied: Vec::new(),
+            tear: None,
         }
     }
 
@@ -1092,6 +1120,53 @@ mod tests {
         let Some(Mark::Rect { x, y, w, h }) = p.mark else { panic!() };
         assert_eq!((x, y, w), (0.0, 0.0, 200.0));
         assert!(close(h, 100.0));
+    }
+
+    /// A wave across a 200 x 100 plot, centered on y = 90.
+    fn wave() -> super::super::Tear {
+        let cubics = (0..4)
+            .map(|i| {
+                let x = f64::from(i) * 50.0;
+                let (a, b) = (if i % 2 == 0 { 84.0 } else { 94.0 }, if i % 2 == 0 { 94.0 } else { 84.0 });
+                [(x, a), (x + 15.0, a + 6.0), (x + 35.0, b - 6.0), (x + 50.0, b)]
+            })
+            .collect();
+        super::super::Tear { cubics, inward: -1.0 }
+    }
+
+    /// Under a tear an unset span ends on the wave at its own x, never past it.
+    #[test]
+    fn an_unset_span_ends_on_the_tear() {
+        let mut anns = contract();
+        anns[4].x = Some(Anchor::Range { from: Some(super::super::model::Scalar::Date("2024-03-01".into())), to: Some(super::super::model::Scalar::Date("2024-06-01".into())) });
+        anns[4].y = None;
+        let fonts = fonts();
+        let mut c = ctx(&anns, &fonts, Orientation::Vertical);
+        c.y = AxisMap::Linear { domain: (0.0, 40_000_000.0), range: (85.0, 0.0) };
+        c.tear = Some(wave());
+        let tear = c.tear.clone().unwrap();
+        let Some(Mark::Segment { a, b }) = place(&anns[1], &c).unwrap().unwrap().mark else { panic!() };
+        assert_eq!((a.1, b.1), (0.0, crate::torn::torn_across_at(&tear.cubics, a.0)), "x rule ends on the wave");
+        let placed = place(&anns[4], &c).unwrap().unwrap();
+        let Some(Mark::Rect { x, w, .. }) = placed.mark else { panic!() };
+        let (cubics, far) = placed.torn.expect("x band follows the tear");
+        assert_eq!(cubics, crate::torn::torn_slice(&tear.cubics, x, x + w, 0.0));
+        assert_eq!(far, 0.0, "the band's flat edge is the plot top");
+    }
+
+    /// A torn baseline pads the y range past the domain's floor; an unset span still reaches the plot's edge.
+    #[test]
+    fn an_unset_span_reaches_the_plot_edge_when_the_y_range_is_padded() {
+        let mut anns = contract();
+        anns[4].x = Some(Anchor::Range { from: Some(super::super::model::Scalar::Date("2024-03-01".into())), to: Some(super::super::model::Scalar::Date("2024-06-01".into())) });
+        anns[4].y = None;
+        let fonts = fonts();
+        let mut c = ctx(&anns, &fonts, Orientation::Vertical);
+        c.y = AxisMap::Linear { domain: (0.0, 40_000_000.0), range: (85.0, 0.0) };
+        let Some(Mark::Segment { a, b }) = place(&anns[1], &c).unwrap().unwrap().mark else { panic!() };
+        assert_eq!((a.1.min(b.1), a.1.max(b.1)), (0.0, 100.0), "x rule spans the plot");
+        let Some(Mark::Rect { y, h, .. }) = place(&anns[4], &c).unwrap().unwrap().mark else { panic!() };
+        assert_eq!((y, h), (0.0, 100.0), "x band spans the plot");
     }
 
     #[test]

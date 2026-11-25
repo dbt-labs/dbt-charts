@@ -41,12 +41,32 @@ def test_server_config_defaults_are_present():
     assert config.server.nav is True
     assert config.server.port is None
     assert config.server.markdown_metadata_table is False
+    assert config.server.nav_order == {}
     assert config.public_url == ""
 
 
 def test_server_config_requires_shipped_markdown_metadata_table() -> None:
     with pytest.raises(ValidationError, match="markdown_metadata_table"):
         ServerConfig.model_validate({"debug": True, "nav": True})
+
+
+@pytest.mark.parametrize(
+    ("nav_order", "match"),
+    [
+        ({".": ["a", "a"]}, "lists 'a' more than once"),
+        ({".": [""]}, "lists an empty name"),
+        ({"/sales": ["a"]}, "no leading or trailing '/'"),
+        ({"sales/": ["a"]}, "no leading or trailing '/'"),
+        ({"../x": ["a"]}, "must be '.'"),
+        ({".": "a"}, "list"),
+    ],
+)
+def test_server_nav_order_rejects_a_malformed_entry(
+    nav_order: object, match: str
+) -> None:
+    shipped = get_config().server.to_plain_dict(exclude_none=False)
+    with pytest.raises(ValidationError, match=match):
+        ServerConfig.model_validate({**shipped, "nav_order": nav_order})
 
 
 def test_config_requires_shipped_public_url() -> None:
@@ -217,7 +237,7 @@ def test_warnings_ignore_key_is_accepted_and_takes_effect(
 
     assert config.warnings is not None
     assert config.warnings.ignore == ["WARN-REAGGREGATION"]
-    assert project.warnings_ignore == frozenset({"WARN-REAGGREGATION"})
+    assert "WARN-REAGGREGATION" in project.warnings_ignore
 
 
 def test_warnings_defaults_to_none() -> None:

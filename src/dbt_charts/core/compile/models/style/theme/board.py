@@ -31,12 +31,10 @@ from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     DividerStyle,
     FontStyle,
+    LineLimit,
     TextBaseline,
     one_error,
 )
-
-OverflowMode = Literal["clip", "truncate", "wrap-two", "wrap"]
-
 
 FontWeight = Literal[
     "normal", "bold", "100", "200", "300", "400", "500", "600", "700", "800", "900",
@@ -311,10 +309,10 @@ class TitleSubtitleStyle(BaseModel):
     # theme; None here keeps TitleSubtitleStyle() constructable as a cascade
     # placeholder (it is built via default_factory=TitleSubtitleStyle on
     # TitleStyle.subtitle).
-    overflow: OverflowMode | None = Field(
+    max_lines: LineLimit | None = Field(
         default=None,
-        description="Text overflow mode for the subtitle (clip, truncate, wrap-two, wrap). "
-        "None means not set at this cascade level (theme floor is wrap-two).",
+        description="Lines the subtitle takes before an ellipsis (1 = no wrapping, 3 = wraps twice); or 'all'. "
+        "None means not set at this cascade level (theme floor is 2).",
     )
 
 
@@ -397,8 +395,8 @@ class _TitleBase(BaseModel):
         )
     )
     min_height: float = Field(description="Minimum title row height in pixels.")
-    overflow: OverflowMode = Field(
-        description="Text overflow mode (clip, truncate, wrap-two, wrap)."
+    max_lines: LineLimit = Field(
+        description="Lines the title takes before an ellipsis (1 = no wrapping, 3 = wraps twice); or 'all'."
     )
     # SkipInheritSlots(cascade=True): see width_offsets above.
     position: Annotated[TitlePositionStyle, SkipInheritSlots(cascade=True)] = Field(

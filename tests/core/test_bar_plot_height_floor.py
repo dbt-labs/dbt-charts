@@ -266,10 +266,10 @@ def test_a_starved_plot_is_flagged_at_340px() -> None:
 
 
 def test_a_legend_is_charged_only_the_rows_vega_will_draw() -> None:
-    """A legend past ``symbol_limit`` costs the rows it renders, not one per
+    """A legend past ``limit`` costs the rows it renders, not one per
     series.
 
-    Vega draws at most ``symbol_limit`` symbols (20 by default), so a
+    Vega draws at most ``limit`` symbols (20 by default), so a
     60-series legend is 20 symbols tall, not 60. Charging a row per series
     bills height that is never drawn and accuses a healthy plot: unclamped,
     this card estimates -117px against a 189.6px floor and fires. Clamped it
@@ -417,7 +417,7 @@ def test_a_suppressed_legend_is_charged_nothing() -> None:
     not drawn. Charging it anyway costs 210px of estimate, drives the plot
     to -97px against a 69.6px floor, and tells the author to trim a legend
     they cannot see — the same false-positive class as an unclamped
-    ``symbol_limit``.
+    ``limit``.
     """
     fields = [f"m{i:02d}" for i in range(19)]
     rows: list[dict[str, str | float]] = [

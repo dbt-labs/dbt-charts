@@ -172,6 +172,10 @@ pub struct Deletion {
     pub reason: Option<String>,
     /// Scopes the deletion to one family of the chart union.
     pub chart_type: Option<String>,
+    /// Strikes before the boundary's moves, while the document is still in the
+    /// frozen grammar's shape (a move that reshapes a holder, like `tabs`, hides
+    /// what sits beneath it from the frozen walk).
+    pub early: bool,
 }
 
 impl Deletion {
@@ -182,6 +186,7 @@ impl Deletion {
             path: path(parts),
             reason: None,
             chart_type: None,
+            early: false,
         }
     }
 }

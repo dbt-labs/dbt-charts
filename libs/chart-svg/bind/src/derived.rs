@@ -40,6 +40,12 @@ use crate::style::legend::{walked_key_visible, walked_legend};
 use crate::style::title::walked_title;
 use crate::style::Tiers;
 
+/// The board's ink: `style.roles.ink` where it is a hex, which no label or mark derivation moves
+/// (`color::is_board_ink`). A themed role (a palette token) is no board ink.
+pub fn board_ink(style: &Style) -> Option<&str> {
+    style.roles.get("ink").map(String::as_str).filter(|ink| ink.starts_with('#'))
+}
+
 /// One placement of a cartesian chart: the chart, the bodies from the root to the one that places
 /// it (the last), its folded family style, its own tier alone (the only one production reads for
 /// the fill and the canvas) and its place in the single-series rhythm.
@@ -64,10 +70,10 @@ pub struct DerivedChart {
 }
 
 /// The leaves of a tier's legend and title patch the walks read; any other set leaf is refused.
-pub(crate) const KEY_WALKED: [&str; 5] = ["visible", "type", "legend.symbol_limit", "legend.direction", "legend.title.visible"];
+pub(crate) const KEY_WALKED: [&str; 5] = ["visible", "type", "legend.limit", "legend.direction", "legend.title.visible"];
 /// A line, area or bar's theme states the label offset (and a bar its strip height) the bind never draws.
-const DIRECT_KEY_WALKED: [&str; 7] = ["visible", "type", "legend.symbol_limit", "legend.direction", "legend.title.visible", "direct.offset", "direct.height"];
-const TITLE_WALKED: [&str; 2] = ["min_height", "subtitle.overflow"];
+const DIRECT_KEY_WALKED: [&str; 7] = ["visible", "type", "legend.limit", "legend.direction", "legend.title.visible", "direct.offset", "direct.height"];
+const TITLE_WALKED: [&str; 2] = ["min_height", "subtitle.max_lines"];
 
 pub(crate) fn refuse_unwalked(slot: &str, patch: &impl SetLeaves, walked: &[&str]) -> Result<(), Diagnostic> {
     let mut unwalked = None;
@@ -229,7 +235,7 @@ impl Placed<'_> {
             }
             Chart::Scatter(_) => {
                 let own = &self.own.charts.scatter;
-                (&own.cartesian.painted, own.marks.point.color.as_ref())
+                (&own.cartesian.painted, own.marks.point.point.color.as_ref())
             }
             other => {
                 return Err(diag::err_internal(format!(

@@ -103,9 +103,10 @@ rows:
 
 def test_values_at_or_above_one_still_compact(tmp_path: Path) -> None:
     """A spec-less affix on
-    values >= $1 still compacts through the engine's predefined SI spec."""
+    values >= $1 still compacts through the engine's predefined SI spec: the
+    axis declares `£10m` and the labels, a run in its magnitude, print bare."""
     text = _text_node_content(_render_inline_board(_ABOVE_ONE_BOARD, tmp_path))
-    assert "£12.4m" in text, text
+    assert "£10m" in text and "12.4" in text, text
 
 
 _NO_AFFIX_BOARD = """

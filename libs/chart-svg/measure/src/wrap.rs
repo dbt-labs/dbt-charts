@@ -1,13 +1,14 @@
 //! Breaking plain text into lines that fit a width.
 
-use crate::fonts::{wrap_text_precise, FontMeasurer};
+use crate::fit::{fit_with, FittedText};
+use crate::fonts::FontMeasurer;
 use crate::FontBook;
 
-/// `wrap_text_precise(..., ellipsis=True) or [text]` against `measurer`, the font
+/// `fit_with(...).lines or [text]` against `measurer`, the font
 /// `get_font_measurer(family)` loads. Unweighted: its callers, the callout placard and the error
 /// card, paint no `font-weight`, so the browser draws it at 400.
 pub fn wrap_plain(measurer: &FontMeasurer, text: &str, width: f64, size: f64, max_lines: usize) -> Vec<String> {
-    let (lines, _) = wrap_text_precise(text, width, size, measurer, Some(max_lines), true, true);
+    let lines = fit_with(text, width, size, measurer, Some(max_lines)).lines;
     if lines.is_empty() {
         vec![text.to_string()]
     } else {
@@ -17,10 +18,7 @@ pub fn wrap_plain(measurer: &FontMeasurer, text: &str, width: f64, size: f64, ma
 
 /// `title_overflow.py::prepare_title_text`'s wrap (title_overflow.py:33-46,
 /// 49-82): the measurer of the face `family` resolves to, instanced at the CSS
-/// `weight` the text paints at, whitespace-normalized, at most
-/// `max_lines` lines with an ellipsis when `ellipsis`. Returns the lines and
-/// whether any text was cut.
-#[allow(clippy::too_many_arguments)]
+/// `weight` the text paints at, whitespace-normalized, at most `max_lines` lines.
 pub fn wrap_label(
     book: &FontBook,
     family: &str,
@@ -29,10 +27,9 @@ pub fn wrap_label(
     limit: f64,
     size: f64,
     max_lines: Option<usize>,
-    ellipsis: bool,
-) -> Result<(Vec<String>, bool), String> {
+) -> Result<FittedText, String> {
     let measurer = book.measurer_at_weight(family, weight)?;
-    Ok(wrap_text_precise(text, limit, size, &measurer, max_lines, ellipsis, true))
+    Ok(fit_with(text, limit, size, &measurer, max_lines))
 }
 
 #[cfg(test)]
@@ -51,7 +48,7 @@ mod tests {
         let text = "Quarterly recurring revenue";
         let regular = fonts.measure(text, FAMILY, 14.0).unwrap();
         let wraps_at = |weight: &str| {
-            wrap_label(&fonts, FAMILY, weight, text, regular + 0.5, 14.0, None, false).unwrap().0.len() > 1
+            wrap_label(&fonts, FAMILY, weight, text, regular + 0.5, 14.0, None).unwrap().lines.len() > 1
         };
         assert!(!wraps_at("400"), "the regular label fits its own width");
         assert!(wraps_at("700"), "the bold label is wider than that width");

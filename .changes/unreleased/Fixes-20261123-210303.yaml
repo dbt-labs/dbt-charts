@@ -1,5 +1,0 @@
-kind: Fixes
-body: Area layers draw each fill from zero to its own value instead of stacking, so adjacent bands no longer draw as slanted wedges.
-time: 2026-11-23T21:03:03.240303925Z
-custom:
-    DbtChartsIssue: "116"

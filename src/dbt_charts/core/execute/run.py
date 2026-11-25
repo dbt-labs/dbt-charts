@@ -918,7 +918,11 @@ def observed(
 
 
 def run_values(query: ValuesQuery) -> QueryResult:
-    schema = query.declared_schema()
+    return values_result(query, query.declared_schema())
+
+
+def values_result(query: ValuesQuery, schema: dict[str, ColumnType]) -> QueryResult:
+    """*query*'s rows as *schema* declares them."""
     return QueryResult(
         data=query.apply_limit(declared_literal_cells(query.rows, schema)),
         columns=list(schema),
@@ -1134,8 +1138,14 @@ def run_planned(
     with attributed(source_config, name, plan["board_id"]):
         if entry["type"] == "values":
             values = ValuesQuery.model_validate(entry["spec"])
+            schema = {
+                column: ColumnType.model_validate(declared)
+                for column, declared in entry["schema"].items()
+            }
             return observed(
-                env.observers, None, lambda: _cut_to_ceiling(run_values(values))
+                env.observers,
+                None,
+                lambda: _cut_to_ceiling(values_result(values, schema)),
             )
         if entry["type"] == "schema":
             schema = SchemaQuery.model_validate(entry["spec"])

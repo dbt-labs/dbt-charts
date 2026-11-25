@@ -37,7 +37,7 @@ def _board(style: dict[str, Any]) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("board", "message"),
     [
-        (_bar({"key": {"legend": {"symbol_limit": 0}}}), "greater than or equal to 1"),
+        (_bar({"key": {"legend": {"limit": 0}}}), "greater than or equal to 1"),
         (
             _chart_board(
                 {
@@ -127,8 +127,8 @@ def test_title_level_coerces_lax_input_on_theme_and_patch(
 
 
 def test_patch_null_stays_unconstrained() -> None:
-    patch = build_patch_model(LegendStyle).model_validate({"symbol_limit": None})
-    assert patch.model_dump(exclude_unset=True) == {"symbol_limit": None}
+    patch = build_patch_model(LegendStyle).model_validate({"limit": None})
+    assert patch.model_dump(exclude_unset=True) == {"limit": None}
 
 
 def test_divider_dasharray_normalizes_separators() -> None:

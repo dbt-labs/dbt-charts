@@ -164,6 +164,27 @@ def stacked_bar_totals_max(
     return max(totals.values()) if totals else None
 
 
+def stacked_category_totals(
+    data: PanelRows, x_field: str, y_fields: list[str], net: bool
+) -> list[float]:
+    """Each category's stacked total across ``y_fields``, one panel's rows.
+
+    ``net`` sums every segment, the total a label prints; otherwise only the
+    positive segments, the extent the stack's domain must cover.
+    """
+    totals: defaultdict[str | int | float | Decimal, float] = defaultdict(float)
+    for row in data:
+        x = row.get(x_field)
+        if x is None:
+            continue
+        totals[x] += sum(
+            float(row[y]) if net else max(0.0, float(row[y]))
+            for y in y_fields
+            if row.get(y) is not None
+        )
+    return list(totals.values())
+
+
 def stacked_bar_multi_measure_totals_max(
     data: PanelRows,
     x_field: str,
@@ -173,15 +194,8 @@ def stacked_bar_multi_measure_totals_max(
 
     ``data`` is one panel's rows — see ``stacked_bar_totals_max``.
     """
-    totals: defaultdict[str | int | float | Decimal, float] = defaultdict(float)
-    for row in data:
-        x = row.get(x_field)
-        if x is None:
-            continue
-        totals[x] += sum(
-            max(0.0, float(row[y])) for y in y_fields if row.get(y) is not None
-        )
-    return (max(totals.values()),) if totals else ()
+    totals = stacked_category_totals(data, x_field, y_fields, net=False)
+    return (max(totals),) if totals else ()
 
 
 def stacked_totals_max(

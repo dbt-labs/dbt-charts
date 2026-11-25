@@ -15,6 +15,7 @@ pub mod embed_fonts;
 pub mod families;
 pub mod layout;
 pub(crate) mod placement;
+mod series_names;
 pub mod font_normalize;
 pub mod frame;
 pub mod href;
@@ -159,6 +160,10 @@ pub struct BoardStyle {
     /// table or a value label errors when it is absent.
     #[serde(default)]
     pub font_color: Option<String>,
+    /// The board's hex `style.roles.ink` as set: the one color no label derivation moves
+    /// (`dbt_charts_color::is_board_ink`). Absent where the board sets none.
+    #[serde(default)]
+    pub ink: Option<String>,
     /// `style.fonts.numeral`: the family a table sets its digits in. Optional in
     /// the envelope; a table errors when it is absent.
     #[serde(default)]
@@ -515,7 +520,7 @@ pub struct Payload {
     pub placement: usize,
     /// Set on the width-corrected re-render of a support_table chart: the slot width the chart was
     /// placed at, before the correction shrank `width`. The plot box is the same either way, so a
-    /// bar's label cadence is judged against this, not the shrunk `width`.
+    /// bar's label cadence is judged against the plot this slot leaves, not the shrunk `width`.
     #[serde(skip)]
     pub slot_width: Option<f64>,
     /// A pie's sized mode (`direct`, `hybrid`, `full_table`): what the size stage

@@ -71,6 +71,7 @@ from dbt_charts.core.text.predefined_formats import ALL_PREDEFINED_NAMES
 def detect_board_warnings(
     board: Board,
     own_format_names: frozenset[str],
+    own_pin_fields: frozenset[str],
     chart_styles: Mapping[
         str, BaseModel | None
     ],  # type-state: optional — None when the chart authors no style
@@ -85,7 +86,7 @@ def detect_board_warnings(
     _detect_single_chart_redundant_title(board, warnings)
     _detect_adjacent_text_rows(board, warnings)
     _detect_orphan_charts(board, warnings)
-    _detect_orphan_category_pins(board, warnings)
+    _detect_orphan_category_pins(board, own_pin_fields, warnings)
     _detect_unreferenced_queries(board, warnings)
     _detect_undeclared_text_names(board, warnings)
     _detect_retired_ignore_codes(board, warnings)
@@ -493,10 +494,14 @@ def _detect_orphan_charts(board: Board, warnings: list[Diagnostic]) -> None:
         )
 
 
-def _detect_orphan_category_pins(board: Board, warnings: list[Diagnostic]) -> None:
+def _detect_orphan_category_pins(
+    board: Board, own_pin_fields: frozenset[str], warnings: list[Diagnostic]
+) -> None:
     """Warn for a `category_colors` pin whose field no chart colors by.
 
     Pins apply board-wide, so a field is judged against every chart in the tree.
+    Only pins the board file writes are judged: an inherited pin is a shared
+    default most boards in the folder never draw.
     A pin aimed at a multi-measure `y:` series lands here: those series have no
     `color:` field. A custom chart reads pins by any of its columns, so a board
     with one judges nothing.
@@ -519,7 +524,7 @@ def _detect_orphan_category_pins(board: Board, warnings: list[Diagnostic]) -> No
     if any(has_custom):
         return
     for field in dict.fromkeys(pinned):
-        if field not in colored:
+        if field in own_pin_fields and field not in colored:
             warnings.append(
                 Diagnostic.from_code(
                     WARN_CATEGORY_COLOR_PIN_ORPHAN,

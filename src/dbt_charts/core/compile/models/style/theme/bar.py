@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Literal
+import math
+from functools import partial
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+)
 
 from dbt_charts.core.compile.models.conditional_predicate import (
     default_rule_last,
 )
 from dbt_charts.core.compile.models.factories import build_conditional_model
 from dbt_charts.core.compile.models.markers import (
+    Absent,
     ChartLocal,
     InheritSlot,
     SkipInheritSlots,  # noqa: F401  # pyright: ignore[reportUnusedImport] — required in module globals for model_rebuild() to resolve inherited base-class annotations
@@ -61,6 +71,80 @@ class BarGroupedStyle(BaseModel):
         ge=0,
         lt=1,
         description="Margin at both plot edges, as a share of the band step.",
+    )
+
+
+def _read_cap(
+    value: Any,  # type-state: explicit_any — validator input is whatever the author wrote
+    *,
+    allow_none: bool,
+) -> float | str:
+    """A cap as pixels (`64`, `"64"`, `"64px"`) or a percent string (`"33%"`); `"none"` where `allow_none`."""
+    if allow_none and value == "none":
+        return value
+    percent = isinstance(value, str) and value.strip().endswith("%")
+    digits = value
+    if isinstance(value, str):
+        digits = value.strip().removesuffix("%" if percent else "px")
+    try:
+        number = float(digits)
+    except (TypeError, ValueError):
+        number = math.nan
+    if isinstance(value, bool) or not math.isfinite(number):
+        suffix = ", or 'none'" if allow_none else ""
+        raise ValueError(
+            f"{value!r} is not a valid cap (use pixels such as 64 or '64px', "
+            f"or a percent such as '33%'{suffix})"
+        )
+    if number <= 0:
+        raise ValueError(f"{value!r} must be positive")
+    return f"{str(digits).strip()}%" if percent else number
+
+
+_PERCENT = r"\d+(\.\d+)?%"
+HorizontalCap = Annotated[
+    float | Annotated[str, StringConstraints(pattern=f"^{_PERCENT}$")],
+    BeforeValidator(partial(_read_cap, allow_none=False)),
+]
+VerticalCap = Annotated[
+    float | Annotated[str, StringConstraints(pattern=f"^({_PERCENT}|none)$")],
+    BeforeValidator(partial(_read_cap, allow_none=True)),
+]
+
+
+class BarMaxThicknessStyle(BaseModel):
+    """Thickest a category bar or column may be: the plot shrinks along the category axis until a bar is the cap."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    horizontal: HorizontalCap = Field(
+        description=(
+            "Thickest a horizontal bar may be: pixels, or a percent of the plot's width such as '20%'."
+        )
+    )
+    vertical: VerticalCap = Field(
+        description=(
+            "Widest a column may be: pixels, or a percent of the plot's height such as '33%'; "
+            "'none' leaves columns uncapped."
+        )
+    )
+
+
+class BarLabelsAboveStyle(BaseModel):
+    """Moves a horizontal bar chart's category names above their bars when the names beside the bars take too much of the chart."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_share: float = Field(
+        gt=0,
+        le=1,
+        description=(
+            "The largest share of the chart's width the category names may take "
+            "beside the bars, as a fraction from above 0 up to 1. A single-series "
+            "or stacked horizontal bar chart whose names would take more puts each "
+            "name on one line above its bar instead, and a name too long for that "
+            "line ends in an ellipsis."
+        ),
     )
 
 
@@ -170,6 +254,19 @@ class _BarChartStyleBase(
     grouped: BarGroupedStyle = Field(description="Band-scale padding for grouped bars.")
     outliers: BarOutliersStyle = Field(
         description="Tear bars far longer than the rest."
+    )
+    max_thickness: Annotated[
+        BarMaxThicknessStyle | None, Absent("category bars are uncapped")
+    ] = Field(
+        default=None,
+        description="Thickest a category bar or column may be; unset leaves them uncapped.",
+    )
+    labels_above: Annotated[
+        BarLabelsAboveStyle | None,
+        Absent("category names stay beside horizontal bars"),
+    ] = Field(
+        default=None,
+        description="Moves long horizontal bar names above their bars; unset keeps them beside the bars.",
     )
     pattern: PatternStyle = Field(
         description="How the `pattern:` channel paints fills."

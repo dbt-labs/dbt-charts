@@ -191,7 +191,7 @@ class TestChartTitleWidensHug:
         )
 
     def test_wrapping_title_does_not_widen(self) -> None:
-        wrap = "style:\n  charts:\n    title:\n      overflow: wrap\n"
+        wrap = "style:\n  charts:\n    title:\n      max_lines: all\n"
         assert _lone_chart_width(_LONG_TITLE, board_extra=wrap) == _lone_chart_width(
             _SHORT_TITLE, board_extra=wrap
         )

@@ -64,6 +64,8 @@ const TITLE_LIMIT: f64 = 180.0;
 /// `VEGA_SYMBOL_STROKE_WIDTH`).
 const SYMBOL_SIZE: f64 = 100.0;
 const STROKE: f64 = 1.5;
+/// `symbol.size` as themes state it: the glyph's side.
+const SYMBOL_SIDE: f64 = 10.0;
 /// `VEGA_ROW_PADDING`.
 const ROW_PADDING: f64 = 2.0;
 
@@ -288,10 +290,16 @@ impl SideLegend {
         if base.direction == Engine::Value(LegendDirection::Horizontal) || base.columns != 0 {
             return Err(Diagnostic::refused("a side legend with a horizontal direction or an authored column count is not supported"));
         }
-        if base.symbol_shape != Engine::Rule(Auto::Auto) || base.symbol_fill != Engine::Rule(Auto::Auto) {
+        if base.symbol.shape != Engine::Rule(Auto::Auto) || base.symbol.fill != Engine::Rule(Auto::Auto) {
             return Err(Diagnostic::refused("a side legend with an authored symbol shape or fill is not supported"));
         }
-        let limit = base.symbol_limit.map_or(SYMBOL_LIMIT, |limit| limit as usize);
+        if base.symbol.size != SYMBOL_SIDE {
+            return Err(Diagnostic::refused("a side legend with an authored symbol size is not supported"));
+        }
+        if base.border.width != 0.0 || matches!(base.padding, Engine::Value(p) if p.get() != 0.0) || base.label.halo.get() != 0.0 {
+            return Err(Diagnostic::refused("a side legend with a padding, border or label halo is not supported"));
+        }
+        let limit = base.limit.map_or(SYMBOL_LIMIT, |limit| limit as usize);
         if legend.entries.len() > limit {
             return Err(Diagnostic::refused("a side legend with more entries than its symbol limit is not supported"));
         }

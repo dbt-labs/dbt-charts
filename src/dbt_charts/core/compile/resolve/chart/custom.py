@@ -37,6 +37,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import (
+    decide_legend_padding,
     decide_legend_position,
     merge_authored_position,
 )
@@ -109,6 +110,15 @@ def _decided_position(
     return {k: getattr(decided, k) for k in _ENGINE_DECIDED_PLACEMENT}
 
 
+def _place(legend_node: dict[str, JsonValue], position: dict[str, JsonValue]) -> None:
+    """Write the decided placement, and the padding an `auto` padding gets with it."""
+    legend_node["position"] = position
+    if "padding" in legend_node and legend_node["padding"] in (None, "auto"):
+        legend_node["padding"] = decide_legend_padding(
+            None, overlay=bool(position["overlay"])
+        )
+
+
 def _style_tree(context: ChartStyleContext) -> dict[str, JsonValue]:
     cascaded = context.cascaded
     defaults = concrete_family_defaults(context)
@@ -137,7 +147,7 @@ def _style_tree(context: ChartStyleContext) -> dict[str, JsonValue]:
     assert isinstance(general_key_node, dict)
     general_node = general_key_node["legend"]
     assert isinstance(general_node, dict)
-    general_node["position"] = _decided_position(general.position, None)
+    _place(general_node, _decided_position(general.position, None))
     for name, family in charts:
         key = dict(family).get("key") if isinstance(family, BaseModel) else None
         node = tree_charts[name]
@@ -147,14 +157,15 @@ def _style_tree(context: ChartStyleContext) -> dict[str, JsonValue]:
         if isinstance(legend, (LegendStylePatch, PieLegendStylePatch)) and isinstance(
             legend_node, dict
         ):
-            legend_node["position"] = _decided_position(
-                general.position, legend, radial=name == "pie"
+            _place(
+                legend_node,
+                _decided_position(general.position, legend, radial=name == "pie"),
             )
-    # A pattern palette names fills, not color stops: a template reads colors.
+    # A pattern or line palette names fills or strokes, not color stops: a template reads colors.
     concrete["palettes"] = {
         role: _palette_value(name)
         for role, name in context.palettes.items()
-        if palette_family(name) != "pattern"
+        if palette_family(name) not in ("pattern", "line")
     }
     return concrete
 

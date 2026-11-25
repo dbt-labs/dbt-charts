@@ -514,6 +514,7 @@ pub(super) fn render_vertical_continuous_x_panel(
             canvas: r.canvas.as_str(),
             clip_id: format!("{}-ann{}", crate::contract::scoped_id(&r.id), panel.map_or(0, |(_, ordinal)| ordinal)),
             occupied: Vec::new(),
+            tear: None,
         }
     };
     // A line or scatter layer's value labels join the fit like any text mark:
@@ -925,6 +926,8 @@ pub(super) fn render_vertical_continuous_x_panel(
     let stamp_legend_series = tooltip_labels && layered;
     let swatch_stroke = mark.border.color.as_deref().unwrap_or("none");
     let mut facet_legend: Option<facet_compose::FacetLegend> = None;
+    // The legend's nodes in `head` and its box, once drawn.
+    let mut drawn_legend: Option<(std::ops::Range<usize>, (f64, f64))> = None;
     if let Some(lg) = &legend {
         if suppress_x_axis {
             let mut nodes: Vec<scene::Node> = drawn_symbol_legend(&legend_entries, lg, &r.legend, LegendSymbol::Square(swatch_stroke), 0.0, 0.0, stamp_legend_series, r.canvas.as_str()).into_iter().collect();
@@ -933,8 +936,10 @@ pub(super) fn render_vertical_continuous_x_panel(
         } else {
             let (lx, ly) = legend_xy.get();
             let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (m.plot_w, m.plot_h))?;
+            let first_node = head.len();
             head.extend(drawn_symbol_legend(&legend_entries, lg, &r.legend, LegendSymbol::Square(swatch_stroke), group_x + lx + dx, group_y + ly + dy, stamp_legend_series, r.canvas.as_str()));
             head.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (m.plot_w, m.plot_h), (group_x + lx + dx, group_y + ly + dy), r.canvas.as_str())?);
+            drawn_legend = Some((first_node..head.len(), (lg.box_w, lg.box_h())));
         }
     }
     let mut plot: Vec<Node> = Vec::new();
@@ -1219,6 +1224,7 @@ pub(super) fn render_vertical_continuous_x_panel(
 crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
 crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
 &under,
+        None,
 )
                     .map_err(|e| format!("bar: {e}"))
                 };
@@ -1343,6 +1349,14 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
         plot.extend(mark_labels(ml, false, false, true, &points, painted_layers, board_style, 0.0, 0.0, r.canvas.as_str(), &under, &crate::placement::strikes(&plot, r.canvas.as_str())?, &mut LayerCaptions::default(), r.link_open)?);
     }
     let annotations = crate::annotation::AnnotationCtx { occupied: crate::annotation::DataMark::plot_marks(&plot), ..annotations };
+    if let Some((nodes, block)) = drawn_legend.filter(|_| r.legend.position.overlay) {
+        let (corner_x, corner_y) = crate::families::legend::overlay_corner_shift(&r.legend.position, (m.plot_w, m.plot_h), block, || annotations.occupied.clone());
+        if (corner_x, corner_y) != (0.0, 0.0) {
+            for node in &mut head[nodes] {
+                *node = node.clone().translate(corner_x, corner_y);
+            }
+        }
+    }
     // Built where the data marks are known, painted right after the x axis so a rule on the plot edge covers its ticks.
     let foreground_annotations = crate::annotation::nodes(&annotations, crate::annotation::Plane::Foreground)?;
 

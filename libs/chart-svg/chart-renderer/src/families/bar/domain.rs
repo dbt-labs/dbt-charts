@@ -4,10 +4,13 @@
 use ::bind::rows::color_domain_of;
 use crate::common::AxisStyle;
 use ::bind::rows::{ChartSort, SortAggregate, dimension_sort_domain, row_num, row_str};
-use crate::families::cartesian::vl_default_tick_count;
+use crate::common::VALUE_AXIS_BREATHING_ROOM;
+use crate::constants::bar::NAME_ABOVE_ROW_PX;
+use crate::families::cartesian::{BandScale, vl_default_tick_count};
 use crate::families::span::RangedBars;
 
-use serde_json::Value;
+use diagnostic::{Diagnostic, codes};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
 use super::facet::color_1to1_with_cat;
@@ -1105,15 +1108,114 @@ pub(super) fn build_chart_domains(
     Ok(BarChartState { cat_domain, color_domain, series_order, is_grouped, is_stacked, normalize, palette_domain })
 }
 
+/// What a horizontal bar's category labels reserve beside the plot: the widest line they paint,
+/// which is the wrapped width when the plot's rows hold two lines.
+pub(super) struct CategoryGutter<'a> {
+    pub(super) hidden: bool,
+    pub(super) domain: &'a [String],
+    pub(super) band: (f64, f64),
+    pub(super) line_height: f64,
+    pub(super) one_line: f64,
+    pub(super) wrapped: f64,
+    pub(super) flip: bool,
+    pub(super) center: bool,
+    pub(super) pad: f64,
+    /// A support-table block on the label side widens the labels' own padding.
+    pub(super) block_footprint: f64,
+    pub(super) above: bool,
+}
+
+impl CategoryGutter<'_> {
+    /// Two lines overprint the next row's label unless the row step holds both; the step is the
+    /// plot height's, so each fit pass decides it afresh.
+    pub(super) fn holds_two(&self, plot_h: f64) -> bool {
+        self.domain.len() < 2 || {
+            let band = BandScale::new(self.domain.to_vec(), 0.0, plot_h, self.band.0, self.band.1);
+            (band.position_at(1) - band.position_at(0)).abs() >= 2.0 * self.line_height
+        }
+    }
+
+    /// `(label padding, gutter)` at a plot height: the labels' own width decides both.
+    pub(super) fn at(&self, plot_h: f64) -> (f64, f64) {
+        if self.above {
+            return (0.0, 0.0);
+        }
+        let width = match (self.hidden, self.holds_two(plot_h)) {
+            (true, _) => 0.0,
+            (false, true) => self.wrapped,
+            (false, false) => self.one_line,
+        };
+        let label_pad = if self.hidden {
+            0.0
+        } else if self.flip {
+            width + VALUE_AXIS_BREATHING_ROOM
+        } else if self.center {
+            VALUE_AXIS_BREATHING_ROOM + width / 2.0
+        } else {
+            self.pad
+        } + self.block_footprint;
+        (label_pad, if self.flip { label_pad } else if self.center { label_pad + width / 2.0 } else { label_pad + width })
+    }
+}
+
+/// Whether a horizontal bar's names sit above their bars: the theme set
+/// `style.charts.bar.labels_above` and the names beside the bars, wrapped as they would be at the
+/// authored height, would take more than its share of the chart's width. The only place the share
+/// is read. `one_bar_per_band` is false for the charts that keep the left column.
+pub(super) fn names_above(r: &BarResolved, gutter: &CategoryGutter, width: f64, payload_height: f64, one_bar_per_band: bool) -> bool {
+    // The hover rows are the bar's hit targets, which a layer, a folded measure or a stack mode `hover_band_for` declines would not own.
+    let owns_hover = r.layers.is_empty() && r.wide_measures.is_empty() && matches!(r.stack.as_str(), "none" | "zero");
+    let Some(labels_above) = r.style.labels_above.as_ref().filter(|_| one_bar_per_band && owns_hover) else { return false };
+    gutter.at(payload_height - CHROME_PX).1 > labels_above.max_share * width
+}
+
 /// The shortest card that gives each of `n_categories` bands room for its label
-/// (`min_height_for_horizontal_bar_categories`).
-pub(super) fn horizontal_min_height(r: &BarResolved, n_categories: usize) -> Result<f64, String> {
+/// (`min_height_for_horizontal_bar_categories`), or its name's row when the names sit above.
+pub(super) fn horizontal_min_height(r: &BarResolved, n_categories: usize, names_above: bool) -> Result<f64, String> {
+    if names_above {
+        return Ok(CHROME_PX + n_categories as f64 * NAME_ABOVE_ROW_PX);
+    }
     let ax_x = &r.style.axis_x;
     let font_size = ax_x.labels.font.size.ok_or("bar: axis_x.labels.font.size absent (theme required)")?;
     let min_gap = ax_x.labels.min_gap.ok_or("bar: axis_x.labels.min_gap absent (theme required)")?;
     let mark_size = r.style.mark.size.unwrap_or_else(|| continuous_max_size(&r.style.mark));
     let band_step = mark_size.max(font_size + 2.0 * BAND_LABEL_LEADING) + min_gap;
     Ok(CHROME_PX + n_categories as f64 * band_step)
+}
+
+/// Warns when the category floor `min_height` exceeds a cap the chart itself authored: its root
+/// `height`, else its own `style.max_height`. A theme or board `max_height` is not authored here.
+pub(super) fn warn_floor_above_own_cap(r: &BarResolved, n_categories: usize, min_height: f64) {
+    let Some((field, cap)) = r.height.map(|h| ("height", h)).or(r.max_height.map(|h| ("style.max_height", h))) else { return };
+    if n_categories > 0 && min_height > cap {
+        diagnostic::warn(Diagnostic::new(
+            &codes::WARN_CHART_HEIGHT_BELOW_CATEGORY_FLOOR,
+            [
+                ("authored_height", json!(cap)),
+                ("chart_id", json!(r.id)),
+                ("field", json!(field)),
+                ("min_height", json!(min_height)),
+                ("n_categories", json!(n_categories)),
+            ],
+        ));
+    }
+}
+
+/// The plot extent along the category axis at which a bar is exactly `cap` thick, or `extent`
+/// when it is already no thicker (`style.charts.bar.max_thickness`). A band bar's thickness is `extent`
+/// times a constant, so one proportion reaches the cap; the width law of a bar on a date axis has a
+/// ceiling or an offset, so the proportion is repeated until it settles. A thickness that does not
+/// follow the extent (an authored size, a ceiling or floor) never reaches the cap by shrinking, so
+/// the plot keeps its extent. `thickness_at` reads it through the code the draw path uses. The only
+/// place the cap shrinks a plot; the card's height floor (`horizontal_min_height`) is a floor the cap
+/// never lowers.
+pub(super) fn capped_category_extent(extent: f64, thickness_at: impl Fn(f64) -> f64, cap: f64) -> f64 {
+    if thickness_at(extent) <= cap {
+        return extent;
+    }
+    let capped = (0..4).fold(extent, |capped, _| (capped * cap / thickness_at(capped)).min(extent));
+    // Half a pixel is the settling the repeated proportion leaves on a width law with an offset.
+    if thickness_at(capped) <= cap + 0.5 { capped } else { extent }
 }
 
 /// A bar segment's place on the measure axis, shared by its drawn bar and its

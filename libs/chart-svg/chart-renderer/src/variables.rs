@@ -381,7 +381,7 @@ fn traits_of(input_type: &str) -> Result<InputTraits, String> {
             unset: "none",
             segments: "none",
         },
-        "slider" | "range" => InputTraits {
+        "slider" => InputTraits {
             sizing: "slider",
             ornament: "none",
             unset: "none",
@@ -567,7 +567,7 @@ fn drawn_value(
         return Ok(spec.value.clone());
     }
     let slot = vs.input.widths.text - vs.input.padding.left - vs.input.padding.right;
-    crate::common::truncate_label_with(&spec.value, slot, |s| {
+    measure::fit::truncate_label_by(&spec.value, slot, |s| {
         Ok(text_width(s, font_size, fonts_dir))
     })
 }
@@ -1491,7 +1491,7 @@ fn format_variable_display_value(
             }
             format_date_label(&py_str(value))
         }
-        "text" | "input" | "textarea" | "number" | "slider" | "range" => {
+        "text" | "input" | "textarea" | "number" | "slider" => {
             if value_is_unset(value) {
                 return Ok(var_def.placeholder.clone().unwrap_or_default());
             }
@@ -1612,7 +1612,7 @@ pub fn resolve_controls(
             .get(name)
             .cloned()
             .unwrap_or_else(|| var_def.default.clone().unwrap_or(Value::Null));
-        if matches!(refined.input_type.as_str(), "slider" | "range") && current.is_null() {
+        if refined.input_type == "slider" && current.is_null() {
             current = Value::from(low);
         } else if refined.input_type == "multiselect" {
             current = Value::Array(coerce_multiselect(&current));

@@ -95,7 +95,7 @@ pub const SYMBOL_LIMIT: usize = 30;
 /// `symbolLimit`: vega-encode's `LegendEntries` keeps the first `limit - 1` of `count` entries and
 /// folds the rest into one "+N more" note, which draws no swatch of its own. `None` where
 /// the entries fit.
-pub fn fold_symbol_limit(count: usize, limit: usize) -> Option<(usize, String)> {
+pub fn fold_limit(count: usize, limit: usize) -> Option<(usize, String)> {
     (limit > 0 && count > limit).then(|| (limit - 1, format!("+{} more", count - (limit - 1))))
 }
 

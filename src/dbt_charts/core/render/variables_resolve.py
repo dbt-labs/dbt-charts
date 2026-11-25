@@ -199,7 +199,7 @@ def resolve_controls(
         low, high, step = _slider_bounds(var_def, refined, variables_style)
         current = current_values.get(name, var_def.default)
         preset: str | None = None
-        if refined.input_type in ("slider", "range") and current is None:
+        if refined.input_type == "slider" and current is None:
             # A slider always shows a position; with nothing committed that is
             # the low end, which is where the mounted control shows it too.
             current = low
@@ -780,7 +780,6 @@ def format_variable_display_value(
         "textarea",
         "number",
         "slider",
-        "range",
     ):
         if value is None or value == "":
             return var_def.placeholder or ""

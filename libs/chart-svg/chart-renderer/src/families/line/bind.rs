@@ -30,6 +30,61 @@ pub struct Bound<'a> {
     pub(super) wide_series: Vec<String>,
     pub(super) wide_labels: HashMap<String, String>,
     pub(super) x: XAxis,
+    /// The slot of each series of a chart drawn with a line palette, chosen once for every panel of
+    /// a small-multiples chart: the composer sets it after a probe pass, and layout reads it.
+    pub(super) line_slots: std::cell::OnceCell<HashMap<String, usize>>,
+    /// `key.direct.position: auto`: the chart bound with its series named inside the plot, for layout
+    /// to draw in place of this one unless a name finds no clear spot. `None` also where that
+    /// binding failed: the chart then draws as resolved.
+    pub(super) overlay_attempt: Option<Box<Bound<'a>>>,
+    /// This is another chart's `overlay_attempt`: its names decide `auto`'s choice straight.
+    pub(super) auto_attempt: bool,
+    /// The payload this was bound from, before any wide fold or view narrowing.
+    pub(super) origin: Cow<'a, Payload>,
+}
+
+impl Bound<'_> {
+    /// Whether the chart draws its series with the theme's line palette: lines with no areas, no
+    /// authored `dashes`, which outrank it. Every line layer's series join the base's pool.
+    pub(super) fn line_styled(&self) -> bool {
+        !self.draw_areas && self.r.style.dashes.is_empty() && !self.r.style.line_styles.is_empty()
+    }
+
+    fn into_owned(self) -> Bound<'static> {
+        Bound {
+            payload: Cow::Owned(self.payload.into_owned()),
+            r: self.r,
+            overlays: self.overlays,
+            draw_areas: self.draw_areas,
+            wide_series: self.wide_series,
+            wide_labels: self.wide_labels,
+            x: self.x,
+            overlay_attempt: self.overlay_attempt.map(|attempt| Box::new(attempt.into_owned())),
+            auto_attempt: self.auto_attempt,
+            origin: Cow::Owned(self.origin.into_owned()),
+            line_slots: self.line_slots,
+        }
+    }
+
+    /// `payload` bound as this chart is: with its series named inside the plot when this one names them so.
+    pub(super) fn rebind<'p>(&self, payload: &'p Payload) -> Result<Bound<'p>, Diagnostic> {
+        bind_chart(payload, self.draw_areas, self.r.style.endpoint_labels.overlay)
+    }
+
+    /// This chart bound again with `key` named in a legend of only those series: above the plot in
+    /// the top legend slot, or in the side slot (`edge`) where the top has no room.
+    pub(super) fn keyed(&self, key: &[String], edge: &str) -> Result<Bound<'static>, Diagnostic> {
+        let mut keyed = self.origin.as_ref().clone();
+        let legend = &mut keyed.resolved["legend"];
+        legend["visible"] = true.into();
+        legend["position"] = serde_json::json!({"edge": edge, "align": "start", "overlay": false, "corners": [{"edge": edge, "align": "start"}]});
+        legend["direction"] = (if edge == "top" { "horizontal" } else { "vertical" }).into();
+        legend["columns"] = 0.into();
+        legend["title"]["visible"] = false.into();
+        keyed.resolved["style"]["endpoint_labels"]["key"] = key.into();
+        let (bound, _) = diagnostic::collect(|| self.rebind(&keyed).map(Bound::into_owned));
+        bound.map(|keyed| Bound { auto_attempt: self.auto_attempt, ..keyed })
+    }
 }
 
 /// The x axis as the rows decide it.
@@ -51,7 +106,19 @@ pub(super) struct XAxis {
 }
 
 pub fn bind(payload: &Payload, draw_areas: bool) -> Result<Bound<'_>, Diagnostic> {
+    let mut bound = bind_chart(payload, draw_areas, false)?;
+    if bound.r.style.overlay.is_some() {
+        let (attempted, _) = diagnostic::collect(|| bind_chart(payload, draw_areas, true));
+        bound.overlay_attempt = attempted.ok().map(|attempt| Box::new(Bound { auto_attempt: true, ..attempt }));
+    }
+    Ok(bound)
+}
+
+fn bind_chart(payload: &Payload, draw_areas: bool, name_inside: bool) -> Result<Bound<'_>, Diagnostic> {
     let mut r = LineResolved::from_payload(payload)?;
+    if name_inside {
+        r.style.name_inside();
+    }
     let faceted = r.multiples.is_some();
 
     let overlays = validate_line_layers(&r, payload)?;
@@ -115,7 +182,7 @@ pub fn bind(payload: &Payload, draw_areas: bool) -> Result<Bound<'_>, Diagnostic
         r.whole_rows = Some(narrowed.whole);
         prepared = Cow::Owned(narrowed.payload);
     }
-    Ok(Bound { payload: prepared, r, overlays, draw_areas, wide_series: wide.series, wide_labels: wide.labels, x })
+    Ok(Bound { payload: prepared, r, overlays, draw_areas, wide_series: wide.series, wide_labels: wide.labels, x, overlay_attempt: None, auto_attempt: false, origin: Cow::Borrowed(payload), line_slots: std::cell::OnceCell::new() })
 }
 
 /// A `connect:` cell: the order column holds all numbers, or all text (ISO dates sort as text).

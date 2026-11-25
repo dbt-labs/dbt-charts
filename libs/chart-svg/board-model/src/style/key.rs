@@ -1,9 +1,11 @@
 //! `style/theme/key.py`: how a chart names its series, in a legend or on the chart itself.
 
+use crate::chart::annotation::AnchorScalar;
 use crate::string_enum;
 use crate::style::legend::{LegendStyle, PieLegendStyle};
 use crate::style::marks::SeriesLabelFontStyle;
 use crate::rule::Auto;
+use indexmap::IndexMap;
 use model_core::Engine;
 use model_derive::Model;
 
@@ -16,9 +18,13 @@ string_enum!(
     LegendOnlyKeyType { Legend = "legend" }
 );
 
-/// The direct-key leaves a line or area reads.
+string_enum!(
+    DirectPosition { End = "end", Overlay = "overlay" }
+);
+
+/// The direct-key leaves every family that names series on the chart reads.
 #[derive(Debug, Clone, PartialEq, Model)]
-pub struct LineAreaDirectKeyStyle {
+pub struct DirectKeyStyleBase {
     /// Gap in pixels between the plot and the series labels.
     pub offset: f64,
     /// Direct label font; unset fields come from the broader tier.
@@ -26,7 +32,28 @@ pub struct LineAreaDirectKeyStyle {
     pub font: SeriesLabelFontStyle,
 }
 
-/// Every direct-key leaf: the board-wide style, and a bar's own.
+/// The direct-key leaves a line or area reads.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct LineAreaDirectKeyStyle {
+    #[flatten]
+    pub base: DirectKeyStyleBase,
+    /// Beside the lines' end, over the plot, or `auto` to pick.
+    pub position: Engine<DirectPosition, Auto>,
+    /// Where each series prefers its name inside the plot, by series name.
+    #[model(fill = fill_empty, local)]
+    pub overlay_x: IndexMap<String, AnchorScalar>,
+}
+
+/// The direct-key leaves a bar reads.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct BarDirectKeyStyle {
+    #[flatten]
+    pub base: DirectKeyStyleBase,
+    /// Height in pixels of the label strip above a horizontal stacked bar.
+    pub height: f64,
+}
+
+/// Every direct-key leaf: the board-wide style each family reads its own from.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct DirectKeyStyle {
     #[flatten]
@@ -73,7 +100,7 @@ pub struct BarKeyStyle {
     pub legend: LegendStyle,
     /// Direct label style.
     #[model(local)]
-    pub direct: DirectKeyStyle,
+    pub direct: BarDirectKeyStyle,
 }
 
 /// The key of a pie or donut chart.

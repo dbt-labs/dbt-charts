@@ -986,7 +986,14 @@ def canvas_tone(canvas: str) -> CanvasTone:
     return "light" if is_light_canvas(canvas) else "dark"
 
 
-def ensure_readable_ink(color: str, background: str, min_ratio: float = 4.5) -> str:
+def is_board_ink(color: str, ink: str | None) -> bool:
+    """True when *color* is the board's ink (a hex ``style.roles.ink``), which is never moved."""
+    return ink is not None and parse_css_color(color) == parse_css_color(ink)
+
+
+def ensure_readable_ink(
+    color: str, background: str, min_ratio: float = 4.5, *, ink: str | None = None
+) -> str:
     """Nudge *color* toward legible against *background*, hue/chroma preserved.
 
     A readability floor for ink derived from an author-picked color that
@@ -997,7 +1004,8 @@ def ensure_readable_ink(color: str, background: str, min_ratio: float = 4.5) -> 
     against *background* and keeps the closest-to-original L -- the
     higher-contrast pole on a tie. C and H stay fixed, so the result still
     reads as the same hue, just legible.
-    Returns *color* unchanged when it already clears the floor.
+    Returns *color* unchanged when it already clears the floor, or when it is
+    the board's own *ink* (``is_board_ink``).
 
     Searching only toward a pole that clears the floor (rather than pivoting
     on the background's own luminance at the 0.5 midpoint) is load-bearing:
@@ -1012,7 +1020,7 @@ def ensure_readable_ink(color: str, background: str, min_ratio: float = 4.5) -> 
     (``compile/resolve/style/palette.py``) already follows for its own WCAG
     floor.
     """
-    if wcag_contrast(color, background) >= min_ratio:
+    if is_board_ink(color, ink) or wcag_contrast(color, background) >= min_ratio:
         return color
     black_contrast = wcag_contrast("#000000", background)
     white_contrast = wcag_contrast("#ffffff", background)

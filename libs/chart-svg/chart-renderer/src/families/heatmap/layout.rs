@@ -21,7 +21,7 @@ use crate::families::cartesian::BandScale;
 use crate::families::color_scale::{GradientAt, VerticalGradient};
 use crate::families::heatmap_facet::{AxisLabel, GradientLegend, GradientPaint, HeatmapXAxis};
 use crate::families::legend::{
-    gradient_legend_box, gradient_length, horizontal_gradient_length, legend_fit_bounds, legend_origin, legend_slide,
+    gradient_legend_box, gradient_length, horizontal_gradient_length, legend_box_node, legend_fit_bounds, legend_origin, legend_slide,
     slide_block, drawn_symbol_legend, vega_legend, LegendEntry, LegendSymbol, VEGA_GRADIENT_LENGTH_MAX,
     VEGA_GRADIENT_LENGTH_MIN,
 };
@@ -404,7 +404,8 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         } else if vertical_gradient {
             let (short, long) = date_label_widths.expect("the numeric gradient is drawn by gradient_legend");
             let label_w = if gradient_length(ph) >= VEGA_GRADIENT_LENGTH_MAX { long } else { short };
-            Some(gradient_legend_box(leg_title_w, leg_title_size, label_w, leg_label_offset, gradient_length(ph)))
+            let (w, h) = gradient_legend_box(leg_title_w, leg_title_size, label_w, leg_label_offset, gradient_length(ph));
+            Some((w + 2.0 * r.legend.padding, h + 2.0 * r.legend.padding))
         } else {
             None
         }
@@ -717,9 +718,9 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     if let Some(legend) = gradient_legend.as_ref().filter(|_| !vertical_gradient) {
         if let Coloring::DateGradient { min, max, aware } = &bound.coloring {
             let dates = date_scale(*min, *max, *aware);
-            body.extend(GradientAt::nodes(&r.legend, None, &dates, (grad_id, leg_title_text), fonts, (plot_w, plot_h), (leg_x, leg_y))?);
+            body.extend(GradientAt::nodes(&r.legend, None, &dates, (grad_id, leg_title_text), fonts, (plot_w, plot_h), (leg_x, leg_y), r.canvas.as_str())?);
         } else {
-            body.extend(legend.nodes(leg_x, leg_y, horizontal_gradient_length(legend_edge, legend_floats, plot_w)));
+            body.extend(legend.nodes(leg_x, leg_y, horizontal_gradient_length(legend_edge, legend_floats, plot_w), r.canvas.as_str()));
         }
     }
     match (&symbol_legend_box, &bound.coloring) {
@@ -729,7 +730,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         }
         (None, Coloring::Gradient { .. }) if vertical_gradient => {
             if let Some(legend) = &gradient_legend {
-                body.extend(legend.nodes(leg_x, leg_y, legend.bar_len(plot_w, plot_h)));
+                body.extend(legend.nodes(leg_x, leg_y, legend.bar_len(plot_w, plot_h), r.canvas.as_str()));
             }
         }
         (None, Coloring::DateGradient { min, max, aware }) if vertical_gradient => {
@@ -743,7 +744,11 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                 labels: &labels,
                 length: gradient_length(plot_h),
             };
-            body.extend(bar.nodes(&r.legend, leg_x, leg_y)?);
+            let pad = r.legend.padding;
+            if r.legend.draws_background(r.canvas.as_str()) {
+                body.push(legend_box_node(&r.legend, legend_size(plot_w, plot_h).expect("a vertical date gradient has a size"), (leg_x, leg_y)));
+            }
+            body.extend(bar.nodes(&r.legend, leg_x + pad, leg_y + pad)?);
         }
         _ => {}
     }

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from dbt_charts import _engine
+from dbt_charts.core.colors import is_board_ink
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.board.normalized import (
     NO_TITLE_SHIFT,
@@ -49,6 +50,7 @@ from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.render.board_variables import held_legend_view
 from dbt_charts.core.render.chart.spec_builders import additive_padding
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
+from dbt_charts.core.render.contrast_warning import check_ink_contrast
 from dbt_charts.core.render.controls import ships_page_runtime
 from dbt_charts.core.render.errors import RenderError
 
@@ -531,6 +533,20 @@ def render_chart_item(
 
     chart_type = chart.chart_type
     is_svg_family = _uses_svg_family_layout_padding(chart_type)
+    # A chart paints on its own card canvas, which may differ from the board's; a
+    # KPI or callout has none of its own and sits on the board's card canvas.
+    if isinstance(chart, _SharedResolvedChartFields):
+        card_canvas = chart.canvas
+        draws_in_ink = resolved_style.charts_draw_in_ink or (
+            bool(chart.title)
+            and (title_color := chart.title_style.font.color) is not None
+            and is_board_ink(title_color, resolved_style.ink)
+        )
+    else:
+        card_canvas = resolved_style.chart_defaults.ink_canvas
+        draws_in_ink = resolved_style.charts_draw_in_ink
+    if draws_in_ink:
+        check_ink_contrast(resolved_style.ink, card_canvas)
     try:
         slot_width = available_width
         slot_height = available_height

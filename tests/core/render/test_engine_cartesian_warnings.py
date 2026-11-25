@@ -130,8 +130,9 @@ def test_rail_label_with_no_room_lands_in_the_overflow_sink_as_dropped() -> None
 
 
 def test_rail_on_one_value_lands_in_the_overflow_sink_as_no_slope() -> None:
+    chart = {**_RAIL_LINE, "style": {"key": {"direct": {"position": "end"}}}}
     with _sinks() as sinks:
-        _native(_RAIL_LINE, _rail_rows((50, 50, 50)), width=600.0, height=320.0)
+        _native(chart, _rail_rows((50, 50, 50)), width=600.0, height=320.0)
     assert sinks.rail_overflows == {
         "c1": EndpointLabelGapOverflow(series_count=3, gap_px=18.2, cause="no_slope")
     }

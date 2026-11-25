@@ -37,7 +37,7 @@ class TooltipField(BaseModel):
     )
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
-        description="D3 format string or format config object. Defaults to the query's `formats:` entry for the column.",
+        description="D3 format string or format config object, or `url`/`email` to draw the value as a link. Defaults to the query's `formats:` entry for the column.",
     )
 
 
@@ -68,7 +68,9 @@ class _TooltipFields(BaseModel):
                 "rows. Each entry is a column name or `{column, label, format}`. "
                 "On a stacked or grouped bar, or a multi-series line or area, "
                 "the card lists every series at the hovered x: a series' extra "
-                "rows sit under its own row."
+                "rows sit under its own row. A click pins the card, so a `url` or "
+                "`email` entry's link can be followed; such an entry cannot sit "
+                "beside the chart's `link:`."
             ),
         ),
     ]

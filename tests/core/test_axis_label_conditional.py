@@ -371,7 +371,7 @@ def test_a_bar_interval_label_tests_its_own_period_start() -> None:
             "week": (dt.date(2024, 1, 1) + dt.timedelta(weeks=i)).isoformat(),
             "revenue": 1,
         }
-        for i in range(26)
+        for i in range(52)
     ]
     rule = {
         "week": [

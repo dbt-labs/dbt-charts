@@ -21,7 +21,9 @@ access to the layout tree itself.
 
 ``kind`` names the element that painted the pair; ``_REMEDY_KEYS`` is the
 YAML key that governs that element's ink: ``text_heading`` names
-``style.title.font.color`` and ``text_body`` names ``style.font.color``.
+``style.title.font.color``, ``text_body`` names ``style.font.color`` and
+``ink`` (the ``style.roles.ink`` a scope's text, marks and chrome draw in) names
+``style.roles.ink``.
 """
 
 from __future__ import annotations
@@ -45,16 +47,18 @@ from dbt_charts.core.constants.contrast import LARGE_TEXT_MIN_RATIO, TEXT_MIN_RA
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 
-ContrastKind = Literal["text_heading", "text_body"]
+ContrastKind = Literal["text_heading", "text_body", "ink"]
 
 _REMEDY_KEYS: dict[ContrastKind, str] = {
     "text_heading": "style.title.font.color",
     "text_body": "style.font.color",
+    "ink": "style.roles.ink",
 }
 
 _ELEMENT_NAMES: dict[ContrastKind, str] = {
     "text_heading": "Heading",
     "text_body": "Body text",
+    "ink": "The board ink",
 }
 
 # WCAG's own "large text" exception: >=24px (18pt) at any weight, or
@@ -197,6 +201,12 @@ def check_text_contrast(
     floor = LARGE_TEXT_MIN_RATIO if large_text else TEXT_MIN_RATIO
     if ratio >= floor:
         return
+    # The scope's `style.roles.ink` warning already reports this pair, naming the key to edit.
+    if any(
+        r.kind == "ink" and (r.ink, r.background) == (ink_hex, bg_hex)
+        for r in sinks[-1]
+    ):
+        return
     sinks[-1].append(
         ContrastRecord(
             kind=kind,
@@ -208,6 +218,37 @@ def check_text_contrast(
             path=path,
         )
     )
+
+
+def check_ink_contrast(
+    ink: str | None, background: str | None, *, path: str | None = None
+) -> None:
+    """Record ``ink`` (a scope's ``ResolvedStyle.ink``) when it clears less than
+    the normal-text floor against the scope's opaque ``background``.
+
+    The ink has no one font size, so the large-text exception never applies.
+    A nested scope that inherits the ink and the canvas repeats its parent's
+    pair, so a pair already recorded is not recorded again.
+    """
+    if ink is None or background is None or not (sinks := _sinks.get()):
+        return
+    ink_hex = ink_hex_over(ink, background)
+    if ink_hex is None:
+        return
+    ratio = wcag_contrast(ink_hex, background)
+    if ratio >= TEXT_MIN_RATIO:
+        return
+    record = ContrastRecord(
+        kind="ink",
+        ink=ink_hex,
+        background=background,
+        ratio=ratio,
+        floor=TEXT_MIN_RATIO,
+        large_text=False,
+        path=path,
+    )
+    if record not in sinks[-1]:
+        sinks[-1].append(record)
 
 
 def check_markdown_contrast(

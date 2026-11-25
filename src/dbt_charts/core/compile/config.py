@@ -715,6 +715,62 @@ def get_project_server_config(project: Project) -> ServerConfig:
     return ServerConfig.model_validate(deep_merge_dict(base, server_section))
 
 
+@dataclass(frozen=True)
+class NavOrder:
+    """One folder's ``server.nav_order`` entry, with the dbt_charts.yml line of
+    the folder key and of each name, so an error points at what is wrong."""
+
+    file: str
+    folder: str
+    line: int
+    names: tuple[str, ...]
+    lines: tuple[int, ...]
+
+    def error(self, line: int, reason: str) -> CompilationError:
+        from dbt_charts.core.diagnostics.codes_compile import ERR_NAV_ORDER_INVALID
+
+        return CompilationError.from_code(
+            ERR_NAV_ORDER_INVALID,
+            file=self.file,
+            line=line,
+            folder=self.folder,
+            reason=reason,
+        )
+
+
+def get_project_nav_order(project: Project) -> dict[str, NavOrder]:
+    """``server.nav_order`` from dbt_charts.yml, keyed by folder."""
+    from dbt_charts.core.compile.authoring.paths import join_path
+    from dbt_charts.core.compile.parse.source_map import build_source_index
+
+    order = get_project_server_config(project).nav_order
+    if not order:
+        return {}
+    filename, _ = _load_dbt_charts_yml(project)
+    ranges = build_source_index(project.read_text(filename), filename).source_map
+
+    def line(*path: str | int) -> int:
+        # A key a YAML merge (`<<: *anchor`) brought in has no source position
+        # of its own; it reports at the nearest written ancestor.
+        segments = ["server", "nav_order", *path]
+        while segments and join_path(segments) not in ranges:
+            segments.pop()
+        if not segments:
+            return 1  # the whole of `server:` came from a merge: name the file
+        return ranges[join_path(segments)].start_line
+
+    return {
+        folder: NavOrder(
+            filename,
+            folder,
+            line(folder),
+            tuple(names),
+            tuple(line(folder, i) for i in range(len(names))),
+        )
+        for folder, names in order.items()
+    }
+
+
 def get_project_markdown_metadata_table(project: Project) -> bool:
     """Return whether the project has the markdown_metadata_table flag enabled."""
     return get_project_server_config(project).markdown_metadata_table
@@ -1234,22 +1290,20 @@ def read_locked_schema_version(
     config: dict[str, Any],  # type-state: explicit_any — raw YAML section
     filename: str,
 ) -> str | None:
-    """The ``locked_schema_version`` of a raw ``dbt_charts.yml`` mapping, checked
-    to name a released schema; ``None`` when unset."""
+    """The released version a raw ``dbt_charts.yml`` mapping locks to, unset
+    meaning ``latest``; ``None`` for ``preview``."""
     from dbt_charts.core.compile.migrations.locked_schema import (
-        validate_locked_schema_version,
+        resolve_locked_schema_version,
     )
 
     value = config.get("locked_schema_version")
-    if value is None:
-        return None
-    if not isinstance(value, str):
+    if value is not None and not isinstance(value, str):
         raise _project_config_error(
             f"{filename}: locked_schema_version must be a string, "
             f"got {type(value).__name__}: {value!r}"
         )
     try:
-        return validate_locked_schema_version(value, source=filename)
+        return resolve_locked_schema_version(value, source=filename)
     except ValueError as exc:
         raise _project_config_error(str(exc)) from None
 
@@ -1279,7 +1333,8 @@ def get_project_boards_dir(project: Project) -> str:
 
 
 def get_project_locked_schema_version(project: Project) -> str | None:
-    """The project's ``locked_schema_version``. Fresh read per call."""
+    """The released version the project locks to; ``None`` for ``preview``. Fresh
+    read per call."""
     filename, config = _load_dbt_charts_yml(project)
     return read_locked_schema_version(config, filename)
 

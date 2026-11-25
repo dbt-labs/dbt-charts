@@ -11,6 +11,8 @@ from dbt_charts.core.compile.models.style.resolved._marks import ResolvedBarMark
 from dbt_charts.core.compile.models.style.theme.bar import (
     BarConditionalRule,
     BarGroupedStyle,
+    BarLabelsAboveStyle,
+    BarMaxThicknessStyle,
     BarOutliersCapStyle,
 )
 
@@ -89,6 +91,12 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
     )
     outliers: ResolvedBarOutliersStyle = Field(
         description="How torn outlier bars are drawn."
+    )
+    max_thickness: BarMaxThicknessStyle | None = Field(
+        description="Thickest a category bar or column may be; None leaves them uncapped.",
+    )
+    labels_above: BarLabelsAboveStyle | None = Field(
+        description="Share of the chart's width the category names may take beside horizontal bars before they move above them; None keeps them beside.",
     )
     total_label_is_house: bool = Field(
         default=False,

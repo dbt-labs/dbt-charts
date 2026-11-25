@@ -314,9 +314,8 @@ fn axis<'a>(scale: &'a Scale, parts: &'a Parts, horizontal: bool, env: &'a Env) 
     ValueAxis::new(&value.domain, labels, env.book)
 }
 
-/// A time x axis over `domain` in a cell of `cell`. Its crowding is judged against the cell's width
-/// by the theme's usable ratio, and a clipped edge period against the cell less the y axis'
-/// width (`edge_width`), which production estimates before its fit settles.
+/// A time x axis over `domain` in a cell of `cell`. Its crowding and a clipped edge period are judged against the cell less
+/// the y axis' width (`edge_width`), which production estimates before its fit settles.
 ///
 /// `points`: the marks are points, which draw only the clock's ticks where a line also names the data's end
 /// points and its days (`scatter_axis.rs:675, 908-934`).
@@ -337,7 +336,7 @@ fn time_axis<'a>(domain: &TimeDomain, style: &'a AxisStyle, parts: &'a Parts, ce
         crowding: Crowding {
             skip: time.skip,
             tilt: time.tilt.as_deref(),
-            usable_width: cell.width * time.usable_ratio,
+            usable_width: edge_width,
             flush: parts.flush,
             font_size: parts.labels.size,
             bucket_aligned: false,

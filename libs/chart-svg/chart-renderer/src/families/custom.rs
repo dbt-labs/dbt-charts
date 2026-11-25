@@ -574,9 +574,10 @@ fn render_template(r: &Resolved, job: &Job, fonts: &FontBook) -> Result<String, 
 
     let label_ink = {
         let canvas = r.canvas.clone();
+        let board_ink = job.board_ink.clone();
         Value::from_function(move |color: Value| -> Result<Value, Error> {
             let color = color_arg("label_ink", &color)?;
-            dbt_charts_color::label_ink(color, &canvas)
+            dbt_charts_color::label_ink(color, &canvas, board_ink.as_deref())
                 .map(Value::from)
                 .map_err(|e| invalid(format!("label_ink(): {e}")))
         })
@@ -1061,6 +1062,8 @@ struct Job {
     height: f64,
     /// What the board's output budget has left for this chart.
     budget: u64,
+    /// The board's hex `style.roles.ink`, which `label_ink()` returns as set.
+    board_ink: Option<String>,
     /// The board's plain-digit siblings of its adaptive money and number formats.
     sub_unit_specs: BTreeMap<String, String>,
 }
@@ -1128,6 +1131,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         budget: payload
             .max_template_output_bytes
             .ok_or("custom: payload.max_template_output_bytes missing")?,
+        board_ink: payload.board_style.as_ref().and_then(|b| b.ink.clone()),
     };
     let content = render_template(&r, &job, fonts)
         .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_RENDER, &r.id, reason))?;
@@ -1374,12 +1378,12 @@ mod tests {
         );
         let expected = format!(
             "<text>{} {} {}</text>",
-            color::label_ink("#e6b800", "#ffffff").unwrap(),
+            color::label_ink("#e6b800", "#ffffff", None).unwrap(),
             color::variant("#3366cc", "light").unwrap(),
             color::variant("#3366cc", "deep").unwrap(),
         );
         assert!(svg.contains(&expected), "{svg}");
-        assert_ne!(color::label_ink("#e6b800", "#ffffff").unwrap(), "#e6b800");
+        assert_ne!(color::label_ink("#e6b800", "#ffffff", None).unwrap(), "#e6b800");
     }
 
     #[test]
@@ -1392,8 +1396,21 @@ mod tests {
             &test_fonts(),
         )
         .unwrap();
-        let ink = color::label_ink("#3366cc", "#111111").unwrap();
+        let ink = color::label_ink("#3366cc", "#111111", None).unwrap();
         assert!(svg.contains(&format!("<text>{ink}</text>")), "{svg}");
+    }
+
+    #[test]
+    fn label_ink_leaves_the_board_ink_as_set() {
+        let template = "<text>{{ label_ink('#1F3A68') }}</text>";
+        let mut p = payload(template, |r| {
+            r["canvas"] = json!("#111111");
+        });
+        let lifted = render(&p, &test_fonts()).unwrap();
+        assert!(!lifted.contains("<text>#1F3A68</text>"), "{lifted}");
+        p.board_style.as_mut().unwrap().ink = Some("#1F3A68".to_string());
+        let kept = render(&p, &test_fonts()).unwrap();
+        assert!(kept.contains("<text>#1F3A68</text>"), "{kept}");
     }
 
     #[test]

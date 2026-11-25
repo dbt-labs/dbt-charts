@@ -1,3 +1,0 @@
-kind: Fixes
-body: '`dct validate` now rejects a table `style.row.conditional` rule whose `columns.<col>` sets `tone` or `glyph_color` with no glyph for that cell, instead of the board failing at render.'
-time: 2026-11-23T20:55:08.187819971Z

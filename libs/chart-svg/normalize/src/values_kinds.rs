@@ -2,10 +2,10 @@
 //! `column_types.literal_schema` reads it off the literals.
 
 use crate::chart_checks::Patch;
-use board_model::query::QueryAuthored;
+use board_model::query::{QueryAuthored, ValuesQueryAuthored};
 use diagnostic::{diag, Diagnostic};
 use model_core::Tri;
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 use yaml::{Kind, Node};
 
@@ -36,8 +36,9 @@ fn kind((v, node): Cell) -> &'static str {
     }
 }
 
-/// `_literal_type`: `path` is the column, then `.field` and `[]` below it.
-fn check(path: &str, values: &[Cell]) -> Result<(), Diagnostic> {
+/// `_literal_type`: the declared type of the cells at `path` (the column, then
+/// `.field` and `[]` below it), in the `ColumnType` wire form.
+fn check(path: &str, values: &[Cell]) -> Result<Value, Diagnostic> {
     let column = path.split(['.', '[']).next().unwrap_or(path).to_string();
     let where_ = if path == column {
         String::new()
@@ -64,8 +65,11 @@ fn check(path: &str, values: &[Cell]) -> Result<(), Diagnostic> {
             ),
         ));
     }
-    match kinds.into_iter().next() {
-        Some("list") => {
+    let Some(kind) = kinds.into_iter().next() else {
+        return Err(diag::err_internal(format!("{path} has cells but no kind")));
+    };
+    match kind {
+        "list" => {
             let items: Vec<Cell> = values
                 .iter()
                 .flat_map(|(v, node)| {
@@ -81,9 +85,10 @@ fn check(path: &str, values: &[Cell]) -> Result<(), Diagnostic> {
                 })
                 .filter(|(i, _)| !i.is_null())
                 .collect();
-            check(&format!("{path}[]"), &items)
+            let element = check(&format!("{path}[]"), &items)?;
+            Ok(json!({"kind": kind, "element": element, "fields": null}))
         }
-        Some("struct") => {
+        "struct" => {
             let mut names: Vec<&String> = Vec::new();
             for (v, _) in values {
                 for k in v.as_object().into_iter().flat_map(|o| o.keys()) {
@@ -92,6 +97,7 @@ fn check(path: &str, values: &[Cell]) -> Result<(), Diagnostic> {
                     }
                 }
             }
+            let mut fields = Vec::new();
             for name in names {
                 let inner: Vec<Cell> = values
                     .iter()
@@ -103,48 +109,52 @@ fn check(path: &str, values: &[Cell]) -> Result<(), Diagnostic> {
                         Some((v.get(name).filter(|c| !c.is_null())?, child))
                     })
                     .collect();
-                check(&format!("{path}.{name}"), &inner)?;
+                fields.push(json!([name, check(&format!("{path}.{name}"), &inner)?]));
             }
-            Ok(())
+            Ok(json!({"kind": kind, "element": null, "fields": fields}))
         }
-        _ => Ok(()),
+        _ => Ok(json!({"kind": kind, "element": null, "fields": null})),
     }
 }
 
-/// The first values query, in board order, with a column that mixes kinds or holds only nulls.
-pub fn values_kind_error(patch: &Patch) -> Option<Diagnostic> {
-    for query in patch.body.queries.values().flatten() {
-        let QueryAuthored::Values(q) = query else {
-            continue;
-        };
-        let rows = q.rows.as_deref().unwrap_or_default();
-        // No rows, no literal to read: the authored columns are declared as strings.
-        if rows.is_empty() {
-            continue;
-        }
-        let mut names: Vec<&String> = Vec::new();
-        match &q.columns {
-            Tri::Value(columns) => names.extend(columns),
-            _ => {
-                for row in rows {
-                    for k in row.0.keys() {
-                        if !names.contains(&k) {
-                            names.push(k);
-                        }
+/// `ValuesQuery.declared_schema`: each column's declared type, read off its
+/// literals, in the `ColumnType` wire form. With no rows there is no literal to
+/// read: the authored columns are declared as strings.
+pub fn values_schema(q: &ValuesQueryAuthored) -> Result<Map<String, Value>, Diagnostic> {
+    let rows = q.rows.as_deref().unwrap_or_default();
+    let mut names: Vec<&String> = Vec::new();
+    match &q.columns {
+        Tri::Value(columns) => names.extend(columns),
+        _ => {
+            for row in rows {
+                for k in row.0.keys() {
+                    if !names.contains(&k) {
+                        names.push(k);
                     }
                 }
             }
         }
-        for name in names {
+    }
+    names
+        .into_iter()
+        .map(|name| {
+            if rows.is_empty() {
+                return Ok((name.clone(), json!({"kind": "string", "element": null, "fields": null})));
+            }
             let cells: Vec<Cell> = rows
                 .iter()
                 .filter_map(|r| r.0.get(name).filter(|c| !c.0.is_null()))
                 .map(|c| (&c.0, c.1.as_ref()))
                 .collect();
-            if let Err(d) = check(name, &cells) {
-                return Some(d);
-            }
-        }
-    }
-    None
+            Ok((name.clone(), check(name, &cells)?))
+        })
+        .collect()
+}
+
+/// The first values query, in board order, with a column that mixes kinds or holds only nulls.
+pub fn values_kind_error(patch: &Patch) -> Option<Diagnostic> {
+    patch.body.queries.values().flatten().find_map(|query| match query {
+        QueryAuthored::Values(q) => values_schema(q).err(),
+        _ => None,
+    })
 }

@@ -85,7 +85,7 @@ use board_model::board::layout::{Layout, LayoutItem};
 use board_model::board::value::Visible;
 use board_model::board::{items, Board, BoardBody};
 use board_model::ids::{ItemId, QueryId};
-use board_model::query::Query;
+use board_model::query::{Query, QueryAuthored};
 use board_model::variable::{Enabled, OptionsQuery, Variable, VariableQuery};
 use board_model::variable_value::{Atom, VariableValue};
 use diagnostic::{diag, refuse, Diagnostic};
@@ -99,7 +99,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use template::Kind;
 
 /// The wire version; a reader refuses another.
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// A field always on the wire, null when absent.
 #[cfg(feature = "schema")]
@@ -212,6 +212,9 @@ pub enum QueryKind {
 #[serde(untagged)]
 pub enum PlannedOwn<'a> {
     Sql(PlannedSql<'a>),
+    /// A values query: its rows as authored, and each column's type read off
+    /// its literals, which the JSON spelling of `spec` cannot carry (a date).
+    Values { spec: Value, schema: Map<String, Value> },
     Data { spec: Value },
 }
 
@@ -912,8 +915,9 @@ fn queries<'a>(
             Query::Values(q) => (
                 &q.base,
                 QueryKind::Values,
-                PlannedOwn::Data {
+                PlannedOwn::Values {
                     spec: authored(compiled, &key)?,
+                    schema: declared_values(compiled, &key)?,
                 },
             ),
             Query::Schema(q) => (
@@ -950,6 +954,14 @@ fn spelled_text(leaf: &impl Spell) -> Result<String, Diagnostic> {
     match leaf.spell() {
         Value::String(text) => Ok(text),
         other => Err(diag::err_internal(format!("{other} is not text"))),
+    }
+}
+
+/// A values query's declared column types, read off its authored literals.
+fn declared_values(compiled: &CompiledBoard, key: &str) -> Result<Map<String, Value>, Diagnostic> {
+    match compiled.structure.patch.body.queries.get(key).and_then(Option::as_ref) {
+        Some(QueryAuthored::Values(q)) => normalize::values_kinds::values_schema(q),
+        _ => Err(diag::err_internal(format!("the values query {key} is not in the folded board"))),
     }
 }
 

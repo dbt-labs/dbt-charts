@@ -119,7 +119,7 @@ def parse_variable_json_strings(variables: VariableValues) -> VariableValues:
 # are handled below as scalars, multiselect above as a list, and text stays
 # a string.
 _DATE_INPUTS = frozenset({"date", "datepicker"})
-_NUMBER_INPUTS = frozenset({"number", "slider", "range"})
+_NUMBER_INPUTS = frozenset({"number", "slider"})
 _CHOICE_INPUTS = frozenset({"select", "radio"})
 # Scalar typed inputs where an empty string means "unset" (→ None), like the
 # renderer's absent-check. daterange is excluded — its own branch handles both

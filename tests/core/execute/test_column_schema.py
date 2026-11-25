@@ -21,6 +21,7 @@ from dbt_charts.core.column_types import (
     literal_schema,
     map_to_json,
 )
+from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.query.normalized import (
     SqlQuery,
     ValuesQuery,
@@ -33,12 +34,14 @@ from dbt_charts.core.compile.models.source import (
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_COLUMN_TYPE
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.duckdb_types import duckdb_column_type
+from dbt_charts.core.execute.env import build_exec_env
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.query_result import QueryResult, RowFetchLimit
 from dbt_charts.core.execute.result import arrow_to_query_result
 from dbt_charts.core.execute.run import run_values
 
 from ..._backend_runner import DuckDBRunner, SqliteRunner
+from ..._run import Run
 
 FLOAT = ColumnType(kind="float")
 LIST_FLOAT = ColumnType(kind="list", element=FLOAT)
@@ -451,3 +454,36 @@ def test_arrow_is_built_from_rows_by_kind() -> None:
     naive = na.c_schema(infer_type([datetime(2024, 1, 1)]))
     aware = na.c_schema(infer_type([datetime(2024, 1, 1, tzinfo=UTC)]))
     assert (naive.format, aware.format) == ("tsu:", "tsu:UTC")
+
+
+def test_a_planned_values_query_keeps_its_date_literals_dates(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    board = compile("""
+queries:
+  events:
+    columns: [day, at, label]
+    values:
+      - [2026-04-10, 2026-04-10T08:30:00, "2026-04-10"]
+charts:
+  t:
+    query: events
+    type: table
+rows:
+  - t
+""").board
+    result = Run(
+        board, env=build_exec_env(local_project(tmp_path))
+    ).execute_query_result("events")
+    assert result.schema == {
+        "day": ColumnType(kind="date"),
+        "at": ColumnType(kind="datetime"),
+        "label": ColumnType(kind="string"),
+    }
+    assert result.rows == [
+        {
+            "day": date(2026, 4, 10),
+            "at": datetime(2026, 4, 10, 8, 30),
+            "label": "2026-04-10",
+        }
+    ]

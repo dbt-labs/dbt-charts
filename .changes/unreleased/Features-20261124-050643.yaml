@@ -1,5 +1,0 @@
-kind: Features
-body: 'A y-axis `domain` can now pin one end and fit the other to the data, as in `domain: [null, 1]`.'
-time: 2026-11-24T05:06:43.378302067Z
-custom:
-    DbtChartsIssue: "107"

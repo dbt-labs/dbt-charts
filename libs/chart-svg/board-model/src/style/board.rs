@@ -7,17 +7,12 @@
 //! `VALID_FONT_WEIGHTS` (consumers of a resolved weight, not model shape).
 
 use crate::facet::{Color, FontFamily, FontWeight, FontWeightValue};
-use crate::primitives::{BorderStyle, DividerStyle, TextBaseline};
+use crate::primitives::{BorderStyle, DividerStyle, LineLimit, TextBaseline};
 use crate::rule::Auto;
 use crate::string_enum;
 use crate::style::font::{FontSlant, FontStyle, LetterCase, TextDecoration};
 use model_core::{Engine, Patch};
 use model_derive::Model;
-
-string_enum!(
-    /// How a title or subtitle that overflows its box is handled.
-    OverflowMode { Clip = "clip", Truncate = "truncate", WrapTwo = "wrap-two", Wrap = "wrap" }
-);
 
 string_enum!(
     /// Alignment of the board body text.
@@ -197,15 +192,15 @@ pub struct TitlePositionStyle {
     pub baseline: Engine<TextBaseline, Auto>,
 }
 
-/// Subtitle font and overflow.
+/// Subtitle font and line limit.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct TitleSubtitleStyle {
     /// Subtitle font style overrides (color, family, size, weight).
     #[model(inherit_slot = "Style.font")]
     pub font: FontStyle,
-    /// Text overflow mode for the subtitle (clip, truncate, wrap-two, wrap).
-    #[model(fill = "wrap-two")]
-    pub overflow: OverflowMode,
+    /// Lines the subtitle takes before an ellipsis (1 = no wrapping, 3 = wraps twice); or 'all'.
+    #[model(fill = 2)]
+    pub max_lines: LineLimit,
 }
 
 /// A chart title's font: a font whose `size`, `weight` and `family` also take
@@ -245,8 +240,8 @@ pub struct TitleBase {
     pub width_offsets: TitleWidthOffsetsStyle,
     /// Minimum title row height in pixels.
     pub min_height: f64,
-    /// Text overflow mode (clip, truncate, wrap-two, wrap).
-    pub overflow: OverflowMode,
+    /// Lines the title takes before an ellipsis (1 = no wrapping, 3 = wraps twice); or 'all'.
+    pub max_lines: LineLimit,
     /// Vega-Lite title positioning: anchor, angle, offset, baseline.
     pub position: TitlePositionStyle,
     /// Heading level override for board titles. 'auto' counts titled ancestors;

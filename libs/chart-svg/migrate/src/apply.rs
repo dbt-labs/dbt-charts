@@ -591,7 +591,11 @@ fn delete_tails(
             let matching = if present.is_empty() {
                 Vec::new()
             } else {
-                w.schema.matching(positions, w.live, live_positions, node)
+                // A node this boundary's own moves rewrote carries spellings of the later
+                // grammars, which the frozen one rejects whole; its positions stand in for the
+                // branches it matches.
+                let matched = w.schema.matching(positions, w.live, live_positions, node);
+                if matched.is_empty() { positions.to_vec() } else { matched }
             };
             let firing: Vec<&Deletion> = present
                 .into_iter()

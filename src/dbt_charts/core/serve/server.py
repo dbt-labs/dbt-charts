@@ -996,7 +996,7 @@ def _render_directory_listing(
     # The root directory has an empty name; "/" is how the nav trigger labels it.
     nav_label = dir_handle.name or "/"  # type-state: silent_fallback — root's label
 
-    board_text, listing_variables = directory_listing(dir_handles, url_path, project)
+    board_text, listing_variables = directory_listing(dir_handles, url_path)
 
     try:
         compile_result = compile(board_text)

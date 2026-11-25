@@ -1,3 +1,0 @@
-kind: Fixes
-body: A layered chart's `y_label` titles its shared y axis as written, and `dct validate` now reports a layer `axis_y` title or style when no layer pins a side.
-time: 2026-11-23T19:43:53.534407836Z

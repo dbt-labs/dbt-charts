@@ -146,6 +146,10 @@ _VEGA_PAINTED_PARENTS = frozenset(
 )
 
 
+# A chart `tooltip:` entry links its values under a text name (`url`, `email`).
+_TOOLTIP_ENTRY_FORMAT = re.compile(r"\.tooltip\.\d+\.format$")
+
+
 def _iter_format_slots(
     node: object,  # type-state: object_annotation — recursive tree walk over a BaseModel/dict/list/tuple/leaf mix; each isinstance branch below narrows it
     path: str,
@@ -288,7 +292,11 @@ def _validate_spec(
                     - PREDEFINED_TEXT_NAMES
                 ),
             )
-        if vega_painted and spec in PREDEFINED_TEXT_NAMES:
+        if (
+            vega_painted
+            and spec in PREDEFINED_TEXT_NAMES
+            and not _TOOLTIP_ENTRY_FORMAT.search(field_path)
+        ):
             raise CompilationError.from_code(
                 ERR_FORMAT_TEXT_IN_VEGA_SLOT, spec=spec, field_path=field_path
             )

@@ -1,5 +1,0 @@
-kind: Fixes
-body: A KPI keeps its own height, as a table does, instead of stretching to a taller slot such as a `cols:` row beside a taller chart or a `grid:` span.
-time: 2026-11-24T04:48:05.55018351Z
-custom:
-    DbtChartsIssue: "106"

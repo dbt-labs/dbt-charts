@@ -14,3 +14,7 @@ LABEL_FIT_LINE_HEIGHT_MULTIPLIER: Final[float] = 1.15
 TOP_RAIL_LABEL_GAP_SPACES: Final[int] = 1
 # Ceiling of a continuous-scale bar's computed width when `marks.bar.max_size` is unauthored.
 CONTINUOUS_BAR_MAX_SIZE: Final[float] = 20.0
+# A horizontal bar's row when its name sits above it: the name's line, the bar, and the space before the next row.
+NAME_ABOVE_ROW_PX: Final[float] = 44.0
+NAME_ABOVE_BAR_PX: Final[float] = 19.0
+NAME_ABOVE_BASELINE_GAP_PX: Final[float] = 5.0

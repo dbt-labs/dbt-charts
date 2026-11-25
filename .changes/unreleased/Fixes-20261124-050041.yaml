@@ -1,3 +1,0 @@
-kind: Fixes
-body: An empty `x_label` no longer blanks the x row of hover cards on faceted charts, layers and support tables.
-time: 2026-11-24T05:00:41.041103276Z

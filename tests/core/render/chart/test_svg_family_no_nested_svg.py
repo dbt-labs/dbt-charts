@@ -302,8 +302,11 @@ def test_kpi_title_block_emits_inner_title_when_truncated() -> None:
     """Long KPI title truncated to '…' must emit <title> with the full text so
     users can hover to see the complete title."""
     long_title = "Total Revenue for Enterprise Segment by Partner Region Q4 2025"
-    svg = kpi_svg({"value": "revenue", "label": long_title}, [{"revenue": 42000}])
-    assert "…" in svg, "title should be truncated at this width"
+    svg = kpi_svg(
+        {"value": "revenue", "label": long_title, "style": {"label": {"max_lines": 1}}},
+        [{"revenue": 42000}],
+    )
+    assert "…" in svg, "title should be truncated at one line"
     assert f"<title>{long_title}</title>" in svg
 
 
@@ -364,57 +367,55 @@ def test_table_title_block_emits_inner_title_when_truncated() -> None:
     assert f"<title>{long_title}</title>" in svg
 
 
-def _clip_resolved_style() -> tuple[ResolvedStyle, Any]:
-    """ResolvedStyle + ChartStyleContext with title.overflow=clip for regression tests."""
-    new_title = _RESOLVED_STYLE.chart_defaults.title.model_copy(
-        update={"overflow": "clip"}
-    )
+def _one_line_resolved_style() -> tuple[ResolvedStyle, Any]:
+    """ResolvedStyle + ChartStyleContext with title.max_lines=1 for regression tests."""
+    new_title = _RESOLVED_STYLE.chart_defaults.title.model_copy(update={"max_lines": 1})
     new_chart_defaults = dataclasses.replace(
         _RESOLVED_STYLE.chart_defaults, title=new_title
     )
-    clip_rs = dataclasses.replace(_RESOLVED_STYLE, chart_defaults=new_chart_defaults)
-    clip_ctx = dataclasses.replace(
-        _CHART_CTX, title=_CHART_CTX.title.model_copy(update={"overflow": "clip"})
+    one_line_rs = dataclasses.replace(
+        _RESOLVED_STYLE, chart_defaults=new_chart_defaults
     )
-    return clip_rs, clip_ctx
+    one_line_ctx = dataclasses.replace(
+        _CHART_CTX, title=_CHART_CTX.title.model_copy(update={"max_lines": 1})
+    )
+    return one_line_rs, one_line_ctx
 
 
-def test_kpi_title_block_clip_mode_emits_inner_title_when_clipped() -> None:
-    """KPI with label.overflow=clip must emit inner <title> when text is clipped
-    (no ellipsis emitted, but text IS shortened — the old '…' sniff misses this)."""
+def test_kpi_one_line_label_emits_inner_title_when_cut() -> None:
+    """KPI with label.max_lines=1 must emit inner <title> when text is cut."""
     long_title = "Total Revenue for Enterprise Segment by Partner Region Q4 2025"
     svg = kpi_svg(
         {
             "value": "revenue",
             "label": long_title,
-            "style": {"label": {"overflow": "clip"}},
+            "style": {"label": {"max_lines": 1}},
         },
         [{"revenue": 42000}],
     )
-    assert "…" not in svg, "clip mode must not emit ellipsis"
+    assert "…" in svg, "a cut line ends in an ellipsis"
     assert f"<title>{long_title}</title>" in svg, (
-        "clip mode must emit inner <title> so users can hover to read full title"
+        "a cut title must emit inner <title> so users can hover to read full title"
     )
 
 
-def test_table_title_block_clip_mode_emits_inner_title_when_clipped() -> None:
-    """Table with title.overflow=clip must emit inner <title> when text is clipped
-    (no ellipsis emitted, but text IS shortened — the old '…' sniff misses this)."""
+def test_table_one_line_title_emits_inner_title_when_cut() -> None:
+    """Table with title.max_lines=1 must emit inner <title> when text is cut."""
     long_title = "Revenue performance by enterprise segment and partner region Q4 2025"
     chart = _chart("table", title=long_title)
-    clip_rs, clip_ctx = _clip_resolved_style()
+    one_line_rs, one_line_ctx = _one_line_resolved_style()
     svg, _ = render_chart_item(
-        _rc(chart, clip_ctx),
+        _rc(chart, one_line_ctx),
         _executor([{"name": "Alice", "score": 95}]),
         {},
         220,
         300,
-        resolved_style=clip_rs,
+        resolved_style=one_line_rs,
         render_cache={},
     )
-    assert "…" not in svg, "clip mode must not emit ellipsis"
+    assert "…" in svg, "a cut line ends in an ellipsis"
     assert f"<title>{long_title}</title>" in svg, (
-        "clip mode must emit inner <title> so users can hover to read full title"
+        "a cut title must emit inner <title> so users can hover to read full title"
     )
 
 

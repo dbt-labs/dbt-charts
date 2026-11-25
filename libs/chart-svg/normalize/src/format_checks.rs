@@ -7,6 +7,7 @@ use crate::compile::CompileError;
 use board_model::chart::ChartAuthored;
 use board_model::chart::ChartQuery;
 use board_model::query::QueryAuthored;
+use board_model::style::table::TableColumnConfig;
 use board_model::style::style::Style;
 use d3rs::format_spec::{
     self, is_engine_name, is_number_name, is_time_name, ParseError, GRAIN_NAMES, TEXT_NAMES,
@@ -71,6 +72,15 @@ fn is_grain(name: &str) -> bool {
 
 fn is_text_name(name: &str) -> bool {
     TEXT_NAMES.contains(&name)
+}
+
+/// A chart `tooltip:` entry's format (`….tooltip.<n>.format`), which links its values under a
+/// text name.
+fn is_tooltip_entry(path: &str) -> bool {
+    let mut back = path.rsplit('.');
+    back.next() == Some("format")
+        && back.next().is_some_and(|i| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()))
+        && back.next() == Some("tooltip")
 }
 
 /// Every engine name that survives `keep`, sorted.
@@ -270,7 +280,7 @@ fn validate_spec(value: &Fmt, aliases: &Aliases, path: &str, slot: Slot) -> Resu
                 list(available),
             ));
         }
-        if vega_painted && is_text_name(spec) {
+        if vega_painted && is_text_name(spec) && !is_tooltip_entry(path) {
             return Err(diag::err_format_text_in_vega_slot(spec, path));
         }
         if reject_time_affix && is_time_name(spec) {
@@ -699,6 +709,23 @@ fn inline_query(chart: &ChartAuthored) -> Option<String> {
     }
 }
 
+/// A table column's own `format:` writes the kind its `type:` prints
+/// (`TableColumnConfig._format_matches_type`).
+fn column_formats_match_types(id: &str, chart: &ChartAuthored) -> Result<(), Diagnostic> {
+    let ChartAuthored::Table(table) = chart else {
+        return Ok(());
+    };
+    for (name, column) in &table.style.columns {
+        if let Some(message) = TableColumnConfig::format_conflict(column) {
+            return Err(diag::err_validation_field(
+                format!("charts.{id}.style.columns.{name}"),
+                message,
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn refuse(d: Diagnostic) -> CompileError {
     CompileError::Invalid(vec![d])
 }
@@ -798,6 +825,7 @@ pub fn format_checks(
                 validate_spec(&f.fmt, aliases, &format!("charts.{id}.{}", f.path), f.slot)
                     .map_err(refuse)?;
             }
+            column_formats_match_types(&id, chart).map_err(refuse)?;
         }
     }
     Ok(())

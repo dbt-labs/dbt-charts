@@ -29,7 +29,7 @@ For no border, omit `border`; `border: none` is rejected.
 - `palettes` (map of name): Theme palette role assignments: role name to a built-in palette name, never a color. Custom colors go in ``charts.color.categorical.palette: [hex, ...]``. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge
 - `border` (text|{radius, color, width, dash_array, line_cap, dash_offset}): Frame drawn around the whole board: `{width, color, radius}` or `'2px solid #333'`. Omit the key for no border
 - `frame` ({max_width, min_height, margin, card_padding, card_gap}): Board-level structural frame dimensions
-- `title` ({compact_weight, width_offsets: {tiny, narrow, medium, wide}, min_height, overflow, position: {anchor, angle, offset, baseline}, level, subtitle: {font: {}, overflow}, font: {}}): Typography for every heading
+- `title` ({compact_weight, width_offsets: {tiny, narrow, medium, wide}, min_height, max_lines, position: {anchor, angle, offset, baseline}, level, subtitle: {font: {}, max_lines}, font: {}}): Typography for every heading
 - `text` (mapping): Markdown and plain text content style
 - `footer` ({visible, text, link, font: {}, y_offset, brand_weight, divider: {visible, color, width, dasharray, gap}}): Page footer chrome visibility
 - `charts` (mapping): Root of all chart-type styles and shared chart configuration
@@ -104,7 +104,7 @@ Also exist: `preferred_width`, `padding`, `background`, `aspect_ratio`, `min_hei
 - `stack` (none|zero|normalize|center): Default stack mode for bar charts; none renders side-by-side columns
 - `orientation` (horizontal|vertical|auto): Preferred bar orientation
 - `outliers` ({median_multiplier, variant, reveal, cap: {band, length}}): Tear bars far longer than the rest
-Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `series_order`, `grouped`, `pattern`, `conditional`.
+Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `series_order`, `grouped`, `max_thickness`, `labels_above`, `pattern`, `conditional`.
 
 `outliers (bar charts)`:
 - `median_multiplier` (number|none): Tear bars at least this many times the median bar; none turns it off
@@ -164,7 +164,7 @@ Also exist: `dx`, `dy`, `font`, `stacked`, `template`.
 - `labels` ({visible, field, format, dx, dy, font: {}, position}): Value label style for line marks
 Also exist: `connect`, `disconnected_cap`, `disconnected_width`, `halo_multiplier`.
 
-`marks.point`: `size`, `color`, `shape`, `opacity`, `filled`, `fill`, `stroke_width`, `halo`, `labels`.
+`marks.point`: `size`, `color`, `shape`, `opacity`, `filled`, `fill`, `stroke_width`, `labels`.
 
 `marks.area`: `color`, `opacity`, `curve`, `backdrop`, `stacked`.
 
@@ -176,11 +176,20 @@ Also exist: `connect`, `disconnected_cap`, `disconnected_width`, `halo_multiplie
 - `legend` (mapping): Legend style
 - `direct` ({offset, font: {}, height}): Direct label style
 
+`key.direct (line, area)`:
+- `position` (auto|end|overlay): Beside the lines' end, over the plot, or `auto` to pick
+- `overlay_x` (map of number|int|date|text): Where each series prefers its name inside the plot, by series name
+Also exist: `offset`, `font`.
+
 `key.legend`:
 - `position` ({align, overlay, edge}): Legend edge, align along it, overlay or reserve
 - `values` (list of text): Explicit legend entry order/filter
-- `label` ({font: {}, padding, max_width}): Legend label style
-Also exist: `direction`, `columns`, `compact_columns`, `row`, `title`, `symbol_limit`, `symbol_shape`, `symbol_fill`.
+- `label` ({font: {}, padding, max_width, halo}): Legend label style
+- `symbol` ({shape, fill, size}): Legend glyph style
+- `background`: Fill behind the legend; the canvas the chart paints on by default
+- `padding` (number|auto): Space in pixels between the entries and the background's edge
+- `border` (text|{radius, color, width, dash_array, line_cap, dash_offset}): Legend border: width, color, radius, dash_array, line_cap
+Also exist: `direction`, `columns`, `compact_columns`, `entry_gap`, `opacity`, `title`, `limit`.
 
 `color`:
 - `categorical` ({palette, single_series_palette}): Palettes used when color encodes distinct categories, or a lone series
@@ -210,7 +219,7 @@ A color request ("make Created orange") pins `category.<hue>` under `style.chart
 - `variant` (stacked|inline|compact): Card layout
 - `align` (left|center|right): Horizontal alignment of the value, label, and support text within the card
 - `value` ({font: {}, format, compact: {spec, threshold}, affix: {font: {}}, glyph: {up, down, neutral, font: {}, arrow: {}}}): KPI headline value slot
-- `label` ({font: {}, overflow}): KPI card label slot
+- `label` ({font: {}, max_lines}): KPI card label slot
 - `support` ({font: {}, format, tone, glyph: {up, down, neutral, font: {}}}): KPI support row slot
 - `background` (text|{column, scale: {palette, domain, nice, null_color, hinge, arm_mode}}): Card fill, or a {column, scale} gradient; defaults to charts.background
 - `conditional` (map of list of mapping): Rules that restyle the card by value, keyed by column name
@@ -227,16 +236,16 @@ Also exist: `font`, `format`, `glyph`.
 ## Table
 
 `a table's style`:
-- `wrap` (bool): Allow cell text wrapping; false clips to single line
-- `header` ({visible, height, font: {}, font_compact: {}, background, overflow, divider: {visible, color, width, dasharray, continuous}}): Table header row style
+- `max_lines` (int|text|trim_outliers|square|all): Lines a text cell takes before an ellipsis
+- `header` ({visible, height, font: {}, font_compact: {}, background, max_lines, divider: {visible, color, width, dasharray, continuous}}): Table header row style
 - `row` ({height, stripe: {color}, divider: {visible, color, width, dasharray, continuous}, roles: {summary: {}, total: {}}, conditional}): Table body row style
 - `pagination` ({enabled, page_rows, mode}): Client-side pagination defaults for table charts
 - `column_defaults` ({width, align, format, background, font: {}}): Table-level column defaults applied to every column; None means no defaults authored
 - `columns` (map of mapping): Per-column display configuration keyed by column name (label, format, width, etc.)
 - `row_numbers` ({visible, header, align, font: {}}): Leading row-number column configuration
-Also exist: `title`, `preferred_width`, `padding`, `background`, `font`, `border`, `color`, `outer_padding`, `bottom_padding`, `column_layout`, `title_row`, `hide_underscore_columns`, `header_overflow`, `paginator`, `scrollbar`, `symbol_mode`, `more_rows`, `empty_state`, `spark`, `transpose`, `text_baseline_offset`, `title_subtitle_gap`.
+Also exist: `title`, `preferred_width`, `padding`, `background`, `font`, `border`, `color`, `outer_padding`, `bottom_padding`, `column_layout`, `title_row`, `hide_underscore_columns`, `paginator`, `scrollbar`, `symbol_mode`, `more_rows`, `empty_state`, `spark`, `transpose`, `text_baseline_offset`, `title_subtitle_gap`.
 
-`table style.header`: `visible`, `height`, `font`, `font_compact`, `background`, `overflow`, `divider`.
+`table style.header`: `visible`, `height`, `font`, `font_compact`, `background`, `max_lines`, `divider`.
 
 `table style.column_defaults`:
 - `width` (int|text): Override column width in pixels (integer) or a CSS width string
@@ -266,7 +275,7 @@ Also exist: `divider`, `roles`.
 - `glyph`: Text shown before every cell value
 - `spark` (line|area|bar|bar-normalize|column|columns): Miniature chart drawn inside each cell
 - `conditional` (list of mapping): Rules that restyle this column's cells by the cell's own value
-Also exist: `swatch`, `list`, `max_width`, `header_overflow`, `header_link`, `glyph_color`.
+Also exist: `type`, `swatch`, `list`, `max_width`, `header_max_lines`, `header_link`, `glyph_color`.
 
 `style.columns.<column>.conditional[]`: `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `between`, `in`, `is_null`, `default`, `tone`, `background`, `font`, `glyph`, `glyph_color`.
 - A conditional rule requires exactly one condition operator

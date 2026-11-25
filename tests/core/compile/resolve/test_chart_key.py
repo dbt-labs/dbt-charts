@@ -27,7 +27,10 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.diagnostics import WARN_LEGEND_POSITION_WIDTH_FALLBACK
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.diagnostics.codes_render import ERR_LEGEND_POSITION_UNSUPPORTED
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_DIRECT_OVERLAY_UNSUPPORTED,
+    ERR_LEGEND_POSITION_UNSUPPORTED,
+)
 from dbt_charts.core.render.warnings import (
     WarningContext,
     legend_position_width_fallback,
@@ -92,9 +95,12 @@ def _resolve(
     family_key: dict[str, Any] | None = None,
     width: float = _WIDE,
     position: dict[str, Any] | None = None,
+    direct_position: str | None = None,
 ) -> ResolvedChart:
     style = dict(chart_def.get("style", {}))
     key: dict[str, Any] = {}
+    if direct_position is not None:
+        key["direct"] = {"position": direct_position}
     if edge is not None or position is not None:
         key["legend"] = {
             "position": {**({"edge": edge} if edge else {}), **(position or {})}
@@ -511,6 +517,186 @@ def test_a_line_or_area_key_refuses_a_direct_height(chart_type: str) -> None:
     with pytest.raises(ValidationError) as caught:
         StylePatch.model_validate(
             {"charts": {chart_type: {"key": {"direct": {"height": 10}}}}}
+        )
+
+    assert caught.value.errors()[0]["type"] == "extra_forbidden"
+
+
+def _overlays(resolved: ResolvedChart) -> bool:
+    assert isinstance(resolved, (ResolvedLineChart, ResolvedAreaChart))
+    return resolved.style.endpoint_labels.overlay
+
+
+def _attempt(resolved: ResolvedChart) -> Any:
+    assert isinstance(resolved, (ResolvedLineChart, ResolvedAreaChart))
+    return resolved.style.overlay
+
+
+_STACKED_AREA = {**_SHAPES["area"], "style": {"stack": "zero"}}
+_CONNECTED = {**_SHAPES["line"], "x": "v", "y": "w", "connect": "m"}
+
+
+@pytest.mark.parametrize("chart_def", [_SHAPES["line"], _STACKED_AREA])
+def test_overlay_names_series_inside_the_plot_with_no_strip_or_legend(
+    chart_def: dict[str, Any],
+) -> None:
+    resolved = _resolve(chart_def, direct_position="overlay")
+
+    assert _overlays(resolved) is True
+    assert _names_series_on_chart(resolved) is False
+    assert resolved.legend.visible is False
+    assert _attempt(resolved) is None
+
+
+@pytest.mark.parametrize("direct_position", ["end", "auto"])
+def test_end_and_auto_resolve_to_the_strip(direct_position: str) -> None:
+    resolved = _resolve(_SHAPES["line"], direct_position=direct_position)
+
+    assert _overlays(resolved) is False
+    assert _names_series_on_chart(resolved) is True
+
+
+def test_end_has_no_in_plot_attempt() -> None:
+    assert _attempt(_resolve(_SHAPES["line"], direct_position="end")) is None
+
+
+@pytest.mark.parametrize("key_type", [None, "direct"])
+@pytest.mark.parametrize("chart_def", [_SHAPES["line"], _STACKED_AREA])
+def test_auto_carries_the_in_plot_attempt_beside_the_strip(
+    chart_def: dict[str, Any], key_type: str | None
+) -> None:
+    auto = _resolve(chart_def, key_type=key_type, direct_position="auto")
+    overlay = _resolve(chart_def, key_type=key_type, direct_position="overlay")
+
+    assert _attempt(auto).axis_y == overlay.style.axis_y
+    assert _attempt(auto).axis_y != auto.style.axis_y
+    assert _attempt(auto).line_mark == overlay.style.line_mark
+    assert _attempt(auto).point_mark == overlay.style.point_mark
+
+
+@pytest.mark.parametrize(
+    ("chart_def", "kwargs"),
+    [
+        (_SHAPES["line"], {"width": _TINY}),
+        (_SHAPES["line"], {"key_type": "legend"}),
+        (_SHAPES["line"], {"edge": "right"}),
+        (_SHAPES["layered_line"], {"key_type": "direct"}),
+        (_SHAPES["area"], {}),
+        ({k: v for k, v in _SHAPES["line"].items() if k != "color"}, {}),
+        (_CONNECTED, {}),
+    ],
+    ids=[
+        "tiny",
+        "legend",
+        "placed_legend",
+        "layered",
+        "unstacked_area",
+        "single",
+        "connected",
+    ],
+)
+def test_auto_does_not_attempt_where_names_go_to_a_legend_or_cannot_overlay(
+    chart_def: dict[str, Any], kwargs: dict[str, Any]
+) -> None:
+    resolved = _resolve(chart_def, direct_position="auto", **kwargs)
+
+    assert _attempt(resolved) is None
+    assert _overlays(resolved) is False
+
+
+@pytest.mark.parametrize(
+    "chart_def",
+    [
+        _SHAPES["area"],
+        {**_SHAPES["layered_line"], "color": "c"},
+        _CONNECTED,
+        {**_STACKED_AREA, "layers": [{"type": "line", "y": "k"}]},
+        {**_SHAPES["line"], "multiples": {"columns": "c"}},
+    ],
+    ids=["unstacked_area", "layered", "connected", "layered_stacked_area", "faceted"],
+)
+def test_overlay_is_refused_where_names_cannot_go_inside_the_plot(
+    chart_def: dict[str, Any],
+) -> None:
+    with pytest.raises(ChartDataError, match="overlay") as caught:
+        _resolve(chart_def, key_type="direct", direct_position="overlay")
+
+    assert caught.value.code is ERR_DIRECT_OVERLAY_UNSUPPORTED
+
+
+def test_overlay_on_a_line_with_no_series_to_name_adds_no_names_or_values() -> None:
+    single = {k: v for k, v in _SHAPES["line"].items() if k != "color"}
+    resolved = _resolve(single, direct_position="overlay")
+
+    assert _overlays(resolved) is False
+    assert resolved.style.line_mark.labels.visible in (None, False)
+
+
+def test_overlay_under_a_legend_is_a_legend() -> None:
+    resolved = _resolve(_SHAPES["area"], key_type="legend", direct_position="overlay")
+
+    assert _overlays(resolved) is False
+    assert resolved.legend.visible is True
+
+
+def test_overlay_on_a_tiny_card_falls_back_to_the_top_legend() -> None:
+    resolved = _resolve(_SHAPES["line"], direct_position="overlay", width=_TINY)
+
+    assert _overlays(resolved) is False
+    assert resolved.legend.position.edge == "top"
+
+
+def test_an_unlabeled_line_prints_each_latest_value_when_named_in_the_plot() -> None:
+    resolved = _resolve(_SHAPES["line"], direct_position="auto")
+    overlay = _resolve(_SHAPES["line"], direct_position="overlay")
+
+    assert _attempt(resolved).line_mark.labels.visible == "last"
+    assert _attempt(resolved).point_mark.anchored_only is True
+    assert resolved.style.point_mark.anchored_only is False
+    assert overlay.style.line_mark.labels.visible == "last"
+
+
+def test_a_line_that_labels_its_values_keeps_its_own_labels_in_the_plot() -> None:
+    chart_def = {
+        **_SHAPES["line"],
+        "style": {"marks": {"point": {"labels": {"visible": ["max"]}}}},
+    }
+    attempt = _attempt(_resolve(chart_def, direct_position="auto"))
+
+    assert attempt.point_mark.labels.visible == ["max"]
+    assert attempt.line_mark.labels.visible in (None, False)
+
+
+def test_a_stacked_area_in_the_plot_prints_no_values() -> None:
+    attempt = _attempt(_resolve(_STACKED_AREA, direct_position="auto"))
+
+    assert attempt.line_mark.labels.visible in (None, False)
+    assert attempt.point_mark.anchored_only is False
+
+
+@pytest.mark.parametrize(
+    ("tiers", "overlays"),
+    [
+        (["local", "family", "board"], True),
+        (["family", "board"], False),
+        (["board"], True),
+    ],
+)
+def test_direct_position_cascades_chart_then_family_then_board(
+    tiers: list[str], overlays: bool
+) -> None:
+    leaves = {
+        "local": {"direct": {"position": "overlay"}},
+        "family": {"direct": {"position": "end"}},
+        "board": {"direct": {"position": "overlay"}},
+    }
+    assert _overlays(_ladder_resolve("line", tiers, leaves)) is overlays
+
+
+def test_a_bar_key_refuses_a_direct_position() -> None:
+    with pytest.raises(ValidationError) as caught:
+        StylePatch.model_validate(
+            {"charts": {"bar": {"key": {"direct": {"position": "overlay"}}}}}
         )
 
     assert caught.value.errors()[0]["type"] == "extra_forbidden"

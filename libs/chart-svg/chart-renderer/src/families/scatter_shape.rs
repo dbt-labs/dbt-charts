@@ -3,7 +3,7 @@
 //! for a shape encoding that carries no legend config.
 
 use ::layout::scene_path::scene_path;
-use crate::families::legend::{legend_grid, LegendGrid, LegendSymbol};
+use crate::families::legend::{legend_box_node, legend_grid, LegendConfig, LegendGrid, LegendSymbol};
 use d3rs::vega_symbol::{Extents, VegaSymbol};
 use scene::{Attrs, Node, PathData, Role};
 use measure::FontBook;
@@ -93,14 +93,18 @@ pub enum SymbolFill<'a> {
 /// defaults — orient right, `guide-title` (11px bold, `#000`), `guide-label`
 /// (10px, `#000`) text (`vega-parser/src/config.js:84-95`), `titlePadding` 5
 /// and `labelOffset` 4 (`:205`, `:194`) — laid out by the same symbol-legend
-/// grid as every other legend, each row bounded by its own glyph.
+/// grid as every other legend, each row bounded by its own glyph. Only the legend's
+/// `symbol.size`, `entry_gap`, box (`background`, `opacity`, `padding`, `border`) and label
+/// `halo` reach it.
 pub struct ShapeLegend {
     title: String,
     labels: Vec<String>,
     paths: Vec<PathData>,
     family: String,
     grid: LegendGrid,
-    /// The legend's ink width, ceiled, and its height.
+    /// The padding around the entries, the background behind them included.
+    pad: f64,
+    /// The legend's width, ceiled, and its height, box padding included.
     pub w: f64,
     pub h: f64,
 }
@@ -123,7 +127,7 @@ impl ShapeLegend {
     /// `guide-label` styles (`config.ts:505-512`). The title is measured at the
     /// default weight: vl-convert's text layout does not re-instance a variable
     /// font for the title's bold (`text.rs` `measure_shaped`).
-    pub fn new(fonts: &FontBook, payload: &Payload, title: String, labels: Vec<String>) -> Result<Self, String> {
+    pub fn new(fonts: &FontBook, payload: &Payload, cfg: &LegendConfig, title: String, labels: Vec<String>) -> Result<Self, String> {
         let family = payload
             .board_style
             .as_ref()
@@ -140,25 +144,29 @@ impl ShapeLegend {
                 Some(LegendSymbol::Glyph(half_extents(s, SYMBOL_RADIUS)))
             })
             .collect();
-        let paths = symbols.iter().map(|s| path(s, SYMBOL_RADIUS)).collect::<Result<Vec<_>, _>>()?;
-        let grid = legend_grid(&label_ws, &glyphs, false, LABEL_SIZE, 1, LABEL_OFFSET);
+        let paths = symbols.iter().map(|s| path(s, cfg.symbol.size / 2.0)).collect::<Result<Vec<_>, _>>()?;
+        let grid = legend_grid(&label_ws, &glyphs, false, LABEL_SIZE, 1, LABEL_OFFSET, cfg.symbol.size, cfg.entry_gap);
         let title_w = fonts.measure_shaped(&title, family, TITLE_SIZE)?;
-        let w = title_w.max(grid.width).ceil();
-        let h = TITLE_SIZE + TITLE_PADDING + grid.box_h;
+        let pad = cfg.inset();
+        let w = title_w.max(grid.width).ceil() + 2.0 * pad;
+        let h = TITLE_SIZE + TITLE_PADDING + grid.box_h + 2.0 * pad;
         Ok(Self {
             title,
             labels,
             paths,
             family: family.to_string(),
             grid,
+            pad,
             w,
             h,
         })
     }
 
     /// The legend at `(x, y)` with `opacity` the mark's own.
-    pub fn nodes(&self, x: f64, y: f64, fill: SymbolFill, opacity: f64) -> Vec<Node> {
-        let symbol_fill = |attrs: Attrs| match fill {
+    pub fn nodes(&self, cfg: &LegendConfig, x: f64, y: f64, fill: SymbolFill, opacity: f64, canvas: &str) -> Vec<Node> {
+        let (box_x, box_y) = (x, y);
+        let (x, y) = (x + self.pad, y + self.pad);
+        let fill_paint = |attrs: Attrs| match fill {
             SymbolFill::Static(color) => attrs.set("fill", color),
             SymbolFill::Field => attrs.set("fill", "black").set("fill-opacity", "1"),
             SymbolFill::Ring { interior, stroke } => {
@@ -169,7 +177,8 @@ impl ShapeLegend {
                 }
             }
         };
-        let mut nodes = vec![Node::text(
+        let mut nodes: Vec<Node> = cfg.draws_background(canvas).then(|| legend_box_node(cfg, (self.w, self.h), (box_x, box_y))).into_iter().collect();
+        nodes.push(Node::text(
             Role::Legend,
             (x, y + baseline_shift("top", TITLE_SIZE)),
             Attrs::new()
@@ -178,19 +187,17 @@ impl ShapeLegend {
                 .set("font-weight", "bold")
                 .set("fill", INK),
             self.title.as_str(),
-        )];
+        ));
         let entries_y = y + TITLE_SIZE + TITLE_PADDING;
         let c = self.grid.size / 2.0;
         for (i, (label, path)) in self.labels.iter().zip(&self.paths).enumerate() {
             let row_y = entries_y + self.grid.row_y[i];
-            let glyph = symbol_fill(Attrs::new()).num("stroke-width", SYMBOL_STROKE_WIDTH).num("opacity", opacity);
+            let glyph = fill_paint(Attrs::new()).num("stroke-width", SYMBOL_STROKE_WIDTH).num("opacity", opacity);
             nodes.push(Node::path(Role::Legend, path.clone(), glyph).translate(x + c, row_y + c));
-            nodes.push(Node::text(
-                Role::Legend,
-                (x + self.grid.label_x, row_y + c + baseline_shift("middle", LABEL_SIZE)),
-                Attrs::new().vega("font-family", self.family.as_str()).num("font-size", LABEL_SIZE).set("fill", INK),
-                label.as_str(),
-            ));
+            let at = (x + self.grid.label_x, row_y + c + baseline_shift("middle", LABEL_SIZE));
+            let face = Attrs::new().vega("font-family", self.family.as_str()).num("font-size", LABEL_SIZE);
+            nodes.extend(cfg.label_halo(Role::Legend, at, face.clone(), label));
+            nodes.push(Node::text(Role::Legend, at, face.set("fill", INK), label.as_str()));
         }
         nodes
     }
@@ -220,3 +227,63 @@ mod tests {
         assert!(b.sharp && !half_extents("triangle", 5.0).sharp);
     }
 }
+
+/// A series symbol of a framed scatter (`style.series_symbols`): an open shape drawn as a stroke.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeriesSymbol {
+    HollowCircle,
+    Plus,
+    OpenTriangle,
+    Cross,
+    Diamond,
+    Tripod,
+    Square,
+    Asterisk,
+}
+
+impl SeriesSymbol {
+    pub fn path(self, r: f64) -> PathData {
+        let d = r * 1.05;
+        match self {
+            SeriesSymbol::HollowCircle => {
+                let rr = r - HOLLOW_INSET;
+                PathData::new().move_to(rr, 0.0).arc_to(rr, true, -rr, 0.0).arc_to(rr, true, rr, 0.0).close()
+            }
+            SeriesSymbol::Plus => PathData::new().move_to(-d, 0.0).line_to(d, 0.0).move_to(0.0, -d).line_to(0.0, d),
+            SeriesSymbol::OpenTriangle => {
+                PathData::new().move_to(0.0, -d * 1.1).line_to(d, d * 0.75).line_to(-d, d * 0.75).close()
+            }
+            SeriesSymbol::Cross => {
+                let c = d * 0.85;
+                PathData::new().move_to(-c, -c).line_to(c, c).move_to(-c, c).line_to(c, -c)
+            }
+            SeriesSymbol::Diamond => PathData::new().move_to(0.0, -d * 1.2).line_to(d, 0.0).line_to(0.0, d * 1.2).line_to(-d, 0.0).close(),
+            SeriesSymbol::Tripod => PathData::new()
+                .move_to(0.0, 0.0)
+                .line_to(0.0, -d)
+                .move_to(0.0, 0.0)
+                .line_to(0.87 * d, 0.5 * d)
+                .move_to(0.0, 0.0)
+                .line_to(-0.87 * d, 0.5 * d),
+            SeriesSymbol::Square => {
+                let c = 0.8 * d;
+                PathData::new().move_to(-c, -c).line_to(c, -c).line_to(c, c).line_to(-c, c).close()
+            }
+            SeriesSymbol::Asterisk => {
+                let (arm, x, y) = (0.9 * d, 0.866 * 0.9 * d, 0.5 * 0.9 * d);
+                PathData::new().move_to(0.0, -arm).line_to(0.0, arm).move_to(-x, -y).line_to(x, y).move_to(-x, y).line_to(x, -y)
+            }
+        }
+    }
+
+    pub fn stroke_width(self) -> f64 {
+        match self {
+            SeriesSymbol::HollowCircle | SeriesSymbol::OpenTriangle | SeriesSymbol::Diamond | SeriesSymbol::Square => 1.25,
+            SeriesSymbol::Plus | SeriesSymbol::Cross | SeriesSymbol::Tripod | SeriesSymbol::Asterisk => 1.5,
+        }
+    }
+}
+
+/// How far inside the radius a hollow circle's stroke is centered, so its ring matches a solid dot's size.
+const HOLLOW_INSET: f64 = 0.5;

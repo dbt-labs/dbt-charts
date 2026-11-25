@@ -10,6 +10,7 @@ use model_core::{Bounds, Cx, Engine, FromNode, Keywords, Leaf, Merge, Node, Read
 use model_derive::Model;
 use regex::Regex;
 use serde_json::Value;
+use std::num::NonZeroU32;
 use std::sync::OnceLock;
 
 string_enum!(
@@ -50,6 +51,114 @@ string_enum!(
         LineBottom = "line-bottom",
     }
 );
+
+string_enum!(
+    /// The keyword spelling of an unbounded [`LineLimit`].
+    LimitWord { All = "all" }
+);
+
+/// How many lines text gets before an ellipsis cuts it: a count of at least 1, or `all`.
+///
+/// The one spelling of every text line limit (`max_lines:` on a title, subtitle, KPI label, table
+/// header, table column header and body cell, and the tabs rail).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineLimit {
+    Lines(NonZeroU32),
+    All,
+}
+
+impl LineLimit {
+    /// One line: the text is cut with an ellipsis rather than wrapped.
+    pub const ONE: Self = Self::Lines(NonZeroU32::MIN);
+
+    /// A count of at least 1.
+    pub fn lines(count: u32) -> Option<Self> {
+        NonZeroU32::new(count).map(Self::Lines)
+    }
+
+    /// The line cap, `None` for `all`.
+    pub fn max_lines(self) -> Option<usize> {
+        match self {
+            Self::Lines(n) => Some(n.get() as usize),
+            Self::All => None,
+        }
+    }
+
+    /// One line is no wrapping at all.
+    pub fn is_one_line(self) -> bool {
+        self == Self::ONE
+    }
+
+    /// The limit a resolved theme carries: `all` or a line count of at least 1.
+    pub fn from_resolved(value: &Value) -> Result<Self, String> {
+        let limit = match value {
+            Value::String(word) if word == "all" => Some(Self::All),
+            Value::Number(n) => n.as_u64().and_then(|n| u32::try_from(n).ok()).and_then(Self::lines),
+            _ => None,
+        };
+        limit.ok_or_else(|| {
+            format!("`max_lines` {value} is not `all` or a line count of at least 1")
+        })
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for LineLimit {
+    /// A resolved payload's `max_lines`: `all` or a line count of at least 1.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = <Value as serde::Deserialize>::deserialize(deserializer)?;
+        Self::from_resolved(&value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl ReadScalar for LineLimit {
+    fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
+        if let yaml::Kind::Scalar(yaml::Value::Str(word)) = &node.kind {
+            if word == "all" {
+                return Some(Self::All);
+            }
+        }
+        if let Ok(Some(n)) = cx.attempt(|cx| u32::read(node, cx)) {
+            if let Some(limit) = Self::lines(n) {
+                return Some(limit);
+            }
+        }
+        cx.mismatch(node, "'all' or an integer of at least 1");
+        None
+    }
+}
+impl Spell for LineLimit {
+    fn spell(&self) -> Value {
+        match self {
+            Self::Lines(n) => n.get().spell(),
+            Self::All => LimitWord::All.spell(),
+        }
+    }
+}
+impl FromNode for LineLimit {
+    fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
+        Self::read(node, cx)
+    }
+    fn patch(node: &Node, cx: &mut Cx) -> Self::Patch {
+        Self::read(node, cx)
+    }
+    fn whole(node: &Node, cx: &mut Cx) -> Option<Self::Whole> {
+        Self::read(node, cx)
+    }
+}
+impl Leaf for LineLimit {
+    type Whole = LineLimit;
+    type Authored = Option<LineLimit>;
+    type Patch = Option<LineLimit>;
+    const MERGE: Merge = Merge::Override;
+    const EXPR: TypeExpr = TypeExpr::Either(
+        &<LimitWord as Leaf>::EXPR,
+        &TypeExpr::Keyed(
+            &Keywords::bounded(Bounds { ge: Some(1.0), ..Bounds::NONE }),
+            &TypeExpr::Scalar(Scalar::Int),
+        ),
+    );
+}
+model_core::build_leaf!(LineLimit);
 
 /// Stroke appearance shared across mark families.
 #[derive(Debug, Clone, PartialEq, Model)]

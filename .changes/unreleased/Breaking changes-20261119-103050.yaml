@@ -1,3 +1,0 @@
-kind: Breaking changes
-body: 'On a horizontal bar, `axis_x.position: left | right` now places the category names; boards that declare the bar horizontal migrate, others error with the fix.'
-time: 2026-11-19T10:30:50.405683-08:00

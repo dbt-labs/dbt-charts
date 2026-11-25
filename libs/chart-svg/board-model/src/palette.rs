@@ -493,6 +493,10 @@ fn dispatch(
     let Some(target) = t.roles.get(token) else {
         return err(format!("unknown color token '{token}': not a dotted palette address, bracket form, or theme role"));
     };
+    // A board's own ink is a hex role, used as set.
+    if token == "ink" && target.starts_with('#') {
+        return Ok((target.clone(), "literal"));
+    }
     if visited.iter().any(|v| v == token) {
         return err(format!("theme.roles cycle detected involving '{token}'"));
     }

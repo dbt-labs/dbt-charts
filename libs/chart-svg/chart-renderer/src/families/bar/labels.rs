@@ -1133,6 +1133,8 @@ pub(crate) struct LabelFont {
     /// The board's text color: the ink a label takes before the ground it sits on moves it,
     /// when nothing authored or inherited names one.
     pub ink: String,
+    /// The board's hex `style.roles.ink`, which no ink here moves.
+    pub board_ink: Option<String>,
 }
 
 pub(crate) fn label_font(ml: &MarkLabels, board_style: Option<&crate::BoardStyle>) -> Result<LabelFont, String> {
@@ -1145,6 +1147,7 @@ pub(crate) fn label_font(ml: &MarkLabels, board_style: Option<&crate::BoardStyle
         weight: f.map(|f| f.weight_str()).unwrap_or_else(|| "400".into()),
         color: f.and_then(|f| f.color.clone()),
         ink,
+        board_ink: board_style.and_then(|b| b.ink.clone()),
     })
 }
 
@@ -1323,7 +1326,7 @@ pub(super) fn mark_labels(
     let stamped = points.iter().any(|p| p.aria.is_some());
     let mut labels = Vec::new();
     // A label outside its bar with no series color to take reads as the neutral ink, kept readable on the canvas.
-    let neutral_outside = dbt_charts_color::ensure_readable_ink(&style.font.ink, canvas, crate::common::OUTSIDE_INK_CONTRAST)?;
+    let neutral_outside = dbt_charts_color::ensure_readable_ink(&style.font.ink, canvas, crate::common::OUTSIDE_INK_CONTRAST, style.font.board_ink.as_deref())?;
     let lines: Vec<Obstacle> = under.iter().filter(|m| matches!(m, DataMark::Line { .. })).flat_map(Obstacle::of_mark).chain(strikes.iter().cloned()).collect();
     let bars: Vec<vega_fit::Bounds> = under
         .iter()
@@ -1381,7 +1384,7 @@ pub(super) fn mark_labels(
             },
             None if over_bar => canvas.to_string(),
             None => match series_fill {
-                Some(fill) => dbt_charts_color::label_ink(fill, canvas)?,
+                Some(fill) => dbt_charts_color::label_ink(fill, canvas, style.font.board_ink.as_deref())?,
                 None => neutral_outside.clone(),
             },
         };

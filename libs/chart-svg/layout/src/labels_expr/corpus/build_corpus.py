@@ -11,6 +11,8 @@ at every tick) or one `lines` list per tick, and `o` is a list of three outcomes
 when they differ.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess

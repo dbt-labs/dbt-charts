@@ -207,6 +207,33 @@ class TestPrepareServe:
                 cache_path=None,
             )
 
+    def test_a_stale_nav_order_name_returns_a_diagnostic_at_its_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DCT_DEFAULT_THEME", raising=False)
+        (tmp_path / "charts" / "support").mkdir(parents=True)
+        (tmp_path / "charts" / "support" / "tickets.yml").write_text("title: T\n")
+        (tmp_path / "dbt_charts.yml").write_text(
+            "server:\n  nav_order:\n    support:\n      - tickets\n      - gone\n"
+        )
+
+        result = prepare_serve(
+            FilesystemProject(tmp_path),
+            port=None,
+            host="localhost",
+            dialect="duckdb",
+            target=None,
+            max_workers=None,
+            no_cache=False,
+            cache_path=None,
+        )
+
+        assert isinstance(result, Diagnostic)
+        assert result.code == "ERR-NAV-ORDER-INVALID"
+        assert "'gone'" in result.message
+        assert result.range is not None
+        assert (result.range.file, result.range.start_line) == ("dbt_charts.yml", 5)
+
 
 class TestPrepareServeDbtProjectDir:
     """Dialect inference reads the linked dbt_root; port allocation stays

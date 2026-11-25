@@ -1,5 +1,0 @@
-kind: Fixes
-body: dct serve's sidebar, search and board listings name a board whose title is a template by its file name instead of showing the template.
-time: 2026-11-23T19:39:06.19029552Z
-custom:
-    DbtChartsIssue: "119"

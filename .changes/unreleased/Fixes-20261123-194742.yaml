@@ -1,5 +1,0 @@
-kind: Fixes
-body: Palette tokens in a point_map basemap's fill and stroke now resolve to their colors instead of painting black.
-time: 2026-11-23T19:47:42.28423437Z
-custom:
-    DbtChartsIssue: "139"

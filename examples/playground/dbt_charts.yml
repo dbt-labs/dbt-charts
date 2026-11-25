@@ -73,3 +73,4 @@ sources:
       lab_column_stacked: charts/assets/data/chart-lab-import-review/lab_column_stacked.csv
       lab_donut_2: charts/assets/data/chart-lab-import-review/lab_donut_2.csv
       lab_donut_6: charts/assets/data/chart-lab-import-review/lab_donut_6.csv
+locked_schema_version: preview

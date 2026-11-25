@@ -666,7 +666,6 @@ def generate_layout_variables(layout: Layout) -> dict[str, Variable]:
 _TYPE_VALIDATORS: dict[str, tuple[type | tuple[type, ...], str]] = {
     "number": ((int, float), "a number"),
     "slider": ((int, float), "a number"),
-    "range": ((int, float), "a number"),
     "checkbox": (bool, "a boolean"),
     "multiselect": (list, "a list"),
     # A date default may be an ISO string ("2024-01-01") or a native date object
@@ -787,8 +786,8 @@ def validate_variable_value(var_name: str, var: Variable, value: Any) -> None:
                 f"got {type(value).__name__}"
             )
 
-    # Slider/range: additional min/max bounds check
-    if input_type in ("slider", "range"):
+    # Slider: additional min/max bounds check
+    if input_type == "slider":
         if var.min is not None and value < var.min:
             raise CompilationError(
                 f"Variable '{var_name}': {input_type} default {value} < min {var.min}"

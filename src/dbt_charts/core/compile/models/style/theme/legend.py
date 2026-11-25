@@ -9,9 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from dbt_charts.core.compile.models.markers import (
     Absent,
     AutoUnset,
+    Color,
     InheritSlot,
 )
 from dbt_charts.core.compile.models.primitives import (
+    BorderStyle,
     FontStyle,
     SymbolShape,
 )
@@ -43,6 +45,13 @@ class LegendLabelStyle(LegendElementStyle):
     max_width: float | None = Field(
         default=None,
         description="Maximum label width in pixels; maps to VL labelLimit. None uses the engine's default.",
+    )
+    halo: float = Field(
+        ge=0,
+        description=(
+            "Width in pixels of an outline in the legend's background color "
+            "behind each label; 0 draws none."
+        ),
     )
 
 
@@ -111,19 +120,28 @@ class PiePositionStyle(BaseModel):
     )
 
 
-class LegendRowStyle(BaseModel):
-    """Fixed chrome around each entry of a single-row top legend.
-
-    Constant regardless of mark size or entry count: a swatch stays legible even
-    when the marks it names are countless and tiny. The label text is measured
-    against the real resolved label font, never estimated.
-    """
+class LegendSymbolStyle(BaseModel):
+    """The glyph each legend entry draws."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    swatch_width: float = Field(ge=0, description="Swatch box width in pixels.")
-    entry_gap: float = Field(
-        ge=0, description="Gap in pixels between one entry and the next."
+    shape: Annotated[SymbolShape | None, AutoUnset()] = Field(
+        default=None,
+        description=(
+            "Override the legend glyph shape with a Vega symbol name. "
+            "'auto' uses the mark-aware glyph derived from the chart's mark type."
+        ),
+    )
+    fill: Annotated[bool | None, AutoUnset()] = Field(
+        default=None,
+        description=(
+            "When False, draws a hollow (stroke-only) legend glyph. "
+            "'auto' draws a filled symbol."
+        ),
+    )
+    size: float = Field(
+        gt=0,
+        description="Width of the glyph box in pixels. A line's stroke glyph is twice as long.",
     )
 
 
@@ -155,12 +173,33 @@ class _LegendStyleBase(BaseModel):
             "one row); it takes fewer when its labels would not fit."
         ),
     )
-    row: LegendRowStyle = Field(
-        description="Chrome around each entry of a single-row top legend."
+    entry_gap: float = Field(
+        ge=0,
+        description=(
+            "Gap in pixels between one entry and the next: along a row, and "
+            "between grid columns."
+        ),
+    )
+    symbol: LegendSymbolStyle = Field(description="Legend glyph style.")
+    background: Annotated[str, Color()] = Field(
+        description="Fill behind the legend; the canvas the chart paints on by default.",
+    )
+    opacity: float = Field(ge=0, le=1, description="Background fill opacity, 0 to 1.")
+    padding: Annotated[float | None, AutoUnset()] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Space in pixels between the entries and the background's edge. "
+            "'auto' is 5 while the legend floats over the plot (position.overlay) "
+            "and 0 otherwise; a number applies to every legend."
+        ),
+    )
+    border: BorderStyle = Field(
+        description="Legend border: width, color, radius, dash_array, line_cap."
     )
     label: LegendLabelStyle = Field(description="Legend label style.")
     title: LegendTitleStyle = Field(description="Legend title style.")
-    symbol_limit: Annotated[int | None, Absent("no cap")] = Field(
+    limit: Annotated[int | None, Absent("no cap")] = Field(
         default=None,
         ge=1,
         description=(
@@ -179,22 +218,6 @@ class _LegendStyleBase(BaseModel):
             "the real legend domain by its rendered text or its column/measure "
             "name (case/separator-insensitive). None lets the renderer infer "
             "order from the data."
-        ),
-    )
-    # A named shape wins over the mark-derived glyph.
-    symbol_shape: Annotated[SymbolShape | None, AutoUnset()] = Field(
-        default=None,
-        description=(
-            "Override the legend glyph shape with a Vega symbol name. "
-            "'auto' uses the mark-aware glyph derived from the chart's mark type."
-        ),
-    )
-    # False makes hollow (stroke-only) glyphs.
-    symbol_fill: Annotated[bool | None, AutoUnset()] = Field(
-        default=None,
-        description=(
-            "When False, draws a hollow (stroke-only) legend glyph. "
-            "'auto' draws a filled symbol."
         ),
     )
 

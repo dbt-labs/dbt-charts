@@ -429,11 +429,11 @@ def test_project_warnings_ignore_caches_until_refresh(tmp_path: Path) -> None:
     dbt_charts_yml.write_text("warnings:\n  ignore:\n    - WARN-REAGGREGATION\n")
 
     with ProjectSession.open(tmp_path) as project:
-        assert project.warnings_ignore == frozenset({"WARN-REAGGREGATION"})
+        assert "WARN-REAGGREGATION" in project.warnings_ignore
 
         dbt_charts_yml.write_text("warnings:\n  ignore:\n    - WARN-REAGGREGATION\n")
         project.refresh()
-        assert project.warnings_ignore == frozenset({"WARN-REAGGREGATION"})
+        assert "WARN-REAGGREGATION" in project.warnings_ignore
 
 
 def test_project_sources_is_read_only(tmp_path: Path) -> None:
@@ -532,14 +532,14 @@ def test_refresh_sees_dbt_charts_yml_added_after_open(tmp_path: Path) -> None:
     depend on refresh() picking up YAML files that appear after startup.
     """
     with ProjectSession.open(tmp_path) as session:
-        assert session.warnings_ignore == frozenset()
+        assert "WARN-REAGGREGATION" not in session.warnings_ignore
 
         (tmp_path / "dbt_charts.yml").write_text(
             "warnings:\n  ignore:\n    - WARN-REAGGREGATION\n"
         )
         session.refresh()
 
-        assert session.warnings_ignore == frozenset({"WARN-REAGGREGATION"})
+        assert "WARN-REAGGREGATION" in session.warnings_ignore
 
 
 def test_open_threads_resolver_to_env(tmp_path: Path) -> None:

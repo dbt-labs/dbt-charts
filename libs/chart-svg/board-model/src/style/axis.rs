@@ -138,7 +138,7 @@ macro_rules! scalar_leaf {
 }
 
 macro_rules! non_empty_list {
-    ($(#[$m:meta])* $name:ident, $item:ty) => {
+    ($(#[$m:meta])* $name:ident, $item:ty $(, $distinct:ident)?) => {
         $(#[$m])*
         #[derive(Debug, Clone, PartialEq)]
         pub struct $name(pub Vec<$item>);
@@ -153,6 +153,16 @@ macro_rules! non_empty_list {
                     );
                     return None;
                 }
+                $(
+                    let _ = stringify!($distinct);
+                    if let Some(repeat) = items.iter().enumerate().find(|(i, a)| items.iter().take(*i).any(|b| b == *a)) {
+                        cx.invalid(
+                            node.span,
+                            format!("Value error, {} repeats; each entry must be distinct", model_core::Spell::spell(repeat.1)),
+                        );
+                        return None;
+                    }
+                )?
                 Some(Self(items))
             }
         }

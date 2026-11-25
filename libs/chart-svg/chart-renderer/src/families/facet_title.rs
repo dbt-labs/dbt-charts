@@ -53,7 +53,7 @@ impl TitleSource<'_> {
 
 /// `apply_title_overflow_to_spec` against `avail_w`, the padded card width
 /// (a facet composite carries no top-level width, so production passes it in
-/// by hand). An over-wide title or subtitle takes the wrap-two law.
+/// by hand). An over-wide title or subtitle takes the two-line law.
 pub(crate) fn layout_title(
     src: &TitleSource,
     fonts: &FontBook,

@@ -266,7 +266,6 @@ _OMITTED_FROM_PROJECTION = {
     "identity_field": "resolved pie wedge identity source (color, else inferred); no authored counterpart",
     # Table internals: the authored surface is `columns`/`rows`/`values`, which
     # are projected; these are the resolved expansions of them.
-    "header_overflow": "resolved header overflow policy",
     # Render-native-key-space input only (pivot leaf/measure columns and
     # transpose's __metric__/__value__ pair) — every other column already has
     # this merged into `columns`. See compile/resolve/chart/_table.py.
@@ -294,9 +293,9 @@ _OMITTED_FROM_PROJECTION = {
     "basemap_source_name": "resolved from basemap",
     "basemap_stroke": "resolved from basemap",
     # Chart-local presentation facts baked at resolve time for VL emission
-    # (background/title-overflow); no authored counterpart.
+    # (background/title wrap); no authored counterpart.
     "background": "resolved chart-local or board background",
-    "title_style": "resolved chart-local title style (overflow, case)",
+    "title_style": "resolved chart-local title style (wrap, case)",
     # Support-table strip geometry baked at resolve time so render never re-runs axis cascade.
     "support_table_axis_offset": "pixel offset baked at resolve time for support_table strip placement",
     "support_table_series_ink": "resolve-time render flag: whether per-series support_table cells paint their series ink",

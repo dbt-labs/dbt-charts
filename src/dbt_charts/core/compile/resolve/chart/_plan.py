@@ -201,6 +201,7 @@ def plan_cartesian(
     x_type_defaulted: bool,
     y_type_defaulted: bool,
     horizontal: bool | None,
+    leave_auto_format: bool = False,
 ) -> CartesianPlan:
     """Run the shared cartesian prelude: channels, axis bake.
 
@@ -246,6 +247,7 @@ def plan_cartesian(
         multiples=multiples,
         y=y,
         temporal_band_axes=temporal_band_axes,
+        leave_auto_format=leave_auto_format,
     )
     _reject_bent_scale_off_scatter(normalized.id, normalized.type, baked)
     _reject_unfitted_open_domain(normalized.id, normalized.type, baked)

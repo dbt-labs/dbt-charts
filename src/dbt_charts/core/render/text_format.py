@@ -381,23 +381,24 @@ def _field_display(
     node: dict[str, Any],  # type-state: explicit_any — wire dict
     key: str,
 ) -> str | None:
-    """A wire channel's value; a wide ``y`` names its authored measures, not
-    the synthetic fold column the resolver baked into ``y``."""
-    if key == "y" and node.get("wide_measures"):
-        return ", ".join(node["wide_measures"])
-    value = node.get(key)
-    return None if value is None else str(value)
+    """A wire channel's columns, comma-joined; a wide ``y`` names its authored
+    measures, not the synthetic fold column the resolver baked into ``y``."""
+    return ", ".join(_data_columns(node, key)) or None
 
 
 def _data_columns(
     node: dict[str, Any],  # type-state: explicit_any — wire dict
     key: str,
 ) -> list[str]:
-    """The result-row columns a wire channel reads; a wide ``y`` reads one
-    column per authored measure (rows are not folded yet)."""
+    """The result-row columns a wire channel reads. A wide ``y`` reads one
+    column per authored measure (rows are not folded yet), whether the
+    resolver recorded them as ``wide_measures`` or, for a family outside the
+    wide fold (heatmap), left ``y`` as the authored list."""
     if key == "y" and node.get("wide_measures"):
         return list(node["wide_measures"])
     value = node.get(key)
+    if isinstance(value, list):
+        return [str(v) for v in value]
     return [str(value)] if value else []
 
 

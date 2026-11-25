@@ -466,8 +466,7 @@ impl<'a> TimeAxis<'a> {
                 text.push(
                     self.book
                         .truncate(row, &font, limit)
-                        .map_err(diag::err_internal)?
-                        .0,
+                        .map_err(diag::err_internal)?,
                 );
                 ink = ink.max(
                     self.book
@@ -613,7 +612,7 @@ impl<'a> TimeAxis<'a> {
         // A label's drawn text is cut at the limit; its clip test reads the uncut decision width and
         // its ink the uncut shaped advance capped at the limit.
         let measure = |text: &str| -> Result<(String, f64, f64), Diagnostic> {
-            let (cut, _) = self
+            let cut = self
                 .book
                 .truncate(text, &font, limit)
                 .map_err(diag::err_internal)?;

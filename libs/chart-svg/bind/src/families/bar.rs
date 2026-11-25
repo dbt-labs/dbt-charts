@@ -35,10 +35,10 @@ use model_core::{Engine, SetLeaves, Tri};
 use crate::column_kind::{field_channel, y_is_numeric, ChannelType, Role};
 use crate::category_colors::CategoryColorScale;
 use crate::decode::decode;
-use crate::derived::{DerivedChart, Placed};
+use crate::derived::{board_ink, DerivedChart, Placed};
 use crate::families::cartesian::{self, axis_format, hex, no_data, plain_text, single_series, threshold_rules, unsupported, value, Prelude};
 use crate::formats::locale::active_number_locale;
-use crate::legend::fold_symbol_limit;
+use crate::legend::fold_limit;
 use crate::bound::{self,
     AuthoredLegend, AxisStyles, Baselines, BarStyle, Datum, Failure, Key, Legend, LegendEntry, Mark, MarkLayer, MarkStyle, Naming, Orient, Paint,
     Panels, Pos, RowRef, Scale, ScaleKind, Series, SeriesKey, Tooltip, TooltipEntry,
@@ -176,6 +176,14 @@ fn refuse_unported(chart: &BarChart, placed: &Placed<'_>) -> Result<(), Diagnost
     if chart.pattern.pattern.is_some() {
         return Err(unsupported(refuse!("a bar with `pattern:` is not supported")));
     }
+    let axes: Vec<&str> = fields.x.iter().map(|x| x.as_str()).chain(match &fields.y {
+        Some(Columns::One(y)) => Some(y.as_str()),
+        _ => None,
+    }).collect();
+    let color = fields.color.as_ref().map(ColorColumn::as_str);
+    if crate::pattern::identity_series(placed.style.palettes.contains_key("fill_category"), None, color, &axes, false).is_some() {
+        return Err(unsupported(refuse!("a bar patterned by `palettes.fill_category` is not supported")));
+    }
     if fields.support_table.is_some() {
         return Err(unsupported(refuse!("a bar with `support_table:` is not supported")));
     }
@@ -301,15 +309,15 @@ pub fn bars(
     let derived = placed.derive()?;
     refuse_legend_values(chart, &derived)?;
     let colors = color_field
-        .map(|field| cartesian::color_series(field, dataset, decoded.keys(field)?, scales, &palette, derived.frame.canvas))
+        .map(|field| cartesian::color_series(field, dataset, decoded.keys(field)?, scales, &palette, derived.frame.canvas, board_ink(placed.style)))
         .transpose()?;
     let entry_count = match &colors {
         Some(colors) => Some(colors.series.len()),
         None => (!layers.is_empty()).then_some(1 + layers.len()),
     };
-    if let (Some(entry_count), Some(limit)) = (entry_count, derived.legend.base.symbol_limit) {
-        if fold_symbol_limit(entry_count, limit as usize).is_some() {
-            return Err(unsupported(refuse!("a bar legend with more entries than its `symbol_limit:` is not supported")));
+    if let (Some(entry_count), Some(limit)) = (entry_count, derived.legend.base.limit) {
+        if fold_limit(entry_count, limit as usize).is_some() {
+            return Err(unsupported(refuse!("a bar legend with more entries than its `limit:` is not supported")));
         }
     }
     match &colors {
@@ -409,7 +417,7 @@ pub fn bars(
             }
             let ink = free_ink(&painted, &palette)?;
             let stroke = color::parse_css_color(&ink).map_err(diag::err_internal)?;
-            let label_ink = color::label_ink(&hex(stroke), &canvas).map_err(diag::err_internal)?;
+            let label_ink = color::label_ink(&hex(stroke), &canvas, board_ink(placed.style)).map_err(diag::err_internal)?;
             let index = series.len();
             lines.push(datums_of(values, &name, &|_| index)?);
             series.push(Series {

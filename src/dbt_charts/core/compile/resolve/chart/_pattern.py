@@ -15,14 +15,16 @@ from dbt_charts.core.compile.models.primitives import (
     ResolvedPattern,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
+from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_LABEL_FIELD
 from dbt_charts.core.compile.resolve.style.palette import (
+    fill_category_bound,
     list_palettes,
     palette,
     pattern_palette,
 )
 from dbt_charts.core.utils import vega_infers_quantitative
 
-__all__ = ["inked_palette", "pattern_series", "resolve_pattern"]
+__all__ = ["identity_series", "inked_palette", "pattern_series", "resolve_pattern"]
 
 _C = TypeVar("_C", BarChart, AreaChart, PieChart)
 _DEFAULT_ROLE = {
@@ -57,6 +59,19 @@ def pattern_series(chart: _C, *axes: str | Sequence[str] | None) -> _C:
     return chart.model_copy(update={"color": chart.pattern})
 
 
+def identity_series(
+    color: str | None, x: str | None, y: str | Sequence[str] | None
+) -> str | None:
+    """The series a ``palettes.fill_category`` theme patterns a chart by: its
+    ``color`` field, or for several measure columns with none the measure name,
+    as the wide fold names it. A color field the chart also draws on an axis
+    colors categories, not series, and is never patterned."""
+    if color is None:
+        return WIDE_LABEL_FIELD if isinstance(y, list) else None
+    drawn = [x, *(y if isinstance(y, list) else [y])]
+    return None if color in drawn else color
+
+
 def _ground(authored: str) -> str | tuple[str, ...]:
     if authored in list_palettes("categorical"):
         return tuple(palette(authored))
@@ -71,6 +86,7 @@ def resolve_pattern(
     style: PatternStyle,
     single_color: str | None,
     primary: _HasPattern | None,
+    series: str | None,
 ) -> ResolvedPattern | None:
     """Resolve a chart's `pattern:` field against its merged `style.pattern`
     (theme under chart-local) and the field's data.
@@ -78,11 +94,18 @@ def resolve_pattern(
     ``color`` is the authored ``color:`` channel; ``single_color`` is the pattern
     color of a chart without one; ``primary`` is the chart-local style, whose
     ``style.pattern.color`` is the only ink that conflicts with ``color:``.
+    ``series`` (``identity_series``) is the field a theme that binds
+    ``palettes.fill_category`` patterns a chart that authors no ``pattern:`` by,
+    with patterns from that palette.
 
     A discrete field takes the category role, a quantitative one the sequential
     role; an authored palette decides the scale by its own kind and must suit
     the field.
     """
+    fill_bound = fill_category_bound(chart_style_context.palettes)
+    by_series = fill_bound and field is None and series is not None
+    if by_series:
+        field, color = series, None
     if field is None:
         return None
     if color is not None and color != field:
@@ -93,10 +116,15 @@ def resolve_pattern(
     quantitative = vega_infers_quantitative(data, field)
     authored = style.palette
     if authored is None:
-        authored = _DEFAULT_ROLE["sequential" if quantitative else "category"]
+        authored = (
+            "fill_category"
+            if by_series
+            else _DEFAULT_ROLE["sequential" if quantitative else "category"]
+        )
     palette = pattern_palette(authored, chart_style_context.palettes)
     scale = palette.kind
-    assert scale is not None  # pattern_palette returns pattern-family palettes only
+    # pattern_palette returns pattern-family palettes only
+    assert scale is not None and scale != "line"
     if quantitative == (scale == "categorical"):
         raise ValueError(
             f"style.pattern.palette {authored!r} is a {scale} pattern palette, but "
@@ -133,6 +161,7 @@ def resolve_pattern(
         color=ink,
         ground=ground,
         inverse=style.inverse,
+        ink=chart_style_context.ink,
     )
 
 

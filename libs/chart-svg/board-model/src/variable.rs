@@ -40,7 +40,7 @@ string_enum!(
     /// A concrete control; `auto` is the [`Auto`] rule.
     InputType {
         Select = "select", Multiselect = "multiselect", Input = "input", Text = "text",
-        Number = "number", Textarea = "textarea", Slider = "slider", Range = "range",
+        Number = "number", Textarea = "textarea", Slider = "slider",
         Date = "date", Datepicker = "datepicker", Daterange = "daterange",
         Checkbox = "checkbox", Radio = "radio",
     }
@@ -452,13 +452,13 @@ pub struct Variable {
     /// The type of the values a select, radio or multiselect sends back. 'number', 'date' and 'boolean' convert the value before it reaches SQL. Without it, a static numeric list implies 'number' and query options their column's declared type. 'string' and 'array' leave the value as sent.
     #[model(absent = "inferred from the options")]
     pub data_type: Option<VariableDataType>,
-    /// Minimum value for number, slider and range inputs.
+    /// Minimum value for number and slider inputs.
     #[model(absent = "no minimum")]
     pub min: Option<crate::unit::Number>,
-    /// Maximum value for number, slider and range inputs.
+    /// Maximum value for number and slider inputs.
     #[model(absent = "no maximum")]
     pub max: Option<crate::unit::Number>,
-    /// Step size for number, slider and range inputs.
+    /// Step size for number and slider inputs.
     #[model(absent = "the input's own step")]
     pub step: Option<crate::unit::Number>,
     /// SQL operator used when generating filter expressions (e.g., '=', 'IN', 'LIKE').

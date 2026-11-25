@@ -1,0 +1,38 @@
+# Line palette — line-one-ink
+#
+# Ten stroke styles in slot order, for telling lines apart in one ink. Slot 1 is
+# the lead line; an inline is a thinner, canvas-colored stroke drawn on top of a line's ink.
+
+name: line-one-ink
+description: |
+  Ten stroke styles for telling lines apart in one ink: thick, thin, dashed,
+  dotted, dash-dot, big dash, dash-hollow, beads, big dots and medium.
+kind: line
+styles:
+  - width: 3.5
+  - width: 1.5
+  - width: 1.5
+    dash: [9, 5]
+  - width: 1.75
+    dash: [0.1, 4.5]
+    cap: round
+  - width: 1.5
+    dash: [10, 4, 0.1, 4]
+    cap: round
+  - width: 2.5
+    dash: [16, 6]
+  - width: 4
+    inline:
+      width: 2
+      dash: [8, 8]
+      offset: -4
+  - width: 4.5
+    inline:
+      width: 2.4
+      dash: [0.1, 7]
+      cap: round
+      offset: -4
+  - width: 3.25
+    dash: [0.1, 7]
+    cap: round
+  - width: 2.5

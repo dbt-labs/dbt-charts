@@ -49,11 +49,6 @@ fn normalize(s: &str) -> String {
         .to_ascii_lowercase()
 }
 
-const ELLIPSIS: &str = "…";
-
-/// Where a long word may break before falling back to a character break.
-const SEAM_CHARS: &[char] = &['_', '/', '.', '-', '?', '&', '=', ':'];
-
 /// How a run paints: the CSS `font-family` stack, size in px, numeric
 /// `font-weight`, and whether `font-style` is italic.
 #[derive(Clone, Copy, Debug)]
@@ -72,13 +67,6 @@ pub struct Run {
     pub advance: f64,
     pub ascent: f64,
     pub descent: f64,
-}
-
-/// Lines that fit a width; `truncated` when text was cut to an ellipsis.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Wrapped {
-    pub lines: Vec<String>,
-    pub truncated: bool,
 }
 
 pub struct FontBook {
@@ -269,6 +257,12 @@ impl FontBook {
         self.production_sum(text, font, true)
     }
 
+    /// `text` whole when it fits `width`; otherwise its longest prefix, trailing spaces dropped,
+    /// that fits with an ellipsis after it, and when not even that fits, its first character.
+    pub fn truncate(&self, text: &str, font: &Font, width: f64) -> Result<String, String> {
+        crate::fonts::truncate_by(text, width, true, |t| Ok(self.run(t, font)?.advance))
+    }
+
     /// `font_measure.py::centered_baseline_offset(family, size)`: how far below a container's
     /// vertical center a centered line's baseline sits, `(ascent - descent) / 2` of the face
     /// `get_font_path` picks (any `Source Serif` spelling names its cut, every other stack Inter),
@@ -319,153 +313,6 @@ impl FontBook {
         }
         Ok(units / face.units_per_em() as f64 * font.size)
     }
-
-    /// `text` whole when it fits `width`; otherwise its longest prefix, with
-    /// trailing spaces dropped, that fits with an ellipsis after it, and when
-    /// not even that fits, its first character. The flag says whether it was cut.
-    pub fn truncate(&self, text: &str, font: &Font, width: f64) -> Result<(String, bool), String> {
-        if text.is_empty() || self.run(text, font)?.advance <= width {
-            return Ok((text.to_string(), false));
-        }
-        let chars: Vec<char> = text.chars().collect();
-        let candidate = |n: usize| {
-            let prefix: String = chars[..n].iter().collect();
-            format!("{}{ELLIPSIS}", prefix.trim_end())
-        };
-        let (mut lo, mut hi, mut best) = (0, chars.len(), None);
-        while lo <= hi {
-            let mid = (lo + hi) / 2;
-            let c = candidate(mid);
-            if self.run(&c, font)?.advance <= width {
-                best = Some(c);
-                lo = mid + 1;
-            } else if mid == 0 {
-                break;
-            } else {
-                hi = mid - 1;
-            }
-        }
-        let first = || chars.first().map(char::to_string).unwrap_or_default();
-        Ok((best.unwrap_or_else(first), true))
-    }
-
-    /// Greedy word wrap of `text`, whitespace collapsed, to lines that fit
-    /// `width`. A word wider than the line breaks after its last seam
-    /// character that fits, else after its longest fitting prefix (at least one
-    /// character). Past `max_lines`, the last line holds the rest of the text
-    /// truncated with an ellipsis.
-    pub fn wrap(
-        &self,
-        text: &str,
-        font: &Font,
-        width: f64,
-        max_lines: Option<usize>,
-    ) -> Result<Wrapped, String> {
-        if max_lines == Some(0) {
-            return Err("wrap: max_lines must be at least 1".into());
-        }
-        let mut pieces = Vec::new();
-        for word in text.split_whitespace() {
-            self.break_word(word, font, width, &mut pieces)?;
-        }
-        let mut lines: Vec<Vec<(&str, bool)>> = Vec::new();
-        for &(piece, joins) in &pieces {
-            if let Some(line) = lines.last_mut() {
-                let candidate = join(line.iter().copied().chain([(piece, joins)]));
-                if self.run(&candidate, font)?.advance <= width {
-                    line.push((piece, joins));
-                    continue;
-                }
-            }
-            lines.push(vec![(piece, joins)]);
-        }
-        let text_of = |line: &[(&str, bool)]| join(line.iter().copied());
-        match max_lines {
-            Some(max) if lines.len() > max => {
-                let mut out: Vec<String> = lines[..max - 1].iter().map(|l| text_of(l)).collect();
-                let tail = text_of(&lines[max - 1..].concat());
-                out.push(self.truncate(&tail, font, width)?.0);
-                Ok(Wrapped {
-                    lines: out,
-                    truncated: true,
-                })
-            }
-            _ => Ok(Wrapped {
-                lines: lines.iter().map(|l| text_of(l)).collect(),
-                truncated: false,
-            }),
-        }
-    }
-
-    /// Pushes `word`'s pieces: the first joins its line with a space, the
-    /// rest (from a break inside the word) join with nothing.
-    fn break_word<'t>(
-        &self,
-        word: &'t str,
-        font: &Font,
-        width: f64,
-        pieces: &mut Vec<(&'t str, bool)>,
-    ) -> Result<(), String> {
-        let mut rest = word;
-        let mut spaced = true;
-        while self.run(rest, font)?.advance > width {
-            let mut cut = None;
-            for (at, c) in rest.char_indices().skip(1) {
-                if SEAM_CHARS.contains(&c) {
-                    let end = at + c.len_utf8();
-                    if self.run(&rest[..end], font)?.advance > width {
-                        break;
-                    }
-                    cut = Some(end);
-                }
-            }
-            let cut = match cut {
-                Some(cut) => cut,
-                None => {
-                    let ends: Vec<usize> = rest
-                        .char_indices()
-                        .skip(1)
-                        .map(|(i, _)| i)
-                        .chain([rest.len()])
-                        .collect();
-                    let mut best = ends[0];
-                    let (mut lo, mut hi) = (0, ends.len() - 1);
-                    while lo <= hi {
-                        let mid = (lo + hi) / 2;
-                        if self.run(&rest[..ends[mid]], font)?.advance <= width {
-                            best = ends[mid];
-                            lo = mid + 1;
-                        } else if mid == 0 {
-                            break;
-                        } else {
-                            hi = mid - 1;
-                        }
-                    }
-                    best
-                }
-            };
-            pieces.push((&rest[..cut], spaced));
-            spaced = false;
-            rest = &rest[cut..];
-        }
-        if !rest.is_empty() {
-            pieces.push((rest, spaced));
-        }
-        Ok(())
-    }
-}
-
-/// A line's text: each piece after the first preceded by a space when it
-/// starts a word.
-fn join<'t>(pieces: impl Iterator<Item = (&'t str, bool)>) -> String {
-    let mut out = String::new();
-    for (n, (piece, spaced)) in pieces.enumerate() {
-        if n > 0 && spaced {
-            out.push(' ');
-        }
-        out.push_str(piece);
-    }
-    out
 }
 
 /// `text` split into maximal runs set in one face: each character goes to the

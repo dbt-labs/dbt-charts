@@ -47,7 +47,10 @@ import dbt_charts.core.render.warnings.bar_centered_no_baseline as bar_centered_
 import dbt_charts.core.render.warnings.bar_grouped_series_coincide as bar_grouped_series_coincide
 import dbt_charts.core.render.warnings.callout_text_truncated as callout_text_truncated
 import dbt_charts.core.render.warnings.category_color_pin_unseen as category_color_pin_unseen
+import dbt_charts.core.render.warnings.chart_height_below_category_floor as chart_height_below_category_floor
 import dbt_charts.core.render.warnings.chart_title_truncated as chart_title_truncated
+import dbt_charts.core.render.warnings.direct_overlay_collides as direct_overlay_collides
+import dbt_charts.core.render.warnings.direct_overlay_x_unseen as direct_overlay_x_unseen
 import dbt_charts.core.render.warnings.dual_axis_competing_scales as dual_axis_competing_scales
 import dbt_charts.core.render.warnings.endpoint_label_gap_overflow as endpoint_label_gap_overflow
 import dbt_charts.core.render.warnings.facet_panel_width_below_minimum as facet_panel_width_below_minimum
@@ -122,6 +125,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     bar_grouped_series_coincide,
     outliers_torn_unsupported,
     callout_text_truncated,
+    chart_height_below_category_floor,
     chart_title_truncated,
     endpoint_label_gap_overflow,
     facet_panel_width_below_minimum,
@@ -129,6 +133,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     kpi_inline_fallback,
     kpi_label_truncated,
     kpi_support_truncated,
+    direct_overlay_collides,
     layer_x_domain_paint_order,
     layout_min_exceeds_height,
     legend_overlay_covers_marks,
@@ -167,6 +172,7 @@ _DATA_DETECTORS: list[ModuleType] = [
     bar_category_ticks,
     bar_centered_no_baseline,
     category_color_pin_unseen,
+    direct_overlay_x_unseen,
     trend_on_bars,
     dual_axis_competing_scales,
     gradient_hinge_mismatch,

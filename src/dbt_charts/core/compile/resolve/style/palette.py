@@ -66,6 +66,7 @@ from dbt_charts.core.colors import (
     css_named_color_to_hex,
     ensure_readable_ink,
     hex_to_oklch,
+    is_board_ink,
     is_deferred_color_reference,
     is_light_canvas,
     is_sanitizable_color,
@@ -77,6 +78,7 @@ from dbt_charts.core.colors import (
 from dbt_charts.core.compile.models.palette import (
     HARD_FAIL_PALETTE_NAMES,
     PALETTE_WARN_RECOMMENDATIONS,
+    LineStyle,
     Palette,
     PaletteFamily,
     PaletteIndexEntry,
@@ -126,6 +128,11 @@ class ToneAsPaletteError(ValueError):
 class PatternAsPaletteError(ValueError):
     """Raised when a pattern palette name is passed to ``palette()``: it draws
     fills, not color stops."""
+
+
+class LineAsPaletteError(ValueError):
+    """Raised when a line palette name is passed to ``palette()``: it draws
+    stroke styles, not color stops."""
 
 
 # ============================================================================
@@ -631,6 +638,12 @@ def palette(
         raise PatternAsPaletteError(
             f"'{name}' is a pattern palette: it names fill patterns, not color "
             "stops. Set it as `style.pattern.palette`."
+        )
+
+    if family == "line":
+        raise LineAsPaletteError(
+            f"'{name}' is a line palette: it names stroke styles, not color "
+            "stops. Set it as the `palettes.line_category` role."
         )
 
     if family in ("categorical", "scaffold"):
@@ -1273,6 +1286,9 @@ def _color_from_theme_dispatch(
             "bracket form, or theme role. "
             f"Defined theme roles: {sorted(effective_roles)}"
         )
+    # A board's own ink is a hex role, used as set.
+    if token == "ink" and target.startswith("#"):
+        return target, "literal"
     # Cycle detection for bare-name role recursion.
     visited = _visited_roles or frozenset()
     if token in visited:
@@ -1431,8 +1447,8 @@ def ink_canvas(*layers: str) -> str:
     return rgb01_to_hex(*composited[:3])
 
 
-def mark_ink(color: str, canvas: str) -> str:
-    """label_ink() for one mark color.
+def mark_ink(color: str, canvas: str, ink: str | None) -> str:
+    """label_ink() for one mark color; the board's own ``ink`` is returned as set.
 
     A color token or bare identifier that is NOT already a real, parseable
     color defers to ``validate_board_palette_specs()`` instead of resolving
@@ -1457,6 +1473,8 @@ def mark_ink(color: str, canvas: str) -> str:
     r, g, b, a = parsed
     if a <= 0.0:
         # Fully transparent: no ink to derive against any canvas.
+        return color
+    if is_board_ink(color, ink):
         return color
     return label_ink(rgb01_to_hex(r, g, b), canvas)
 
@@ -1530,10 +1548,49 @@ def pattern_palette(name: str, roles: Mapping[str, str]) -> Palette:
         name, name
     )  # type-state: silent_fallback — a name that is no role is a palette file name
     spine = _load_spine_raw(resolved)
-    if spine.kind is None:
+    if spine.kind is None or spine.kind == "line":
         raise UnknownPaletteError(
-            f"'{resolved}' is a color palette, not a pattern palette; "
+            f"'{resolved}' is a {'color' if spine.kind is None else 'line'} palette, "
+            "not a pattern palette; "
             "`style.pattern.palette` takes one of: "
             f"{', '.join(list_palettes('pattern'))}."
         )
     return spine
+
+
+def fill_category_bound(roles: Mapping[str, str]) -> bool:
+    """Whether the theme binds ``palettes.fill_category``, the pattern palette that
+    tells a bar, area or pie chart's series apart in place of hues.
+
+    Raises:
+        UnknownPaletteError: the role names a palette that is not a pattern palette.
+    """
+    bound = roles.get("fill_category")
+    if bound is None:
+        return False
+    spine = _load_spine_raw(bound)
+    if spine.kind is None or spine.kind == "line":
+        raise UnknownPaletteError(
+            f"palettes.fill_category names '{bound}', which is not a pattern palette; "
+            f"it takes one of: {', '.join(list_palettes('pattern'))}."
+        )
+    return True
+
+
+def line_palette_styles(roles: Mapping[str, str]) -> tuple[LineStyle, ...]:
+    """The stroke styles of the line palette the theme binds to ``line_category``,
+    or none when the theme binds no line palette.
+
+    Raises:
+        UnknownPaletteError: the role names a palette that is not a line palette.
+    """
+    bound = roles.get("line_category")
+    if bound is None:
+        return ()
+    spine = _load_spine_raw(bound)
+    if spine.styles is None:
+        raise UnknownPaletteError(
+            f"palettes.line_category names '{bound}', which is not a line palette; "
+            f"it takes one of: {', '.join(list_palettes('line'))}."
+        )
+    return spine.styles

@@ -33,6 +33,7 @@ from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPointLabels,
     ResolvedPointMarkStyle,
+    ResolvedRingedPointMarkStyle,
     ResolvedTotalStyle,
     ResolvedTotalValueSlot,
 )
@@ -68,10 +69,16 @@ def _series_label() -> ResolvedSeriesLabelStyle:
 def _endpoint_labels(visible: bool = False):
     """Minimal cascade-merged endpoint-label config for cartesian-style fixtures."""
     from dbt_charts.core.compile.models.style.resolved._cartesian import (
-        ResolvedEndpointLabelsConfig,
+        ResolvedLineAreaEndpointLabelsConfig,
     )
 
-    return ResolvedEndpointLabelsConfig(visible=visible, label_offset=8.0)
+    return ResolvedLineAreaEndpointLabelsConfig(
+        visible=visible,
+        overlay=False,
+        overlay_x=(),
+        unseen_overlay_x=(),
+        label_offset=8.0,
+    )
 
 
 def fixture_chart_for_type(chart_type: str):
@@ -170,6 +177,8 @@ def bar_style() -> ResolvedBarStyle:
         tooltip_format=ResolvedFormat(spec=""),
         label_font_size=11.0,
         grouped=BarGroupedStyle(padding_inner=0.2, padding_outer=0.2),
+        max_thickness=None,
+        labels_above=None,
         label_usable_ratio=0.8,
         axis_x=ax,
         axis_y=ay,
@@ -187,7 +196,6 @@ def line_style() -> ResolvedLineStyle:
     from dbt_charts.core.compile.models.style.resolved import (
         ResolvedLineMarkStyle,
         ResolvedPointLabels,
-        ResolvedPointMarkStyle,
         ResolvedStrokeStyle,
     )
 
@@ -203,10 +211,12 @@ def line_style() -> ResolvedLineStyle:
         ),
         point_mark=ResolvedPointMarkStyle(),
         endpoint_labels=_endpoint_labels(),
+        overlay=None,
         single_series_fill=SINGLE_SERIES_FILL,
         tooltip_format=ResolvedFormat(spec=""),
         label_usable_ratio=0.8,
         dashes=[],
+        line_styles=(),
         axis_x=ax,
         axis_y=ay,
     )
@@ -219,7 +229,6 @@ def area_style() -> ResolvedAreaStyle:
         ResolvedAreaLineStyle,
         ResolvedAreaMarkStyle,
         ResolvedPointLabels,
-        ResolvedPointMarkStyle,
         ResolvedStrokeStyle,
     )
 
@@ -234,6 +243,7 @@ def area_style() -> ResolvedAreaStyle:
         ),
         point_mark=ResolvedPointMarkStyle(),
         endpoint_labels=_endpoint_labels(),
+        overlay=None,
         single_series_fill=SINGLE_SERIES_FILL,
         tooltip_format=ResolvedFormat(spec=""),
         label_usable_ratio=0.8,
@@ -247,12 +257,12 @@ def area_style() -> ResolvedAreaStyle:
 def scatter_style() -> ResolvedScatterStyle:
     """Minimal valid ResolvedScatterStyle for test injection."""
     from dbt_charts.core.compile.models.primitives import SizeScaleStyle
-    from dbt_charts.core.compile.models.style.resolved import ResolvedPointMarkStyle
 
     ax, ay = _bake_axes("scatter", "quantitative", "quantitative")
     return ResolvedScatterStyle(
-        point_mark=ResolvedPointMarkStyle(),
+        point_mark=ResolvedRingedPointMarkStyle(),
         size=SizeScaleStyle(range=(4, 361), type="linear"),
+        frame="full",
         single_series_fill=SINGLE_SERIES_FILL,
         tooltip_format=ResolvedFormat(spec=""),
         label_usable_ratio=0.8,
@@ -369,7 +379,7 @@ def point_map_style() -> ResolvedPointMapStyle:
     return ResolvedPointMapStyle(
         point_map=rcs.point_map,
         point_mark=resolved_as(
-            ResolvedPointMarkStyle,
+            ResolvedRingedPointMarkStyle,
             rcs.point_map.marks.point,
             labels=resolved_as(
                 ResolvedPointLabels, rcs.point_map.marks.point.labels, format=None

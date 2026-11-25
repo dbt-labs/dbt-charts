@@ -48,6 +48,8 @@ from dbt_charts import _engine
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NATIVE,
     PREDEFINED_NUMBER_NAMES,
+    PREDEFINED_TEXT_NAMES,
+    PREDEFINED_TIME_NAMES,
 )
 
 # The house notation vocabulary — analytic (SI-prefix, " K"/" M") or narrative
@@ -872,6 +874,21 @@ def is_d3_number_spec(spec: str) -> bool:
     except D3FormatError:
         return False
     return True
+
+
+def format_spec_kind(spec: str) -> Literal["text", "time", "number"] | None:
+    """The kind of value a ``format:`` spec writes, or ``None`` when it is none
+    this module can name: an unresolved ``style.formats`` alias or a typo.
+
+    Never raises, the same totality contract as ``is_d3_number_spec``.
+    """
+    if spec in PREDEFINED_TEXT_NAMES:
+        return "text"
+    if spec in PREDEFINED_TIME_NAMES or is_time_format(spec):
+        return "time"
+    if spec in PREDEFINED_NUMBER_NAMES or is_d3_number_spec(spec):
+        return "number"
+    return None
 
 
 def round_aware_spec(format_spec: str) -> str:

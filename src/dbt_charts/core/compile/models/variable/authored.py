@@ -41,7 +41,6 @@ VariableInputType = Literal[
     "number",
     "textarea",
     "slider",
-    "range",
     "date",
     "datepicker",
     "daterange",
@@ -283,13 +282,13 @@ class Variable(BaseModel):
 
     # Numeric bounds: a slider needs them to draw, a number input enforces them
     min: int | float | None = Field(
-        default=None, description="Minimum value for number, slider and range inputs."
+        default=None, description="Minimum value for number and slider inputs."
     )
     max: int | float | None = Field(
-        default=None, description="Maximum value for number, slider and range inputs."
+        default=None, description="Maximum value for number and slider inputs."
     )
     step: int | float | None = Field(
-        default=None, description="Step size for number, slider and range inputs."
+        default=None, description="Step size for number and slider inputs."
     )
 
     @field_validator("presets")

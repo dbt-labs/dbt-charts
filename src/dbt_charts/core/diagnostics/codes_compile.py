@@ -307,6 +307,18 @@ ERR_META_SCHEMA = REGISTRY.register(
     )
 )
 
+ERR_NAV_ORDER_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-NAV-ORDER-INVALID",
+        domain="compile",
+        title="server.nav_order names a folder or entry the project does not hold",
+        message_template="{file}:{line}: server.nav_order[{folder!r}] {reason}. Each folder lists the board file names (without extension) and subfolder names it holds.",
+        doc="Fired by `dct serve` when `server.nav_order` in `dbt_charts.yml` names a folder that does not exist, or lists a name that matches no board or subfolder in that folder, or matches more than one. `server.nav_order` sets the order of a folder's entries in the `dct serve` sidebar and folder listing.",
+        summary="Fired when dbt_charts.yml's server.nav_order names a folder or entry the project does not hold.",
+        docs_topic="board",
+    )
+)
+
 ERR_PROJECT_CONFIG_SCHEMA = REGISTRY.register(
     ErrorCode(
         code="ERR-PROJECT-CONFIG-SCHEMA",
@@ -325,7 +337,7 @@ ERR_LOCKED_SCHEMA_VERSION = REGISTRY.register(
         domain="compile",
         title="Board file does not match the project's locked schema version",
         message_template="{message}",
-        doc="Fired when dbt_charts.yml sets `locked_schema_version` and a board, its meta.yml, or an `extends:` file uses syntax that release does not accept, typically because a newer dbt Charts wrote it. Rewrite the file in the locked release's syntax, or raise the lock.",
+        doc="Fired when a board, its meta.yml, or an `extends:` file uses syntax the release named by dbt_charts.yml's `locked_schema_version` (default `latest`) does not accept, typically because a newer dbt Charts wrote it. Rewrite the file in the locked release's syntax, or raise the lock (`preview` accepts unreleased syntax).",
         summary="Fired when a board file uses syntax newer than the project's locked_schema_version.",
         docs_topic="board",
     )
@@ -606,6 +618,18 @@ ERR_ANNOTATION_INVALID = REGISTRY.register(
         message_template="Chart {chart_id!r}: annotation {index}: {reason}.",
         doc="Fired when an annotation does not fit the chart it is on: an anchor whose value does not match the axis column's type, an aggregate or fit the axis cannot take, a missing or unknown `series`, a range whose `from` is past its `to`, or text that does not render.",
         summary="Fired when an annotation does not fit the chart it is on.",
+        docs_topic="charts",
+    )
+)
+
+ERR_DIRECT_OVERLAY_X_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DIRECT-OVERLAY-X-INVALID",
+        domain="compile",
+        title="A `style.key.direct.overlay_x` value cannot be resolved against the chart",
+        message_template="Chart {chart_id!r}: `style.key.direct.overlay_x` series {series!r}: {reason}.",
+        doc="Fired when an x under `style.key.direct.overlay_x` does not fit the chart's x axis: a value that does not read in the axis column's type, a category the column does not hold, a range function such as `current(month)`, or an aggregate the axis cannot take.",
+        summary="Fired when a `style.key.direct.overlay_x` x does not fit the chart's x axis.",
         docs_topic="charts",
     )
 )
@@ -1396,9 +1420,21 @@ ERR_FORMAT_TEXT_IN_VEGA_SLOT = REGISTRY.register(
         code="ERR-FORMAT-TEXT-IN-VEGA-SLOT",
         domain="compile",
         title="Text format name used in a chart format slot",
-        message_template="Format {spec!r} at {field_path} is a text format and cannot be used in chart slots (axis labels, mark value labels, support_table). Use it on a table column or KPI value; a number or date slot takes a number or time name or a d3 spec.",
-        doc="Fired when `email` or `url` appears in a chart slot. They name text a table cell or KPI value links, and have no number or date spec to apply.",
+        message_template="Format {spec!r} at {field_path} is a text format and cannot be used in chart slots (axis labels, mark value labels, support_table). Use it on a table column, a KPI value or a chart `tooltip:` entry; a number or date slot takes a number or time name or a d3 spec.",
+        doc="Fired when `email` or `url` appears in a chart slot. They name text a table cell, KPI value or tooltip row links, and have no number or date spec to apply.",
         summary="`email` / `url` is not a number or time format for a chart slot.",
+        docs_topic="charts",
+    )
+)
+
+ERR_TOOLTIP_LINK_BESIDE_CHART_LINK = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TOOLTIP-LINK-BESIDE-CHART-LINK",
+        domain="compile",
+        title="A chart `link:` beside a link in its tooltip",
+        message_template="Chart {chart!r} has a `link:` and a `url` or `email` entry in `tooltip:` ({column!r}). A click on a mark follows `link:`, so the tooltip never pins and its link cannot be clicked. Drop `link:`, or drop the `url`/`email` format from the entry.",
+        doc="Fired when a chart sets `link:` and a `tooltip:` entry formats its column `url` or `email`, by its own `format` or the query's `formats:`. A click either follows the chart's link or pins the tooltip, never both.",
+        summary="A chart's `link:` and a `url`/`email` tooltip entry both claim the click.",
         docs_topic="charts",
     )
 )

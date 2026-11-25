@@ -28,6 +28,8 @@ style:
     pattern_category: pattern-mixed-8
     pattern_sequential: pattern-dots
     pattern_diverging: pattern-hatch-dots
+    # `fill_category` is unset: a theme that binds it to a pattern palette
+    # patterns a bar, area or pie chart's series in place of hues.
 
   # Semantic tone palette for KPI support rows and table conditional glyphs —
   # shared board-level slot, not one chart family's. Four tones: positive,
@@ -152,7 +154,7 @@ style:
       offset: 10
       angle: auto
       baseline: auto
-    overflow: truncate
+    max_lines: 1
     # Compute heading level from count of titled ancestors (not structural depth).
     # Set to an integer to lock all board titles to a specific H-level (useful for
     # embedded dashboards where H1/H2 are reserved by the outer page).
@@ -172,7 +174,7 @@ style:
       wide: 0
     min_height: 24.0
     subtitle:
-      overflow: wrap-two
+      max_lines: 2
       font: subtitle
 
   # Annotation defaults per type. Colors name theme roles (`muted`) so every
@@ -526,13 +528,13 @@ style:
       drop_line_width: 1.0
       drop_line_dash: [0.1, 2.5]
 
-
     # `auto` shows a legend unless direct labels name the series; a concrete
     # type from any tier wins.
     key:
       visible: true
       type: auto
       direct:
+        position: auto
         offset: 6.0
         height: 20.0
         font:
@@ -545,19 +547,29 @@ style:
           align: auto
           overlay: auto
         direction: auto
-        symbol_shape: auto
-        symbol_fill: auto
         columns: 0
         # The most columns a wrapped legend takes; it takes fewer when its
         # labels would not fit the card.
         compact_columns: 6
-        symbol_limit: 20
-        row:
-          swatch_width: 10.0
-          entry_gap: 16.0
+        limit: 20
+        entry_gap: 10.0
+        symbol:
+          shape: auto
+          fill: auto
+          size: 10.0
+        background: theme.background
+        opacity: 1
+        # `auto`: 5 px when the legend floats over the plot, 0 otherwise.
+        padding: auto
+        border:
+          width: 0.0
+          color: chrome[4]
+          radius: 3.0
         label:
           font: label
           max_width: 200
+          # Width of an outline in the legend's background behind each label; 0 is none.
+          halo: 0
           # Gap between a legend symbol and its label text (VL labelOffset).
           # Must clear wide stroke symbols (target lines in mixed bar+line
           # legends), which overflow VL's default offset of 4.
@@ -700,7 +712,7 @@ style:
         # from context.
         visible: true
         height: 28.0
-        overflow: wrap-two
+        max_lines: 2
         divider:
           visible: true
           width: 1
@@ -711,7 +723,7 @@ style:
           # cascade authoritative so themes can tune without touching the
           # render layer.
           weight: '600'
-      wrap: true
+      max_lines: trim_outliers
       hide_underscore_columns: true
       symbol_mode: anchors
       row:
@@ -1044,6 +1056,7 @@ style:
           up: ▲
           down: ▼
       label:
+        max_lines: 2
         font:
           extends: label
       support:
@@ -1147,6 +1160,7 @@ style:
     # build_patch_model_ext-based types: TYPE_CHECKING stub shows required fields from
     # _ChartStyleBase, so pyright can't verify zero-arg construction. These stay required.
     scatter:
+      frame: full
       # Mark-area range (px²) of the `size:` channel; 4 px² keeps the smallest
       # dot visible, 361 px² is a 19 px-wide dot.
       size:
@@ -1398,7 +1412,6 @@ style:
       title_baseline_offset: 5.0
       min_width: 96.0
       max_width: 240.0
-      rail_max_lines: 2
       padding_x: 16.0
       font:
         extends: label

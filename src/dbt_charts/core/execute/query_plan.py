@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Literal, TypedDict
 
-QUERY_PLAN_VERSION = 1
+QUERY_PLAN_VERSION = 2
 
 # JSON the engine spells and Python passes through unread: a values query's keys, a variable
 # value ({"kind": ..., "value": ...}).
@@ -42,14 +42,24 @@ class PlannedSqlQuery(_PlannedBase):
     incremental: str | None
 
 
-class PlannedDataQuery(_PlannedBase):
-    """A `values` or `schema` query: the keys the author wrote, carried unread in `spec`."""
+class PlannedValuesQuery(_PlannedBase):
+    """A `values` query: the keys the author wrote, carried unread in `spec`, and each
+    column's type read off its literals (`ColumnType` wire form), which the JSON
+    spelling of `spec` cannot carry: a date literal arrives as its ISO text."""
 
-    type: Literal["values", "schema"]
+    type: Literal["values"]
+    spec: JsonValue
+    schema: dict[str, JsonValue]
+
+
+class PlannedDataQuery(_PlannedBase):
+    """A `schema` query: the keys the author wrote, carried unread in `spec`."""
+
+    type: Literal["schema"]
     spec: JsonValue
 
 
-PlannedQuery = PlannedSqlQuery | PlannedDataQuery
+PlannedQuery = PlannedSqlQuery | PlannedValuesQuery | PlannedDataQuery
 
 
 class PlanVariables(TypedDict):

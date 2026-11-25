@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+
+from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
+from dbt_charts.core.compile.compiler import compile_file
 from dbt_charts.core.diagnostics import WARN_CATEGORY_COLOR_PIN_ORPHAN
 
 _BOARD = """
@@ -43,5 +48,43 @@ def test_a_pin_on_a_field_a_chart_colors_by_does_not_warn() -> None:
         "    y: [gamma, alpha]", "    y: gamma\n    color: month"
     )
     result = compile(text)
+    assert result.success, result.errors
+    assert WARN_CATEGORY_COLOR_PIN_ORPHAN.code not in [w.code for w in result.warnings]
+
+
+_META_PIN = """
+style:
+  charts:
+    category_colors:
+      side:
+        values:
+          Assets: category[1]
+"""
+
+_NO_SIDE_BOARD = """
+queries:
+  q:
+    columns: [month, amount]
+    values:
+      - [Jan, 500]
+charts:
+  c:
+    type: bar
+    query: q
+    x: month
+    y: amount
+rows:
+  - c
+"""
+
+
+def test_a_pin_inherited_from_meta_does_not_warn(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    charts = tmp_path / "charts"
+    charts.mkdir()
+    (charts / "meta.yml").write_text(_META_PIN)
+    (charts / "board.yml").write_text(_NO_SIDE_BOARD)
+    result = compile_file(local_project(tmp_path).path("charts/board.yml").read_board())
     assert result.success, result.errors
     assert WARN_CATEGORY_COLOR_PIN_ORPHAN.code not in [w.code for w in result.warnings]

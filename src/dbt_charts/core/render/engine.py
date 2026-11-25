@@ -269,6 +269,7 @@ def board_style_envelope(
         "rule_stroke_width": None if rule is None else rule.get("strokeWidth"),
         "font": board_style.vega_config.get("font"),
         "font_color": board_style.font.color,
+        "ink": board_style.ink,
         "text_mark_font": {
             "family": board_style.chart_defaults.marks.text.font.family,
             "size": board_style.chart_defaults.marks.text.font.size,
@@ -657,6 +658,8 @@ _GEOMETRY_WARNINGS = (
     "WARN-TITLE-UNIT-MISMATCH",
     "WARN-BAR-BAND-WIDTH-TOO-NARROW",
     "WARN-BAR-GROUPED-SERIES-COINCIDE",
+    "WARN-CHART-HEIGHT-BELOW-CATEGORY-FLOOR",
+    "WARN-DIRECT-OVERLAY-COLLIDES",
     "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
     "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
     "WARN-LEGEND-OVERLAY-COVERS-MARKS",

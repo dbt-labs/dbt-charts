@@ -179,6 +179,27 @@ CASES: list[tuple[str, type[BaseModel], dict[str, Any], str]] = [
         "'width' for a hard pin, or 'max_width' to cap auto-sizing.",
     ),
     (
+        "column-type-number-with-date-format",
+        TableColumnConfig,
+        {"type": "number", "format": "%b %Y"},
+        "TableColumnConfig: 'type: number' takes a number 'format', but 'format' "
+        "is a time format. Change 'type', or change or remove 'format'.",
+    ),
+    (
+        "column-type-date-with-number-format",
+        TableColumnConfig,
+        {"type": "date", "format": {"spec": ",.0f"}},
+        "TableColumnConfig: 'type: date' takes a time 'format', but 'format' "
+        "is a number format. Change 'type', or change or remove 'format'.",
+    ),
+    (
+        "column-type-text-with-number-format",
+        TableColumnConfig,
+        {"type": "text", "format": "currency"},
+        "TableColumnConfig: 'type: text' takes a text 'format', but 'format' "
+        "is a number format. Change 'type', or change or remove 'format'.",
+    ),
+    (
         "column-glyph-color-without-glyph",
         TableColumnConfig,
         {"glyph_color": "red"},
@@ -369,6 +390,10 @@ def test_length_rule_message(
             {"type": "temporal", "domain": ["2024-01-01", "2024-02-01T10:00:00Z"]},
         ),
         (ScaleContinuousStyle, {"type": "linear", "domain": [0, 10]}),
+        (TableColumnConfig, {"type": "number", "format": "$,.2f"}),
+        (TableColumnConfig, {"type": "datetime", "format": "date_short"}),
+        (TableColumnConfig, {"type": "text", "format": "email"}),
+        (TableColumnConfig, {"type": "date", "format": "my_board_alias"}),
     ],
     ids=[
         "rule-eq-empty-string",
@@ -379,6 +404,10 @@ def test_length_rule_message(
         "point-map-no-collapse",
         "temporal-domain-iso",
         "linear-domain",
+        "column-type-number-with-number-spec",
+        "column-type-datetime-with-time-name",
+        "column-type-text-with-text-name",
+        "column-type-date-with-unresolved-alias",
     ],
 )
 def test_rule_accepts(model: type[BaseModel], payload: dict[str, Any]) -> None:

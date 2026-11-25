@@ -10,9 +10,11 @@ from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
+    CalloutChart,
     Chart,
     HeatmapChart,
     LineChart,
+    PieChart,
     ScatterChart,
     SparkBarChart,
 )
@@ -36,6 +38,7 @@ from dbt_charts.core.compile.resolve.chart._table import (
     _EMPTY_TABLE_COLUMN_LINKS,
     _resolve_table,
 )
+from dbt_charts.core.compile.resolve.chart._tooltip import tooltip_links
 from dbt_charts.core.compile.resolve.chart.area import _resolve_area
 from dbt_charts.core.compile.resolve.chart.bar import (
     _resolve_bar,
@@ -56,14 +59,51 @@ from dbt_charts.core.compile.resolve.chart.simple import (
     _resolve_kpi,
     _resolve_spark_bar,
 )
+from dbt_charts.core.compile.resolve.style.chart_context import (
+    build_chart_style_context,
+)
 from dbt_charts.core.compile.resolve.style.fonts import expand_named_fonts
 from dbt_charts.core.compile.resolve.style.palette import UnknownColorError
+from dbt_charts.core.compile.resolve.style.tokens import _resolve_self_tokens
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import ERR_COLOR_TOKEN
 
 __all__ = [
     "resolve",
 ]
+
+
+def _with_chart_canvas(
+    normalized: Chart, chart_style_context: ChartStyleContext
+) -> Chart:
+    """A `theme.background` in the chart's own style, or a layer's, is the chart's canvas.
+
+    Every family reads its style patch again after its chart context is built, so
+    the token is settled here once instead of at each of those reads. A callout
+    builds no chart context; a token in its style stays an unknown color.
+    """
+    if isinstance(normalized, CalloutChart):
+        return normalized
+    layered = isinstance(normalized, (BarChart, LineChart, AreaChart, ScatterChart))
+    styles = (
+        [normalized.style, *(layer.style for layer in normalized.layers)]
+        if layered
+        else [normalized.style]
+    )
+    if all(_resolve_self_tokens(style, "") is style for style in styles):
+        return normalized
+    canvas = build_chart_style_context(chart_style_context, normalized).ink_canvas
+    updates: dict[str, object] = {  # type-state: object_annotation — model field values
+        "style": _resolve_self_tokens(normalized.style, canvas)
+    }
+    if layered:
+        updates["layers"] = [
+            layer.model_copy(
+                update={"style": _resolve_self_tokens(layer.style, canvas)}
+            )
+            for layer in normalized.layers
+        ]
+    return normalized.model_copy(update=updates)
 
 
 def resolve(
@@ -129,6 +169,7 @@ def resolve(
     normalized = expand_named_fonts(
         normalized, chart_style_context.pre_style.fonts, f"charts.{normalized.id}"
     )
+    normalized = _with_chart_canvas(normalized, chart_style_context)
     # Board renders bind every chart ahead of their board-wide passes
     # (with_bound_channels); this is the guarantee for every other caller.
     normalized = bind_channels(
@@ -156,6 +197,10 @@ def resolve(
         (AreaChart, BarChart, HeatmapChart, LineChart, ScatterChart, SparkBarChart),
     ):
         require_sort_field(normalized.sort, data)
+    if isinstance(
+        normalized, (AreaChart, BarChart, LineChart, PieChart, ScatterChart)
+    ) and tooltip_links(normalized, chart_style_context.formats):
+        automatic_link_candidate = None
     try:
         match normalized.type:
             case "bar" | "funnel":

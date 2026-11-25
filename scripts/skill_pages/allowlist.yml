@@ -155,10 +155,14 @@ objects:
     path: chart:bar.style.key
     label: key
     keys: [visible, type, legend, direct]
+  s_line_direct:
+    path: chart:line.style.key.direct
+    label: key.direct (line, area)
+    keys: [position, overlay_x]
   s_legend:
     path: chart:bar.style.key.legend
     label: key.legend
-    keys: [position, values, label]
+    keys: [position, values, label, symbol, background, padding, border]
   s_legend_position:
     path: chart:bar.style.key.legend.position
     label: key.legend.position
@@ -195,7 +199,7 @@ objects:
   s_table:
     path: chart:table.style
     label: a table's style
-    keys: [wrap, header, row, pagination, column_defaults, columns, row_numbers]
+    keys: [max_lines, header, row, pagination, column_defaults, columns, row_numbers]
   table_hidden_columns:
     path: chart:table.style
     label: a table's style
@@ -309,7 +313,7 @@ formats:
     names: [percent, percent_whole, percent_delta]
 
 helpers:
-  filter: [none]
+  filter: [unset]
   filter_date_range: [date_range]
 
 themes: [clarity, paper, vivid, neon, stark]

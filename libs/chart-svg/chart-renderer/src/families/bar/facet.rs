@@ -14,7 +14,7 @@ use std::collections::HashSet;
 
 use super::bind::validate_layers;
 use super::continuous::{XLayers, render_vertical_continuous_x_panel};
-use super::domain::{CenterStack, horizontal_min_height};
+use super::domain::{CenterStack, horizontal_min_height, warn_floor_above_own_cap};
 use super::horizontal::{HorizontalFacetOpts, HorizontalFacetPanel, RightEdge, RowAxisPlacement, horizontal_layer_rows, render_horizontal_panel};
 use super::layout::{XScale, warn_vertical_density};
 use super::vertical::{BarFacetPanelOpts, render_vertical_panel};
@@ -289,7 +289,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
         } else {
             ::bind::rows::count_horizontal_bar_categories(&payload.rows, &r.x)
         };
-        let min_height = horizontal_min_height(&r, n_categories)? * panel_rows_n as f64;
+        let min_height = horizontal_min_height(&r, n_categories, false)? * panel_rows_n as f64;
         if let Some(authored) = payload.authored_height.filter(|&authored| n_categories > 0 && min_height > authored) {
             diagnostic::warn(Diagnostic::new(
                 &codes::WARN_LAYOUT_MIN_EXCEEDS_HEIGHT,
@@ -301,6 +301,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                 ],
             ));
         }
+        warn_floor_above_own_cap(&r, n_categories, min_height);
         let height = payload.height.max(min_height);
         floored = Payload { height, ..payload.clone() };
         &floored
@@ -448,6 +449,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                     wide_series,
                     &layers,
                     Some(&facet_opts),
+                    &Cell::new(None),
                 )?;
                 let geom = geom.expect("a facet panel is drawn with its geometry");
                 Ok(

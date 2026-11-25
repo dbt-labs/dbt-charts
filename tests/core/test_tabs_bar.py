@@ -317,33 +317,13 @@ def test_left_rail_board_is_never_shorter_than_its_rail() -> None:
 TWO_LINE_LABEL = "Quarterly Revenue Breakdown by Region"
 
 
-def _line_step() -> float:
-    font = resolve_style(get_theme_style()).layout.tabs.font
-    return font.size * font.line_height
-
-
-def _tspans(svg: str, idx: int) -> list[str]:
-    tab = re.findall(r'role="tab".*?</text>', svg)[idx]
-    return re.findall(r"<tspan [^>]*>(.*?)</tspan>", tab)
-
-
-def test_left_rail_wraps_a_long_label_to_two_lines_before_truncating() -> None:
+def test_left_rail_cuts_a_long_label_on_one_line_with_a_tooltip() -> None:
     svg = _bar(["One", TWO_LINE_LABEL, "Three"], tab_position="left")
-    lines = _tspans(svg, 1)
-    assert len(lines) == 2
-    assert " ".join(lines) == TWO_LINE_LABEL
-    assert "…" not in svg
-    assert "<title>" not in svg
-    # The wrapped cell is one line step taller, pushing the next tab down.
-    assert _rail_cells(svg)[2] == (0.0, 2 * _BAR_HEIGHT + _line_step())
-
-
-def test_left_rail_truncates_only_after_two_lines() -> None:
-    svg = _bar(["One", LONG_LABEL], tab_position="left")
-    lines = _tspans(svg, 1)
-    assert len(lines) == 2
-    assert lines[1].endswith("…")
-    assert f"<title>{LONG_LABEL}</title>" in svg
+    assert "<tspan" not in svg
+    assert "…</text>" in svg
+    assert f"<title>{TWO_LINE_LABEL}</title>" in svg
+    # Every cell is one bar high, the long label's included.
+    assert _rail_cells(svg)[2] == (0.0, 2 * _BAR_HEIGHT)
 
 
 def test_top_bar_still_truncates_a_long_label_on_one_line() -> None:
@@ -352,14 +332,25 @@ def test_top_bar_still_truncates_a_long_label_on_one_line() -> None:
     assert "…</text>" in svg
 
 
-def test_left_rail_height_counts_wrapped_cells() -> None:
+def test_left_rail_height_counts_one_bar_per_tab() -> None:
     items = "".join(f'  "{TWO_LINE_LABEL} {i}":\n    text: x\n' for i in range(6))
     svg = render_board_to_svg(_LEFT + "tabs:\n" + items)
     height = re.search(
         r'<rect x="0" y="0" width="[\d.]+" height="([\d.]+)" fill="#FFFFFF" rx', svg
     )
     assert height is not None
-    assert float(height[1]) >= _CARD_PADDING + 6 * (_BAR_HEIGHT + _line_step())
+    assert float(height[1]) >= _CARD_PADDING + 6 * _BAR_HEIGHT
+
+
+def test_a_cut_tab_label_collapses_whitespace_runs_as_the_engine_does() -> None:
+    label = "Quarterly   Revenue    Breakdown   Across  Every   Single  Market   Segment Today"
+    for position in ("top", "left"):
+        svg = _bar(["One", label], tab_position=position)
+        text = re.findall(r'role="tab".*?</text>', svg)[1]
+        shown = re.search(r">([^<>]*…)</text>", text)
+        assert shown is not None, text
+        assert "  " not in shown[1]
+        assert f"<title>{label}</title>" in svg
 
 
 def _pane_tabs(first_style: str, *, position: str = "top") -> str:

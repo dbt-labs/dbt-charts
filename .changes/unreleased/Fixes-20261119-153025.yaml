@@ -1,3 +1,0 @@
-kind: Fixes
-body: KPI and table cards now take style.charts.background, accept CSS color names, and round like other cards.
-time: 2026-11-19T15:30:25.238925-08:00

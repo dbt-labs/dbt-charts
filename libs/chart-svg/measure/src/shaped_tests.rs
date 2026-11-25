@@ -147,71 +147,38 @@ fn an_unserved_family_measures_in_the_next_served_face_else_in_inter() {
     close(bare.unwrap().advance, 48.99609375);
 }
 
-#[test]
-fn wrap_fills_lines_greedily_by_word() {
-    let b = book();
-    let f = font(MONO, 10.0, 400.0);
-    let lines = |w| b.wrap("alpha  beta\ngamma", &f, w, None).unwrap();
-    assert_eq!(
-        lines(96.0),
-        Wrapped {
-            lines: vec!["alpha beta gamma".into()],
-            truncated: false
-        }
-    );
-    assert_eq!(lines(60.0).lines, ["alpha beta", "gamma"]);
-    assert_eq!(lines(59.0).lines, ["alpha", "beta", "gamma"]);
+/// `fit_lines` in the shaped measurer: the engine title's fit.
+fn fit(b: &FontBook, text: &str, f: &Font, width: f64, max_lines: Option<usize>) -> crate::fit::FittedText {
+    crate::fit::fit_lines(text, width, &|t| b.run(t, f).map(|run| run.advance), max_lines).unwrap()
 }
 
 #[test]
-fn wrap_breaks_a_long_word_at_a_seam_then_at_a_character() {
+fn the_shaped_measurer_fills_lines_greedily_by_word() {
     let b = book();
     let f = font(MONO, 10.0, 400.0);
-    assert_eq!(
-        b.wrap("path/to/some_file", &f, 48.0, None).unwrap().lines,
-        ["path/to/", "some_", "file"]
-    );
-    assert_eq!(
-        b.wrap("abcdefghij", &f, 24.0, None).unwrap().lines,
-        ["abcd", "efgh", "ij"]
-    );
+    let fitted = fit(&b, "alpha  beta\ngamma", &f, 96.0, None);
+    assert_eq!((fitted.lines, fitted.cut), (vec!["alpha beta gamma".to_string()], false));
+    assert_eq!(fit(&b, "alpha  beta\ngamma", &f, 60.0, None).lines, ["alpha beta", "gamma"]);
+    assert_eq!(fit(&b, "alpha  beta\ngamma", &f, 59.0, None).lines, ["alpha", "beta", "gamma"]);
 }
 
 #[test]
-fn wrap_past_max_lines_truncates_the_rest_with_an_ellipsis() {
+fn the_shaped_measurer_breaks_a_long_word_at_a_seam_then_at_a_character() {
     let b = book();
     let f = font(MONO, 10.0, 400.0);
-    assert_eq!(
-        b.wrap("alpha beta gamma delta", &f, 60.0, Some(2)).unwrap(),
-        Wrapped {
-            lines: vec!["alpha beta".into(), "gamma del…".into()],
-            truncated: true
-        }
-    );
+    assert_eq!(fit(&b, "path/to/some_file", &f, 48.0, None).lines, ["path/to/", "some_", "file"]);
+    assert_eq!(fit(&b, "abcdefghij", &f, 24.0, None).lines, ["abcd", "efgh", "ij"]);
 }
 
 #[test]
-fn truncate_keeps_the_longest_prefix_that_fits_with_its_ellipsis() {
+fn the_shaped_measurer_cuts_past_the_limit_with_an_ellipsis() {
     let b = book();
     let f = font(MONO, 10.0, 400.0);
-    assert_eq!(
-        b.truncate("Revenue", &f, 42.0).unwrap(),
-        ("Revenue".into(), false)
-    );
-    assert_eq!(
-        b.truncate("Revenue by region", &f, 54.0).unwrap(),
-        ("Revenue…".into(), true)
-    );
-    assert_eq!(b.truncate("Revenue", &f, 3.0).unwrap(), ("R".into(), true));
-}
-
-#[test]
-fn the_pieces_of_a_broken_word_rejoin_without_a_space() {
-    let b = book();
-    let f = font(MONO, 10.0, 400.0);
-    let one_line = b.wrap("ab/cdefgh", &f, 30.0, Some(1)).unwrap();
-    assert_eq!(one_line.lines, ["ab/c…"]);
-    assert!(b.wrap("ab", &f, 30.0, Some(0)).is_err());
+    let fitted = fit(&b, "alpha beta gamma delta", &f, 60.0, Some(2));
+    assert_eq!((fitted.lines, fitted.cut, fitted.natural_lines), (vec!["alpha beta".to_string(), "gamma del…".to_string()], true, 3));
+    assert_eq!(fit(&b, "Revenue by region", &f, 54.0, Some(1)).lines, ["Revenue…"]);
+    assert_eq!(fit(&b, "Revenue", &f, 3.0, Some(1)).lines, ["R"]);
+    assert_eq!(fit(&b, "ab/cdefgh", &f, 30.0, Some(1)).lines, ["ab/c…"]);
 }
 
 #[test]

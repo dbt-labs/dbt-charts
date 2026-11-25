@@ -7,9 +7,9 @@ merge gate).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from datetime import date
+from typing import TYPE_CHECKING, Any
 
-import yaml
 from jsonschema.exceptions import ValidationError
 from jsonschema.validators import validator_for
 
@@ -18,30 +18,35 @@ from dbt_charts.core.compile.merge import fragment_files
 from dbt_charts.core.compile.migrations.migrations import (
     MigrationError,
     UnsupportedSchemaError,
-    collect_migration_notices,
-    migrate_yaml_text,
+    migrate_mapping_to,
     package_schemas,
 )
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping, load_yaml_text
+from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import JsonValue
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import Project, ProjectPath
 
 
-def validate_locked_schema_version(value: str, *, source: str) -> str:
-    """*value* when it names a released schema version; otherwise raise."""
+def resolve_locked_schema_version(value: str | None, *, source: str) -> str | None:
+    """The released version *value* locks to; ``None`` for ``preview``, which locks
+    to nothing: the running build's own grammar. Unset means ``latest``."""
+    if value == "preview":
+        return None
     catalog = package_schemas()
+    if value is None or value == "latest":
+        return catalog.latest_released.version
     released = [e.version for e in reversed(catalog.entries) if e.status == "RELEASED"]
     if value not in released:
         raise ValueError(
-            f"{source}: locked_schema_version {value!r} is not a released schema "
-            f"version; released versions: {', '.join(released)}"
+            f"{source}: locked_schema_version {value!r} must be 'latest', 'preview', "
+            f"or a released version: {', '.join(released)}"
         )
     return value
 
 
 def warnings_newer_than_lock(lock: str | None) -> frozenset[str]:
-    """Warning codes a project locked to *lock* must not see; none when unlocked."""
+    """Warning codes a project locked to *lock* must not see; none for ``preview``."""
     if lock is None:
         return frozenset()
     catalog = package_schemas()
@@ -59,20 +64,14 @@ def locked_grammar_rejections(
     recognition never sees them.
     """
     catalog = package_schemas()
-    if ignored_keys:
-        yaml_text = yaml.safe_dump(
-            {
-                key: value
-                for key, value in load_yaml_mapping(yaml_text).items()
-                if key not in ignored_keys
-            },
-            sort_keys=False,
-        )
-    with collect_migration_notices():
-        capped = migrate_yaml_text(yaml_text, stop_target=lock)
-    mapping = {
+    authored = {
         key: value
-        for key, value in load_yaml_mapping(capped).items()
+        for key, value in load_yaml_mapping(yaml_text).items()
+        if key not in ignored_keys
+    }
+    mapping = {
+        key: _json_scalars(value)
+        for key, value in migrate_mapping_to(authored, lock).items()
         if key != "_schema_version"
     }
     grammar = catalog.grammar_for(lock)
@@ -86,6 +85,17 @@ def locked_grammar_rejections(
         else error.message
         for error in errors
     )
+
+
+def _json_scalars(value: Any) -> JsonValue:  # type-state: explicit_any — raw YAML
+    """*value* with YAML's dates spelled as the ISO strings the grammar declares."""
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_scalars(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_scalars(item) for item in value]
+    return value
 
 
 def _closest_branch_error(error: ValidationError) -> ValidationError:
@@ -112,7 +122,7 @@ def locked_schema_errors(
     board_path: ProjectPath, board_text: str, project: Project
 ) -> list[str]:
     """Messages for every file of the board (itself, its meta.yml and
-    ``extends:`` files) the project's lock rejects; empty when unlocked.
+    ``extends:`` files) the project's lock rejects; empty for ``preview``.
 
     Markdown boards are not checked. The board itself, when it does not parse
     or is not recognizably board YAML, is left to the compile, which reports it.

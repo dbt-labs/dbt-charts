@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import SizeScaleStyle
-from dbt_charts.core.compile.models.style.theme.scatter import ScatterConditionalRule
+from dbt_charts.core.compile.models.style.theme.scatter import (
+    ScatterConditionalRule,
+    ScatterSeriesSymbol,
+)
 
 from ._cartesian import _CartesianResolvedStyle
-from ._marks import ResolvedPointMarkStyle
+from ._marks import ResolvedRingedPointMarkStyle
 
 
 class ResolvedScatterStyle(_CartesianResolvedStyle):
@@ -19,7 +24,7 @@ class ResolvedScatterStyle(_CartesianResolvedStyle):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    point_mark: ResolvedPointMarkStyle = Field(
+    point_mark: ResolvedRingedPointMarkStyle = Field(
         description="Cascade-merged point mark geometry."
     )
     size: SizeScaleStyle = Field(
@@ -31,6 +36,13 @@ class ResolvedScatterStyle(_CartesianResolvedStyle):
             "The chart's per-point rules keyed by column, color tokens resolved. "
             "The renderer evaluates them against each base-layer point's row."
         ),
+    )
+    frame: Literal["full", "range"] = Field(
+        description="`range` draws the axes as a range frame; `full` draws them whole."
+    )
+    series_symbols: tuple[ScatterSeriesSymbol, ...] | None = Field(
+        default=None,
+        description="The symbol each series of a framed chart takes, in series order.",
     )
     single_series_fill: str = Field(
         description="Fill color for single-series points (ink palette slot 0)."

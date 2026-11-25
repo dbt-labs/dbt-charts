@@ -395,6 +395,15 @@ class TestRender:
         assert [d.code for d in out.chart_errors] == ["ERR-CUSTOM-RENDER"]
         assert "needs two flows" in out.chart_errors[0].message
 
+    def test_renders_under_a_line_palette_role(self, tmp_path: Path) -> None:
+        """A line palette names stroke styles, not colors: the template's palette
+        roles leave it out instead of failing to expand it."""
+        project = _project(tmp_path)
+        yaml_text = (
+            "style:\n  palettes:\n    line_category: line-one-ink\n" + _board_yaml()
+        )
+        assert "Where visitors go" in _render(project, yaml_text).output
+
     def test_undefined_name_is_err_custom_render(self, tmp_path: Path) -> None:
         template = HEADER + "<text>{{ options.typo }}</text>"
         out = _render(_project(tmp_path, template), _board_yaml())

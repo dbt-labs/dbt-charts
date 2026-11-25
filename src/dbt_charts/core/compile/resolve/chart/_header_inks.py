@@ -33,6 +33,7 @@ def series_header_inks(
     layers: Sequence[ResolvedLayer],
     legend_visible: bool,
     canvas: str,
+    ink: str | None,
 ) -> Mapping[str, str]:
     """Each measure's header ink, by the mark that reads it.
 
@@ -49,5 +50,7 @@ def series_header_inks(
             return {}
         seen[layer.y] = None if layer.y in seen else color
     return {
-        y: mark_ink(color, canvas) for y, color in seen.items() if color is not None
+        y: mark_ink(color, canvas, ink)
+        for y, color in seen.items()
+        if color is not None
     }

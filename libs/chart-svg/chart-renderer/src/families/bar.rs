@@ -221,6 +221,13 @@ pub(crate) struct BarResolved {
     query_name: Option<String>,
     legend: LegendConfig,
     style: BarStyle,
+    /// The height the chart itself authored at its root, and its own `style.max_height`
+    /// (`_CartesianResolvedChartFields`); neither is a theme or board default. A horizontal
+    /// bar's category floor is judged against them.
+    #[serde(default)]
+    height: Option<f64>,
+    #[serde(default)]
+    max_height: Option<f64>,
     /// Baked stacked-total-per-category max (with headroom), used as the
     /// shared value-axis domain for `stack = "zero"`. `bar.py:557-572` leaves
     /// this `None` for `stack = "normalize"` and for a non-positive total —
@@ -232,8 +239,8 @@ pub(crate) struct BarResolved {
     stacked_domain_max: Option<f64>,
     /// The value a bar tears at (`style.outliers`). Under `torn_with_cap` the value domain
     /// is `[0, torn_break]` and everything past it floats in the cap band; under `torn`
-    /// the axis already ends there, and a chart shape off-chart bars cannot draw, which
-    /// still carries it, draws plain and warns.
+    /// the axis already ends there; it reaches a shape off-chart bars cannot draw only from a
+    /// pinned `axis_y` max, and that chart draws plain and warns.
     #[serde(default)]
     torn_break: Option<f64>,
     /// A non-null `support_table` grows the card past the plot's own
@@ -357,6 +364,12 @@ struct BarStyle {
     overlap: Option<Overlap>,
     #[serde(default)]
     outliers: Option<torn_outlier::Style>,
+    /// `style.charts.bar.max_thickness`: the theme's ceiling on a category bar's thickness.
+    #[serde(default)]
+    max_thickness: Option<MaxThickness>,
+    /// `style.charts.bar.labels_above`: the theme's switch that moves long horizontal names above their bars.
+    #[serde(default)]
+    labels_above: Option<LabelsAbove>,
     /// `style.conditional`: per-column rules restyling a base-layer bar by its own row.
     #[serde(default)]
     conditional: Option<std::collections::BTreeMap<String, Vec<BarRule>>>,
@@ -494,6 +507,69 @@ enum Overlap {
     Keyword(String),
 }
 
+/// The share of a horizontal bar chart's width its names may take beside the bars before they move
+/// above them (`style.charts.bar.labels_above`).
+#[derive(Deserialize)]
+struct LabelsAbove {
+    max_share: f64,
+}
+
+/// A theme's ceiling on the thickness of a category bar (`style.charts.bar.max_thickness`).
+#[derive(Deserialize)]
+struct MaxThickness {
+    horizontal: Cap,
+    /// `None` leaves columns uncapped.
+    #[serde(deserialize_with = "optional_cap")]
+    vertical: Option<Cap>,
+}
+
+/// A cap in pixels, or a percent of the plot's extent across the bars.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(try_from = "RawCap")]
+enum Cap {
+    Px(f64),
+    Percent(f64),
+}
+
+impl Cap {
+    /// The cap in pixels on a plot whose extent across the bars is `plot_extent`.
+    fn px(self, plot_extent: f64) -> f64 {
+        match self {
+            Self::Px(px) => px,
+            Self::Percent(percent) => percent / 100.0 * plot_extent,
+        }
+    }
+}
+
+/// A cap as the resolved style spells it: a number of pixels, a `"N%"` string, or `"none"` where a side allows it.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawCap {
+    Px(f64),
+    Text(String),
+}
+
+impl TryFrom<RawCap> for Cap {
+    type Error = String;
+    fn try_from(raw: RawCap) -> Result<Self, String> {
+        match raw {
+            RawCap::Px(px) => Ok(Self::Px(px)),
+            RawCap::Text(text) => text
+                .strip_suffix('%')
+                .and_then(|digits| digits.parse().ok())
+                .map(Self::Percent)
+                .ok_or_else(|| format!("max_thickness: {text:?} is not a pixel number or a percent such as \"33%\"")),
+        }
+    }
+}
+
+fn optional_cap<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Cap>, D::Error> {
+    match RawCap::deserialize(deserializer)? {
+        RawCap::Text(text) if text == "none" => Ok(None),
+        raw => Cap::try_from(raw).map(Some).map_err(serde::de::Error::custom),
+    }
+}
+
 /// Vega-Lite's floor under a grouped bar's `width` expression.
 const MIN_COLUMN_WIDTH: f64 = 0.25;
 
@@ -526,6 +602,10 @@ impl ContinuousWidth {
             )),
         };
         Ok(Self { size: mark.size, ladder })
+    }
+
+    pub(crate) fn has_authored_size(&self) -> bool {
+        self.size.is_some()
     }
 
     /// The width of a bar on a point scale: the authored `size`, else Vega-Lite's view step less two.
@@ -1027,7 +1107,7 @@ mod tests {
     /// The ink a value label over a bar of `fill` takes on `canvas`: the canvas or the outside
     /// labels' ink, whichever contrasts more with the bar.
     fn knockout_ink_on(canvas: &str, fill: &str) -> String {
-        let ink = dbt_charts_color::ensure_readable_ink("#313233", canvas, crate::common::OUTSIDE_INK_CONTRAST).unwrap();
+        let ink = dbt_charts_color::ensure_readable_ink("#313233", canvas, crate::common::OUTSIDE_INK_CONTRAST, None).unwrap();
         let on = |c: &str| dbt_charts_color::wcag_contrast(c, fill).unwrap();
         if on(&ink) > on(canvas) { ink } else { canvas.to_string() }
     }
@@ -1079,12 +1159,14 @@ mod tests {
 
     #[test]
     fn an_authored_max_size_caps_and_centers_a_band_bar() {
-        let plain = BandColumns::new(100.0, 0.8, None, None);
+        let plain = BandColumns::new(100.0, 0.8, None, None, None);
         assert_eq!((plain.width, plain.pad), (80.0, 10.0));
-        let capped = BandColumns::new(100.0, 0.8, Some(20.0), None);
+        let capped = BandColumns::new(100.0, 0.8, None, Some(20.0), None);
         assert_eq!((capped.width, capped.pad), (20.0, 40.0));
-        let loose = BandColumns::new(100.0, 0.8, Some(400.0), None);
+        let loose = BandColumns::new(100.0, 0.8, None, Some(400.0), None);
         assert_eq!((loose.width, loose.pad), (80.0, 10.0));
+        let sized = BandColumns::new(100.0, 0.8, Some(3.0), Some(20.0), None);
+        assert_eq!((sized.width, sized.pad), (3.0, 48.5));
     }
 
     fn painted_rules(positions: &[f64]) -> String {
@@ -1254,10 +1336,10 @@ mod tests {
             "layers": [],
             "legend": {
                 "visible": grouped,
-                "position": {"edge": "top", "align": "start", "overlay": false},
+                "position": {"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]},
                 "direction": "horizontal",
                 "title": {"font": {"case": "title", "family": TEST_FONT}},
-                "label": {
+                "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0,
                     "padding": 8.0,
                     "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}
                 }
@@ -1267,7 +1349,7 @@ mod tests {
                 "axis_y": axis_y,
                 "mark": {
                     "band_width": 0.7,
-                    "size": 20.0,
+                    "size": null, "gap": 3.0, "min_size": 4.0,
                     "border": {"width": null, "color": null, "radius": 4.0},
                     "labels": {"visible": false}
                 },
@@ -3251,7 +3333,7 @@ mod tests {
             let mut payload_json = payload_with_layer(&[("Jan", 100.0, 40.0)], scatter);
             payload_json["resolved"]["query_name"] = serde_json::json!("base");
             payload_json["resolved"]["legend"]["position"] =
-                serde_json::json!({"edge": "right", "align": "start", "overlay": false});
+                serde_json::json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
             payload_json["resolved"]["legend"]["direction"] = serde_json::json!("vertical");
             payload_json["datasets"] = serde_json::json!({"regional": [
                 {"product": "Jan", "target": 40.0, "region": "East"},
@@ -4002,7 +4084,7 @@ mod tests {
             assert!(jan.3 > 0.0 && jan.3 == feb.3, "{bars:?}");
         }
 
-        fn horizontal_bar_layer_payload(layer: serde_json::Value, rows: &[(&str, f64, f64)]) -> serde_json::Value {
+        pub(super) fn horizontal_bar_layer_payload(layer: serde_json::Value, rows: &[(&str, f64, f64)]) -> serde_json::Value {
             let mut payload_json = payload_with_layer(rows, layer);
             payload_json["resolved"]["orientation"] = serde_json::json!("horizontal");
             payload_json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("bottom");
@@ -5150,13 +5232,13 @@ mod tests {
         }
     }
 
-    /// Twenty-four years of monthly bars on a 300px card cannot name every year between its ticks: the years thin to
-    /// every fifth, on their ticks.
+    /// Twenty-four years of monthly bars on a 320px card (a 255px plot) cannot name every year between its ticks: the
+    /// years thin to every fifth, on their ticks.
     #[test]
     fn a_long_time_axis_thins_year_labels_on_their_ticks() {
         let _locale = ::bind::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(288));
-        p["width"] = serde_json::json!(300.0);
+        p["width"] = serde_json::json!(320.0);
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
         let ticks = tick_xs(&svg);
         for year in ["2000", "2005", "2010", "2015", "2020"] {
@@ -5214,6 +5296,19 @@ mod tests {
         let q1 = label_x(&svg, "Q1");
         assert!((ticks[0] + 1.5 * step - q1).abs() < 1.0, "Q1 centered on its middle bar: {q1} {ticks:?}");
         assert!((ticks[1] - ticks[0] - 3.0 * step).abs() < 1.0, "one tick per quarter gap: {ticks:?}");
+    }
+
+    /// The cadence ladder judges the plot the bars fill, not the card's `label_usable_ratio` share of it: 28 quarters
+    /// from a Q4 open put two year rows one band apart, which clear their gap at the plot's band and not at the card's.
+    #[test]
+    fn quarterly_bars_from_a_q4_open_keep_every_quarter_label() {
+        let _locale = ::bind::time_locale::en_us_scope();
+        let dates: Vec<String> = (0..28).map(|i| format!("{}-{:02}-01", 2019 + (9 + 3 * i) / 12, (9 + 3 * i) % 12 + 1)).collect();
+        let mut p = make_time_payload(&dates);
+        // 0.8 of the card is 880px (31px a band, short of two year rows' gap); the plot is about 1050.
+        p["width"] = serde_json::json!(1100.0);
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        assert!(svg.contains(">Q2</text>"), "every quarter is labeled, not thinned to years: {svg}");
     }
 
     /// Monthly bars under quarter labels centered on their quarters (a band axis), and under year labels centered
@@ -6511,7 +6606,7 @@ mod tests {
         #[test]
         fn a_legend_beside_the_plot_stays_off_the_band() {
             let svg = grouped_card_with(&[5000.0, 320.0, 320.0, 320.0], |p| {
-                p["resolved"]["legend"]["position"] = serde_json::json!({"edge": "right", "align": "start", "overlay": false});
+                p["resolved"]["legend"]["position"] = serde_json::json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
             });
             let (_, top) = plot_origin(&svg);
             let d = bands(&svg)[0].split(" d=\"").nth(1).expect("a path").split('"').next().expect("closes");
@@ -7189,7 +7284,7 @@ mod tests {
                         payload_json["resolved"]["legend"]["visible"] = serde_json::json!(true);
                     }
                     payload_json["resolved"]["legend"]["position"] =
-                        serde_json::json!({"edge": edge, "align": "start", "overlay": false});
+                        serde_json::json!({"edge": edge, "align": "start", "overlay": false, "corners": [{"edge": edge, "align": "start"}]});
                     if edge == "left" || edge == "right" {
                         payload_json["resolved"]["legend"]["direction"] = serde_json::json!("vertical");
                     }
@@ -8296,7 +8391,7 @@ mod tests {
             "multiples": null,
             "field_labels": {}, "wide_measures": [],
             "layers": [],
-            "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal", "title": {"font": {"case": "title", "family": TEST_FONT}}, "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}},
+            "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]}, "direction": "horizontal", "title": {"font": {"case": "title", "family": TEST_FONT}}, "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}},
             "style": {
                 "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
                 "axis_x": {
@@ -8324,7 +8419,7 @@ mod tests {
                     "ruler": null, "tick_label": {"format": ",.0~f"},
                     "time_unit": null, "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false, "fill": null, "line": null
                 },
-                "mark": {"band_width": 0.7, "size": 20.0, "border": {"width": null, "color": null, "radius": 0.0}, "labels": {"visible": false}},
+                "mark": {"band_width": 0.7, "size": null, "border": {"width": null, "color": null, "radius": 0.0}, "labels": {"visible": false}},
                 "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
                 "single_series_fill": "#3164a3",
                 "series_label": {"font_family": "'Inter'", "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": []},
@@ -8451,9 +8546,9 @@ mod tests {
         p["resolved"]["y"] = json!("__dbt_charts_wide_value__");
         p["resolved"]["wide_measures"] = json!(["revenue", "profit"]);
         p["resolved"]["legend"] = json!({
-            "visible": true, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal",
+            "visible": true, "position": {"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]}, "direction": "horizontal",
             "title": {"font": {"case": "title", "family": TEST_FONT}},
-            "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}
         });
         p["rows"] = json!([
             {"product": "Alpha", "revenue": 800.0, "profit": 200.0},
@@ -8996,7 +9091,7 @@ mod tests {
             "multiples": null,
             "field_labels": {}, "wide_measures": [],
             "layers": [],
-            "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal", "title": {"font": {"case": "title", "family": TEST_FONT}}, "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}},
+            "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]}, "direction": "horizontal", "title": {"font": {"case": "title", "family": TEST_FONT}}, "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}},
             "style": {
                 "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
                 "axis_x": {
@@ -9031,7 +9126,7 @@ mod tests {
                     "time_unit": null, "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false, "fill": null, "line": null
                 },
                 "mark": {
-                    "band_width": 0.8, "size": 20.0,
+                    "band_width": 0.8, "size": null,
                     "border": {"width": null, "color": "#FAFAFA", "radius": 0.0},
                     "labels": {
                         "visible": true, "field": null, "format": ".3~s",
@@ -10681,7 +10776,7 @@ mod tests {
     const WRAPPING_SUBTITLE_LINE_2: &str = "unchanged.";
 
     /// A subtitle wider than the padded card wraps to two measured lines
-    /// (`apply_title_overflow_to_spec`, wrap-two) and Vega's title group
+    /// (`apply_title_overflow_to_spec`, two-line) and Vega's title group
     /// grows by `sub_fs + 2` — the text mark's default lineHeight — per
     /// extra line, on the fit arm rather than dropping to the legacy
     /// margins.
@@ -10703,10 +10798,10 @@ mod tests {
             p["resolved"]["title_style"] = json!({
                 "font": {"family": TEST_FONT, "size": 14.0, "weight": 500.0, "case": "none"},
                 "position": {"offset": 10.0},
-                "overflow": "truncate",
+                "max_lines": 1,
                 "subtitle": {
                     "font": {"family": TEST_FONT, "size": 11.0, "weight": "400"},
-                    "overflow": "wrap-two"
+                    "max_lines": 2
                 }
             });
             p["resolved"]["subtitle"] = json!(subtitle);
@@ -10900,22 +10995,22 @@ mod tests {
     /// (`set_chart_title`), and `"   "` is truthy, so the block survives
     /// into the spec; `prepare_title_text` then decides what reaches Vega —
     /// `truncate` (and `clip`) return the raw string when the wrap yields no
-    /// lines, so the band survives, while `wrap-two` joins the empty list
+    /// lines, so the band survives, while two-line joins the empty list
     /// into `""` and Vega reserves nothing (probed: title group origin y 49
     /// for `"   "` against 21 for `""`). Trimming unconditionally would
     /// shift a truncate-themed chart 28px off the reference.
     #[test]
-    fn whitespace_title_reserves_its_band_only_where_the_mode_keeps_it() {
+    fn whitespace_title_reserves_its_band_only_where_the_limit_keeps_it() {
         use serde_json::json;
         let plot_top = |s: &str| -> f64 {
             let i = s.find("<g transform=\"translate(").expect("plot group");
             s[i..].split(',').nth(1).unwrap().split(')').next().unwrap().trim().parse().unwrap()
         };
         let fonts = test_fonts();
-        let spaces = |overflow: &str| {
+        let spaces = |wrap: serde_json::Value| {
             let mut j = make_vertical_payload(&[("Alpha", 10.0), ("Beta", 20.0)], false);
             j["resolved"]["title"] = json!("   ");
-            j["resolved"]["title_style"]["overflow"] = json!(overflow);
+            j["resolved"]["title_style"]["max_lines"] = wrap;
             render(&make_payload(j), &fonts).expect("renders")
         };
         let titled = render(
@@ -10929,14 +11024,14 @@ mod tests {
             render(&make_payload(j), &fonts).expect("renders")
         };
         assert_eq!(
-            plot_top(&spaces("truncate")),
+            plot_top(&spaces(json!(1))),
             plot_top(&titled),
-            "under the themes' truncate a whitespace title reserves a real title's band"
+            "under a one-line limit a whitespace title reserves a real title's band"
         );
         assert_eq!(
-            plot_top(&spaces("wrap-two")),
+            plot_top(&spaces(json!(2))),
             plot_top(&untitled),
-            "under wrap-two it collapses to no title at all"
+            "under two lines it collapses to no title at all"
         );
     }
 
@@ -11076,7 +11171,7 @@ mod tests {
             .collect::<Vec<_>>());
         payload_json["resolved"]["color"] = json!("region");
         payload_json["resolved"]["legend"]["visible"] = json!(true);
-        payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+        payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
         payload_json["width"] = json!(564.0);
         payload_json["height"] = json!(202.0);
         let payload = make_payload(payload_json);
@@ -11401,11 +11496,11 @@ mod tests {
                 "orientation": "diagonal",
                 "stack": "none", "palette": [], "multiples": null,
                 "field_labels": {}, "wide_measures": [], "layers": [],
-                "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal", "title": {"font": {"case": "title"}}, "label": {"font": {}}},
+                "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]}, "direction": "horizontal", "title": {"font": {"case": "title"}}, "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {}}},
                 "style": {
                     "axis_x": {"grid": {"visible": false}, "ticks": {"color": "#D0D3D9"}, "labels": {"font": {}}, "title": {"font": {"case": "title"}}, "scale": {}, "tick_values": [], "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false},
                     "axis_y": {"grid": {"visible": false}, "ticks": {"color": "#D0D3D9"}, "labels": {"font": {}}, "title": {"font": {"case": "title"}}, "scale": {}, "tick_values": [], "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false},
-                    "mark": {"band_width": 0.7, "size": 20.0, "border": {}},
+                    "mark": {"band_width": 0.7, "size": null, "border": {}},
                     "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
                     "single_series_fill": "#000",
                     "series_label": {"font_family": "'Inter'", "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": []},
@@ -11488,10 +11583,10 @@ mod tests {
             "layers": [],
             "legend": {
                 "visible": false,
-                "position": {"edge": "top", "align": "start", "overlay": false},
+                "position": {"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]},
                 "direction": "horizontal",
                 "title": {"font": {"case": "title", "family": TEST_FONT}},
-                "label": {"padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
+                "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
             },
             "style": {
                 "label_usable_ratio": 0.8,
@@ -11499,7 +11594,7 @@ mod tests {
                 "axis_y": axis_y,
                 "mark": {
                     "band_width": 0.8,
-                    "size": 20.0,
+                    "size": null,
                     "border": {"width": null, "color": null, "radius": 0.0}
                 },
                 "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
@@ -11878,7 +11973,7 @@ mod tests {
         use serde_json::json;
         let mut payload_json = make_rail_payload();
         payload_json["resolved"]["legend"]["visible"] = json!(true);
-        payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+        payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
         let payload = make_payload(payload_json);
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("rail bar with a kept legend renders");
@@ -12104,7 +12199,7 @@ mod tests {
         p["resolved"]["subtitle"] = serde_json::Value::Null;
         p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(false);
         p["resolved"]["legend"]["visible"] = json!(true);
-        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
         p["resolved"]["support_table"] = json!({"entries": [{"per_series": "val", "format": ",d"}]});
         p["resolved"]["effective_support_table_style"] = support_table_style_json();
         let payload = make_payload(p);
@@ -12176,7 +12271,7 @@ mod tests {
         p["resolved"]["subtitle"] = serde_json::Value::Null;
         p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(false);
         p["resolved"]["legend"]["visible"] = json!(true);
-        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
         p["resolved"]["support_table"] = json!({"entries": [{"per_series": "val", "format": ",d"}]});
         p["resolved"]["effective_support_table_style"] = support_table_style_json();
         let payload = make_payload(p);
@@ -12198,7 +12293,7 @@ mod tests {
         let mut p = make_rail_payload();
         p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(false);
         p["resolved"]["legend"]["visible"] = json!(true);
-        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
         p["resolved"]["legend"]["direction"] = json!("vertical");
         p["resolved"]["legend"]["columns"] = json!(2);
         p["resolved"]["support_table"] =
@@ -12502,7 +12597,7 @@ mod tests {
         use serde_json::json;
         let mut payload_json = make_rail_strip_payload();
         payload_json["resolved"]["legend"]["visible"] = json!(true);
-        payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+        payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
         let svg = render(&make_payload(payload_json), &test_fonts()).expect("rail with a kept legend and a strip renders");
         assert!(svg.contains(">Units<"), "{svg}");
     }
@@ -12741,7 +12836,7 @@ mod tests {
             let mut payload_json = make_stacked_payload(orientation, "zero");
             payload_json["resolved"]["legend"]["visible"] = json!(true);
             let overlay = orientation == "vertical";
-            payload_json["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": overlay});
+            payload_json["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": overlay, "corners": [{"edge": "top", "align": "start"}]});
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
             let legend_at = svg.find("role-legend\"").expect("legend");
             let last_bar_at = svg.rfind("fill=\"#779bc9\"/>").expect("bars");
@@ -12768,7 +12863,7 @@ mod tests {
             let mut payload_json = make_stacked_payload("horizontal", "zero");
             payload_json["width"] = json!(width);
             payload_json["resolved"]["legend"]["visible"] = json!(true);
-            payload_json["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false});
+            payload_json["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]});
             payload_json["rows"] = json!(series.iter().map(|s| json!({"cat": "A", "series": s, "val": 10.0})).collect::<Vec<_>>());
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
             let at = svg.find("role-legend\"").expect("legend");
@@ -12804,7 +12899,7 @@ mod tests {
             let mut payload_json = make_stacked_payload("horizontal", "zero");
             payload_json["width"] = json!(408.0);
             payload_json["resolved"]["legend"]["visible"] = json!(true);
-            payload_json["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false});
+            payload_json["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]});
             payload_json["rows"] = json!(["Initial sync", "Sync attempted", "Incremental volume"]
                 .iter()
                 .map(|s| json!({"cat": cat, "series": s, "val": 10.0}))
@@ -13618,6 +13713,7 @@ mod tests {
         let refs: Vec<(&str, f64)> = months.iter().map(|(c, v)| (c.as_str(), *v)).collect();
         let mut p = make_vertical_payload(&refs, false);
         p["resolved"]["style"]["mark"]["border"]["radius"] = json!(0.0);
+        p["resolved"]["style"]["mark"]["size"] = json!(20.0);
         p["resolved"]["style"]["label_usable_ratio"] = json!(0.8);
         p["resolved"]["style"]["axis_x"]["fill"] = json!("null");
         let xs = bar_xs(p);
@@ -13989,7 +14085,7 @@ mod tests {
         ]);
         payload_json["resolved"]["stacked_domain_max"] = json!(40.0);
         payload_json["resolved"]["legend"]["visible"] = json!(true);
-        payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+        payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
         payload_json["resolved"]["legend"]["direction"] = json!("vertical");
         payload_json["resolved"]["legend"]["title"] =
             json!({"font": {"family": TEST_FONT, "size": 12.0, "weight": 600.0, "case": "title"}});
@@ -14069,7 +14165,7 @@ mod tests {
         let mut payload_json = make_rail_payload();
         payload_json["resolved"]["legend"]["visible"] = json!(true);
         payload_json["resolved"]["legend"]["position"] =
-            json!({"edge": "left", "align": "start", "overlay": false});
+            json!({"edge": "left", "align": "start", "overlay": false, "corners": [{"edge": "left", "align": "start"}]});
         let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
         let tags = text_tags(&svg);
         let title_x = tags.iter().find(|t| t.3 == "Stacked Test").expect("title").0;
@@ -14086,7 +14182,7 @@ mod tests {
             let mut payload_json = make_rail_payload();
             payload_json["resolved"]["legend"]["visible"] = json!(true);
             payload_json["resolved"]["legend"]["position"] =
-                json!({"edge": edge, "align": "start", "overlay": false});
+                json!({"edge": edge, "align": "start", "overlay": false, "corners": [{"edge": edge, "align": "start"}]});
             render(&make_payload(payload_json), &test_fonts()).expect("renders")
         };
         let canvas_h = |svg: &str| -> f64 {
@@ -14348,10 +14444,10 @@ mod tests {
         payload_json["resolved"]["style"]["endpoint_labels"]["visible"] = json!(true);
         payload_json["resolved"]["legend"] = json!({
             "visible": true,
-            "position": {"edge": "right", "align": "start", "overlay": false},
+            "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]},
             "direction": "vertical",
             "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600"}},
-            "label": {"padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
         });
         let payload = make_payload(payload_json);
         let fonts = test_fonts();
@@ -14390,7 +14486,7 @@ mod tests {
         for orientation in ["horizontal", "vertical"] {
             let mut p = make_stacked_payload(orientation, "zero");
             p["resolved"]["legend"]["visible"] = json!(true);
-            p["resolved"]["legend"]["position"] = json!({"edge": "bottom", "align": "start", "overlay": false});
+            p["resolved"]["legend"]["position"] = json!({"edge": "bottom", "align": "start", "overlay": false, "corners": [{"edge": "bottom", "align": "start"}]});
             p["resolved"]["legend"]["title"]["visible"] = json!(false);
             let svg = render(&make_payload(p), &test_fonts()).unwrap_or_else(|e| panic!("{orientation}: {e}"));
             let legend_y = 300.0 - 16.0 - 13.0;
@@ -14543,7 +14639,7 @@ mod tests {
             payload_json["resolved"]["palette"] = names.iter().map(|_| json!("#3164a3")).collect();
             payload_json["resolved"]["legend"]["visible"] = json!(true);
             payload_json["resolved"]["legend"]["direction"] = json!("vertical");
-            payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+            payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
             payload_json["resolved"]["stacked_domain_max"] = json!(25.0);
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
             let marks_h: f64 = svg.split(" height=\"").nth(1).and_then(|r| r.split('"').next()).expect("svg height").parse().expect("number");
@@ -14810,10 +14906,10 @@ mod tests {
         let mut payload_json = make_stacked_payload("vertical", "zero");
         payload_json["resolved"]["legend"] = json!({
             "visible": true,
-            "position": {"edge": "right", "align": "start", "overlay": false},
+            "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]},
             "direction": "vertical",
             "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600"}},
-            "label": {"padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
         });
         let payload = make_payload(payload_json);
         let fonts = test_fonts();
@@ -14862,10 +14958,10 @@ mod tests {
         payload_json["resolved"]["style"]["axis_y"]["position"] = json!("right");
         payload_json["resolved"]["legend"] = json!({
             "visible": true,
-            "position": {"edge": "right", "align": "start", "overlay": false},
+            "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]},
             "direction": "vertical",
             "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600"}},
-            "label": {"padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
         });
         let payload = make_payload(payload_json);
         let fonts = test_fonts();
@@ -14919,7 +15015,7 @@ mod tests {
         let fonts = test_fonts();
         let mut p = make_stacked_payload("vertical", "zero");
         p["resolved"]["legend"]["visible"] = json!(true);
-        p["resolved"]["legend"]["position"] = json!({"edge": "left", "align": "start", "overlay": false});
+        p["resolved"]["legend"]["position"] = json!({"edge": "left", "align": "start", "overlay": false, "corners": [{"edge": "left", "align": "start"}]});
         p["resolved"]["legend"]["direction"] = json!("vertical");
         p["resolved"]["legend"]["title"] =
             json!({"font": {"family": TEST_FONT, "size": 12.0, "weight": 600.0, "case": "title"}});
@@ -19512,7 +19608,7 @@ mod tests {
         fn legend_beside_trend(orientation: &str, stack: &str) -> String {
             let mut payload = make_stacked_payload(orientation, stack);
             payload["resolved"]["legend"]["visible"] = json!(true);
-            payload["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+            payload["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
             payload["resolved"]["legend"]["direction"] = json!("vertical");
             for row in payload["rows"].as_array_mut().unwrap() {
                 row["cat"] = json!(if row["cat"] == "A" { "2024-01-01" } else { "2024-02-01" });
@@ -20098,6 +20194,697 @@ mod tests {
             assert_eq!(svg.unwrap(), print::print(&laid.nodes));
             assert!(!laid.diagnostics.is_empty(), "the payload must warn for forwarding to be tested");
             assert_eq!(sunk, laid.diagnostics);
+        }
+    }
+
+    /// `style.charts.bar.max_thickness`: a theme's ceiling on a category bar's thickness. The plot
+    /// shrinks along the category axis until a bar is exactly the cap; horizontal bars pack from the
+    /// top, columns sit centered as a group.
+    mod max_thickness {
+        use super::*;
+        use super::super::domain::capped_category_extent;
+
+        const HORIZONTAL: f64 = 40.0;
+        const VERTICAL: &str = "33.333333333333336%";
+        const COLUMN_SHARE: f64 = 1.0 / 3.0;
+        /// The printed SVG carries two decimals.
+        const EPS: f64 = 0.02;
+        /// The baseline snaps to a whole pixel, so a plot's height read from it is that close.
+        const SNAP: f64 = 0.75;
+
+        fn capped(mut payload: serde_json::Value) -> serde_json::Value {
+            payload["resolved"]["style"]["max_thickness"] = serde_json::json!({"horizontal": HORIZONTAL, "vertical": VERTICAL});
+            payload
+        }
+
+        fn svg_of(payload: serde_json::Value) -> String {
+            render(&make_payload(payload), &test_fonts()).expect("renders")
+        }
+
+        fn number_after(svg: &str, marker: &str) -> f64 {
+            let rest = svg.split(marker).nth(1).unwrap_or_else(|| panic!("{marker} in {svg}"));
+            rest.split(|c| c == ')' || c == ',' || c == '"').next().unwrap().parse().expect("a number")
+        }
+
+        /// The plot's origin on the card: every translate wrapped around it, down to the gridlines.
+        fn plot_origin(svg: &str) -> (f64, f64) {
+            let before = &svg[..svg.find("role-axis-grid").expect("a grid group")];
+            before.split("<g transform=\"translate(").skip(1).fold((0.0, 0.0), |(x, y), at| {
+                let mut xy = at.split(')').next().unwrap().split(',');
+                (x + xy.next().unwrap().parse::<f64>().unwrap(), y + xy.next().unwrap().parse::<f64>().unwrap())
+            })
+        }
+
+        /// How far the whole plot body sits right of the card's own frame: the translate of the group a capped column group is wrapped in.
+        fn body_shift(svg: &str) -> f64 {
+            let Some(at) = svg.find("class=\"plot-body\"") else { return 0.0 };
+            number_after(&svg[svg[..at].rfind("<g ").unwrap()..], "translate(")
+        }
+
+        /// Each text's absolute x on the card: its own x plus every translate around it.
+        fn text_abs_xs(svg: &str) -> Vec<f64> {
+            let mut stack: Vec<f64> = Vec::new();
+            let mut xs = Vec::new();
+            for tag in svg.split('<').skip(1) {
+                if tag.starts_with("g ") || tag.starts_with("g>") {
+                    stack.push(tag.split("transform=\"translate(").nth(1).and_then(|t| t.split(',').next()?.parse().ok()).unwrap_or(0.0));
+                } else if tag.starts_with("/g>") {
+                    stack.pop();
+                } else if tag.starts_with("text ") {
+                    let x: f64 = tag.split("x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+                    xs.push(x + stack.iter().sum::<f64>());
+                }
+            }
+            xs
+        }
+
+        /// The plot's extent along the category axis, from its first gridline.
+        fn plot_extent(svg: &str, horizontal: bool) -> f64 {
+            let grid = svg.split("role-axis-grid").nth(1).expect("a grid group");
+            let line = grid.split("<line ").nth(1).expect("a gridline");
+            let attr = |name: &str| -> f64 { line.split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().parse().unwrap() };
+            (if horizontal { attr("y2") } else { attr("x2") }) - 0.5
+        }
+
+        /// The plot's height: where its zero baseline sits below the plot's top.
+        fn plot_height(svg: &str) -> f64 {
+            let baseline = svg.split("layer_1_marks").nth(1).expect("a baseline rule");
+            number_after(baseline, "y1=\"")
+        }
+
+        fn bars_of(svg: &str, fill: &str) -> Vec<Drawn> {
+            drawn(svg).into_iter().filter(|m| m.attr("fill") == Some(fill) && m.attr("stroke-linecap").is_none()).collect()
+        }
+
+        fn horizontal() -> serde_json::Value {
+            make_horizontal_payload()
+        }
+
+        fn twelve(mut payload: serde_json::Value, key: &str) -> serde_json::Value {
+            payload["rows"] = serde_json::json!((0..12).map(|i| serde_json::json!({key: format!("C{i:02}"), "revenue": 100.0 + i as f64})).collect::<Vec<_>>());
+            payload
+        }
+
+        fn column_chart(band_width: f64) -> serde_json::Value {
+            let mut payload = make_vertical_payload(&[("a", 1000.0), ("b", 1500.0)], false);
+            payload["resolved"]["style"]["mark"]["band_width"] = serde_json::json!(band_width);
+            payload
+        }
+
+        fn with_cap(mut payload: serde_json::Value, horizontal: serde_json::Value, vertical: serde_json::Value) -> serde_json::Value {
+            payload["resolved"]["style"]["max_thickness"] = serde_json::json!({"horizontal": horizontal, "vertical": vertical});
+            payload
+        }
+
+        /// The plot's width: its last value gridline, which sits half a pixel past the plot edge.
+        fn plot_width(svg: &str) -> f64 {
+            let grid = svg.split("role-axis-grid").nth(1).expect("a grid group").split("</g>").next().unwrap();
+            grid.split("<line ").skip(1).map(|l| number_after(l, "x2=\"")).fold(0.0, f64::max) - 0.5
+        }
+
+        #[test]
+        fn a_pixel_cap_sets_column_width_and_a_percent_cap_sets_horizontal_bar_thickness_against_the_plot_width() {
+            let columns = bars_of(&svg_of(with_cap(column_chart(0.8), serde_json::json!(40.0), serde_json::json!(30.0))), "#3164a3");
+            assert!(columns.iter().all(|b| (b.w() - 30.0).abs() < SNAP), "{:?}", columns.iter().map(Drawn::w).collect::<Vec<_>>());
+            let svg = svg_of(with_cap(horizontal(), serde_json::json!("10%"), serde_json::json!("none")));
+            let bars = bars_of(&svg, "#3164a3");
+            assert_eq!(bars.len(), 2);
+            let width = plot_width(&svg);
+            assert!(bars.iter().all(|b| (b.h() - 0.1 * width).abs() < SNAP), "plot width {width}: {:?}", bars.iter().map(Drawn::h).collect::<Vec<_>>());
+        }
+
+        #[test]
+        fn a_percent_column_cap_is_that_share_of_the_plot_height() {
+            let svg = svg_of(with_cap(column_chart(0.8), serde_json::json!(40.0), serde_json::json!("25%")));
+            let bars = bars_of(&svg, "#3164a3");
+            assert_eq!(bars.len(), 2);
+            let cap = 0.25 * plot_height(&svg);
+            assert!(bars.iter().all(|b| (b.w() - cap).abs() < SNAP), "{cap}: {:?}", bars.iter().map(Drawn::w).collect::<Vec<_>>());
+        }
+
+        #[test]
+        fn a_percent_horizontal_cap_equals_the_pixel_cap_of_the_same_size() {
+            let width = plot_width(&svg_of(horizontal()));
+            let by_percent = svg_of(with_cap(horizontal(), serde_json::json!("10%"), serde_json::json!("none")));
+            let by_pixels = svg_of(with_cap(horizontal(), serde_json::json!(0.1 * width), serde_json::json!("none")));
+            assert_eq!(by_percent, by_pixels);
+        }
+
+        #[test]
+        fn two_horizontal_bars_in_a_tall_card_are_the_cap_thick() {
+            let bars = bars_of(&svg_of(capped(horizontal())), "#3164a3");
+            assert_eq!(bars.len(), 2);
+            assert!(bars.iter().all(|b| (b.h() - HORIZONTAL).abs() < EPS), "{:?}", bars.iter().map(Drawn::h).collect::<Vec<_>>());
+        }
+
+        #[test]
+        fn horizontal_bars_keep_their_natural_pitch_and_pack_from_the_top() {
+            let payload = horizontal();
+            let band_width = payload["resolved"]["style"]["mark"]["band_width"].as_f64().unwrap();
+            let svg = svg_of(capped(payload));
+            let bars = bars_of(&svg, "#3164a3");
+            let pitch = HORIZONTAL / band_width;
+            assert!((bars[1].y() - bars[0].y() - pitch).abs() < EPS, "pitch {}", bars[1].y() - bars[0].y());
+            assert!((bars[0].y() - (pitch - HORIZONTAL) / 2.0).abs() < EPS, "offset {}", bars[0].y());
+        }
+
+        #[test]
+        fn the_value_axis_and_gridlines_end_at_the_shrunk_plot() {
+            let uncapped = svg_of(horizontal());
+            let svg = svg_of(capped(horizontal()));
+            let band_width = 0.7;
+            let pitch = HORIZONTAL / band_width;
+            let bars = bars_of(&svg, "#3164a3");
+            let plot_h = plot_extent(&svg, true);
+            assert!((plot_h - 2.0 * pitch).abs() < EPS, "{plot_h}");
+            let last = bars.last().unwrap();
+            assert!((last.y() + last.h() + (pitch - HORIZONTAL) / 2.0 - plot_h).abs() < EPS, "the plot ends half a gap below the last bar");
+            let label_y = |s: &str| number_after(s.split("data-dct-role=\"x-axis\"").nth(1).unwrap(), " y=\"");
+            assert!(((label_y(&svg) - label_y(&uncapped)) - (plot_h - plot_extent(&uncapped, true))).abs() < EPS, "the axis labels follow the plot");
+            assert_eq!(plot_origin(&svg), plot_origin(&uncapped), "the plot starts where it did");
+        }
+
+        #[test]
+        fn twelve_categories_draw_exactly_as_uncapped() {
+            let payload = twelve(horizontal(), "product");
+            assert_eq!(svg_of(capped(payload.clone())), svg_of(payload));
+        }
+
+        #[test]
+        fn twelve_columns_draw_exactly_as_uncapped() {
+            let payload = twelve(make_vertical_payload(&[("a", 1.0)], false), "product");
+            assert_eq!(svg_of(capped(payload.clone())), svg_of(payload));
+        }
+
+        #[test]
+        fn a_grouped_chart_caps_each_bar_and_keeps_its_proportions() {
+            let grouped = |cap: bool| {
+                let mut payload = make_stacked_payload("horizontal", "none");
+                payload["height"] = serde_json::json!(500.0);
+                if cap { capped(payload) } else { payload }
+            };
+            let (plain, shrunk) = (svg_of(grouped(false)), svg_of(grouped(true)));
+            let thick = |svg: &str| -> Vec<Drawn> { let mut b = drawn(svg).into_iter().filter(|m| m.attr("fill") == Some("#3164a3") || m.attr("fill") == Some("#779bc9")).collect::<Vec<_>>(); b.retain(|m| m.h() > 1.0); b };
+            let (before, after) = (thick(&plain), thick(&shrunk));
+            assert_eq!(before.len(), after.len());
+            assert!(after.iter().all(|b| b.h() <= HORIZONTAL + EPS), "{:?}", after.iter().map(Drawn::h).collect::<Vec<_>>());
+            let tallest = after.iter().map(Drawn::h).fold(0.0, f64::max);
+            assert!((tallest - HORIZONTAL).abs() < EPS, "the thickest bar is exactly the cap: {tallest}");
+            let ratio = tallest / before.iter().map(Drawn::h).fold(0.0, f64::max);
+            for (b, a) in before.iter().zip(&after) {
+                assert!((a.h() - b.h() * ratio).abs() < 0.1 && (a.y() - b.y() * ratio).abs() < 0.1, "bars in a group keep their spacing");
+            }
+        }
+
+        #[test]
+        fn stacked_columns_are_the_column_cap_wide() {
+            let svg = svg_of(capped(make_stacked_payload("vertical", "zero")));
+            let segments: Vec<Drawn> = drawn(&svg).into_iter().filter(|m| m.attr("fill") == Some("#3164a3") || m.attr("fill") == Some("#779bc9")).filter(|m| m.h() > 1.0).collect();
+            assert_eq!(segments.len(), 4);
+            let cap = COLUMN_SHARE * segments.iter().map(|s| s.y() + s.h()).fold(0.0, f64::max);
+            assert!(segments.iter().all(|s| (s.w() - cap).abs() < SNAP), "{cap}: {:?}", segments.iter().map(Drawn::w).collect::<Vec<_>>());
+        }
+
+        #[test]
+        fn two_columns_are_the_cap_wide_a_quarter_apart_and_centered_as_a_group() {
+            let uncapped = svg_of(column_chart(0.8));
+            let svg = svg_of(capped(column_chart(0.8)));
+            let bars = bars_of(&svg, "#3164a3");
+            assert_eq!(bars.len(), 2);
+            let cap = COLUMN_SHARE * plot_height(&svg);
+            assert!(bars.iter().all(|b| (b.w() - cap).abs() < SNAP), "{cap}: {:?}", bars.iter().map(Drawn::w).collect::<Vec<_>>());
+            let gap = bars[1].x() - (bars[0].x() + bars[0].w());
+            assert!(gap <= cap / 4.0 + SNAP, "gap {gap}");
+            let (left, right) = (plot_origin(&uncapped).0, plot_origin(&uncapped).0 + plot_extent(&uncapped, false));
+            let (shift, _) = plot_origin(&svg);
+            let room_left = shift + bars[0].x() - left;
+            let room_right = right - (shift + bars[1].x() + bars[1].w());
+            assert!((room_left - room_right).abs() < EPS, "{room_left} {room_right}");
+            assert!((plot_extent(&svg, false) - 2.0 * cap / 0.8).abs() < 2.0 * SNAP, "gridlines span the group only");
+        }
+
+        #[test]
+        fn grouped_columns_keep_the_group_gap_and_center_as_a_group() {
+            let grouped = |cap: bool| {
+                let mut payload = make_vertical_payload(&[("a", 1000.0), ("b", 1500.0)], true);
+                payload["resolved"]["style"]["mark"]["band_width"] = serde_json::json!(0.8);
+                payload["resolved"]["style"]["overlap"] = serde_json::json!("flush");
+                if cap { capped(payload) } else { payload }
+            };
+            let (uncapped, svg) = (svg_of(grouped(false)), svg_of(grouped(true)));
+            let first: Vec<Drawn> = bars_of(&svg, "#3164a3").into_iter().filter(|b| b.w() > LEGEND_SWATCH).collect();
+            assert!(first.iter().all(|b| b.w() <= COLUMN_SHARE * plot_height(&svg) + SNAP));
+            let all: Vec<Drawn> = drawn(&svg).into_iter().filter(|m| m.w() > LEGEND_SWATCH && (m.attr("fill") == Some("#3164a3") || m.attr("fill") == Some("#779bc9"))).collect();
+            let (lo, hi) = all.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), b| (lo.min(b.x()), hi.max(b.x() + b.w())));
+            let step = first[1].x() - first[0].x();
+            let group_w = all.iter().filter(|b| b.x() < first[1].x() - EPS).map(|b| b.x() + b.w()).fold(0.0, f64::max) - first[0].x();
+            assert!(step - group_w <= group_w / 4.0 + 4.0 * EPS, "the gap between groups is at most a quarter of a group: {}", step - group_w);
+            let (left, right) = (plot_origin(&uncapped).0, plot_origin(&uncapped).0 + plot_extent(&uncapped, false));
+            let shift = plot_origin(&svg).0;
+            assert!(((shift + lo - left) - (right - (shift + hi))).abs() < EPS, "room left and right of the group agree");
+        }
+
+        #[test]
+        fn a_long_category_name_wraps_under_a_column_held_at_the_cap() {
+            let name = "Enterprise subscriptions";
+            let mut payload = make_vertical_payload(&[(name, 1000.0), ("b", 1500.0)], false);
+            payload["resolved"]["style"]["mark"]["band_width"] = serde_json::json!(0.8);
+            payload["height"] = serde_json::json!(300.0);
+            let svg = svg_of(capped(payload));
+            let name_w = test_fonts().measure(name, TEST_FONT, 11.0).unwrap();
+            let cap = COLUMN_SHARE * plot_height(&svg);
+            let pitch = cap / 0.8;
+            assert!(name_w > pitch, "the name outgrows its slot: {name_w} against {pitch}");
+            let bars = bars_of(&svg, "#3164a3");
+            assert!(bars.iter().all(|b| (b.w() - cap).abs() < SNAP), "{cap}: {:?}", bars.iter().map(Drawn::w).collect::<Vec<_>>());
+            let axis = svg.split("data-dct-role=\"x-axis\"").nth(1).expect("an x axis");
+            let lines: Vec<&str> = ["Enterprise", "subscriptions"].into_iter().filter(|word| axis.contains(&format!(">{word}<"))).collect();
+            assert_eq!(lines, ["Enterprise", "subscriptions"], "the name wraps onto two lines: {axis}");
+            for line in lines {
+                assert!(test_fonts().measure(line, TEST_FONT, 11.0).unwrap() <= pitch, "{line} fits the pitch");
+            }
+        }
+
+        /// A column is never wider than a third of the plot's height, however many columns share the card.
+        #[test]
+        fn columns_are_a_third_of_the_plot_height_at_any_count() {
+            for count in [2, 5, 9] {
+                let rows: Vec<(String, f64)> = (0..count).map(|i| (format!("C{i}"), 100.0 + i as f64)).collect();
+                let rows: Vec<(&str, f64)> = rows.iter().map(|(n, v)| (n.as_str(), *v)).collect();
+                let mut payload = make_vertical_payload(&rows, false);
+                payload["width"] = serde_json::json!(3000.0);
+                payload["resolved"]["style"]["mark"]["band_width"] = serde_json::json!(0.8);
+                let svg = svg_of(capped(payload));
+                let cap = COLUMN_SHARE * plot_height(&svg);
+                let bars = bars_of(&svg, "#3164a3");
+                assert_eq!(bars.len(), count);
+                assert!(bars.iter().all(|b| (b.w() - cap).abs() < SNAP), "{count} columns, cap {cap}: {:?}", bars.iter().map(Drawn::w).collect::<Vec<_>>());
+            }
+        }
+
+        #[test]
+        fn a_shorter_card_draws_narrower_columns() {
+            let width_at = |height: f64| {
+                let mut payload = column_chart(0.8);
+                payload["height"] = serde_json::json!(height);
+                payload["width"] = serde_json::json!(3000.0);
+                let svg = svg_of(capped(payload));
+                (bars_of(&svg, "#3164a3")[0].w(), plot_height(&svg))
+            };
+            let (tall_w, tall_h) = width_at(600.0);
+            let (short_w, short_h) = width_at(300.0);
+            assert!(short_w < tall_w, "{short_w} {tall_w}");
+            assert!((short_w - COLUMN_SHARE * short_h).abs() < SNAP && (tall_w - COLUMN_SHARE * tall_h).abs() < SNAP);
+        }
+
+        /// Date buckets on a time axis take the category column rule.
+        #[test]
+        fn bucketed_date_columns_are_a_third_of_the_plot_height() {
+            let _locale = ::bind::time_locale::en_us_scope();
+            let mut payload = make_time_payload(&months_from_2000(4));
+            payload["resolved"]["style"]["axis_x"]["time_unit"] = serde_json::json!("yearmonth");
+            payload["resolved"]["style"]["axis_x"]["type"] = serde_json::json!("temporal");
+            payload["resolved"]["style"]["mark"]["max_size"] = serde_json::json!(null);
+            payload["width"] = serde_json::json!(2000.0);
+            payload["height"] = serde_json::json!(400.0);
+            let uncapped = svg_of(payload.clone());
+            let svg = svg_of(capped(payload));
+            let cap = COLUMN_SHARE * plot_height(&svg);
+            let widest = |svg: &str| drawn(svg).into_iter().filter(|m| m.attr("fill") == Some("#3164a3")).map(|b| b.w()).fold(0.0, f64::max);
+            assert!(widest(&uncapped) > cap + 1.0, "the cap binds: {} against {cap}", widest(&uncapped));
+            assert!((widest(&svg) - cap).abs() < SNAP, "{} against {cap}", widest(&svg));
+        }
+
+        /// A name wraps exactly when it outgrows the pitch the drawn columns have, whatever sits above the plot
+        /// (a legend takes height the labels' wrap is judged against).
+        #[test]
+        fn a_name_wraps_exactly_when_it_outgrows_the_drawn_pitch_under_a_legend() {
+            let words = ["Enterprise", "plan", "and", "services", "worldwide", "plans"];
+            let (mut wrapped_count, mut cases) = (0, 0);
+            for (take, height) in (1..=6).flat_map(|take| (0..8).map(move |step| (take, 200.0 + 12.0 * step as f64))) {
+                let name = words[..take].join(" ");
+                let mut payload = make_vertical_payload(&[(name.as_str(), 1000.0), ("b", 1500.0)], true);
+                payload["rows"] = serde_json::json!([
+                    {"product": name, "region": "North", "revenue": 1000.0},
+                    {"product": name, "region": "South", "revenue": 600.0},
+                    {"product": "b", "region": "North", "revenue": 1500.0},
+                    {"product": "b", "region": "South", "revenue": 900.0},
+                ]);
+                payload["resolved"]["style"]["mark"]["band_width"] = serde_json::json!(0.8);
+                payload["resolved"]["style"]["overlap"] = serde_json::json!("flush");
+                payload["height"] = serde_json::json!(height);
+                let svg = svg_of(capped(legend_centered(payload, "top")));
+                let firsts: Vec<Drawn> = bars_of(&svg, "#3164a3").into_iter().filter(|b| b.w() > LEGEND_SWATCH).collect();
+                let pitch = firsts[1].x() - firsts[0].x();
+                let axis = svg.split("data-dct-role=\"x-axis\"").nth(1).expect("an x axis").split("data-dct-role=\"y-axis\"").next().unwrap();
+                let wrapped = !axis.contains(&format!(">{name}<"));
+                let outgrows = test_fonts().measure_shaped(&name, TEST_FONT, 11.0).unwrap() > pitch;
+                assert_eq!(wrapped, outgrows, "{name}: pitch {pitch}");
+                wrapped_count += usize::from(wrapped);
+                cases += 1;
+            }
+            assert!(wrapped_count > 0 && wrapped_count < cases, "the sweep crosses the wrap threshold");
+        }
+
+        /// Wrapping one name takes a line of height, and with it pitch from every name still on one line.
+        #[test]
+        fn every_name_is_judged_against_the_pitch_the_final_wrap_leaves() {
+            let words = ["Enterprise", "plan", "and", "services", "worldwide", "plans", "included"];
+            let mut wrapped_some = 0;
+            for (take, other, height) in (2..=6).flat_map(|take| (1..=3).flat_map(move |other| (0..10).map(move |step| (take, other, 190.0 + 9.0 * step as f64)))) {
+                let names = [words[..take].join(" "), words[other..other + take.min(7 - other)].join(" ")];
+                let mut payload = make_vertical_payload(&[(names[0].as_str(), 1000.0), (names[1].as_str(), 1500.0)], true);
+                payload["rows"] = serde_json::json!([
+                    {"product": names[0], "region": "North", "revenue": 1000.0},
+                    {"product": names[0], "region": "South", "revenue": 600.0},
+                    {"product": names[1], "region": "North", "revenue": 1500.0},
+                    {"product": names[1], "region": "South", "revenue": 900.0},
+                ]);
+                payload["resolved"]["style"]["mark"]["band_width"] = serde_json::json!(0.8);
+                payload["resolved"]["style"]["overlap"] = serde_json::json!("flush");
+                payload["height"] = serde_json::json!(height);
+                let svg = svg_of(capped(legend_centered(payload, "top")));
+                let firsts: Vec<Drawn> = bars_of(&svg, "#3164a3").into_iter().filter(|b| b.w() > LEGEND_SWATCH).collect();
+                let pitch = firsts[1].x() - firsts[0].x();
+                let axis = svg.split("data-dct-role=\"x-axis\"").nth(1).expect("an x axis").split("data-dct-role=\"y-axis\"").next().unwrap();
+                for name in &names {
+                    let wrapped = !axis.contains(&format!(">{name}<"));
+                    let outgrows = test_fonts().measure_shaped(name, TEST_FONT, 11.0).unwrap() > pitch;
+                    assert_eq!(wrapped, outgrows, "{name} among {names:?} at {height}: pitch {pitch}");
+                    wrapped_some += usize::from(wrapped);
+                }
+            }
+            assert!(wrapped_some > 0, "the sweep wraps names");
+        }
+
+        #[test]
+        fn a_thickness_that_does_not_follow_the_extent_leaves_the_extent_unshrunk() {
+            assert_eq!(capped_category_extent(300.0, |_| 40.0, 10.0), 300.0, "fixed above the cap");
+            assert_eq!(capped_category_extent(300.0, |extent| (extent / 5.0).min(40.0), 50.0), 300.0, "held at a ceiling under the cap");
+            let held = capped_category_extent(300.0, |extent| (extent / 5.0).min(40.0), 20.0);
+            assert!((held / 5.0 - 20.0).abs() < 1e-9, "a ceiling above the cap still shrinks to the cap: {held}");
+        }
+
+        /// Dates far apart on a time axis, which no bucket spans.
+        fn instants(size: Option<f64>, height: f64) -> serde_json::Value {
+            let dates: Vec<String> = ["2000-01-03", "2000-04-17", "2000-07-09", "2000-10-23"].map(String::from).to_vec();
+            let mut payload = make_time_payload(&dates);
+            payload["resolved"]["style"]["axis_x"]["type"] = serde_json::json!("temporal");
+            payload["resolved"]["style"]["mark"]["max_size"] = serde_json::json!(null);
+            payload["resolved"]["style"]["mark"]["size"] = serde_json::json!(size);
+            payload["width"] = serde_json::json!(1200.0);
+            payload["height"] = serde_json::json!(height);
+            payload
+        }
+
+        #[test]
+        fn instant_columns_of_an_authored_size_do_not_shrink_the_plot() {
+            let _locale = ::bind::time_locale::en_us_scope();
+            let payload = instants(Some(40.0), 120.0);
+            let (plain, svg) = (svg_of(payload.clone()), svg_of(capped(payload)));
+            assert!(40.0 > COLUMN_SHARE * plot_height(&svg), "the size outgrows the cap");
+            assert_eq!(plot_extent(&svg, false), plot_extent(&plain, false), "the plot is not shrunk");
+        }
+
+        #[test]
+        fn a_continuous_bar_keeps_its_own_ceiling() {
+            let payload = make_continuous_payload(&[(1.0, 5.0), (2.0, 7.0)]);
+            assert_eq!(svg_of(capped(payload.clone())), svg_of(payload));
+        }
+
+        #[test]
+        fn an_authored_max_size_wins_and_centers_in_the_band() {
+            let mut payload = column_chart(0.8);
+            payload["resolved"]["style"]["mark"]["max_size"] = serde_json::json!(60.0);
+            let bars = bars_of(&svg_of(capped(payload.clone())), "#3164a3");
+            assert!(bars.iter().all(|b| (b.w() - 60.0).abs() < EPS));
+            assert_eq!(svg_of(capped(payload.clone())), svg_of(payload));
+        }
+
+        /// Thickness is the extent times a constant in every band mode, so one scale reaches the cap.
+        #[test]
+        fn thickness_is_proportional_to_the_extent_in_every_band_mode() {
+            use super::super::marks::{BandColumns, ColumnSplit};
+            use crate::families::cartesian::BandScale;
+            let domain: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
+            let split = ColumnSplit { n_series: 3, lead: 0, width_steps: 0.9, layered: false, touching: false };
+            for (inner, outer, split) in [(0.0, 0.0, None), (0.2, 0.2, Some(&split)), (0.4, 0.1, Some(&split))] {
+                let thickness = |extent: f64| {
+                    let band = BandScale::new(domain.clone(), 0.0, extent, inner, outer);
+                    BandColumns::new(band.bandwidth(), 0.8, None, None, split).width
+                };
+                assert!((thickness(300.0) - 2.0 * thickness(150.0)).abs() < 1e-9, "{inner} {outer}");
+                let extent = capped_category_extent(300.0, thickness, 10.0);
+                assert!((thickness(extent) - 10.0).abs() < 1e-9, "{inner} {outer}");
+            }
+            assert_eq!(capped_category_extent(300.0, |e| e / 10.0, 40.0), 300.0, "a bar already under the cap leaves the plot alone");
+        }
+
+        #[test]
+        fn a_faceted_chart_is_not_capped() {
+            let payload = super::facet::make_facet_payload("shared");
+            assert_eq!(svg_of(capped(payload.clone())), svg_of(payload));
+        }
+
+        #[test]
+        fn a_support_table_column_stays_centered_on_its_bar() {
+            let mut payload = column_chart(0.8);
+            payload["resolved"]["support_table"] = serde_json::json!({
+                "entries": [{"source": "revenue", "format": {"spec": "$,.0f", "raw": "currency_whole"}, "label": "Revenue"}]
+            });
+            payload["resolved"]["effective_support_table_style"] = support_table_style_json();
+            let svg = svg_of(capped(payload));
+            let bars = bars_of(&svg, "#3164a3");
+            let left = plot_origin(&svg).0;
+            for (bar, label) in bars.iter().zip(["1,000", "1,500"]) {
+                let end = *text_xs(&svg, &format!(">{label}<")).last().expect("a strip cell");
+                let cell_center = body_shift(&svg) + end - test_fonts().measure_shaped(label, TEST_FONT, 11.0).unwrap() / 2.0;
+                assert!((cell_center - (left + bar.x() + bar.w() / 2.0)).abs() < 1.0, "{label}: cell {cell_center}, bar {} wide at {}", bar.w(), bar.x());
+            }
+        }
+
+        #[test]
+        fn a_bar_layer_stays_inside_its_band() {
+            let mut layer = layers::bar_layer_json(None);
+            layer["bar_mark"]["border"]["radius"] = serde_json::json!(0.0);
+            let mut payload = layers::horizontal_bar_layer_payload(layer, &[("Jan", 100.0, 90.0), ("Feb", 120.0, 110.0)]);
+            payload["height"] = serde_json::json!(500.0);
+            let svg = svg_of(capped(payload));
+            let plot_h = plot_extent(&svg, true);
+            assert!((plot_h - 2.0 * HORIZONTAL / 0.7).abs() < 4.0 * EPS, "the plot shrank to the capped extent: {plot_h}");
+            let layer_bars = bars_of(&svg, "#779bc9");
+            assert!(!layer_bars.is_empty());
+            assert!(layer_bars.iter().all(|b| b.h() <= plot_h / 2.0 + EPS), "{plot_h}");
+        }
+
+        fn legend_centered(mut payload: serde_json::Value, edge: &str) -> serde_json::Value {
+            payload["resolved"]["legend"]["visible"] = serde_json::json!(true);
+            payload["resolved"]["legend"]["position"] = serde_json::json!({"edge": edge, "align": "center", "overlay": false, "corners": [{"edge": edge, "align": "center"}]});
+            payload
+        }
+
+        #[test]
+        fn a_centered_top_legend_wider_than_the_capped_plot_centers_on_the_columns() {
+            let mut payload = make_vertical_payload(&[("a", 1000.0), ("b", 1500.0)], true);
+            payload["rows"] = serde_json::json!([
+                {"product": "a", "region": "North", "revenue": 1000.0},
+                {"product": "a", "region": "South", "revenue": 600.0},
+                {"product": "b", "region": "North", "revenue": 1500.0},
+                {"product": "b", "region": "South", "revenue": 900.0},
+            ]);
+            payload["resolved"]["style"]["mark"]["band_width"] = serde_json::json!(0.8);
+            payload["resolved"]["style"]["overlap"] = serde_json::json!("flush");
+            payload["height"] = serde_json::json!(170.0);
+            payload["resolved"]["style"]["max_thickness"] = serde_json::json!({"horizontal": HORIZONTAL, "vertical": VERTICAL});
+            let svg = svg_of(legend_centered(payload, "top"));
+            let swatches: Vec<Drawn> = drawn(&svg).into_iter().filter(|m| m.w() == LEGEND_SWATCH && m.h() == LEGEND_SWATCH).collect();
+            let last_label = *text_xs(&svg, ">South<").first().expect("a legend label");
+            let shift = body_shift(&svg);
+            let legend = (shift + swatches[0].x1, shift + last_label + test_fonts().measure_shaped("South", TEST_FONT, 11.0).unwrap());
+            let bars: Vec<Drawn> = bars_of(&svg, "#3164a3").into_iter().filter(|b| b.w() > LEGEND_SWATCH).chain(bars_of(&svg, "#779bc9").into_iter().filter(|b| b.w() > LEGEND_SWATCH)).collect();
+            let origin = plot_origin(&svg).0;
+            let group = bars.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), b| (lo.min(origin + b.x()), hi.max(origin + b.x() + b.w())));
+            assert!(legend.1 - legend.0 > group.1 - group.0, "the legend is wider than the group");
+            assert!((((legend.0 + legend.1) / 2.0) - ((group.0 + group.1) / 2.0)).abs() < 2.0, "legend {legend:?} group {group:?}");
+        }
+
+        #[test]
+        fn a_tall_centered_right_legend_beside_capped_bars_renders() {
+            let mut payload = make_stacked_payload("horizontal", "zero");
+            payload["resolved"]["stacked_domain_max"] = serde_json::json!(120.0);
+            payload["rows"] = serde_json::json!(["A", "B"].iter().flat_map(|cat| (0..10).map(move |s| serde_json::json!({"cat": cat, "series": format!("s{s}"), "val": 10.0 + s as f64}))).collect::<Vec<_>>());
+            payload["height"] = serde_json::json!(500.0);
+            payload["width"] = serde_json::json!(800.0);
+            payload["resolved"]["legend"]["direction"] = serde_json::json!("vertical");
+            render(&make_payload(legend_centered(payload.clone(), "right")), &test_fonts()).expect("uncapped renders");
+            svg_of(capped(legend_centered(payload, "right")));
+        }
+
+        #[test]
+        fn strip_cells_wider_than_the_capped_pitch_never_overlap() {
+            let mut payload = column_chart(0.8);
+            payload["rows"] = serde_json::json!([
+                {"product": "a", "revenue": 1250000000000.0},
+                {"product": "b", "revenue": 1500000000000.0},
+            ]);
+            payload["resolved"]["support_table"] = serde_json::json!({
+                "entries": [{"source": "revenue", "format": {"spec": "$,.0f", "raw": "currency_whole"}, "label": "Revenue"}]
+            });
+            payload["resolved"]["effective_support_table_style"] = support_table_style_json();
+            payload["height"] = serde_json::json!(200.0);
+            let (svg, sunk) = diagnostic::collect(|| render(&make_payload(capped(payload)), &test_fonts()));
+            let svg = svg.expect("renders");
+            assert!(sunk.iter().any(|d| d.code == "WARN-SUPPORT-TABLE-CELL-OVERFLOW"), "colliding cells warn: {sunk:?}");
+            let Some(strip) = svg.split("role-mark strip").nth(1) else { return assert!(!svg.contains(">$1,250,000,000,000<"), "a hidden strip paints no cells") };
+            let strip = strip.split("</g>").next().unwrap();
+            let mut cells: Vec<(f64, f64)> = strip
+                .split("<text ")
+                .skip(1)
+                .map(|t| {
+                    let x: f64 = t.split("x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+                    let text = t.split('>').nth(1).unwrap().split('<').next().unwrap();
+                    (x, test_fonts().measure_shaped(text, TEST_FONT, 11.0).unwrap())
+                })
+                .collect();
+            cells.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            assert!(cells.windows(2).all(|w| w[1].0 - w[1].1 >= w[0].0), "{cells:?}");
+        }
+
+        #[test]
+        fn horizontal_labels_never_paint_wider_than_the_gutter_at_a_small_cap() {
+            let mut payload = horizontal();
+            payload["rows"] = serde_json::json!([
+                {"product": "Enterprise subscriptions and services", "revenue": 800.0},
+                {"product": "Professional services and support", "revenue": 600.0},
+            ]);
+            payload["resolved"]["style"]["max_thickness"] = serde_json::json!({"horizontal": 12.0, "vertical": VERTICAL});
+            let svg = svg_of(payload);
+            let plot_left = plot_origin(&svg).0;
+            let axis = svg.split("data-dct-role=\"y-axis\"").nth(1).expect("a category axis");
+            for label in axis.split("<text ").skip(1) {
+                let x: f64 = label.split("x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+                let text = label.split('>').nth(1).unwrap().split('<').next().unwrap();
+                let w = test_fonts().measure(text, TEST_FONT, 11.0).unwrap();
+                let (left, right) = if label.contains("text-anchor=\"end\"") { (x - w, x) } else { (x, x + w) };
+                assert!(left >= 0.0 && right <= plot_left + EPS, "{text}: {left}..{right} against the plot at {plot_left}");
+            }
+        }
+
+        #[test]
+        fn a_cap_that_does_not_bind_leaves_names_unwrapped_and_the_chart_identical() {
+            let names: Vec<(String, f64)> = (0..10).map(|i| (format!("Enterprise {i}x"), 100.0 + i as f64)).collect();
+            let rows: Vec<(&str, f64)> = names.iter().map(|(n, v)| (n.as_str(), *v)).collect();
+            let mut payload = make_vertical_payload(&rows, false);
+            payload["width"] = serde_json::json!(850.0);
+            payload["resolved"]["style"]["mark"]["band_width"] = serde_json::json!(0.8);
+            assert_eq!(svg_of(capped(payload.clone())), svg_of(payload));
+        }
+
+        #[test]
+        fn a_right_legend_clears_the_capped_columns() {
+            let mut payload = make_vertical_payload(&[("a", 1000.0), ("b", 1500.0)], true);
+            payload["resolved"]["style"]["mark"]["band_width"] = serde_json::json!(0.8);
+            payload["resolved"]["style"]["overlap"] = serde_json::json!("flush");
+            payload["resolved"]["legend"]["visible"] = serde_json::json!(true);
+            payload["resolved"]["legend"]["position"] = serde_json::json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
+            payload["resolved"]["legend"]["direction"] = serde_json::json!("vertical");
+            let svg = svg_of(capped(payload));
+            let origin = plot_origin(&svg).0;
+            let last_right = drawn(&svg)
+                .into_iter()
+                .filter(|m| m.w() > LEGEND_SWATCH && (m.attr("fill") == Some("#3164a3") || m.attr("fill") == Some("#779bc9")))
+                .map(|b| origin + b.x() + b.w())
+                .fold(0.0, f64::max);
+            let swatch = drawn(&svg).into_iter().find(|m| m.w() == LEGEND_SWATCH && m.h() == LEGEND_SWATCH).expect("a legend swatch");
+            assert!(body_shift(&svg) + swatch.x1 >= last_right, "legend at {} against columns ending at {last_right}", body_shift(&svg) + swatch.x1);
+        }
+
+        fn six_series_columns(align: &str, overlay: bool, cap: bool) -> serde_json::Value {
+            let mut payload = make_stacked_payload("vertical", "zero");
+            payload["rows"] = serde_json::json!(["A", "B"].iter().flat_map(|cat| (0..6).map(move |s| serde_json::json!({"cat": cat, "series": format!("Series number {s}"), "val": 10.0 + s as f64}))).collect::<Vec<_>>());
+            payload["resolved"]["stacked_domain_max"] = serde_json::json!(100.0);
+            payload["resolved"]["style"]["mark"]["band_width"] = serde_json::json!(0.8);
+            payload["resolved"]["legend"]["visible"] = serde_json::json!(true);
+            payload["resolved"]["legend"]["position"] = serde_json::json!({"edge": "top", "align": align, "overlay": overlay, "corners": [{"edge": "top", "align": align}]});
+            payload["resolved"]["style"]["axis_y"]["grid"]["visible"] = serde_json::json!(true);
+            payload["width"] = serde_json::json!(800.0);
+            if cap { capped(payload) } else { payload }
+        }
+
+        /// The legend's absolute left and right edges: its swatches and the end of its last label.
+        fn legend_edges(svg: &str) -> (f64, f64) {
+            let shift = body_shift(svg);
+            let swatches: Vec<Drawn> = drawn(svg).into_iter().filter(|m| m.w() == LEGEND_SWATCH && m.h() == LEGEND_SWATCH).collect();
+            let last = text_abs_xs(svg).into_iter().zip(svg.split("<text ").skip(1)).filter(|(_, t)| t.contains(">Series number 5<")).map(|(x, _)| x).next().expect("the last legend label");
+            (shift + swatches[0].x1, last + test_fonts().measure_shaped("Series number 5", TEST_FONT, 11.0).unwrap())
+        }
+
+        #[test]
+        fn a_start_aligned_top_legend_stays_on_the_card_plot_beside_capped_columns() {
+            let svg = svg_of(six_series_columns("start", false, true));
+            let (left, right) = legend_edges(&svg);
+            let (uncapped_left, _) = legend_edges(&svg_of(six_series_columns("start", false, false)));
+            assert!((left - uncapped_left).abs() < EPS, "legend at {left}, where the card's own plot puts it: {uncapped_left}");
+            assert!(right <= 800.0 - 16.0, "the legend ends at {right}, past the card's padding");
+        }
+
+        #[test]
+        fn an_overlaid_center_legend_centers_on_the_card_plot_of_capped_columns() {
+            let svg = svg_of(six_series_columns("center", true, true));
+            let shift = body_shift(&svg);
+            let natural_left = plot_origin(&svg).0 - shift;
+            let natural_w = plot_extent(&svg, false) + 2.0 * shift;
+            let (left, right) = legend_edges(&svg);
+            assert!(((left + right) / 2.0 - (natural_left + natural_w / 2.0)).abs() < 2.0, "legend {left}..{right} on a card plot {natural_left} wide {natural_w}");
+        }
+
+        #[test]
+        fn an_endpoint_label_rail_stays_inside_the_canvas_of_capped_columns() {
+            let payload = capped(make_rail_payload());
+            let width = payload["width"].as_f64().unwrap();
+            let svg = svg_of(payload);
+            assert_eq!(number_after(&svg, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\""), width);
+            let shift = body_shift(&svg);
+            assert!(shift > 0.0, "the columns were capped");
+            for x in text_abs_xs(&svg) {
+                assert!(x <= width, "a label at {x} is past the canvas {width}");
+            }
+        }
+
+        #[test]
+        fn a_capped_horizontal_chart_with_a_support_table_block_keeps_its_card_height() {
+            let mut payload = horizontal();
+            payload["resolved"]["support_table"] = serde_json::json!({"entries": [{"source": "revenue", "format": {"spec": ",d", "raw": "d"}, "label": "Revenue"}]});
+            let mut style = support_table_style_json();
+            style["position"] = serde_json::json!("right");
+            payload["resolved"]["effective_support_table_style"] = style;
+            let height = |svg: &str| number_after(svg, " height=\"");
+            assert_eq!(height(&svg_of(capped(payload.clone()))), height(&svg_of(payload)));
+        }
+
+        #[test]
+        fn a_title_wider_than_the_capped_plot_does_not_collapse_it() {
+            let mut payload = column_chart(0.8);
+            payload["resolved"]["title"] = serde_json::json!("A title that is far wider than two capped columns can ever be");
+            let svg = svg_of(capped(payload));
+            let cap = COLUMN_SHARE * plot_height(&svg);
+            let bars = bars_of(&svg, "#3164a3");
+            assert!(bars.iter().all(|b| (b.w() - cap).abs() < SNAP), "{cap}: {:?}", bars.iter().map(Drawn::w).collect::<Vec<_>>());
+        }
+
+        #[test]
+        fn grouped_columns_under_a_strip_wrap_against_the_true_pitch() {
+            let name = "Enterprise subscriptions services";
+            let mut payload = make_vertical_payload(&[(name, 1000.0), ("b", 1500.0)], true);
+            payload["resolved"]["style"]["mark"]["band_width"] = serde_json::json!(0.8);
+            payload["resolved"]["style"]["overlap"] = serde_json::json!("flush");
+            payload["resolved"]["support_table"] = serde_json::json!({
+                "entries": [{"source": "revenue", "aggregate": "sum", "format": {"spec": ",d", "raw": "d"}, "label": "Revenue"}]
+            });
+            payload["resolved"]["effective_support_table_style"] = support_table_style_json();
+            let svg = svg_of(capped(payload));
+            let axis = svg.split("data-dct-role=\"x-axis\"").nth(1).expect("an x axis");
+            assert!(axis.contains(&format!(">{name}<")), "a strip adds a sub-band, so the pitch fits the name on one line: {axis}");
         }
     }
 }

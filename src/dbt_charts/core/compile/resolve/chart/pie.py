@@ -44,6 +44,8 @@ from dbt_charts.core.compile.resolve.chart._conditional import (
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
+    ResolvedLegendFacts,
+    ResolvedPositionFacts,
     _base_kwargs,
     _bound_scales,
     _shared_kwargs,
@@ -58,6 +60,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _with_color_tokens,
 )
 from dbt_charts.core.compile.resolve.chart._pattern import (
+    identity_series,
     inked_palette,
     pattern_series,
     resolve_pattern,
@@ -172,6 +175,7 @@ def _resolve_pie(
             rhythm_slot=normalized.rhythm_slot,
         ),
         primary,
+        identity_series(authored_color, None, None),
     )
     eff_palette = inked_palette(_effective_palette(chart_style_context, pie), pattern)
     if not eff_palette:
@@ -219,9 +223,11 @@ def _resolve_pie(
     dark_stops: tuple[str, ...]
     canvas = chart_local_style_context.ink_canvas
     if color_channel is not None and color_channel.data_field:
-        dark_stops = tuple(mark_ink(c, canvas) for c in eff_palette)
+        dark_stops = tuple(
+            mark_ink(c, canvas, chart_local_style_context.ink) for c in eff_palette
+        )
     else:
-        dark_stops = (mark_ink(eff_palette[0], canvas),)
+        dark_stops = (mark_ink(eff_palette[0], canvas, chart_local_style_context.ink),)
 
     # template/where live under style.marks.slice.labels (mirrors the authored
     # surface); the default_template fallback fires when template is None
@@ -469,8 +475,13 @@ def _resolve_pie(
     # A pie draws no legend; the resolved one carries where its table sits.
     placed = decide_legend_position(authored_position, top_strip=False, radial=True)
     base_kwargs["legend"] = merge_unset(
-        base_kwargs["legend"],
-        LegendStylePatch.model_validate({"position": placed.model_dump()}),
+        merge_unset(
+            base_kwargs["legend"],
+            LegendStylePatch.model_validate(
+                {"position": placed.model_dump(exclude={"corners"})}
+            ),
+        ),
+        ResolvedLegendFacts(position=ResolvedPositionFacts(corners=placed.corners)),
     )
     return ResolvedPieChart(
         pattern=pattern,

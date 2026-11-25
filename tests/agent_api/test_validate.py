@@ -1730,3 +1730,35 @@ class TestBadSourceConfigReportedOnce:
 
         assert len(findings) == len(set(findings))
         assert ("dbt_charts.yml", "ERR-SOURCE-CONFIG-INVALID") in findings
+
+
+class TestValidateRefusesAColumnFormatOfAnotherKindThanItsType:
+    def test_validate_names_the_column_and_both_keys(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate
+
+        board = _write_board(
+            tmp_path,
+            """
+queries:
+  revenue:
+    sql: SELECT month, SUM(revenue) AS revenue FROM orders GROUP BY 1
+    source: analytics
+charts:
+  t:
+    query: revenue
+    type: table
+    style:
+      columns:
+        revenue:
+          type: text
+          format: currency
+rows:
+  - t
+""",
+        )
+        result = validate(board, project=local_project(tmp_path))
+
+        assert result.success is False
+        assert "'type: text' takes a text 'format'" in str(result.errors)

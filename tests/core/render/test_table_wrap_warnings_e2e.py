@@ -89,12 +89,12 @@ def test_a_wrap_two_header_needing_three_lines_is_extra_wrap_not_truncation() ->
     )
 
 
-def test_a_wrap_mode_header_that_draws_every_line_warns_too() -> None:
+def test_an_all_lines_header_that_draws_every_line_warns_too() -> None:
     columns = (
         "      columns:\n"
         "        product_line:\n"
         "          width: 60\n"
-        "          header_overflow: wrap\n"
+        "          header_max_lines: all\n"
         "          label: Quarterly recurring revenue per product line\n"
     )
     assert _codes(_board([_TEN_COLUMNS] * 2, columns)) == [
@@ -104,7 +104,9 @@ def test_a_wrap_mode_header_that_draws_every_line_warns_too() -> None:
 
 def test_wrapped_text_taller_than_its_column_is_wide_names_the_column() -> None:
     rows = [{"ticket": f"T-{i:03d}", "notes": _PARAGRAPH} for i in range(4)]
-    columns = "      columns:\n        notes:\n          width: 90\n"
+    columns = (
+        "      max_lines: all\n      columns:\n        notes:\n          width: 90\n"
+    )
     (warning,) = _table_warnings(_board(rows, columns))
     assert warning.code == "WARN-TABLE-CONTENT-TALLER-THAN-WIDE"
     assert warning.path == "charts.t.style.columns.notes"
@@ -112,6 +114,20 @@ def test_wrapped_text_taller_than_its_column_is_wide_names_the_column() -> None:
     assert "90px" in warning.message
     assert "Customer reported" not in warning.message
     assert "sync failures" not in (warning.fix or "")
+
+
+def test_an_authored_line_count_that_cuts_a_cell_is_a_truncation_not_a_tower() -> None:
+    rows = [{"ticket": f"T-{i:03d}", "notes": _PARAGRAPH} for i in range(4)]
+    columns = (
+        "      max_lines: 3\n      columns:\n        notes:\n          width: 90\n"
+    )
+    assert _codes(_board(rows, columns)) == ["WARN-TABLE-TEXT-TRUNCATED"]
+
+
+def test_a_trim_outliers_cut_is_the_designed_look_and_raises_no_warning() -> None:
+    rows = [{"ticket": f"T-{i:03d}", "notes": _PARAGRAPH} for i in range(4)]
+    columns = "      columns:\n        notes:\n          width: 90\n"
+    assert _codes(_board(rows, columns)) == []
 
 
 def test_short_text_in_a_thin_column_is_not_a_tower() -> None:

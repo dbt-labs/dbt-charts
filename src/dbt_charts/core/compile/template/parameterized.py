@@ -719,7 +719,7 @@ def make_filter_helper(emit: Emitter, dialect: SQLDialect) -> Callable[..., str]
         value: Any,
         operator: str = "=",
         *,
-        none: str = "allow",
+        unset: str = "allow",
     ) -> str:
         """Filter clause `{{ filter('col', var) }}`; when the variable is All or unset it is no constraint, so never wrap it in `{% if %}`. A date value compares the column by its calendar date, so pass a timestamp column bare (no DATE() or wrapping subquery).
 
@@ -727,26 +727,26 @@ def make_filter_helper(emit: Emitter, dialect: SQLDialect) -> Callable[..., str]
             column: Column name (must be valid SQL identifier, not user input)
             value: Filter value (will be parameterized)
             operator: SQL operator (validated against allowlist)
-            none: Fallback when value is null/empty/_NullValue. 'allow' (default)
+            unset: Fallback when value is null/empty/_NullValue. 'allow' (default)
                 returns '1=1' (no constraint, show all rows). 'deny' returns
                 '1=0' (zero rows).
 
         Returns:
             SQL clause with parameter placeholder, '1=1' (allow all) on missing
-            value, or '1=0' (deny all) on missing value when none='deny'.
+            value, or '1=0' (deny all) on missing value when unset='deny'.
 
         Raises:
-            ValueError: If column name, operator, or `none` is invalid.
+            ValueError: If column name, operator, or `unset` is invalid.
         """
-        if none not in ("allow", "deny"):
-            raise ValueError(f"none= must be 'allow' or 'deny', got {none!r}")
+        if unset not in ("allow", "deny"):
+            raise ValueError(f"unset= must be 'allow' or 'deny', got {unset!r}")
 
         # Validate column name to prevent SQL injection
         _validate_identifier(column, "column")
 
-        # Handle None/empty/NullValue - return fallback per `none` kwarg
+        # Handle None/empty/NullValue - return fallback per `unset` kwarg
         if value is None or value == "" or isinstance(value, _NullValue):
-            return "1=0" if none == "deny" else "1=1"
+            return "1=0" if unset == "deny" else "1=1"
 
         # Unwrap if it's already a ParameterizedValue
         actual_value = value._value if isinstance(value, _ParameterizedValue) else value
@@ -771,7 +771,7 @@ def make_filter_helper(emit: Emitter, dialect: SQLDialect) -> Callable[..., str]
                 for item in actual_value
             ]
             if not items:
-                return "1=0" if none == "deny" else "1=1"
+                return "1=0" if unset == "deny" else "1=1"
             if any(item is None or isinstance(item, _NullValue) for item in items):
                 raise ValueError(
                     f"filter(): a list value cannot contain NULL ({items!r}); "

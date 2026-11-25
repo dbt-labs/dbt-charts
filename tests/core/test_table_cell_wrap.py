@@ -121,13 +121,13 @@ class TestCellWrapProducesTspans:
                 f"Short text unexpectedly wrapped across tspans: {g}"
             )
 
-    def test_wrap_produces_more_data_row_tspans_than_wrap_false(self, make_chart):
-        """Controlled comparison: the same long-text data with wrap:true
-        produces strictly more tspans than with wrap:false (which truncates
+    def test_wrap_produces_more_data_row_tspans_than_truncate(self, make_chart):
+        """Controlled comparison: the same long-text data with wrap: all
+        produces strictly more tspans than with truncate (which cuts
         to a single line)."""
         data = [{"description": _LONG_TEXT}]
         chart_wrap = _make_table(make_chart)
-        chart_no_wrap = _make_table(make_chart, style={"table": {"wrap": False}})
+        chart_no_wrap = _make_table(make_chart, style={"table": {"max_lines": 1}})
 
         svg_wrap = _render(chart_wrap, data, 300)
         svg_no_wrap = _render(chart_no_wrap, data, 300)
@@ -135,9 +135,76 @@ class TestCellWrapProducesTspans:
         wrap_count = sum(len(g) for g in _text_group_tspans(svg_wrap))
         no_wrap_count = sum(len(g) for g in _text_group_tspans(svg_no_wrap))
         assert wrap_count > no_wrap_count, (
-            f"wrap:true should emit more tspans than wrap:false "
+            f"wrap: all should emit more tspans than 1 "
             f"(got wrap={wrap_count}, no_wrap={no_wrap_count})"
         )
+
+
+# ---------------------------------------------------------------------------
+# wrap bounds how far a body cell wraps
+# ---------------------------------------------------------------------------
+
+_VERY_LONG_TEXT = " ".join([_LONG_TEXT] * 8)
+
+
+class TestTableWrapBounds:
+    def _render(self, make_chart, style):
+        chart = _make_table(make_chart, style=style)
+        return _render(chart, [{"description": _VERY_LONG_TEXT}], 300)
+
+    def _lines(self, make_chart, style):
+        svg = self._render(make_chart, style)
+        cell = next(
+            g for g in _text_group_tspans(svg) if _LONG_TEXT_WORDS[0] in " ".join(g)
+        )
+        return cell, svg
+
+    def test_default_trims_an_outlier_to_the_lines_the_column_needs(self, make_chart):
+        data = [{"description": _SHORT_TEXT}] * 4 + [{"description": _VERY_LONG_TEXT}]
+        svg = _render(_make_table(make_chart), data, 300)
+        assert not _wrapped_cell_groups(svg)
+        assert _has_ellipsis(svg)
+        assert f'data-dbt-full="{_VERY_LONG_TEXT}"' in svg
+
+    def test_default_cuts_nothing_when_every_cell_is_as_long(self, make_chart):
+        lines, svg = self._lines(make_chart, None)
+        assert len(lines) > 3
+        assert "data-dbt-full" not in svg
+
+    def test_p100_keeps_the_longest_cell_whole(self, make_chart):
+        data = [{"description": _SHORT_TEXT}] * 4 + [{"description": _VERY_LONG_TEXT}]
+        chart = _make_table(make_chart, style={"table": {"max_lines": "p100"}})
+        svg = _render(chart, data, 300)
+        assert "data-dbt-full" not in svg
+        assert _wrapped_cell_groups(svg)
+
+    def test_all_draws_every_line(self, make_chart):
+        lines, svg = self._lines(make_chart, {"table": {"max_lines": "all"}})
+        assert len(lines) > 3
+        assert "data-dbt-full" not in svg
+
+    def test_a_line_count_is_the_limit(self, make_chart):
+        lines, svg = self._lines(make_chart, {"table": {"max_lines": 2}})
+        assert len(lines) == 2
+        assert lines[-1].endswith("…")
+
+    def test_square_lets_a_wide_column_pass_three_lines(self, make_chart):
+        lines, svg = self._lines(make_chart, {"table": {"max_lines": "square"}})
+        assert len(lines) > 3
+
+    def test_one_is_one_line(self, make_chart):
+        svg = self._render(
+            make_chart,
+            {
+                "table": {
+                    "max_lines": 1,
+                    "column_layout": {"overflow": "fit"},
+                }
+            },
+        )
+        assert not _wrapped_cell_groups(svg)
+        assert _has_ellipsis(svg)
+        assert f'data-dbt-full="{_VERY_LONG_TEXT}"' in svg
 
 
 # ---------------------------------------------------------------------------
@@ -393,42 +460,45 @@ class TestPaginatedAndHeightConstrained:
 
 
 # ---------------------------------------------------------------------------
-# wrap: false preserves truncation
+# wrap: 1 keeps one line
 # ---------------------------------------------------------------------------
 
 
-class TestWrapFalsePreservesTruncation:
-    """When wrap is disabled (style.table.wrap: false), truncation is used instead."""
+class TestTruncateKeepsOneLine:
+    """`style.table.max_lines: 1` cuts a long cell to one line."""
 
-    def test_wrap_false_emits_ellipsis(self, make_chart):
+    def test_truncate_emits_ellipsis(self, make_chart):
         # `fit`: a slot-squeezed single line truncates; `scroll` would widen it.
         chart = _make_table(
             make_chart,
-            style={"table": {"wrap": False, "column_layout": {"overflow": "fit"}}},
+            style={
+                "table": {
+                    "max_lines": 1,
+                    "column_layout": {"overflow": "fit"},
+                }
+            },
         )
         svg = _render(chart, [{"description": _LONG_TEXT}], 300)
-        assert _has_ellipsis(svg), "wrap:false must truncate long text with ellipsis"
+        assert _has_ellipsis(svg), "truncate must cut long text with an ellipsis"
 
-    def test_wrap_true_does_not_emit_ellipsis_for_wrappable_text(self, make_chart):
+    def test_wrap_three_does_not_cut_text_that_fits_in_three_lines(self, make_chart):
         chart = _make_table(make_chart)
         svg = _render(chart, [{"description": _LONG_TEXT}], 400)
         assert not _has_ellipsis(svg), (
-            "wrap:true must not truncate — the whole value should wrap across lines"
+            "a value that fits in three lines must wrap whole, not be cut"
         )
 
-    def test_wrap_false_strictly_shorter_than_wrap_true_for_wrappable_text(
-        self, make_chart
-    ):
+    def test_truncate_strictly_shorter_than_wrap_for_wrappable_text(self, make_chart):
         data = [{"description": _LONG_TEXT}]
         chart_wrap = _make_table(make_chart)
-        chart_no_wrap = _make_table(make_chart, style={"table": {"wrap": False}})
+        chart_no_wrap = _make_table(make_chart, style={"table": {"max_lines": 1}})
 
         svg_wrap = _render(chart_wrap, data, 300)
         svg_no_wrap = _render(chart_no_wrap, data, 300)
 
         assert _table_height(svg_no_wrap) < _table_height(svg_wrap), (
-            f"wrap:false should not grow the row; "
-            f"wrap:false={_table_height(svg_no_wrap)}, wrap:true={_table_height(svg_wrap)}"
+            f"truncate should not grow the row; "
+            f"one line={_table_height(svg_no_wrap)}, default={_table_height(svg_wrap)}"
         )
 
 

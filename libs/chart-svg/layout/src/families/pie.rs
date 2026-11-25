@@ -24,7 +24,7 @@
 use board_model::primitives::LinkOpen;
 use bind::bound::{Href, Listed, Pie, PieKeyEdge, PieLabeled, PieTable, Table, TableCell, TableColumn};
 use board_model::style::legend::LegendAlign;
-use board_model::style::board::{EmojiMode, OverflowMode};
+use board_model::style::board::EmojiMode;
 use board_model::style::pie::PieChartStyle;
 use board_model::style::style::Style;
 use board_model::style::table::TableChartStyle;
@@ -82,7 +82,6 @@ enum Refused {
     NoRoom,
     WideTotal,
     Weight,
-    TitleClip,
 }
 
 impl Refused {
@@ -94,7 +93,6 @@ impl Refused {
             Refused::NoRoom => "drawn in a box its labels leave no room in",
             Refused::WideTotal => "whose total is wider than its hole",
             Refused::Weight => "whose font weight names no axis value",
-            Refused::TitleClip => "whose title `overflow: clip` cuts it",
         };
         Diagnostic::refused(refuse!("a pie {what} is not supported"))
     }
@@ -404,13 +402,6 @@ struct Framed {
 fn framed(card: &PieCard, book: &FontBook, tier: f64, width: f64, pad: (f64, f64, f64, f64)) -> Result<Framed, Diagnostic> {
     // The title takes the top of the card's padding box, in the mode guard's solve as in the drawn one.
     let title = chart_title(card.chart_id, card.pie.title.as_deref().unwrap_or_default(), card.pie.subtitle.as_deref(), card.placed, tier, width - pad.0 - pad.1, book)?;
-    // Production clips by its own estimate, not by the painted face: a title `clip` cuts is refused
-    // until the clip law is ported.
-    let clipped = card.placed.charts.title.base.overflow == OverflowMode::Clip
-        && title.as_ref().is_some_and(|t| t.diagnostics.iter().any(|d| d.code == diagnostic::codes::WARN_CHART_TITLE_TRUNCATED.id && d.params.get("authored_field").and_then(|f| f.as_str()) == Some("title")));
-    if clipped {
-        return Err(Refused::TitleClip.refusal());
-    }
     let title_h = title.as_ref().map_or(0.0, |t| t.band.height());
     Ok(Framed { title, title_at: (pad.0, pad.2), pad: (pad.0, pad.1, pad.2 + title_h, pad.3) })
 }

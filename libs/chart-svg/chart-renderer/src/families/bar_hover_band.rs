@@ -23,9 +23,13 @@ enum Gate {
     Each,
     /// A stacked bar: the one carrier row of each near-zero total extends.
     Carriers(HashMap<String, String>),
+    /// Names above their bars: one target per category, as wide as the plot and `row` tall,
+    /// ending at the foot of its bar. Painted under the bars, so a bar always wins its own area.
+    Rows { row: f64 },
 }
 
 struct Row {
+    cat: String,
     aria: Option<String>,
     href: Option<String>,
     start: f64,
@@ -83,6 +87,16 @@ impl HoverBand {
         (!carriers.is_empty()).then(|| HoverBand { gate: Gate::Carriers(carriers), rows: Vec::new() })
     }
 
+    /// The layer of a chart whose names sit above their bars: every category's row is a target,
+    /// so no pointer position between a name and its bar, or between two rows, leaves the hover.
+    pub(crate) fn rows(row: f64) -> Self {
+        HoverBand { gate: Gate::Rows { row }, rows: Vec::new() }
+    }
+
+    pub(crate) fn under_bars(&self) -> bool {
+        matches!(self.gate, Gate::Rows { .. })
+    }
+
     /// Record one painted datum: its tooltip label, its cross-axis start and
     /// size, and its measure value (`None` when null).
     pub(crate) fn push(
@@ -96,10 +110,13 @@ impl HoverBand {
         value: Option<f64>,
     ) {
         let carrier = match &self.gate {
-            Gate::Each => false,
+            Gate::Each | Gate::Rows { .. } => false,
             Gate::Carriers(carriers) => carriers.get(cat).is_some_and(|s| s == series),
         };
-        self.rows.push(Row { aria: aria.map(str::to_owned), href: href.map(str::to_owned), start, size, value, carrier });
+        if matches!(self.gate, Gate::Rows { .. }) && self.rows.iter().any(|row| row.cat == cat) {
+            return;
+        }
+        self.rows.push(Row { cat: cat.to_owned(), aria: aria.map(str::to_owned), href: href.map(str::to_owned), start, size, value, carrier });
     }
 
     /// The layer. `vertical` bars grow up from the baseline; `extent` is
@@ -114,13 +131,18 @@ impl HoverBand {
                 (Gate::Each, Some(v)) => (scale.scale(v) - baseline).abs() < trigger,
                 (Gate::Each, None) => false,
                 (Gate::Carriers(_), _) => row.carrier,
+                (Gate::Rows { .. }, _) => false,
             };
             let sign = if row.value.is_some_and(|v| v < 0.0) { -1.0 } else { 1.0 };
             // Up (vertical) and right (horizontal) are the positive directions.
             let reach = if !grows { 0.0 } else if vertical { -sign * band } else { sign * band };
             let (lo, len) = (baseline.min(baseline + reach), reach.abs());
             let label = aria_attrs(row.aria.as_deref(), ItemRole::Bar)?;
-            let (x, y, w, h) = if vertical { (row.start, lo, row.size, len) } else { (lo, row.start, len, row.size) };
+            let (x, y, w, h) = match self.gate {
+                Gate::Rows { row: height } => (0.0, row.start + row.size - height, extent, height),
+                _ if vertical => (row.start, lo, row.size, len),
+                _ => (lo, row.start, len, row.size),
+            };
             let d = PathData::new().move_to(x, y).line_to(x + w, y).line_to(x + w, y + h).line_to(x, y + h).close();
             let anchor = link_open.anchor(row.href.as_deref());
             let path = Node::path(Role::Chrome, d, Attrs::new().set("fill", FILL).num("opacity", 0.0).extend(label));

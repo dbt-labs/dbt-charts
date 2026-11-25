@@ -1,5 +1,0 @@
-kind: Fixes
-body: A query that filters on a board variable keeps its dbt column check, so a misspelled model column still fails validation.
-time: 2026-11-23T19:41:59.040204603Z
-custom:
-    DbtChartsIssue: "137"

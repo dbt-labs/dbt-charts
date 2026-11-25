@@ -169,9 +169,9 @@ pub fn color_at(scale: &CategoryColorScale, value: &str, palette: &[String]) -> 
 
 /// The ink a label on `value`'s fill takes (`category_ink`): a pinned literal's own ink against
 /// `canvas` (`_pin_companions`), else the companion of its palette slot in `companions`.
-pub fn ink_at(scale: &CategoryColorScale, value: &str, companions: &[String], canvas: &str) -> Result<String, String> {
+pub fn ink_at(scale: &CategoryColorScale, value: &str, companions: &[String], canvas: &str, ink: Option<&str>) -> Result<String, String> {
     match scale.overrides.get(value) {
-        Some(pinned) => color::mark_ink(pinned, canvas).map_err(|e| e.to_string()),
+        Some(pinned) => color::mark_ink(pinned, canvas, ink).map_err(|e| e.to_string()),
         None => Ok(companions[slot_for(scale, value, companions.len())?].clone()),
     }
 }

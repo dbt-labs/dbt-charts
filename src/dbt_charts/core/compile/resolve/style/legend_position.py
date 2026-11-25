@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.style.resolved import (
+    ResolvedLegendCorner,
     ResolvedLegendPosition,
 )
 from dbt_charts.core.compile.models.style.theme import (
@@ -33,6 +34,8 @@ from dbt_charts.core.compile.models.style.theme import (
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_LEGEND_POSITION_UNSUPPORTED
+
+OVERLAID_LEGEND_PADDING = 5.0
 
 _Patch = TypeVar("_Patch", bound=BaseModel)
 
@@ -83,7 +86,8 @@ def _without(model: _Patch, dropped: set[str]) -> _Patch:
 
 
 def _element_without(
-    element: LegendLabelStyle | LegendTitleStyle | None, dropped: set[str]
+    element: LegendLabelStyle | LegendTitleStyle | None,
+    dropped: set[str],
 ) -> LegendLabelStyle | LegendTitleStyle | None:
     """A legend label or title patch minus *dropped* leaves and the font's
     ``extends``, which the resolved font has no field for. ``None`` if nothing
@@ -105,13 +109,16 @@ def _element_without(
 
 def without_engine_decided(patch: _Patch | None) -> _Patch | None:
     """*patch* minus the leaves the engine decides per chart: ``position``,
-    ``direction`` and ``title.visible``. They may read ``auto``,
+    ``direction``, ``padding`` and ``title.visible``. They may read ``auto``,
     which the baked ``ResolvedLegendStyle`` cannot hold."""
     if patch is None:
         return None
-    fields = patch.model_fields_set - {"position", "direction"}
+    fields = patch.model_fields_set - {"position", "direction", "padding"}
     values = {field: getattr(patch, field) for field in fields}
-    for name, dropped in (("title", {"visible"}), ("label", set())):
+    for name, dropped in (
+        ("title", {"visible"}),
+        ("label", set()),
+    ):
         if name not in values:
             continue
         element = _element_without(values[name], dropped)
@@ -166,7 +173,19 @@ def decide_legend_position(
         edge = "top"
     else:
         edge = "right"
-    return ResolvedLegendPosition(edge=edge, align=align, overlay=overlay)
+    if overlay and edge in ("top", "bottom"):
+        edges: list[LegendEdge] = (
+            [edge] if top_strip or authored_edge is not None else ["top", "bottom"]
+        )
+        aligns: list[LegendAlign] = (
+            [align] if authored_align is not None else ["start", "end"]
+        )
+        corners = [ResolvedLegendCorner(edge=e, align=a) for e in edges for a in aligns]
+    else:
+        corners = [ResolvedLegendCorner(edge=edge, align=align)]
+    return ResolvedLegendPosition(
+        edge=edge, align=align, overlay=overlay, corners=corners
+    )
 
 
 def decide_legend_direction(
@@ -176,6 +195,13 @@ def decide_legend_direction(
     if authored is not None:
         return authored
     return "horizontal" if edge in ("top", "bottom") else "vertical"
+
+
+def decide_legend_padding(authored: float | None, *, overlay: bool) -> float:
+    """The authored padding, else 5 px while the legend floats over the plot, 0 beside it."""
+    if authored is not None:
+        return authored
+    return OVERLAID_LEGEND_PADDING if overlay else 0.0
 
 
 def validate_cartesian_position(

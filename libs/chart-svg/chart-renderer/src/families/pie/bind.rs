@@ -103,7 +103,7 @@ pub fn bind(payload: &Payload, mode: Mode) -> Result<Bound<'_>, Diagnostic> {
         Mode::FullTable => Some(r.full_attachment.as_ref().ok_or("pie: the full-table mode has no attachment")?),
     };
     let attached = chosen.map(|a| bind_attached(payload, &r, a, &thetas, total)).transpose()?;
-    let wheel = bind_wheel(&r, &payload.rows, &payload.schema.rows, &thetas, total, mode.parts())?;
+    let wheel = bind_wheel(&r, &payload.rows, &payload.schema.rows, &thetas, total, mode.parts(), payload.board_style.as_ref().and_then(|b| b.ink.as_deref()))?;
     let faded = payload.is_placeholder && attached.is_none();
     Ok(Bound { payload, r, thetas, total, wheel, attached, faded })
 }
@@ -124,6 +124,7 @@ fn bind_wheel(
     thetas: &[f64],
     total: f64,
     parts: Parts,
+    board_ink: Option<&str>,
 ) -> Result<Wheel, String> {
     // Without a color channel every wedge paints the one resolved `single_series_fill`:
     // palette-by-index is the color scale's range, so it needs the scale to exist.
@@ -135,7 +136,7 @@ fn bind_wheel(
         .map(|idx| MarkPatch::of(r.style.conditional.as_ref(), &rows[idx], MarkKind::Slice).map_err(|e| format!("pie: {e}")))
         .collect::<Result<Vec<_>, String>>()?;
     let labels = if parts.labels {
-        bind_labels(r, rows, thetas, total, color_field, category_scale, &patches)?
+        bind_labels(r, rows, thetas, total, color_field, category_scale, &patches, board_ink)?
     } else {
         Vec::new()
     };
@@ -275,6 +276,7 @@ fn bind_labels(
     color_field: Option<&str>,
     category_scale: Option<&CategoryColorScale>,
     patches: &[MarkPatch],
+    board_ink: Option<&str>,
 ) -> Result<Vec<SliceLabel>, String> {
     let Some(labels) = r.style.slice_mark.labels.as_ref() else { return Ok(Vec::new()) };
     let template = Template::parse(&labels.template)?;
@@ -320,7 +322,7 @@ fn bind_labels(
         let patch = &patches[idx];
         let fill = match (&patch.font_color, &patch.fill) {
             (Some(ink), _) => ink.clone(),
-            (None, Some(paint)) => dbt_charts_color::label_ink(paint, &r.canvas)?,
+            (None, Some(paint)) => dbt_charts_color::label_ink(paint, &r.canvas, board_ink)?,
             (None, None) => fill,
         };
         out.push(SliceLabel { idx, lines, fill, weight: patch.font_weight.clone() });

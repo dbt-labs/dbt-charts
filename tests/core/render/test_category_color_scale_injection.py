@@ -685,7 +685,13 @@ rows:
         self._assert_pinned(self._board("bar", horizontal))
 
     def test_a_line_paints_its_pinned_years(self) -> None:
-        self._assert_pinned(self._board("line"))
+        # Named in the plot, points mark only labeled ends: the stroke carries the pin.
+        svg = render_board_to_svg(self._board("line"))
+        for year, color in (("2020", "#abcdef"), ("2021", "#123456")):
+            strokes = re.findall(
+                rf'<path [^>]*stroke="([^"]+)"[^>]*data-dbt-series="{year}"', svg
+            )
+            assert strokes and set(strokes) == {color}, (year, strokes)
 
     def test_a_scatter_paints_its_pinned_years(self) -> None:
         self._assert_pinned(self._board("scatter"))

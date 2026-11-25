@@ -1,3 +1,0 @@
-kind: Fixes
-body: A text table column whose cells look like numbers no longer fails to render or prints as a number.
-time: 2026-11-23T19:42:04.098747977Z

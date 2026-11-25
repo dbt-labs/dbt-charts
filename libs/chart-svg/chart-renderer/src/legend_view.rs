@@ -538,8 +538,8 @@ pub(crate) fn legend_clear(
     // A stack of numeric legends along x starts just past the base legend's box.
     let numeric_beside = legend.stack.as_ref().is_some_and(|stack| stack.offsets.len() > usize::from(stack.base_block));
     if cfg.direction != "vertical" && !numeric_beside {
-        let row_top = oy + legend.title_band + last_row + (legend.grid.size - ink_size) / 2.0;
-        spots.push((ox + legend.grid.width + 2.0 * CLEAR_GAP, row_top));
+        let row_top = oy + legend.pad + legend.title_band + last_row + (legend.grid.size - ink_size) / 2.0;
+        spots.push((ox + 2.0 * legend.pad + legend.grid.width + 2.0 * CLEAR_GAP, row_top));
     }
     spots.push((ox, oy + legend.box_h() + CLEAR_GAP));
     spots.push((ox, oy - CLEAR_GAP - ink_size));
@@ -666,13 +666,17 @@ mod tests {
     }
 
     /// A horizontal legend of one chart's series, holding a view that hides all but `EMEA`, with
-    /// numeric legends stacked beside it when `stacked`.
-    fn horizontal_legend_clear(stacked: bool) -> (Node, VegaLegend) {
+    /// numeric legends stacked beside it when `stacked`, and a box of `box_padding` around it when set.
+    fn horizontal_legend_clear(stacked: bool, box_padding: Option<f64>) -> (Node, VegaLegend) {
         let payload: Payload = {
             let mut json: Value = serde_json::from_str(include_str!("../../fixtures/line_multi.json")).unwrap();
             json["board_style"]["hover_emphasis"] = serde_json::json!({"visible": true, "recede_contrast": 1.5});
             json["variables"] = serde_json::json!({"_dct_legend_line_multi": "EMEA"});
             json["resolved"]["legend"]["direction"] = serde_json::json!("horizontal");
+            if let Some(padding) = box_padding {
+                json["resolved"]["legend"]["background"] = serde_json::json!("#ffd966");
+                json["resolved"]["legend"]["padding"] = serde_json::json!(padding);
+            }
             serde_json::from_value(json).unwrap()
         };
         let facts = ViewFacts { family: Family::Line, color: Some("region"), panel_fields: vec![], wide: false, normalized: false, layered: false, continuous_color: false };
@@ -700,9 +704,23 @@ mod tests {
             Shape::Text { at, .. } => at.0,
             _ => unreachable!("the control is text"),
         };
-        let (alone, legend) = horizontal_legend_clear(false);
+        let (alone, legend) = horizontal_legend_clear(false, None);
         assert!(x(&alone) >= 20.0 + legend.grid.width, "after the entries: {}", x(&alone));
-        let (stacked, _) = horizontal_legend_clear(true);
+        let (stacked, _) = horizontal_legend_clear(true, None);
         assert_eq!(x(&stacked), 20.0, "below the stacked legends, not over them");
+    }
+
+    /// A boxed legend's entries sit its padding inside the box, and the control keeps to their row and
+    /// stays past the box's right edge.
+    #[test]
+    fn clear_keeps_to_the_entry_row_of_a_boxed_legend() {
+        let at = |node: &Node| match node.shape {
+            Shape::Text { at, .. } => at,
+            _ => unreachable!("the control is text"),
+        };
+        let (plain, _) = horizontal_legend_clear(false, None);
+        let (boxed, legend) = horizontal_legend_clear(false, Some(7.0));
+        assert_eq!(at(&boxed).1 - at(&plain).1, 7.0, "one padding down, on the entry row");
+        assert!(at(&boxed).0 >= 20.0 + legend.block.0, "past the box: {}", at(&boxed).0);
     }
 }

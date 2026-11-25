@@ -114,7 +114,12 @@ fn layers(chart: &ChartAuthored) -> Vec<StylePatch> {
             Layer::Bar(l) => charts.bar.marks = marks(&l.style, |s| s.marks.clone()),
             Layer::Line(l) => charts.line.marks = marks(&l.style, |s| s.marks.clone()),
             Layer::Area(l) => charts.area.marks = marks(&l.style, |s| s.marks.clone()),
-            Layer::Scatter(l) => charts.scatter.marks = marks(&l.style, |s| s.marks.clone()),
+            Layer::Scatter(l) => {
+                if let Some(s) = style(&l.style) {
+                    charts.scatter.marks.point.point = s.marks.point.clone();
+                    charts.scatter.marks.text = s.marks.text.clone();
+                }
+            }
         }
         out.push(StylePatch {
             charts: Box::new(charts),

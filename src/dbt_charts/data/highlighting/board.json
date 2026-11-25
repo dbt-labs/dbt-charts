@@ -61,7 +61,6 @@
       "multiselect",
       "number",
       "radio",
-      "range",
       "select",
       "slider",
       "text",

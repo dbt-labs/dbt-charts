@@ -58,7 +58,9 @@ from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisStyle,
     ResolvedAxisTicksStyle,
     ResolvedChartDefaults,
+    ResolvedLegendCorner,
     ResolvedLegendElementStyle,
+    ResolvedLegendLabelStyle,
     ResolvedLegendPosition,
     ResolvedLegendStyle,
     ResolvedMirrorAxis,
@@ -73,6 +75,10 @@ from dbt_charts.core.compile.models.style.resolved._base import (
     _VLConfig,
     effective_padding,
 )
+from dbt_charts.core.compile.models.style.resolved._cartesian import (
+    ResolvedAreaOverlayAttempt,
+    ResolvedLineOverlayAttempt,
+)
 from dbt_charts.core.compile.models.style.resolved._marks import (
     ResolvedAreaLineStyle,
     ResolvedAreaMarkStyle,
@@ -83,6 +89,7 @@ from dbt_charts.core.compile.models.style.resolved._marks import (
     ResolvedMarkLabels,
     ResolvedPointLabels,
     ResolvedPointMarkStyle,
+    ResolvedRingedPointMarkStyle,
     ResolvedSeriesLabelStyle,
     ResolvedStrokeStyle,
 )
@@ -138,6 +145,8 @@ __all__ = [
     "ResolvedErrorTileStyle",
     "ResolvedChartDefaults",
     "ResolvedLegendElementStyle",
+    "ResolvedLegendLabelStyle",
+    "ResolvedLegendCorner",
     "ResolvedLegendPosition",
     "ResolvedLegendStyle",
     "ResolvedMirrorAxis",
@@ -161,7 +170,10 @@ __all__ = [
     "ResolvedMarkLabels",
     "ResolvedPointLabels",
     "ResolvedPointMarkStyle",
+    "ResolvedRingedPointMarkStyle",
     "ResolvedLineMarkStyle",
+    "ResolvedAreaOverlayAttempt",
+    "ResolvedLineOverlayAttempt",
     "ResolvedSeriesLabelStyle",
     "ResolvedStrokeStyle",
     # per-family slices

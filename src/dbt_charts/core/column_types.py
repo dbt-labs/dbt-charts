@@ -233,11 +233,16 @@ def as_declared(
     declared: ColumnType,
 ) -> Any:  # type-state: explicit_any — one cell value
     """*cell* as its column's declaration says, at any depth (see
-    :func:`declared_literal_cells`)."""
+    :func:`declared_literal_cells`). A date or datetime literal that crossed
+    the query plan's JSON arrives as its ISO text, read back here."""
     if cell is None:
         return None
     if declared.kind == "float":
         return float(cell) if type(cell) is int else cell
+    if declared.kind == "date" and isinstance(cell, str):
+        return date.fromisoformat(cell)
+    if declared.kind in ("datetime", "datetime_tz") and isinstance(cell, str):
+        cell = datetime.fromisoformat(cell)
     if declared.kind == "datetime_tz":
         return cell.astimezone(UTC)
     if declared.element is not None:

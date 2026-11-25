@@ -179,6 +179,7 @@ pub mod bind;
 pub mod gaps;
 pub mod layout;
 pub(crate) mod segments;
+pub(crate) mod styles;
 
 // ── Payload structs ──────────────────────────────────────────────────────────
 
@@ -327,6 +328,10 @@ pub(crate) struct LineStyle {
     pub line_mark: LineMark,
     pub series_label: SeriesLabel,
     pub endpoint_labels: EndpointLabels,
+    /// An `auto` chart's style with its names inside the plot: the chart is also bound and laid
+    /// out that way, and drawn so unless a name finds no clear spot.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub overlay: Option<OverlayAttempt>,
     pub single_series_fill: String,
     /// `style.series_order` (`value`/`data`/`alphabetical`) — the stacked
     /// area's baseline-first series rule, `bind::stack::sorted_by_series_order`.
@@ -350,6 +355,11 @@ pub(crate) struct LineStyle {
     /// when the board authors none.
     #[serde(default)]
     pub dashes: Vec<Vec<f64>>,
+    /// The theme's line palette (`palettes.line_category`), baked when the chart draws lines with
+    /// no authored `dashes`: one stroke style per slot, [`styles::assign_slots`] picks a slot per series.
+    /// Optional because an area chart shares this struct and a theme may bind no line palette.
+    #[serde(default)]
+    pub line_styles: Vec<styles::PaletteLineStyle>,
     /// Production's `_house_register_text_encoding` gate, baked per label
     /// slot: `line_`/`point_` on a line chart's two slots, the bare
     /// `label_is_house` on an area's single one.
@@ -579,9 +589,6 @@ pub(crate) struct PointMark {
     pub anchored_only: bool,
     /// The point area the x edge pad clears, drawn or not (resolve's `bake_edge_size`).
     pub edge_size: f64,
-    /// The canvas ring only a point map draws; a line or area refuses it in `from_payload`.
-    #[serde(default)]
-    pub halo: Option<f64>,
 }
 
 /// The halo point layer sets no `strokeWidth` of its own
@@ -751,15 +758,50 @@ pub(crate) struct SeriesLabel {
     pub gap_px: f64,
 }
 
+/// The `axis_y`, `line_mark` and `point_mark` a chart takes with its series named inside the plot.
+#[derive(Deserialize)]
+pub(crate) struct OverlayAttempt {
+    pub axis_y: AxisStyle,
+    pub line_mark: LineMark,
+    pub point_mark: PointMark,
+}
+
+impl LineStyle {
+    /// This style with its series named inside the plot: an `auto` chart's attempt swapped in.
+    pub(crate) fn name_inside(&mut self) {
+        if let Some(attempt) = self.overlay.take() {
+            self.axis_y = attempt.axis_y;
+            self.line_mark = attempt.line_mark;
+            self.point_mark = Some(attempt.point_mark);
+            self.endpoint_labels.visible = false;
+            self.endpoint_labels.overlay = true;
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub(crate) struct EndpointLabels {
     pub visible: bool,
+    /// `key.direct.position: overlay`: each series is named inside the plot beside its own line.
+    pub overlay: bool,
+    /// The series an overlay chart names in a key beside the plot instead, because their band is
+    /// too thin to hold a name: listed here, they are not set in the plot. Set by layout, never authored.
+    #[serde(default)]
+    pub key: Vec<String>,
+    /// `key.direct.overlay_x`: the x each named series prefers its name at, inside the plot.
+    pub overlay_x: Vec<DirectOverlayX>,
     /// hconcat spacing between the main pane and the label pane
     /// (translate.py `_wrap_hconcat_label_pane`: `spacing: label_offset`).
     /// Required on `EndpointLabelsConfig` (extra="forbid", theme-populated),
     /// so a payload without it is malformed — deserialization errors rather
     /// than silently landing the rail at a default offset.
     pub label_offset: f64,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct DirectOverlayX {
+    pub series: String,
+    pub x: crate::annotation::model::Anchor,
 }
 
 #[derive(Deserialize, Default)]
@@ -1319,9 +1361,6 @@ impl LineResolved {
 
     pub(crate) fn from_payload(payload: &Payload) -> Result<Self, String> {
         let mut r: Self = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("line payload: {e}"))?;
-        if r.style.point_mark.as_ref().is_some_and(|point| point.halo.is_some()) {
-            return Err(diagnostic::refuse!("line and area: `marks.point.halo` is not supported"));
-        }
         r.series_palette = payload.series_palette(&r.palette);
         r.patterns = crate::pattern::PatternPlan::from_resolved(&payload.resolved)?;
         r.link_context = payload.link_context.clone();
@@ -1647,34 +1686,36 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
         bound.r.style.axis_y.title.visible = Some(false);
     }
 
+    let fit_panel = |panel_i: usize, panel: &::bind::multiples::Panel, pw: f64, ph: f64, value_axis_right_overhang: f64| -> Result<layout::Fitted, Diagnostic> {
+        let panel_key = serde_json::to_string(&panel.key).expect("a panel key re-serializes");
+        let facet_opts = FacetPanelOpts {
+            panel_key: &panel_key,
+            panel_ordinal: panel_i,
+            suppress_x_axis: true,
+            // Real Vega's shared value axis (`row_footer`) appears once per ROW, at
+            // that row's last column; a multi-column row reserves its gutter once at
+            // the composer (`composite_axis_reserve`), never folded into a panel.
+            paint_value_axis: independent || (missing + panel_i) % panel_cols_n == panel_cols_n - 1,
+            fold_axis_gutter: independent || panel_cols_n == 1,
+            value_axis_right_overhang,
+            mirror_band_x: has_mirror,
+            shared_domain_rows,
+            independent_scale: independent,
+        };
+        // Production's own compile fails on a pinned layer inside small
+        // multiples (vl-convert: unrecognized scale `child_layer_0_y`).
+        if YSides::of(&bound.overlays).is_some() {
+            return Err(diagnostic::refuse!("{fam}: multiples with a dual-axis layer not supported").into());
+        }
+        layout::fit(&bound, payload, &panel.rows, (pw, ph), None, fonts, Some(&facet_opts), true)
+    };
     let render_pass = |pw: f64, ph: f64, value_axis_right_overhang: f64| -> Result<Vec<facet_compose::PanelGeometry>, Diagnostic> {
         bound.r.patterns.reset_fallbacks();
         panels
             .iter()
             .enumerate()
             .map(|(panel_i, panel)| -> Result<facet_compose::PanelGeometry, Diagnostic> {
-                let panel_key = serde_json::to_string(&panel.key).expect("a panel key re-serializes");
-                let facet_opts = FacetPanelOpts {
-                    panel_key: &panel_key,
-                    panel_ordinal: panel_i,
-                    suppress_x_axis: true,
-                    // Real Vega's shared value axis (`row_footer`) appears once per ROW, at
-                    // that row's last column; a multi-column row reserves its gutter once at
-                    // the composer (`composite_axis_reserve`), never folded into a panel.
-                    paint_value_axis: independent || (missing + panel_i) % panel_cols_n == panel_cols_n - 1,
-                    fold_axis_gutter: independent || panel_cols_n == 1,
-                    value_axis_right_overhang,
-                    mirror_band_x: has_mirror,
-                    shared_domain_rows,
-                    independent_scale: independent,
-                };
-                // Production's own compile fails on a pinned layer inside small
-                // multiples (vl-convert: unrecognized scale `child_layer_0_y`).
-                if YSides::of(&bound.overlays).is_some() {
-                    return Err(diagnostic::refuse!("{fam}: multiples with a dual-axis layer not supported").into());
-                }
-                let layout::Fitted { plot, geometry: geom, cuts, .. } =
-                    layout::fit(&bound, payload, &panel.rows, (pw, ph), None, fonts, Some(&facet_opts), true)?;
+                let layout::Fitted { plot, geometry: geom, cuts, .. } = fit_panel(panel_i, panel, pw, ph, value_axis_right_overhang)?;
                 let cuts = cuts.expect("a facet panel is fitted with its cuts");
                 Ok(
                     facet_compose::PanelGeometry {
@@ -1744,9 +1785,29 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
     };
     // One chart-wide legend: every panel builds the same one; the first
     // render at the naive width lifts it.
+    let naive_w = multiples::panel_width(payload, panel_cols_n, has_mirror, 0.0, facet_x_scale)?;
+    let naive_h = payload.height / panel_rows_n as f64;
+    // A line palette's slots are chosen once, over the lines of every panel at the naive size: a
+    // series draws the same style in each panel and in the legend.
+    if bound.line_styled() {
+        let fitted: Vec<layout::LineTraces> = panels
+            .iter()
+            .enumerate()
+            .map(|(panel_i, panel)| Ok(fit_panel(panel_i, panel, naive_w, naive_h, 0.0)?.line_traces.expect("a line-palette chart fits its traces")))
+            .collect::<Result<_, Diagnostic>>()?;
+        // A line layer's groups come from each panel's own rows, so the pool is every panel's, first seen first.
+        let mut order: Vec<String> = Vec::new();
+        for key in fitted.iter().flat_map(|panel| &panel.order) {
+            if !order.contains(key) {
+                order.push(key.clone());
+            }
+        }
+        let per_panel: Vec<Vec<styles::Trace>> =
+            fitted.iter().map(|panel| order.iter().map(|series| panel.traces.get(series).cloned().unwrap_or_default()).collect()).collect();
+        let slots = styles::assign_slots(&per_panel, bound.r.style.line_styles.len());
+        bound.line_slots.set(order.into_iter().zip(slots).collect()).expect("the slots are chosen once");
+    }
     let facet_legend = if (bound.r.color.is_some() || bound.r.numeric_color.is_some() || !bound.r.layers.is_empty()) && bound.r.legend.visible {
-        let naive_w = multiples::panel_width(payload, panel_cols_n, has_mirror, 0.0, facet_x_scale)?;
-        let naive_h = payload.height / panel_rows_n as f64;
         render_pass(naive_w, naive_h, 0.0)?.into_iter().next().and_then(|g| g.legend)
     } else {
         None
@@ -1970,7 +2031,9 @@ mod tests {
     /// The baked `point_mark.edge_size` of a 4px stroke's automatic point.
     const AUTO_EDGE_SIZE: f64 = 46.24;
 
+    use super::layout::{layer_pool_key, legend_slot_map};
     use super::{render_with_layout, shape, FacetPanelOpts, LineXAxisBody, Shape};
+    use std::collections::HashMap;
     use diagnostic::Diagnostic;
     use crate::families::cartesian::cascade_rail_anchors;
     use crate::common::VALUE_AXIS_BREATHING_ROOM;
@@ -2417,9 +2480,9 @@ mod tests {
             "palette": ["#3164a3"],
             "multiples": null, "field_labels": {}, "wide_measures": [], "layers": [],
             "legend": {
-                "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
+                "visible": false, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
                 "title": {"font": {"case": "title", "family": TEST_FONT}},
-                "label": {"font": {"family": TEST_FONT, "size": 11.0}}
+                "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"family": TEST_FONT, "size": 11.0}}
             },
             "style": {
                 "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
@@ -2427,7 +2490,8 @@ mod tests {
                 "axis_y": line_value_axis_json(titles_visible, y_on_right),
                 "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5}, "point_mark": {"edge_size": AUTO_EDGE_SIZE},
                 "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
-                "endpoint_labels": {"visible": false, "label_offset": 6.0},
+                "endpoint_labels": {"visible": false, "overlay": false, "overlay_x": [], "label_offset": 6.0},
+                "overlay": null,
                 "single_series_fill": "#3164a3",
                 "label_usable_ratio": 0.8
             }
@@ -3988,7 +4052,7 @@ mod tests {
                     p["resolved"]["legend"]["visible"] = serde_json::json!(true);
                     p["resolved"]["legend"]["label"]["padding"] = serde_json::json!(8.0);
                     p["resolved"]["legend"]["position"] =
-                        serde_json::json!({"edge": edge, "align": "start", "overlay": false});
+                        serde_json::json!({"edge": edge, "align": "start", "overlay": false, "corners": [{"edge": edge, "align": "start"}]});
                     p["resolved"]["legend"]["direction"] =
                         serde_json::json!(if edge == "top" || edge == "bottom" { "horizontal" } else { "vertical" });
                     p["resolved"]["support_table"] = serde_json::json!({
@@ -4033,7 +4097,7 @@ mod tests {
         let svg = super::render(
             &serde_json::from_value::<Payload>({
                 let mut p = layered_line_payload_with_cross_query_layer();
-                p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0});
+                p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
                 p["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("left");
                 p["resolved"]["legend"]["visible"] = serde_json::json!(false);
                 p
@@ -4052,7 +4116,7 @@ mod tests {
         let svg = super::render(
             &serde_json::from_value::<Payload>({
                 let mut p = layered_line_payload_with_cross_query_layer();
-                p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0});
+                p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
                 p["resolved"]["legend"]["visible"] = serde_json::json!(false);
                 p
             })
@@ -4067,7 +4131,7 @@ mod tests {
     #[test]
     fn a_layer_repeating_a_label_beside_the_rail_raises_the_collision_code() {
         let mut p = layered_line_payload_with_cross_query_layer();
-        p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("left");
         p["resolved"]["legend"]["visible"] = serde_json::json!(false);
         p["resolved"]["layers"][0]["label"] =
@@ -4093,7 +4157,7 @@ mod tests {
             serde_json::json!([0.0, 1000.0, 2000.0, 3000.0, 4000.0]);
         p["resolved"]["style"]["axis_y"]["tick_label"] = serde_json::json!({"format": ",.0~f"});
         p["resolved"]["legend"]["visible"] = serde_json::json!(true);
-        p["resolved"]["legend"]["position"] = serde_json::json!({"edge": "top", "align": "start", "overlay": false});
+        p["resolved"]["legend"]["position"] = serde_json::json!({"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]});
         p["resolved"]["legend"]["direction"] = serde_json::json!("horizontal");
         p["resolved"]["legend"]["label"]["padding"] = serde_json::json!(8.0);
         p
@@ -4175,7 +4239,7 @@ mod tests {
         json["resolved"]["style"]["axis_y"]["domain_max"] = serde_json::json!(20.0);
         // The layer's legend sits above the bars' pile, which the fit then holds.
         json["resolved"]["legend"]["visible"] = serde_json::json!(true);
-        json["resolved"]["legend"]["position"] = serde_json::json!({"edge": "top", "align": "start", "overlay": false});
+        json["resolved"]["legend"]["position"] = serde_json::json!({"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]});
         json["resolved"]["legend"]["direction"] = serde_json::json!("horizontal");
         json["resolved"]["legend"]["label"]["padding"] = serde_json::json!(8.0);
         let payload: Payload = serde_json::from_value(json).unwrap();
@@ -4460,7 +4524,7 @@ mod tests {
     fn a_rank_domain_beside_the_endpoint_rail_has_no_phantom_zero_tick() {
         use serde_json::json;
         let mut p = make_multi_series_line_payload_with_bottom_legend();
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"domain": [20.0, 1.0]}});
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
         let y_axis = svg.split("data-dct-role=\"y-axis\"").nth(1).expect("y axis");
@@ -5053,9 +5117,9 @@ mod tests {
             "palette": ["#3164a3", "#779bc9"],
             "multiples": null, "field_labels": {}, "wide_measures": [], "layers": [],
             "legend": {
-                "visible": true, "position": {"edge": "bottom", "align": "start", "overlay": false}, "direction": "vertical",
+                "visible": true, "position": {"edge": "bottom", "align": "start", "overlay": false, "corners": [{"edge": "bottom", "align": "start"}]}, "direction": "vertical",
                 "title": {"font": {"case": "title", "family": TEST_FONT}},
-                "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}
+                "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}
             },
             "style": {
                 "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
@@ -5063,7 +5127,8 @@ mod tests {
                 "axis_y": value_axis_json(false, None),
                 "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5}, "point_mark": {"edge_size": AUTO_EDGE_SIZE},
                 "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
-                "endpoint_labels": {"visible": false, "label_offset": 6.0},
+                "endpoint_labels": {"visible": false, "overlay": false, "overlay_x": [], "label_offset": 6.0},
+                "overlay": null,
                 "single_series_fill": "#3164a3",
                 "label_usable_ratio": 0.8
             }
@@ -5507,9 +5572,9 @@ mod tests {
             "palette": ["#3164a3", "#779bc9"],
             "multiples": null, "field_labels": {}, "wide_measures": ["revenue", "units_sold"], "layers": [],
             "legend": {
-                "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
+                "visible": false, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
                 "title": {"font": {"case": "title", "family": TEST_FONT}},
-                "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}
+                "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}
             },
             "style": {
                 "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
@@ -5517,7 +5582,8 @@ mod tests {
                 "axis_y": value_axis_json(false, None),
                 "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5}, "point_mark": {"edge_size": AUTO_EDGE_SIZE},
                 "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
-                "endpoint_labels": {"visible": true, "label_offset": 6.0},
+                "endpoint_labels": {"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0},
+                "overlay": null,
                 "single_series_fill": "#3164a3",
                 "label_usable_ratio": 0.8
             }
@@ -5932,7 +5998,7 @@ mod tests {
         use serde_json::json;
         let mut p = make_wide_stacked_area_payload(None);
         p["resolved"]["legend"]["visible"] = json!(true);
-        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
         let svg = render_wide_stacked(p).expect("renders");
         let at = |label: &str| svg.find(&format!(">{label}<")).unwrap_or_else(|| panic!("{label}: {svg}"));
         assert!(at("Hardware") < at("Subscriptions") && at("Subscriptions") < at("Services"), "{svg}");
@@ -5952,7 +6018,7 @@ mod tests {
         }
         crate::payload_schema::test_declare(&mut p, &[("hardware", "float")]);
         p["resolved"]["legend"]["visible"] = json!(true);
-        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
         let svg = render_wide_stacked(p).expect("renders");
         assert_eq!(stacked_area_fills(&svg), ["#222222", "#111111"], "{svg}");
         assert!(
@@ -6023,6 +6089,190 @@ mod tests {
         let payload: Payload = serde_json::from_value(p).unwrap();
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(!svg.contains("stroke-dasharray"), "{svg}");
+    }
+
+    // ── Line palette (`palettes.line_category`) ──────────────────────────
+
+    /// Three styles: a thick solid, a thin dashed, and a medium one with a dashed inline.
+    fn line_palette_json() -> serde_json::Value {
+        serde_json::json!([
+            {"width": 6.0, "dash": [], "cap": "butt", "inline": null},
+            {"width": 2.0, "dash": [4.0, 2.0], "cap": "butt", "inline": null},
+            {"width": 4.0, "dash": [], "cap": "round", "inline": {"width": 2.0, "dash": [8.0, 8.0], "cap": "round", "offset": -4.0}}
+        ])
+    }
+
+    fn three_series_payload() -> serde_json::Value {
+        use serde_json::json;
+        let mut p = make_multi_series_line_payload_with_bottom_legend();
+        p["rows"] = json!([
+            {"week": "2026-01-01", "series": "A", "signups": 100.0},
+            {"week": "2026-01-08", "series": "A", "signups": 150.0},
+            {"week": "2026-01-01", "series": "B", "signups": 70.0},
+            {"week": "2026-01-08", "series": "B", "signups": 90.0},
+            {"week": "2026-01-01", "series": "C", "signups": 40.0},
+            {"week": "2026-01-08", "series": "C", "signups": 60.0},
+        ]);
+        p["resolved"]["legend"]["visible"] = json!(false);
+        p
+    }
+
+    /// `(stroke, width, dasharray, linecap, dashoffset)` of every unfilled path, in paint order.
+    fn stroked_paths(svg: &str) -> Vec<(String, String, Option<String>, Option<String>, Option<String>)> {
+        svg.match_indices("<path d=\"M")
+            .map(|(i, _)| svg[i..].split("/>").next().unwrap())
+            .filter(|tag| tag.contains("fill=\"none\"") && tag.contains("stroke-width="))
+            .map(|tag| {
+                let attr = |name: &str| tag.split(&format!(" {name}=\"")).nth(1).map(|rest| rest.split('"').next().unwrap().to_string());
+                (attr("stroke").unwrap(), attr("stroke-width").unwrap(), attr("stroke-dasharray"), attr("stroke-linecap"), attr("stroke-dashoffset"))
+            })
+            .collect()
+    }
+
+    fn render_value(p: &serde_json::Value) -> String {
+        render(&<Payload as serde::Deserialize>::deserialize(p).unwrap(), &test_fonts()).expect("renders")
+    }
+
+    /// Each series draws its slot's width, dash and cap; its halo is the style's width times the
+    /// theme's `halo_multiplier` and solid; a style with an inline draws it, in the canvas color, over the ink.
+    #[test]
+    fn a_line_palette_draws_each_series_in_its_slot_style() {
+        let mut p = three_series_payload();
+        p["resolved"]["style"]["line_styles"] = line_palette_json();
+        let strokes = stroked_paths(&render_value(&p));
+        let (halos, rest): (Vec<_>, Vec<_>) = strokes.iter().cloned().partition(|s| s.0 == "#ffffff" && s.2.is_none());
+        // Three halos at 1.5 x the style's width, solid; the inline of the third style is the one other canvas stroke.
+        assert_eq!(halos.iter().map(|s| s.1.as_str()).collect::<Vec<_>>(), ["9", "3", "6"], "{strokes:?}");
+        let inks: Vec<_> = rest.iter().filter(|s| s.0 != "#ffffff").collect();
+        assert_eq!(inks.iter().map(|s| s.1.as_str()).collect::<Vec<_>>(), ["6", "2", "4"], "{strokes:?}");
+        assert_eq!(inks.iter().map(|s| s.2.as_deref()).collect::<Vec<_>>(), [None, Some("4,2"), None], "{strokes:?}");
+        assert_eq!(inks.iter().map(|s| s.3.as_deref().unwrap()).collect::<Vec<_>>(), ["butt", "butt", "round"], "{strokes:?}");
+        let inline = strokes.last().unwrap();
+        assert_eq!((inline.0.as_str(), inline.1.as_str(), inline.2.as_deref(), inline.4.as_deref()), ("#ffffff", "2", Some("8,8"), Some("-4")), "{strokes:?}");
+        let ink_c = strokes.iter().position(|s| s.0 != "#ffffff" && s.1 == "4").unwrap();
+        assert_eq!(strokes.len() - 1, ink_c + 1, "the inline follows its ink directly: {strokes:?}");
+    }
+
+    /// A line layer's series join the base's pool: they draw distinct styles, and a layer's line that
+    /// crosses another layer's never shares its style.
+    #[test]
+    fn a_layered_line_chart_draws_line_styles_across_its_layers() {
+        use serde_json::json;
+        let svg = render_layered(|p| {
+            p["resolved"]["style"]["line_styles"] = json!([
+                {"width": 6.0, "dash": [], "cap": "butt", "inline": null},
+                {"width": 2.0, "dash": [], "cap": "butt", "inline": null},
+                {"width": 4.0, "dash": [], "cap": "butt", "inline": null},
+                {"width": 1.0, "dash": [], "cap": "butt", "inline": null}
+            ]);
+            p["resolved"]["layers"][0]["color"] = json!("region");
+            p["resolved"]["layers"][0]["ink"] = serde_json::Value::Null;
+            p["resolved"]["layers"][0]["series_inks"] = json!({"G1": "#779bc9", "G2": "#608470", "G3": "#aa5533", "G4": "#335599"});
+            p["resolved"]["palette"] = json!(["#40639c", "#779bc9", "#608470", "#aa5533", "#335599"]);
+            p["datasets"] = json!({"trend_query": [
+                {"week": "2026-01-01", "trend": 100.0, "region": "G1"}, {"week": "2026-01-08", "trend": 150.0, "region": "G1"},
+                {"week": "2026-01-01", "trend": 1000.0, "region": "G2"}, {"week": "2026-01-08", "trend": 1050.0, "region": "G2"},
+                {"week": "2026-01-01", "trend": 2000.0, "region": "G3"}, {"week": "2026-01-08", "trend": 2050.0, "region": "G3"},
+                {"week": "2026-01-01", "trend": 2050.0, "region": "G4"}, {"week": "2026-01-08", "trend": 2000.0, "region": "G4"}
+            ]});
+        })
+        .expect("renders");
+        let inks: Vec<_> = stroked_paths(&svg).into_iter().filter(|s| s.0 != "#ffffff").map(|s| s.1).collect();
+        // The base, then G1 (it meets the base's line, so thin), G2 (far from G1, shares thin), G3, and G4
+        // (which crosses G3, so it takes the next style).
+        assert_eq!(inks[..5], ["6", "2", "2", "4", "1"], "{svg}");
+        // The legend draws the same styles beside the plot's.
+        let mut legend: Vec<_> = inks[5..].to_vec();
+        legend.sort();
+        assert_eq!(legend, ["1", "2", "2", "4"], "{svg}");
+    }
+
+    /// Two line layers whose color groups carry one value are still two series: they never share a slot.
+    #[test]
+    fn two_layers_with_one_color_value_take_their_own_styles() {
+        use serde_json::json;
+        let svg = render_layered(|p| {
+            p["resolved"]["style"]["line_styles"] = line_palette_json();
+            let mut second = line_layer_json(Some("second_query"));
+            second["y"] = json!("other");
+            for layer in [&mut p["resolved"]["layers"][0], &mut second] {
+                layer["color"] = json!("region");
+                layer["ink"] = serde_json::Value::Null;
+                layer["series_inks"] = json!({"G": "#779bc9"});
+            }
+            p["resolved"]["layers"].as_array_mut().unwrap().push(second);
+            p["datasets"] = json!({
+                "trend_query": [{"week": "2026-01-01", "trend": 100.0, "region": "G"}, {"week": "2026-01-08", "trend": 150.0, "region": "G"}],
+                "second_query": [{"week": "2026-01-01", "other": 150.0, "region": "G"}, {"week": "2026-01-08", "other": 100.0, "region": "G"}]
+            });
+        })
+        .expect("renders");
+        let inks: Vec<_> = stroked_paths(&svg).into_iter().filter(|s| s.0 != "#ffffff").map(|s| s.1).collect();
+        assert_eq!(inks[..3], ["6", "2", "4"], "{svg}");
+    }
+
+    /// A base series and a layer group reading one label are one legend entry, and it shows the base's style.
+    #[test]
+    fn a_shared_legend_label_takes_the_base_series_style() {
+        let slots: HashMap<String, usize> = [("North".to_string(), 0), (layer_pool_key(0, "North"), 2)].into();
+        for _ in 0..64 {
+            let rebuilt: HashMap<String, usize> = slots.iter().map(|(key, slot)| (key.clone(), *slot)).collect();
+            assert_eq!(legend_slot_map(&rebuilt, |label| label.to_string())["North"], 0);
+        }
+    }
+
+    #[test]
+    fn a_single_line_takes_the_first_style() {
+        let mut p = make_line_payload(false, false);
+        let plain = stroked_paths(&render_value(&p));
+        p["resolved"]["style"]["line_styles"] = line_palette_json();
+        let styled = stroked_paths(&render_value(&p));
+        assert!(plain.iter().any(|s| s.0 != "#ffffff" && s.1 != "6"), "{plain:?}");
+        assert!(styled.iter().any(|s| s.0 != "#ffffff" && s.1 == "6"), "{styled:?}");
+    }
+
+    #[test]
+    fn an_area_chart_keeps_its_own_width_under_a_line_palette() {
+        let area = |p: &serde_json::Value| render_inner(&serde_json::from_value::<Payload>(p.clone()).unwrap(), &test_fonts(), true).expect("renders");
+        let mut p = make_stacked_area_payload("none");
+        let plain = area(&p);
+        assert!(!plain.contains("stroke-width=\"6\""));
+        p["resolved"]["style"]["line_styles"] = line_palette_json();
+        assert_eq!(area(&p), plain);
+    }
+
+    #[test]
+    fn authored_dashes_outrank_the_line_palette() {
+        use serde_json::json;
+        let mut p = three_series_payload();
+        p["resolved"]["style"]["dashes"] = json!([[6.0, 3.0], [2.0, 2.0]]);
+        let dashed = render_value(&p);
+        p["resolved"]["style"]["line_styles"] = line_palette_json();
+        assert_eq!(render_value(&p), dashed);
+    }
+
+    /// A chart of several measure columns tells its lines apart too, under a line palette.
+    #[test]
+    fn a_wide_line_has_distinct_strokes_under_a_line_palette() {
+        let mut p = make_wide_line_payload();
+        p["resolved"]["style"]["line_styles"] = line_palette_json();
+        let svg = render_value(&p);
+        let inks: Vec<_> = stroked_paths(&svg).into_iter().filter(|s| s.0 != "#ffffff").collect();
+        let mut widths: Vec<_> = inks.iter().map(|s| s.1.clone()).collect();
+        widths.sort();
+        assert_eq!(widths, ["2", "6"], "{svg}");
+    }
+
+    /// The legend draws each series' own style, inline included.
+    #[test]
+    fn the_legend_swatch_draws_the_series_style() {
+        let mut p = three_series_payload();
+        p["resolved"]["legend"]["visible"] = serde_json::json!(true);
+        p["resolved"]["style"]["line_styles"] = line_palette_json();
+        let svg = render_value(&p);
+        // Three swatches' inks and the third's inline, beside the plot's own inline.
+        assert_eq!(svg.matches("d=\"M-10,0L10,0\"").count(), 4, "{svg}");
+        assert_eq!(svg.matches("stroke-dasharray=\"8,8\"").count(), 2, "{svg}");
     }
 
     // ── Stacked area ─────────────────────────────────────────────────────
@@ -6191,7 +6441,7 @@ mod tests {
         for series in ["A", "B"] {
             p["rows"].as_array_mut().unwrap().push(serde_json::json!({"week": "2026-01-15", "series": series, "signups": 0.0}));
         }
-        p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("left");
         let svg = super::render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
         assert!(svg.contains(">A</text>") && svg.contains(">B</text>"), "{svg}");
@@ -6830,7 +7080,7 @@ mod tests {
         use serde_json::json;
         let mut p = make_stacked_area_payload("normalize");
         p["resolved"]["style"]["axis_y"]["scale"]["continuous"]["domain"] = json!([0.0, 1.0]);
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let svg = render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true)
             .expect("renders — a visible rail must not blow up the plot-box negotiation");
         let label_y = |label: &str| -> f64 {
@@ -7068,7 +7318,7 @@ mod tests {
     fn stacked_area_zero_top_ink_uses_the_stacked_total_not_a_raw_datum() {
         use serde_json::json;
         let mut p = make_stacked_area_payload("zero");
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["axis_y"]["labels"]["visible"] = json!(false);
         p["resolved"]["style"]["line_mark"]["stroke"]["width"] = json!(20.0);
         p["resolved"]["palette"] =
@@ -7117,7 +7367,7 @@ mod tests {
     fn stacked_area_endpoint_rail_anchors_at_the_stacked_midpoint() {
         use serde_json::json;
         let mut p = make_stacked_area_payload("zero");
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let svg = render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
         let label_y = |label: &str| -> f64 {
             let marker = format!(">{label}</text>");
@@ -7161,7 +7411,7 @@ mod tests {
         let mut rows = p["rows"].as_array().unwrap().clone();
         rows.remove(3); // B's week-2 row -- absent, not null.
         p["rows"] = serde_json::json!(rows);
-        p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let svg =
             render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
         let label_y = |label: &str| -> f64 {
@@ -7203,7 +7453,7 @@ mod tests {
     fn stacked_area_center_with_a_visible_rail_draws_on_the_niced_shared_scale() {
         use serde_json::json;
         let mut p = make_stacked_area_payload("center");
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let svg =
             render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
         let edges = stacked_area_edges(&svg);
@@ -7234,6 +7484,30 @@ mod tests {
         assert!(b_top[1].1.abs() < 0.5, "the raw stacked total 210 is the domain top, pixel 0: {svg}");
     }
 
+    /// A baked `domain_max` is a stacked zero area's top, with or without a
+    /// rail: the tallest column (210) sits `headroom` below the plot's top
+    /// edge, never at it and never rounded to a nice 220 — the line rule.
+    #[test]
+    fn stacked_area_baked_headroom_is_the_domain_top_with_or_without_a_rail() {
+        use serde_json::json;
+        let domain_max = 210.0 * 1.08;
+        for rail in [false, true] {
+            let mut p = make_stacked_area_payload("zero");
+            p["resolved"]["style"]["axis_y"]["scale"]["continuous"]["zero"] = json!(true);
+            p["resolved"]["style"]["axis_y"]["domain_max"] = json!(domain_max);
+            if rail {
+                p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
+            }
+            let svg = render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true)
+                .expect("renders");
+            let edges = stacked_area_edges(&svg);
+            let plot_h = edges[0].1[1].1;
+            let expected_top = plot_h * (1.0 - 210.0 / domain_max);
+            let got = edges[1].0[1].1;
+            assert!((got - expected_top).abs() < 0.5, "rail={rail}: top got={got} want={expected_top}: {svg}");
+        }
+    }
+
     /// The same zero-anchored scale under a visible rail rides the hconcat's
     /// shared y scale, which re-applies the default `nice`: 210 nices to 220.
     #[test]
@@ -7241,7 +7515,7 @@ mod tests {
         use serde_json::json;
         let mut p = make_stacked_area_payload("zero");
         p["resolved"]["style"]["axis_y"]["scale"]["continuous"]["zero"] = json!(true);
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let svg =
             render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
         let edges = stacked_area_edges(&svg);
@@ -7257,7 +7531,7 @@ mod tests {
     fn stacked_area_authored_domain_with_a_visible_rail_renders() {
         use serde_json::json;
         let mut p = make_stacked_area_payload("zero");
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["axis_y"]["scale"]["continuous"]["domain"] = json!([0.0, 1000.0]);
         render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
     }
@@ -7269,7 +7543,7 @@ mod tests {
     fn rail_ink_follows_the_board_slot_over_chart_local_order() {
         use serde_json::json;
         let mut p = make_multi_series_line_payload_with_bottom_legend();
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["series_label"]["dark_companion_palette"] = json!(["#111111", "#222222"]);
         p["resolved"]["category_colors"] =
             json!([{"field": "series", "slots": {"A": 1, "B": 0}, "overrides": {}}]);
@@ -7555,30 +7829,14 @@ mod tests {
         p
     }
 
-    /// HIGH-7/L3 render-level regression, replacing the vacuous
-    /// `tilt_decision_is_stable_under_a_wider_y_gutter` (round-2 review:
-    /// its 30-daily-label/400px fixture sat at the saturation point where
-    /// both `payload.width` and the fitted `pw` pick the same steepest
-    /// tilt rung — mutating `line.rs:1010` from `payload.width` to `pw`
-    /// left it green). `make_monthly_ladder_payload`'s 24-month domain
-    /// sits AT the flat/bucketed-ladder boundary instead: its own
-    /// y-gutter (a right axis formatting 999,999,999-scale values,
-    /// `,.0f`) narrows the fitted plot from 1200px to ~1077px, straddling
-    /// the flat-ladder threshold on either side of the mutation.
-    /// The rail-concat arm (`:1231`, `cadence_w = payload.width -
-    /// (rail_pane_w + spacing)`) has no equivalent mutation: it is a
-    /// single deterministic subtraction, with no iteratively-fitted `pw`
-    /// candidate standing in for the slot width to swap in.
+    /// The ladder's band is the plot estimate (the slot less the wide value axis): on a 1050px card 24 months clear
+    /// their gap in that plot, though not in 0.8 of the card.
     #[test]
-    fn bucketed_ladder_band_is_the_slot_width_not_the_fitted_plot() {
+    fn bucketed_ladder_band_is_the_plot_estimate() {
         let _locale = ::bind::time_locale::en_us_scope();
-        let p = make_monthly_ladder_payload(1200.0);
+        let p = make_monthly_ladder_payload(1050.0);
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
-        // Flat (correct, band from payload.width=1200 → 40px): every month
-        // keeps its own label, so Feb is drawn. The `payload.width`→`pw`
-        // mutation narrows the band to ~35.9px, the months no longer clear
-        // their gap, and the ladder steps to quarterly — Feb disappears.
-        assert!(svg.contains(">Feb</text>"), "band must come from payload.width (40px), not pw (~35.9px): {svg}");
+        assert!(svg.contains(">Feb</text>"), "every month keeps its own label: {svg}");
     }
 
     fn attr(tag: &str, name: &str) -> f64 {
@@ -7660,8 +7918,8 @@ mod tests {
     fn rail_right_legend_sits_past_the_line_stroke_and_the_rail_follows_it() {
         use serde_json::json;
         let mut p = make_multi_series_line_payload_with_bottom_legend();
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
-        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
+        p["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]});
         p["resolved"]["legend"]["title"]["font"] = json!({"family": TEST_FONT, "size": 12.0, "weight": 600.0, "case": "title"});
         let fonts = test_fonts();
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders");
@@ -7693,7 +7951,7 @@ mod tests {
     fn rail_bottom_legend_hangs_below_the_axis_band_at_the_plot_left() {
         use serde_json::json;
         let mut p = make_multi_series_line_payload_with_bottom_legend();
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["legend"]["title"]["font"] = json!({"family": TEST_FONT, "size": 12.0, "weight": 600.0, "case": "title"});
         let fonts = test_fonts();
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders");
@@ -7714,7 +7972,7 @@ mod tests {
         for position in ["right", "bottom"] {
             let mut p = make_multi_series_line_payload_with_bottom_legend();
             p["resolved"]["style"]["axis_y"]["position"] = json!("right");
-            p["resolved"]["legend"]["position"] = json!({"edge": position, "align": "start", "overlay": false});
+            p["resolved"]["legend"]["position"] = json!({"edge": position, "align": "start", "overlay": false, "corners": [{"edge": position, "align": "start"}]});
             p["resolved"]["legend"]["title"]["font"] = json!({"family": TEST_FONT, "size": 12.0, "weight": 600.0, "case": "title"});
             // No y-axis title: the right axis's outermost ink is its
             // flip-aligned (end-anchored) tick labels' shared x.
@@ -7785,7 +8043,7 @@ mod tests {
             ]);
             p["resolved"]["palette"] = json!(["#3164a3", "#779bc9", "#608470"]);
             p["resolved"]["style"]["axis_y"]["position"] = json!("right");
-            p["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false});
+            p["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]});
             p["resolved"]["legend"]["direction"] = json!("horizontal");
             p["resolved"]["legend"]["columns"] = json!(columns);
             p["resolved"]["legend"]["title"]["visible"] = json!(false);
@@ -7802,7 +8060,7 @@ mod tests {
 
         let ws: Vec<f64> =
             ["A", "B", "C"].iter().map(|s| fonts.measure(s, TEST_FONT, 11.0).unwrap()).collect();
-        let grid = legend_grid(&ws, &[None; 3], false, 11.0, 2, 8.0);
+        let grid = legend_grid(&ws, &[None; 3], false, 11.0, 2, 8.0, 10.0, 10.0);
         assert_eq!(grid.box_h, 29.0, "two 11px rows at 0.25/16");
         assert_eq!(gy - gy_one_row, 16.0, "the second legend row costs exactly 16px of plot top");
 
@@ -7835,7 +8093,7 @@ mod tests {
         let mut p = make_multi_series_line_payload_with_bottom_legend();
         p["resolved"]["title"] = json!("Weekly Signups");
         p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(true);
-        p["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false});
+        p["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]});
         p["resolved"]["legend"]["direction"] = json!("horizontal");
         p["resolved"]["legend"]["title"]["visible"] = json!(false);
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders");
@@ -7874,7 +8132,7 @@ mod tests {
         let fonts = test_fonts();
         let mut p = make_multi_series_line_payload_with_bottom_legend();
         p["resolved"]["style"]["axis_y"]["position"] = json!("right");
-        p["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false});
+        p["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]});
         p["resolved"]["legend"]["direction"] = json!("horizontal");
         p["resolved"]["legend"]["columns"] = json!(2);
         p["resolved"]["legend"]["title"]["visible"] = json!(false);
@@ -7888,7 +8146,7 @@ mod tests {
         // geometry rather than merely reusing the earlier assertion.
         let ws: Vec<f64> =
             ["A", "B"].iter().map(|s| fonts.measure(s, TEST_FONT, 11.0).unwrap()).collect();
-        let grid = legend_grid(&ws, &[None; 2], false, 11.0, 2, 8.0);
+        let grid = legend_grid(&ws, &[None; 2], false, 11.0, 2, 8.0, 10.0, 10.0);
         assert_eq!(grid.box_h, 13.0, "one row of two entries");
         let (gx, gy, _) = plot_origin_and_line_end(&svg);
         assert_eq!(
@@ -7906,7 +8164,7 @@ mod tests {
         use serde_json::json;
         let mut p = make_multi_series_line_payload_with_bottom_legend();
         p["resolved"]["style"]["axis_y"]["position"] = json!("right");
-        p["resolved"]["legend"]["position"] = json!({"edge": edge, "align": "start", "overlay": false});
+        p["resolved"]["legend"]["position"] = json!({"edge": edge, "align": "start", "overlay": false, "corners": [{"edge": edge, "align": "start"}]});
         p["resolved"]["legend"]["direction"] = json!(direction);
         p["resolved"]["legend"]["title"]["font"] = json!({"family": TEST_FONT, "size": 12.0, "weight": 600.0, "case": "title"});
         p
@@ -8000,7 +8258,7 @@ mod tests {
         let (gx, _, _) = plot_origin_and_line_end(&svg);
         let ws: Vec<f64> =
             ["A", "B"].iter().map(|s| fonts.measure(s, TEST_FONT, 11.0).unwrap()).collect();
-        let grid = legend_grid(&ws, &[None; 2], false, 11.0, 0, 8.0);
+        let grid = legend_grid(&ws, &[None; 2], false, 11.0, 0, 8.0, 10.0, 10.0);
         assert_eq!(grid.box_h, 13.0, "one 11px row");
         let c = grid.size / 2.0;
         let mid = measure::baseline_shift("middle", 11.0);
@@ -8035,7 +8293,7 @@ mod tests {
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders");
         let ws: Vec<f64> =
             ["A", "B", "C"].iter().map(|s| fonts.measure(s, TEST_FONT, 11.0).unwrap()).collect();
-        let grid = legend_grid(&ws, &[None; 3], false, 11.0, 2, 8.0);
+        let grid = legend_grid(&ws, &[None; 3], false, 11.0, 2, 8.0, 10.0, 10.0);
         let (gx, gy, _) = plot_origin_and_line_end(&svg);
         let legend_x = gx - (crate::families::legend::VEGA_LEGEND_OFFSET + grid.width.ceil());
         let c = grid.size / 2.0;
@@ -8054,7 +8312,7 @@ mod tests {
         use serde_json::json;
         let origin_x = |edge: &str, direction: &str| {
             let mut p = fit_arm_legend_payload(edge, direction);
-            p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+            p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
             let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts())
                 .unwrap_or_else(|e| panic!("{edge} {direction}: {e}"));
             plot_origin_and_line_end(&svg).0
@@ -8070,7 +8328,7 @@ mod tests {
     fn a_vertical_legend_over_columns_renders_beside_a_rail() {
         use serde_json::json;
         let mut p = fit_arm_legend_payload("right", "vertical");
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["legend"]["columns"] = json!(2);
         render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("the rail concat draws it");
     }
@@ -8099,8 +8357,8 @@ mod tests {
         use serde_json::json;
         let plot_top = |edge: &str| {
             let mut p = make_multi_series_line_payload_with_bottom_legend();
-            p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
-            p["resolved"]["legend"]["position"] = json!({"edge": edge, "align": "start", "overlay": false});
+            p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
+            p["resolved"]["legend"]["position"] = json!({"edge": edge, "align": "start", "overlay": false, "corners": [{"edge": edge, "align": "start"}]});
             p["resolved"]["legend"]["direction"] = json!("horizontal");
             p["resolved"]["legend"]["title"]["visible"] = json!(false);
             let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
@@ -8141,7 +8399,7 @@ mod tests {
         use serde_json::json;
         let mut p = make_multi_series_line_payload_with_bottom_legend();
         p["resolved"]["style"]["axis_y"]["position"] = json!("right");
-        p["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false});
+        p["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]});
         p["resolved"]["legend"]["direction"] = json!("horizontal");
         p["resolved"]["legend"]["columns"] = json!(2);
         p["resolved"]["legend"]["title"]["visible"] = json!(false);
@@ -8172,7 +8430,7 @@ mod tests {
             p["height"] = json!(220.0);
             p["resolved"]["style"]["axis_y"]["labels"]["min_gap"] = json!(16.0);
             if arm == "rail" {
-                p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+                p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
             } else {
                 p["resolved"]["style"]["axis_y"]["position"] = json!("right");
                 p["resolved"]["legend"]["visible"] = json!(false);
@@ -9328,7 +9586,7 @@ mod tests {
         p["resolved"]["legend"]["visible"] = json!(true);
         p["resolved"]["legend"]["position"]["edge"] = json!("right");
         p["width"] = json!(1400.0);
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
         assert!(svg.contains("…</text>"), "{svg}");
         // The unbreakable name cannot wrap beside its value, so the rail drops the value and paints it whole.
@@ -9343,7 +9601,7 @@ mod tests {
         let mut p = make_multi_series_line_payload_with_bottom_legend();
         p["resolved"]["style"]["dashes"] = json!([[12.0, 16.0], [2.0, 6.0]]);
         p["resolved"]["legend"]["visible"] = json!(true);
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["axis_y"]["position"] = json!("right");
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
         assert!(svg.contains("stroke-dasharray=\"12,16\""), "{svg}");
@@ -9658,9 +9916,9 @@ mod tests {
             "palette": ["#3164a3"],
             "multiples": null, "field_labels": {}, "wide_measures": [], "layers": [],
             "legend": {
-                "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
+                "visible": false, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
                 "title": {"font": {"case": "title", "family": TEST_FONT}},
-                "label": {"font": {"family": TEST_FONT, "size": 11.0}}
+                "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"family": TEST_FONT, "size": 11.0}}
             },
             "style": {
                 "title_font": {"family": "Inter", "size": 18.0, "weight": "400", "color": "#222222"},
@@ -9669,7 +9927,8 @@ mod tests {
                 "line_mark": line_mark,
                 "point_mark": {"edge_size": AUTO_EDGE_SIZE},
                 "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
-                "endpoint_labels": {"visible": false, "label_offset": 6.0},
+                "endpoint_labels": {"visible": false, "overlay": false, "overlay_x": [], "label_offset": 6.0},
+                "overlay": null,
                 "single_series_fill": "#3164a3",
                 "label_usable_ratio": 0.8
             }
@@ -10730,7 +10989,7 @@ mod tests {
         ]);
         p["height"] = json!(432.0);
         p["resolved"]["legend"]["visible"] = json!(false);
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["axis_y"]["ticks"]["count"] = json!(null);
         set_zero_style(&mut p, true);
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
@@ -11195,6 +11454,25 @@ mod tests {
         }
     }
 
+    /// A label filter picks which points print a value; every datum keeps its hover mark.
+    #[test]
+    fn a_last_label_filter_keeps_a_hover_mark_at_every_datum() {
+        for visible in [serde_json::json!("last"), serde_json::json!(["max", "last"])] {
+            let mut json = make_line_payload(true, false);
+            json["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.2~f");
+            json["resolved"]["style"]["line_mark"]["labels"]["visible"] = visible.clone();
+            json["resolved"]["style"]["point_mark"] = serde_json::json!({"size": 46.24, "edge_size": 46.24, "anchored_only": true});
+            let all_marks = |json: &serde_json::Value| {
+                let svg = render(&serde_json::from_value::<Payload>(json.clone()).unwrap(), &test_fonts()).expect("renders");
+                svg.matches("data-dct-role=\"point\" aria-label").count()
+            };
+            let mut unfiltered = json.clone();
+            unfiltered["resolved"]["style"]["line_mark"]["labels"]["visible"] = serde_json::json!(false);
+            unfiltered["resolved"]["style"]["point_mark"]["anchored_only"] = serde_json::json!(false);
+            assert_eq!(all_marks(&json), all_marks(&unfiltered), "{visible}");
+        }
+    }
+
     /// Each series answers for itself, a tie picks every tied position, and two
     /// anchors on one point pick it once.
     #[test]
@@ -11307,7 +11585,7 @@ mod tests {
     const OVERFLOWING_SUBTITLE_LINE_2: &str = "adjustment applied to every bucket.";
 
     /// L7: a subtitle wider than the padded card wraps to two measured
-    /// lines (`title_overflow.py` wrap-two) and Vega's title group grows by
+    /// lines (`title_overflow.py` two-line) and Vega's title group grows by
     /// `sub_fs + 2` — the text mark's default lineHeight — per extra line,
     /// on the fit arm rather than dropping to the legacy margins.
     #[test]
@@ -11363,7 +11641,7 @@ mod tests {
             {"week": "2026-01-08", "series": b, "signups": 60.0},
         ]);
         p["resolved"]["legend"]["visible"] = json!(false);
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         set_title_and_style(&mut p, Some(subtitle));
         serde_json::from_value(p).unwrap()
     }
@@ -11790,7 +12068,7 @@ mod tests {
             .collect();
         let mut json = make_multi_series_line_payload_with_bottom_legend();
         json["rows"] = serde_json::Value::Array(rows);
-        json["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0});
+        json["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let payload: Payload = serde_json::from_value(json).unwrap();
         let svg = render(&payload, &test_fonts()).expect("renders");
 
@@ -11831,7 +12109,7 @@ mod tests {
         ]);
         p["resolved"]["x"] = json!("month");
         p["resolved"]["legend"]["visible"] = json!(false);
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         // `rail_plot_w` reads pane 0's width off a drawn y gridline.
         p["resolved"]["style"]["axis_y"]["grid"]["visible"] = json!(true);
         mutate(&mut p);
@@ -11937,7 +12215,7 @@ mod tests {
                 })
                 .collect();
             p["resolved"]["legend"]["visible"] = json!(false);
-            p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+            p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
             p["resolved"]["style"]["axis_y"]["grid"]["visible"] = json!(true);
             p["resolved"]["style"]["axis_x"]["labels"]["align"] = json!(align);
             let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders");
@@ -12013,7 +12291,7 @@ mod tests {
         ]);
         let mut p = make_multi_series_line_payload_with_bottom_legend();
         p["rows"] = weekly_sundays;
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["axis_x"]["labels"]["align"] = json!("left");
         let baseline = <Payload as serde::Deserialize>::deserialize(&p).unwrap();
         let baseline_svg = render(&baseline, &test_fonts()).expect("renders");
@@ -12051,7 +12329,7 @@ mod tests {
     fn rail_arm_x_label_baseline_matches_the_fit_arm_formula() {
         use serde_json::json;
         let mut p = make_multi_series_line_payload_with_bottom_legend();
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let rail_payload = serde_json::from_value::<Payload>(p).unwrap();
         let rail_svg = render(&rail_payload, &test_fonts()).expect("renders");
         // `plot_h_from_tick` reads the x-axis tick's y1, the plot's bottom edge.
@@ -12072,7 +12350,7 @@ mod tests {
         use serde_json::json;
         let mut p = make_multi_series_line_payload_with_bottom_legend();
         p["resolved"]["legend"]["visible"] = json!(false);
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let rows: Vec<serde_json::Value> = (0..5)
             .flat_map(|i| {
                 let day = 1 + 7 * i;
@@ -12226,7 +12504,7 @@ mod tests {
             {"week": "2026-01-08", "series": "B", "signups": 60.0},
         ]);
         p["resolved"]["legend"]["visible"] = json!(false);
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let payload: Payload = serde_json::from_value(p).unwrap();
         let cap = 600.0 * 0.33;
         assert!(
@@ -12268,7 +12546,7 @@ mod tests {
                 {"week": "2026-01-11", "series": "A", "signups": 30.0},
                 {"week": "2026-01-18", "series": "A", "signups": 60.0},
             ]);
-            p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+            p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
             p["resolved"]["style"]["line_mark"]["stroke"]["width"] = json!(stroke_w);
             // A 4 square-pixel point: a 3px edge pad, so the strokes straddle an integer of ink past it.
             p["resolved"]["style"]["point_mark"]["edge_size"] = json!(4.0);
@@ -12315,7 +12593,7 @@ mod tests {
             {"week": "2026-01-18", "series": "B", "signups": 90.0},
         ]);
         p["resolved"]["legend"]["visible"] = json!(false);
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["axis_y"]["tick_values"] = json!([0.0, 50.0, 100.0, 150.0]);
         p["resolved"]["style"]["axis_y"]["ticks"]["visible"] = json!(true);
         // A drawn y gridline spans `[0.5, plot_w + 0.5]`, so the pane's own
@@ -12464,7 +12742,7 @@ mod tests {
         use serde_json::json;
         let mut p = make_multi_series_line_payload_with_bottom_legend();
         p["resolved"]["legend"]["visible"] = json!(false);
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let ay = &mut p["resolved"]["style"]["axis_y"];
         ay["labels"]["format"] = json!(".0%");
         ay["tick_label"] = json!(null);
@@ -13569,7 +13847,7 @@ mod tests {
     #[test]
     fn a_stacked_rail_label_stays_name_only() {
         let mut p = make_stacked_area_payload("zero");
-        p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         let svg = render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
         assert!(svg.contains(">A</text>") && svg.contains(">B</text>"), "{svg}");
     }
@@ -13606,7 +13884,7 @@ mod tests {
             {"week": "Before", "trend": 10.0},
             {"week": "After", "trend": 100.0},
         ]});
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["axis_y"]["position"] = json!("left");
         p["resolved"]["legend"]["visible"] = json!(false);
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
@@ -13651,7 +13929,7 @@ mod tests {
             {"week": "Q1 2024", "trend": 100.0},
             {"week": "Q4 2023", "trend": 10.0},
         ]});
-        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["resolved"]["style"]["axis_y"]["position"] = json!("left");
         p["resolved"]["legend"]["visible"] = json!(false);
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
@@ -14680,13 +14958,14 @@ mod tests {
     }
 
     /// Daily rows starting Jan 2 under month ticks that begin at Feb 1: "Jan" names a month no tick labels, so the first
-    /// point keeps its label.
+    /// point keeps its label. At 500px the Mondays do not fit, so the axis keeps month ticks.
     #[test]
     fn an_authored_label_align_labels_a_first_month_no_tick_names() {
         let _locale = ::bind::time_locale::en_us_scope();
         let dates: Vec<String> = (0..181).map(|i| iso_plus_days("2026-01-02", i)).collect();
         let mut payload = native_tick_payload(dated_rows(dates.iter().map(String::as_str)));
         payload.resolved["style"]["axis_x"]["labels"]["align"] = serde_json::json!("left");
+        payload.width = 500.0;
         let texts: Vec<String> = x_label_positions(&render(&payload, &test_fonts()).expect("renders")).into_iter().map(|l| l.1).collect();
         assert_eq!(texts.first().map(String::as_str), Some("Jan"), "{texts:?}");
     }
@@ -16213,7 +16492,7 @@ mod tests {
         let mut p = make_multi_series_line_payload_with_bottom_legend();
         p["resolved"]["legend"]["visible"] = serde_json::json!(false);
         p["resolved"]["style"]["endpoint_labels"] =
-            serde_json::json!({"visible": true, "label_offset": 6.0});
+            serde_json::json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
         p["rows"] = serde_json::json!([
             {"week": "2026-01-01", "series": "A", "signups": 1.0},
             {"week": "2026-01-08", "series": "A", "signups": 1.0},
@@ -16261,7 +16540,7 @@ mod tests {
             let mut p = make_multi_series_line_payload_with_bottom_legend();
             p["resolved"]["legend"]["visible"] = serde_json::json!(false);
             p["resolved"]["style"]["endpoint_labels"] =
-                serde_json::json!({"visible": true, "label_offset": 6.0});
+                serde_json::json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
             p["rows"] = serde_json::json!([
                 {"week": "2026-01-01", "series": "A", "signups": 1.0},
                 {"week": "2026-01-08", "series": "A", "signups": 2.0},
@@ -16299,7 +16578,7 @@ mod tests {
             let mut p = make_multi_series_line_payload_with_bottom_legend();
             p["resolved"]["legend"]["visible"] = serde_json::json!(false);
             p["resolved"]["style"]["endpoint_labels"] =
-                serde_json::json!({"visible": true, "label_offset": 6.0});
+                serde_json::json!({"visible": true, "overlay": false, "overlay_x": [], "label_offset": 6.0});
             p["rows"] = serde_json::json!([
                 {"week": "2026-01-01", "series": "A", "signups": 1.0},
                 {"week": "2026-01-08", "series": "A", "signups": 1.0},
@@ -17586,7 +17865,7 @@ mod tests {
             p["resolved"]["palette"] = json!(["#aa0000", "#00bb00"]);
             p["resolved"]["legend"]["visible"] = json!(true);
             p["resolved"]["legend"]["direction"] = json!("horizontal");
-            p["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false});
+            p["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false, "corners": [{"edge": "top", "align": "start"}]});
             p["resolved"]["legend"]["label"]["padding"] = json!(8.0);
             p["resolved"]["legend"]["title"]["padding"] = json!(0.0);
             let render = |south: &[&str]| {
@@ -17620,7 +17899,7 @@ mod tests {
                 p["resolved"]["palette"] = json!(["#aa0000", "#00bb00"]);
                 p["resolved"]["legend"]["visible"] = json!(true);
                 p["resolved"]["legend"]["direction"] = json!("horizontal");
-                p["resolved"]["legend"]["position"] = json!({"edge": edge, "align": "start", "overlay": false});
+                p["resolved"]["legend"]["position"] = json!({"edge": edge, "align": "start", "overlay": false, "corners": [{"edge": edge, "align": "start"}]});
                 p["resolved"]["legend"]["label"]["padding"] = json!(8.0);
                 p["resolved"]["legend"]["title"]["padding"] = json!(0.0);
                 let rows: Vec<_> = ["store", "web"]
@@ -17864,6 +18143,60 @@ mod tests {
             }
         }
 
+        /// A series keeps its line-palette style in every panel and in the legend.
+        #[test]
+        fn a_line_palette_gives_a_series_one_style_in_every_panel() {
+            let mut p = make_facet_line_payload("shared");
+            p["resolved"]["color"] = json!("channel");
+            p["resolved"]["palette"] = json!(["#3164a3"]);
+            p["resolved"]["style"]["line_styles"] = line_palette_json();
+            p["resolved"]["legend"] = make_multi_series_line_payload_with_bottom_legend()["resolved"]["legend"].clone();
+            let rows: Vec<serde_json::Value> = p["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|row| {
+                    ["store", "web"].map(|channel| {
+                        let mut r = row.clone();
+                        r["channel"] = json!(channel);
+                        r
+                    })
+                })
+                .collect();
+            p["rows"] = json!(rows);
+            let svg = render_facet_payload(p).expect("renders");
+            let inks: Vec<_> = stroked_paths(&svg).into_iter().filter(|s| s.0 != "#ffffff").map(|s| s.1).collect();
+            // Two panels of store then web, then the legend's two swatches.
+            assert_eq!(inks, ["6", "2", "6", "2", "6", "2"], "{svg}");
+        }
+
+        /// A line layer's color group that sits in a later panel only still takes a slot, one for every panel.
+        #[test]
+        fn a_layer_group_missing_from_the_first_panel_still_gets_a_line_style() {
+            let mut p = make_facet_line_payload("shared");
+            p["resolved"]["style"]["line_styles"] = line_palette_json();
+            p["resolved"]["layers"] = json!([line_layer_json(None)]);
+            p["resolved"]["layers"][0]["color"] = json!("grp");
+            p["resolved"]["layers"][0]["ink"] = serde_json::Value::Null;
+            p["resolved"]["layers"][0]["series_inks"] = json!({"A": "#779bc9", "B": "#608470"});
+            let rows: Vec<serde_json::Value> = p["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| {
+                    let mut r = row.clone();
+                    r["trend"] = json!(80.0);
+                    r["grp"] = json!(if row["region"] == "North" { "A" } else { "B" });
+                    r
+                })
+                .collect();
+            p["rows"] = json!(rows);
+            let svg = render_facet_payload(p).expect("renders");
+            let widths: Vec<_> = stroked_paths(&svg).into_iter().filter(|s| s.0 != "#ffffff").map(|s| s.1).collect();
+            // North: the base then A; South: the base then B, drawn in the style B took.
+            assert_eq!(widths, ["6", "2", "6", "4"], "{svg}");
+        }
+
         /// A panel prints its own rows' captions.
         #[test]
         fn value_labels_print_in_every_panel() {
@@ -18058,7 +18391,9 @@ mod tests {
         }
 
         #[test]
-        fn a_descending_positive_domain_tears_the_top_edge() {
+        fn a_descending_domain_has_no_tear() {
+            // A rank axis counts down from 1: the edge nearest zero is its top, where a tear would
+            // float through the first rank's line and cut its tick.
             let svg = render(
                 &torn_payload(|j| {
                     j["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"domain": [200.0, 50.0]}});
@@ -18066,9 +18401,7 @@ mod tests {
                 &test_fonts(),
             )
             .expect("renders");
-            let tag = tear(&svg).unwrap_or_else(|| panic!("no tear: {svg}"));
-            let top = tear_ys(&tag).into_iter().fold(f64::MAX, f64::min);
-            assert!(gridline_ys(&svg).iter().all(|&y| y > top), "50 sits at the top: {svg}");
+            assert!(tear(&svg).is_none(), "{svg}");
         }
 
         #[test]
@@ -18089,6 +18422,16 @@ mod tests {
                 &torn_payload(|j| {
                     j["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"domain": [0.0, 200.0]}});
                 }),
+                &test_fonts(),
+            )
+            .expect("renders");
+            assert!(tear(&svg).is_none(), "{svg}");
+        }
+
+        #[test]
+        fn a_log_axis_has_no_zero_to_tear() {
+            let svg = render(
+                &torn_payload(|j| j["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"type": "log"}})),
                 &test_fonts(),
             )
             .expect("renders");
@@ -18297,13 +18640,7 @@ mod tests {
 
         #[test]
         fn x_gridlines_end_on_a_top_edge_tear() {
-            let svg = render(
-                &torn_grid_payload(|j| {
-                    j["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"domain": [200.0, 50.0]}});
-                }),
-                &test_fonts(),
-            )
-            .expect("renders");
+            let svg = render(&torn_grid_payload(negative), &test_fonts()).expect("renders");
             let tag = tear(&svg).unwrap();
             let verticals: Vec<_> = plot_lines(&svg).into_iter().filter(|l| l.0 == l.2 && l.3 - l.1 > 100.0).collect();
             assert!(!verticals.is_empty(), "{svg}");
@@ -18458,9 +18795,9 @@ mod tests {
     #[test]
     fn a_description_names_the_color_field_as_the_family_cases_it() {
         let legend: crate::families::legend::LegendConfig = serde_json::from_value(serde_json::json!({
-            "visible": true, "position": {"edge": "right", "align": "start", "overlay": false},
+            "visible": true, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]},
             "direction": "vertical", "columns": null,
-            "label": {"font": {"size": 11.0}, "padding": 8.0},
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"size": 11.0}, "padding": 8.0},
             "title": {"font": {"case": "title"}, "visible": false},
         }))
         .unwrap();

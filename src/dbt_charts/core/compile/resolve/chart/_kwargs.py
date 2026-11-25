@@ -39,7 +39,10 @@ from dbt_charts.core.compile.models.style.authored import (
     PaddingStylePatch,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
-from dbt_charts.core.compile.models.style.resolved import ResolvedChartDefaults
+from dbt_charts.core.compile.models.style.resolved import (
+    ResolvedChartDefaults,
+    ResolvedLegendCorner,
+)
 from dbt_charts.core.compile.models.style.theme import (
     AxisLabelStyle,
     BarChartStyle,
@@ -95,7 +98,16 @@ __all__ = [
 AutomaticLinkCandidate = str | None
 
 
-class _ResolvedLegendFacts(BaseModel):
+class ResolvedPositionFacts(BaseModel):
+    """The resolved-only leaf of ``position``: the corner search, which the
+    authored ``LegendPositionStyle`` has no field for."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    corners: list[ResolvedLegendCorner] | None = None
+
+
+class ResolvedLegendFacts(BaseModel):
     """All-Optional carrier for the resolved-only legend facts: ``visible``,
     and ``position_overridden_by_width``. They are
     declared on ``ResolvedLegendStyle``, not on ``LegendStyle``/``LegendStylePatch``
@@ -111,6 +123,7 @@ class _ResolvedLegendFacts(BaseModel):
 
     visible: bool | None = None
     position_overridden_by_width: LegendEdge | Literal["direct"] | None = None
+    position: ResolvedPositionFacts | None = None
 
 
 def _bound_scales(
@@ -213,7 +226,7 @@ def _base_kwargs(
     key = cascaded_key(key_context.key, direct=True)
     title_visible = authored_legend.title.visible
     if legend_position_overridden_by_width is not None:
-        overridden = _ResolvedLegendFacts(
+        overridden = ResolvedLegendFacts(
             position_overridden_by_width=legend_position_overridden_by_width
         )
         legend = merge_unset(legend, overridden)
@@ -254,10 +267,16 @@ def _base_kwargs(
             legend,
             LegendStylePatch.model_validate(
                 {
-                    "position": decided.model_dump(),
+                    "position": decided.model_dump(exclude={"corners"}),
                     "direction": direction,
                     **({"columns": wrap_columns} if wrap else {}),
                 }
+            ),
+        )
+        legend = merge_unset(
+            legend,
+            ResolvedLegendFacts(
+                position=ResolvedPositionFacts(corners=decided.corners)
             ),
         )
     visible = key.visible and not (drop_legend or suppress_legend)
@@ -271,7 +290,7 @@ def _base_kwargs(
         {"title": {"visible": title_visible is not False}}
     )
     legend = merge_unset(legend, decided_visibility)
-    legend = merge_unset(legend, _ResolvedLegendFacts(visible=visible))
+    legend = merge_unset(legend, ResolvedLegendFacts(visible=visible))
     # link: false is the authored `links.auto` opt-out: no link at all.
     link = None if normalized.link is False else normalized.link
     if normalized.link is None:
@@ -696,6 +715,7 @@ def _cartesian_kwargs(
         "effective_support_table_style": effective_support_table_style,
         "support_table_axis_offset": support_table_axis_offset,
         "support_table_series_ink": support_table_series_ink,
+        "height": normalized.height,
         "aspect_ratio": normalized.aspect_ratio,
         "min_height": normalized.min_height,
         "max_height": normalized.max_height,

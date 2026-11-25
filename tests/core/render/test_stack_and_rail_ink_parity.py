@@ -65,7 +65,8 @@ def test_a_one_color_palette_gives_every_endpoint_label_the_same_ink() -> None:
     )
     svg = render_board_to_svg(
         _board(
-            "    type: line\n    x: m\n    y: v\n    color: s",
+            "    type: line\n    x: m\n    y: v\n    color: s\n"
+            "    style:\n      key:\n        direct:\n          position: end",
             rows,
             style='style:\n  charts:\n    color:\n      categorical:\n        palette: ["#1f77b4"]',
         )

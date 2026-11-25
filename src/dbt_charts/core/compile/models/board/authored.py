@@ -474,8 +474,11 @@ class AuthoredBoard(ConstrainedModel):
             description=(
                 "A Markdown block, as Jinja over query results: "
                 "`{{ queries.totals.one.revenue }}` for a one-row query, "
-                "`{{ queries.top.rows[0].name }}` for row N. A value prints raw, "
-                "so format it in SQL; titles and subtitles read the same way."
+                "`{{ queries.top.rows[0].name }}` for row N. A value prints raw; "
+                "format it with the `format` filter, "
+                "`{{ queries.totals.one.revenue | format('currency_whole') }}`, "
+                "which takes a built-in format name or a `style.formats` alias. "
+                "Titles and subtitles read the same way."
             ),
         )
     )

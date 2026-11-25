@@ -1,5 +1,0 @@
-kind: Fixes
-body: 'A DuckDB source that attaches a Quack database now fails with a clear error, because Quack cannot attach read-only; local users can opt in to a writable attach with `read_only: false`.'
-time: 2026-11-23T19:39:19.970503237Z
-custom:
-    DbtChartsIssue: "125"

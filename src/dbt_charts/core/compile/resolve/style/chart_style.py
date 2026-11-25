@@ -18,10 +18,12 @@ from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
 from dbt_charts.core.compile.models.style.authored import (
     BarChartStylePatch,
     ChartStylePatch,
+    LegendStylePatch,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.theme import (
     BarKeyStyle,
+    ChartsStyle,
     LegendOnlyKeyStyle,
     LineAreaKeyStyle,
     PieKeyStyle,
@@ -35,7 +37,11 @@ from dbt_charts.core.compile.resolve.style.inherit_resolver import (
     merge_unset,
     unset_autos,
 )
-from dbt_charts.core.compile.resolve.style.legend_position import without_engine_decided
+from dbt_charts.core.compile.resolve.style.legend_position import (
+    decide_legend_padding,
+    decide_legend_position,
+    without_engine_decided,
+)
 from dbt_charts.core.compile.resolve.style.palette import ink_canvas
 from dbt_charts.core.compile.resolve.style.tokens import (
     _EMOJI_MODE_TO_FAMILY,
@@ -104,7 +110,7 @@ _FamilyKey = LineAreaKeyStyle | BarKeyStyle | PieKeyStyle | LegendOnlyKeyStyle
 
 @overload
 def _family_field_patch(
-    chart_style_context: ChartStyleContext,
+    chart_style_context: ChartStyleContext | ChartsStyle,
     chart_type: str | None,
     field: Literal["key"],
 ) -> _FamilyKey | None: ...
@@ -112,14 +118,14 @@ def _family_field_patch(
 
 @overload
 def _family_field_patch(
-    chart_style_context: ChartStyleContext,
+    chart_style_context: ChartStyleContext | ChartsStyle,
     chart_type: str | None,
     field: Literal["title"],
 ) -> BaseModel | None: ...
 
 
 def _family_field_patch(
-    chart_style_context: ChartStyleContext,
+    chart_style_context: ChartStyleContext | ChartsStyle,
     chart_type: str | None,
     field: Literal["key", "title"],
 ) -> (
@@ -304,6 +310,7 @@ def merge_chart_style(
             base_charts.roles,
             single_series_palette=base_charts.single_series_palette,
             categorical_palette=base_charts.palette,
+            keep_self_tokens=True,
         )
 
     # A board-tier family background sits between the global background and the
@@ -331,6 +338,32 @@ def merge_chart_style(
         primary_patch(chart_style_patch) if chart_style_patch is not None else None
     )
 
+    # A chart's own background is the canvas its knockouts sit on, so they
+    # are substituted here from the token-bearing tree, not inherited from
+    # the board's substitution.
+    _background = getattr(
+        primary, "background", None
+    )  # type-state: silent_fallback — the patch is a per-family union; families without the slot legitimately lack the attribute
+    # A KPI's `{column, scale}` background paints per value and names no canvas.
+    if not isinstance(_background, str):
+        _background = _family_background
+    # Composite over board_canvas, not ink_canvas (the CHART canvas) --
+    # see ChartStyleContext.board_canvas's own comment for why.
+    own_canvas = (
+        None
+        if _background is None
+        else ink_canvas(_background, base_charts.board_canvas)
+    )
+
+    # A theme-self token in the chart's own style is that chart's canvas: its own
+    # background when set, else the one the board gives it.
+    if chart_style_patch is not None:
+        chart_style_patch = _resolve_self_tokens(
+            chart_style_patch,
+            base_charts.ink_canvas if own_canvas is None else own_canvas,
+        )
+        primary = primary_patch(chart_style_patch)
+
     # Per-family merge: merge every chart-patched family onto the pre-inherit
     # board Style, re-run the full inherit graph so a family-root font patch
     # propagates to its leaves, then append the emoji fallback. Uniform for
@@ -349,23 +382,6 @@ def merge_chart_style(
             )  # type-state: silent_fallback — primary is a per-family patch union; families with no support_table slot legitimately lack the attribute
             if _dt_patch is not None:
                 charts_family_patch["support_table"] = _dt_patch
-
-    # A chart's own background is the canvas its knockouts sit on, so they
-    # are substituted here from the token-bearing tree, not inherited from
-    # the board's substitution.
-    _background = getattr(
-        primary, "background", None
-    )  # type-state: silent_fallback — the patch is a per-family union; families without the slot legitimately lack the attribute
-    # A KPI's `{column, scale}` background paints per value and names no canvas.
-    if not isinstance(_background, str):
-        _background = _family_background
-    # Composite over board_canvas, not ink_canvas (the CHART canvas) --
-    # see ChartStyleContext.board_canvas's own comment for why.
-    own_canvas = (
-        None
-        if _background is None
-        else ink_canvas(_background, base_charts.board_canvas)
-    )
 
     if charts_family_patch:
         pre = base_charts.pre_style
@@ -522,10 +538,46 @@ def merge_chart_style(
             # Placement, direction and visibility of the key's legend are decided
             # per chart (`_base_kwargs`); the baked legend takes the rest.
             _legend = base_charts.legend
-            for _tier in (_family_field_patch(base_charts, chart_type, "key"), _local):
+            # A board-wide fill left at `theme.background` is this chart's canvas.
+            _board_fill = base_charts.canvas_token_charts.key.legend.background
+            if (
+                own_canvas is not None
+                and _resolve_self_tokens(_board_fill, own_canvas) != _board_fill
+            ):
+                _legend = merge_unset(
+                    _legend,
+                    LegendStylePatch.model_validate({"background": own_canvas}),
+                )
+            # The family tier too: its token is read before the board canvas
+            # replaces it.
+            _family_key = _family_field_patch(
+                base_charts if own_canvas is None else base_charts.canvas_token_charts,
+                chart_type,
+                "key",
+            )
+            if own_canvas is not None:
+                _family_key = _resolve_self_tokens(_family_key, own_canvas)
+            for _tier in (_family_key, _local):
                 if _tier is not None:
                     _legend = merge_unset(_legend, without_engine_decided(_tier.legend))
-            if _legend is not base_charts.legend:
+            # The fit check reads this legend, so it carries the padding the chart
+            # draws: the one authored on any tier, else the placement's own.
+            _placement = decide_legend_position(
+                _effective.legend.position,
+                top_strip=False,
+                radial=chart_type in ("pie", "donut"),
+            )
+            _legend = merge_unset(
+                _legend,
+                LegendStylePatch.model_validate(
+                    {
+                        "padding": decide_legend_padding(
+                            _effective.legend.padding, overlay=_placement.overlay
+                        )
+                    }
+                ),
+            )
+            if _legend != base_charts.legend:
                 overrides["legend"] = _legend
 
     # --- Pagination (table charts expose this via TableChartStyle.pagination) ---

@@ -235,6 +235,95 @@ def _natural_tier(value: float) -> int | None:
     return None
 
 
+def run_joins_axis(values: Iterable[float], axis_exponent: int) -> bool:
+    """Whether a run of labels prints bare digits in its value axis's magnitude.
+
+    Each nonzero label falls in a natural magnitude (0 below thousands). The
+    run joins the axis when more than half its labels fall in the axis's
+    magnitude and no label would print below 0.1 once converted into it;
+    otherwise every label keeps its own magnitude. An even split does not
+    join: half the run would print below 1.
+    """
+    nonzero = [abs(v) for v in values if v]
+    tiers = [0 if v < 10.0**3 else _natural_tier(v) for v in nonzero]
+    in_axis_tier = tiers.count(axis_exponent)
+    return in_axis_tier * 2 > len(nonzero) and all(
+        v / 10.0**axis_exponent >= 0.1 for v in nonzero
+    )
+
+
+def _digit_precision(digit_spec: str) -> int:
+    precision = _d3_parse(digit_spec).precision
+    if precision is None:
+        raise ValueError(f"digit spec {digit_spec!r} carries no precision")
+    return precision
+
+
+def bare_run_decimals(
+    values: Iterable[float], axis_exponent: int, format_spec: str
+) -> int:
+    """The decimal places a bare run shares: a table column's law, pinned to the
+    smallest of the run's ordinary labels (the most common integer-digit count in
+    the axis's magnitude).
+
+    A ceiling, not a floor: the digit spec trims, so no label gains decimals to
+    match the group. A label below 1 is the painter's exception (one
+    significant digit).
+    """
+    scaled = [
+        abs(v) / 10.0**axis_exponent
+        for v in values
+        if v and _natural_tier(v) == axis_exponent
+    ]
+    # A stray 8.04 beside 372 does not set the grid: the run's ordinary labels do.
+    ordinary_digits = Counter(_integer_digit_count(v) for v in scaled).most_common(1)[
+        0
+    ][0]
+    pivot = min(v for v in scaled if _integer_digit_count(v) == ordinary_digits)
+    return _digit_precision(column_digit_format(format_spec, pivot)[1])
+
+
+def percent_run_decimals(values: Iterable[float], format_spec: str) -> int | None:
+    """The decimals a run under a percent axis prints in percent units, or None
+    when a nonzero label would print below 0.1 and the run keeps its ``%``."""
+    if any(v and abs(v) * 100.0 < 0.1 for v in values):
+        return None
+    precision = _d3_parse(format_spec).precision
+    return 6 if precision is None else precision
+
+
+def _ordinary_digits(scaled: Iterable[float]) -> int:
+    """The most common integer-digit count among labels of at least 1 (0 when
+    none): a stray 8.04 beside 372 does not set the run's grid."""
+    counts = Counter(_integer_digit_count(v) for v in scaled if v >= 1)
+    return counts.most_common(1)[0][0] if counts else 0
+
+
+def bare_run_grid(
+    values: Iterable[float], axis_exponent: int, decimals: int, in_tier_only: bool
+) -> tuple[int, int]:
+    """``(ordinary integer digits, pad places)`` of a bare run.
+
+    When every ordinary label would end in ``.0`` at ``decimals``, the run drops
+    the place (``25 40 62``);
+    otherwise ordinary labels keep ``decimals``, zeros included (``39.8 40.0
+    40.1``). ``in_tier_only`` limits the ordinary vote to labels whose natural
+    magnitude is the axis's.
+    """
+    scaled = [
+        abs(v) * 10.0**-axis_exponent
+        if axis_exponent < 0
+        else abs(v) / 10.0**axis_exponent
+        for v in values
+        if v and (not in_tier_only or _natural_tier(v) == axis_exponent)
+    ]
+    digits = _ordinary_digits(scaled)
+    ordinary = [v for v in scaled if v >= 1 and _integer_digit_count(v) == digits]
+    unit = 10**decimals
+    whole = all(round(v * unit) % unit == 0 for v in ordinary)
+    return digits, 0 if whole else decimals
+
+
 def _printed_si_suffix(formatted: str) -> str:
     """The trailing SI magnitude-suffix letters a d3 ``s``-type spec printed
     (``k``, ``M``, ``m``, the micro sign, ...), or ``""`` when the value

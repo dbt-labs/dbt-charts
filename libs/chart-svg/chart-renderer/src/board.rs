@@ -485,7 +485,6 @@ struct TabsStyleDoc {
     active_weight: String,
     inactive_weight: String,
     title_baseline_offset: f64,
-    rail_max_lines: usize,
 }
 
 #[derive(Deserialize)]
@@ -1704,12 +1703,6 @@ struct TabsChrome {
     active_weight: String,
     inactive_weight: String,
     title_baseline_offset: f64,
-    /// `layout.tabs.rail_max_lines`: lines a rail label wraps to before it
-    /// is cut with an ellipsis.
-    rail_max_lines: usize,
-    /// `sizing.py::tab_line_step`: font size times line height, the
-    /// distance between two baselines of a wrapped label.
-    line_step: f64,
     /// `resolved_style.title.font.color` (active tab) — same literal-`None`
     /// caveat as `DetailsChrome::title_font_color`.
     active_font_color: String,
@@ -1775,28 +1768,6 @@ fn tab_rail_width(
     Ok(widest.unwrap_or(0.0))
 }
 
-/// `sizing.py::tab_rail_lines`: a rail label wrapped to `rail_max_lines`,
-/// and whether text was cut.
-fn tab_rail_lines(
-    label: &str,
-    tabs: &TabsChrome,
-    measure: &impl Fn(&str) -> Result<f64, String>,
-) -> Result<(Vec<String>, bool), String> {
-    crate::common::wrap_text_with(
-        measure,
-        label,
-        tabs.max_width - 2.0 * tabs.padding_x,
-        Some(tabs.rail_max_lines),
-        true,
-    )
-}
-
-/// `sizing.py::tab_rail_cell_height`: the bar height plus one line step
-/// per wrapped line.
-fn tab_rail_cell_height(line_count: usize, tabs: &TabsChrome) -> f64 {
-    tabs.bar_height + (line_count as f64 - 1.0) * tabs.line_step
-}
-
 /// `sizing.py::tab_content_offset` plus `tab_rail_extent`: where this
 /// level's tabs pane starts and, for a left rail, the height floor the
 /// rail puts under the layout (`tabs_layout_height`). A non-tabs layout
@@ -1813,10 +1784,7 @@ fn tabs_pane_for(layout: &LayoutDoc, tabs: &TabsChrome, fonts: &FontBook) -> Res
     let labels = tab_labels(layout, tabs)?;
     let rail_width = tab_rail_width(&labels, tabs, &measure)?;
     // `tab_rail_extent`: the inset plus every cell, summed as CPython's `sum()`.
-    let cells = labels
-        .iter()
-        .map(|label| Ok(tab_rail_cell_height(tab_rail_lines(label, tabs, &measure)?.0.len(), tabs)))
-        .collect::<Result<Vec<f64>, String>>()?;
+    let cells = vec![tabs.bar_height; labels.len()];
     Ok(sizing::TabsPane {
         x: rail_width + tabs.inset,
         y: 0.0,
@@ -1848,8 +1816,6 @@ fn tabs_chrome_from_style(style: &StyleDoc) -> TabsChrome {
         active_weight: tabs.active_weight.clone(),
         inactive_weight: tabs.inactive_weight.clone(),
         title_baseline_offset: tabs.title_baseline_offset,
-        rail_max_lines: tabs.rail_max_lines,
-        line_step: tabs.font.size * tabs.font.line_height,
         active_font_color: style
             .title
             .font
@@ -2908,26 +2874,6 @@ fn render_grid(
     Ok((format!("{bg}\n{rendered}"), max_bottom_edge))
 }
 
-/// `label`, or its longest prefix that fits `room` once "…" is appended.
-fn fit_label(
-    label: &str,
-    measure: &impl Fn(&str) -> Result<f64, String>,
-    room: f64,
-) -> Result<String, String> {
-    if measure(label)? <= room {
-        return Ok(label.to_string());
-    }
-    let chars: Vec<char> = label.chars().collect();
-    for keep in (0..=chars.len()).rev() {
-        let head: String = chars[..keep].iter().collect();
-        let cut = format!("{}…", head.trim_end());
-        if measure(&cut)? <= room {
-            return Ok(cut);
-        }
-    }
-    Ok("…".to_string())
-}
-
 /// `layouts.py::render_tabs_layout`: renders ONLY the active tab's own
 /// content (every OTHER tab's box is uniform but never rendered — see
 /// `sizing::calculate_tabs_boxes`'s own doc), plus the tab bar (one rect +
@@ -3026,16 +2972,12 @@ fn render_tabs_layout(
     let mut active_span = (0.0, 0.0);
     for (idx, (label, slug)) in labels.iter().zip(&slugs).enumerate() {
         let is_active = idx == active_index;
-        // A rail has the height to wrap a long label; a top bar cuts it on one line.
-        let (lines, cut, tab_width, cell_height) = if left_rail {
-            let (lines, cut) = tab_rail_lines(label, tabs, &measure)?;
-            let cell_height = tab_rail_cell_height(lines.len(), tabs);
-            (lines, cut, rail_width, cell_height)
-        } else {
-            let shown = fit_label(label, &measure, label_room)?;
-            let cut = shown != *label;
-            (vec![shown], cut, tab_cell_width(label, tabs, &measure)?, tabs.bar_height)
-        };
+        // A tab label is one line, cut with an ellipsis, in a rail and in a bar.
+        let fitted = measure::fit::fit_lines(label, label_room, &measure, Some(1))?;
+        let shown = fitted.lines.into_iter().next().unwrap_or_else(|| label.clone());
+        let cut = fitted.cut;
+        let tab_width = if left_rail { rail_width } else { tab_cell_width(label, tabs, &measure)? };
+        let cell_height = tabs.bar_height;
         if is_active {
             active_span = if left_rail {
                 (tab_y, tab_y + cell_height)
@@ -3058,41 +3000,16 @@ fn render_tabs_layout(
         } else {
             (tab_width / 2.0, "middle")
         };
-        // The lines sit centered on the cell's middle, one line step apart.
-        let n_lines = lines.len() as f64;
-        let baselines: Vec<f64> = (0..lines.len())
-            .map(|i| {
-                cell_height / 2.0
-                    + tabs.title_baseline_offset
-                    + (i as f64 - (n_lines - 1.0) / 2.0) * tabs.line_step
-            })
-            .collect();
-        let first_baseline = *baselines.first().ok_or("a tab label wrapped to no lines")?;
-        let text_body = if lines.len() == 1 {
-            html_escape(&lines[0])
-        } else {
-            lines
-                .iter()
-                .zip(&baselines)
-                .map(|(line, y)| {
-                    format!(
-                        r#"<tspan x="{}" y="{}">{}</tspan>"#,
-                        float_repr(text_x),
-                        float_repr(*y),
-                        html_escape(line)
-                    )
-                })
-                .collect()
-        };
+        let baseline = cell_height / 2.0 + tabs.title_baseline_offset;
         let tab_svg = format!(
             r#"{tooltip}{boxes}<text x="{}" y="{}" text-anchor="{anchor}" font-family="{}" font-size="{}" fill="{}" font-weight="{}">{}</text>"#,
             float_repr(text_x),
-            float_repr(first_baseline),
+            float_repr(baseline),
             xml_escape_attr(&tabs.font_family),
             float_repr(tabs.font_size),
             xml_escape_attr(text_fill),
             xml_escape_attr(weight),
-            text_body,
+            html_escape(&shown),
         );
         let ty = if left_rail { float_repr(tab_y) } else { "0".to_string() };
         let mut attrs = format!(
@@ -5923,7 +5840,7 @@ mod nested_box_sidecar_tests {
                     "tabs": {
                         "position": "top",
                         "bar_height": 40.0,
-                        "min_width": 96.0, "max_width": 240.0, "rail_max_lines": 2, "padding_x": 16.0,
+                        "min_width": 96.0, "max_width": 240.0, "padding_x": 16.0,
                         "border": {"width": 1.0, "color": "#8A8C8F", "radius": 6.0},
                         "font": {"family": "Inter", "size": 14.0, "case": "title", "line_height": 1.25},
                         "active_weight": "600", "inactive_weight": "400",
@@ -6325,7 +6242,7 @@ mod nested_box_sidecar_tests {
         let mut slope: serde_json::Value = serde_json::from_str(SLOPE_RESOLVED_JSON).unwrap();
         slope["legend"]["visible"] = serde_json::json!(true);
         slope["legend"]["position"] =
-            serde_json::json!({"edge": "bottom", "align": "start", "overlay": false});
+            serde_json::json!({"edge": "bottom", "align": "start", "overlay": false, "corners": [{"edge": "bottom", "align": "start"}]});
         let p = slope_in_nested_board_beside_tall_sibling(slope, "grid");
         let (svg, _painted) = render_board(&p, &fonts).expect("board renders");
 

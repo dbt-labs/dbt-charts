@@ -78,13 +78,13 @@ class TestElasticColumnsTruncateWhenSqueezed:
     """Text columns squeezed below content_floor show ellipsis in rendered SVG."""
 
     def test_elastic_text_shows_ellipsis_at_tight_width(self, make_chart):
-        """At a very tight width with wrap disabled, elastic columns truncate with ellipsis."""
+        """At a very tight width with wrap: 1, elastic columns truncate with ellipsis."""
         from ._engine_render import render_table_svg
 
         chart = _make_table_chart(
             make_chart,
             style={
-                "table": {"wrap": False},
+                "table": {"max_lines": 1},
                 "columns": {
                     "opportunity": {},
                     "account": {},
@@ -109,7 +109,7 @@ class TestElasticColumnsTruncateWhenSqueezed:
 
         has_ellipsis = "…" in svg
         assert has_ellipsis, (
-            "Expected ellipsis ('…') in tight-width table SVG with wrap:false — "
+            "Expected ellipsis ('…') in tight-width table SVG with wrap: 1 — "
             "elastic text columns should truncate rather than overflow"
         )
 

@@ -22,7 +22,7 @@
 use crate::facet::{Color, ColorOrColumn, DisplayText, FontFamily, FontWeightValue};
 use crate::chart::conditional_formatting::Predicate;
 use crate::primitives::{
-    Tone, BorderStyle, ColumnPalette, CornerStyle, DividerStyle, FormatSpec, GlyphText, LinkSpec,
+    Tone, BorderStyle, LineLimit, ColumnPalette, CornerStyle, DividerStyle, FormatSpec, GlyphText, LinkSpec,
     ScaleTargetRest, SpacingValues, GradientColorStyle, StrokeStyle,
 };
 use crate::rule::Auto;
@@ -42,12 +42,118 @@ use model_derive::Model;
 use serde_json::Value;
 
 string_enum!(
-    /// What happens to header text too wide for its column.
-    HeaderOverflow { Clip = "clip", Truncate = "truncate", WrapTwo = "wrap-two", Wrap = "wrap" }
+    /// A keyword for how a body text column picks its line count, beside a percentile.
+    WrapWord { TrimOutliers = "trim_outliers", Square = "square" }
 );
+
+/// The percentile a `p<N>` spelling names: `p1` through `p100`, no sign, no leading zero.
+pub fn percentile(spelling: &str) -> Option<u8> {
+    let digits = spelling.strip_prefix('p')?;
+    if digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok().filter(|n| (1..=100).contains(n))
+}
+
+/// The schema's spelling of [`percentile`].
+const PERCENTILE_PATTERN: &str = "^p([1-9][0-9]?|100)$";
+
+/// `max_lines`: a column strategy (`trim_outliers`, `square`, a percentile `p75`) or a [`LineLimit`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TableMaxLines {
+    TrimOutliers,
+    Percentile(u8),
+    Square,
+    Limit(LineLimit),
+}
+
+impl TableMaxLines {
+    /// The setting a keyword or percentile spelling names.
+    pub fn from_word(word: &str) -> Option<Self> {
+        match WrapWord::try_from(word) {
+            Ok(WrapWord::TrimOutliers) => Some(Self::TrimOutliers),
+            Ok(WrapWord::Square) => Some(Self::Square),
+            Err(_) if word == "all" => Some(Self::Limit(LineLimit::All)),
+            Err(_) => percentile(word).map(Self::Percentile),
+        }
+    }
+
+    /// The setting a resolved theme carries: a spelling or a line count of at least 1.
+    pub fn from_resolved(value: &Value) -> Result<Self, String> {
+        let setting = match value {
+            Value::String(word) => Self::from_word(word),
+            _ => LineLimit::from_resolved(value).ok().map(Self::Limit),
+        };
+        setting.ok_or_else(|| format!("table: `max_lines` {value} is not a keyword, a percentile or a line count"))
+    }
+
+    /// One line is no wrapping at all.
+    pub fn wraps(self) -> bool {
+        self != Self::Limit(LineLimit::ONE)
+    }
+}
+
+impl ReadScalar for TableMaxLines {
+    fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
+        if let yaml::Kind::Scalar(yaml::Value::Str(word)) = &node.kind {
+            if let Some(setting) = Self::from_word(word) {
+                return Some(setting);
+            }
+        }
+        if let Ok(Some(limit)) = cx.attempt(|cx| LineLimit::read(node, cx)) {
+            return Some(Self::Limit(limit));
+        }
+        cx.mismatch(
+            node,
+            "'trim_outliers', 'square', 'all', a percentile 'p1' to 'p100', or an integer of at least 1",
+        );
+        None
+    }
+}
+impl Spell for TableMaxLines {
+    fn spell(&self) -> Value {
+        match self {
+            Self::TrimOutliers => WrapWord::TrimOutliers.spell(),
+            Self::Percentile(n) => Value::String(format!("p{n}")),
+            Self::Square => WrapWord::Square.spell(),
+            Self::Limit(limit) => limit.spell(),
+        }
+    }
+}
+
+impl FromNode for TableMaxLines {
+    fn authored(node: &Node, cx: &mut Cx) -> Self::Authored {
+        Self::read(node, cx)
+    }
+    fn patch(node: &Node, cx: &mut Cx) -> Self::Patch {
+        Self::read(node, cx)
+    }
+    fn whole(node: &Node, cx: &mut Cx) -> Option<Self::Whole> {
+        Self::read(node, cx)
+    }
+}
+const PERCENTILE: TypeExpr = TypeExpr::Keyed(
+    &model_core::Keywords::pattern(PERCENTILE_PATTERN).in_arm(),
+    &TypeExpr::Scalar(Scalar::Str),
+);
+impl Leaf for TableMaxLines {
+    type Whole = TableMaxLines;
+    type Authored = Option<TableMaxLines>;
+    type Patch = Option<TableMaxLines>;
+    const MERGE: Merge = Merge::Override;
+    const EXPR: TypeExpr = TypeExpr::Either(
+        &TypeExpr::Either(&<WrapWord as Leaf>::EXPR, &<LineLimit as Leaf>::EXPR),
+        &PERCENTILE,
+    );
+}
+model_core::build_leaf!(TableMaxLines);
 string_enum!(
     /// Text alignment in a table cell.
     CellAlign { Left = "left", Center = "center", Right = "right" }
+);
+string_enum!(
+    /// What a table column prints as, whatever its source type.
+    TableColumnType { Text = "text", Number = "number", Date = "date", Datetime = "datetime" }
 );
 string_enum!(
     /// Alignment of the row-number column.
@@ -281,8 +387,8 @@ pub struct TableHeaderStyle {
     /// paper-warmth or contrast demands it.
     #[model(absent = "no fill")]
     pub background: Option<Color>,
-    /// What happens to header text too wide for its column (clip, truncate, wrap-two, wrap).
-    pub overflow: HeaderOverflow,
+    /// Lines a header takes before an ellipsis (1 = no wrapping, 3 = wraps twice); or 'all'.
+    pub max_lines: LineLimit,
     /// Line between the header row and the body.
     pub divider: TableDividerStyle,
 }
@@ -726,7 +832,7 @@ pub struct TableColumnConfigConditional {
 /// Table-level defaults applied to every column unless overridden per column.
 ///
 /// Only fields that make sense as uniform defaults: data-dependent ones (link,
-/// header_link, spark, scale, glyph, glyph_color, header_overflow) depend on a
+/// header_link, spark, scale, glyph, glyph_color, header_max_lines) depend on a
 /// column's data shape or interaction intent.
 #[derive(Debug, Clone, PartialEq, Model)]
 pub struct TableColumnDefaultsConfig {
@@ -879,6 +985,9 @@ pub struct TableColumnConfig {
     /// year"). Alias in SQL instead.
     #[model(absent = "the prettified column name")]
     pub label: Option<DisplayText>,
+    /// Print this column as text, number, date or datetime whatever its source type. `text` prints every cell as stored; `number` reads a text cell as a number, and `date` / `datetime` as an ISO date or timestamp. A cell that does not read as the type is an error. Default: the column's source type decides.
+    #[model(absent = "the column's source type decides")]
+    pub r#type: Option<TableColumnType>,
     /// How the number is written: a D3 spec or a preset name.
     #[model(absent = "the table's column default")]
     pub format: Option<FormatSpec>,
@@ -904,9 +1013,9 @@ pub struct TableColumnConfig {
     /// Text alignment in cells (left, center, right).
     #[model(absent = "the column's default alignment")]
     pub align: Option<CellAlign>,
-    /// What happens to header text too wide for its column (clip, truncate, wrap-two, wrap).
-    #[model(absent = "the table's header overflow")]
-    pub header_overflow: Option<HeaderOverflow>,
+    /// Lines this column's header takes before an ellipsis (1 = no wrapping, 3 = wraps twice); or 'all'.
+    #[model(absent = "the table's header max_lines")]
+    pub header_max_lines: Option<LineLimit>,
     /// URL template that makes the column header clickable.
     #[model(absent = "no header link")]
     pub header_link: Option<LinkSpec>,
@@ -937,7 +1046,48 @@ pub struct TableColumnConfig {
     pub conditional: Vec<TableColumnConfigConditional>,
 }
 
+/// The kind of value a `format:` spec writes, `None` for a name that is no engine name, no
+/// strftime spec and no d3 spec (a board's own alias): the board's `style.formats` says what it is.
+fn format_kind(spec: &str) -> Option<&'static str> {
+    use d3rs::format_spec::{is_number_name, is_time_format, is_time_name, TEXT_NAMES};
+    if TEXT_NAMES.contains(&spec) {
+        Some("text")
+    } else if is_time_name(spec) || is_time_format(spec) {
+        Some("time")
+    } else if is_number_name(spec) || d3rs::format::parse_parts(spec).is_ok() {
+        Some("number")
+    } else {
+        None
+    }
+}
+
 impl TableColumnConfig {
+    /// `TableColumnConfig._format_matches_type`: the message of a column whose own `format:`
+    /// writes another kind than its `type:` prints. Hand-written: no `constraint` kind reads what a
+    /// spec means.
+    pub fn format_conflict(column: &Authored<TableColumnConfig>) -> Option<String> {
+        let (Tri::Value(column_type), Tri::Value(format)) = (&column.r#type, &column.format) else {
+            return None;
+        };
+        let spec = match format {
+            FormatSpec::Name(name) => Some(name.as_str()),
+            FormatSpec::Block(block) => match &block.spec {
+                Tri::Value(spec) => Some(spec.as_str()),
+                _ => None,
+            },
+        };
+        let want = match column_type {
+            TableColumnType::Text => "text",
+            TableColumnType::Number => "number",
+            TableColumnType::Date | TableColumnType::Datetime => "time",
+        };
+        let kind = spec.and_then(format_kind).filter(|kind| *kind != want)?;
+        Some(format!(
+            "Value error, TableColumnConfig: 'type: {}' takes a {want} 'format', but 'format' is a {kind} format. Change 'type', or change or remove 'format'.",
+            column_type.as_str()
+        ))
+    }
+
     /// A `default: true` rule is allowed only last in a column's `conditional` list: a positional
     /// rule over an element field, which no `constraint` kind tests.
     pub fn default_position(column: &Authored<TableColumnConfig>) -> Vec<Diagnostic> {
@@ -1003,8 +1153,8 @@ pub struct TableChartStyle {
     pub row_numbers: TableRowNumbersStyle,
     /// Title block rendered above the header row.
     pub title_row: TableTitleStyle,
-    /// Allow cell text wrapping; false clips to single line.
-    pub wrap: bool,
+    /// Lines a text cell takes before an ellipsis. A count (1 = no wrapping, 3 = wraps twice), or 'all', or a strategy: trim_outliers, square, or pN (keeps N% of cells whole).
+    pub max_lines: TableMaxLines,
     /// Hide query columns whose names start with an underscore, such as a `_flag`
     /// computed for a conditional rule or `_fivetran_synced`. A hidden column's values
     /// still feed rules and links, and a column with its own `style.columns` entry
@@ -1018,9 +1168,6 @@ pub struct TableChartStyle {
     /// Per-column display configuration keyed by column name (label, format, width, etc.).
     #[model(default_empty)]
     pub columns: IndexMap<String, TableColumnConfig>,
-    /// Table column header text overflow mode.
-    #[model(absent = "each header's own overflow")]
-    pub header_overflow: Option<HeaderOverflow>,
     /// Visual style for the paginator control (chevrons + page numbers).
     pub paginator: PaginatorStyle,
     /// Visual style for the scrollbars of a table that scrolls.

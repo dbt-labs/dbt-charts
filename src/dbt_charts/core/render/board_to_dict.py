@@ -352,6 +352,33 @@ def _kpi_text_parts(
     return parts
 
 
+def _table_cell_text(
+    value: Any,  # type-state: explicit_any — DB cell value
+    column: str,
+    column_type: str | None,
+    fmt: ResolvedFormat | None,
+    formats: FormatTable | None,
+) -> str:
+    """One preview cell: a typed column's cell is cast first, and a ``text``
+    column prints it as stored."""
+    from dbt_charts.core.compile.format_value import (
+        cast_table_cell,
+        format_table_cell_value,
+        is_temporal_value,
+    )
+    from dbt_charts.core.text.format_d3 import NULL_DISPLAY
+
+    if column_type is not None:
+        value = cast_table_cell(value, column_type, column)
+    if (
+        column_type == "text"
+        or (isinstance(value, str) and column_type not in ("date", "datetime"))
+        or (isinstance(value, str) and not is_temporal_value(value))
+    ):
+        return value if value and value.strip() else NULL_DISPLAY
+    return format_table_cell_value(value, fmt.authored if fmt else None, formats)
+
+
 def _table_text_rows(
     resolved: ResolvedTableChart,
     data: list[dict[str, Any]],  # type-state: explicit_any — query rows
@@ -359,7 +386,6 @@ def _table_text_rows(
 ) -> list[dict[str, str]]:
     """The preview rows of a table, each visible cell through its column's
     format: the same formula the painted cell uses, so a missing format shows."""
-    from dbt_charts.core.compile.format_value import format_table_cell_value
 
     shown = data[:TABLE_PREVIEW_ROW_CAP]
     if resolved.columns is None:
@@ -369,11 +395,14 @@ def _table_text_rows(
         names = [n for n, c in resolved.columns.items() if c.visible is not False]
         fmts = {n: c.format for n, c in resolved.columns.items()}
     names = names[:MAX_TABLE_COLUMNS_SHOWN]
+    types = (
+        {}
+        if resolved.columns is None
+        else {n: c.type for n, c in resolved.columns.items()}
+    )
     return [
         {
-            n: format_table_cell_value(
-                row.get(n), fmt.authored if (fmt := fmts.get(n)) else None, formats
-            )
+            n: _table_cell_text(row.get(n), n, types.get(n), fmts.get(n), formats)
             for n in names
         }
         for row in shown

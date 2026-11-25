@@ -189,7 +189,7 @@ class _SharedResolvedChartFields(_BaseResolvedChartFields):
             "Effective title style — chart-local style.<family>.title merged "
             "onto the board title style. Render-time VL assembly reads "
             "title_style.font.case to case-transform `title` (VL presentation "
-            "only), and title_style.overflow for title-wrap mode."
+            "only), and title_style.max_lines for the title line limit."
         ),
     )
 
@@ -293,6 +293,10 @@ class _CartesianResolvedChartFields(
     )
     aspect_ratio: float | None = Field(
         default=None, description="Width:height aspect ratio."
+    )
+    height: float | None = Field(
+        default=None,
+        description="Authored chart-root height, which pins the content height.",
     )
     min_height: float | None = Field(default=None, description="Minimum chart height.")
     max_height: float | None = Field(default=None, description="Maximum chart height.")

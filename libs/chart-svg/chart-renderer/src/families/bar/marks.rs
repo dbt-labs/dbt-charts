@@ -211,6 +211,11 @@ pub(super) fn capped_thickness(size: f64, max_size: Option<f64>) -> f64 {
     max_size.map_or(size, |max| size.min(max))
 }
 
+/// A band bar's thickness: an authored `size` is the width outright, else `natural` capped by `max_size`.
+pub(super) fn band_thickness(natural: f64, size: Option<f64>, max_size: Option<f64>) -> f64 {
+    size.unwrap_or_else(|| capped_thickness(natural, max_size))
+}
+
 /// Where each category's support-table column stands at a plot `pw` wide: in the cell of the axis label naming its
 /// period. A time axis reads it off its labels; a band axis whose labels center on a coarser period
 /// (`period_centers`, each category's period center in band coordinates) centers it there; any other band label
@@ -1012,9 +1017,9 @@ pub(super) struct BandColumns {
 }
 
 impl BandColumns {
-    pub(super) fn new(band_w: f64, mark_band_width: f64, max_size: Option<f64>, split: Option<&ColumnSplit>) -> Self {
+    pub(super) fn new(band_w: f64, mark_band_width: f64, size: Option<f64>, max_size: Option<f64>, split: Option<&ColumnSplit>) -> Self {
         let Some(split) = split else {
-            let width = capped_thickness((band_w * mark_band_width).min(band_w), max_size);
+            let width = band_thickness((band_w * mark_band_width).min(band_w), size, max_size);
             return Self { step: band_w, lead: 0, width, pad: (band_w - width) / 2.0, anchor: band_w / 2.0, split: false, coincident: false };
         };
         let step = support_table_strip::sub_band_step(band_w, split.n_series + split.lead, false);
@@ -1029,10 +1034,10 @@ impl BandColumns {
         // no layer, vs. `grouped-bar-with-layer`'s reference Jan/Enterprise
         // bar at x=26.671875 — `(1-1.25)/2 * step(71.125)`, not `* band_w`).
         let pad_band_w = if split.layered { step } else { band_w };
-        let width = capped_thickness(split.width_steps * step, max_size);
-        // An authored ceiling makes the width explicit, so it centers on the
+        let width = band_thickness(split.width_steps * step, size, max_size);
+        // An authored size or ceiling makes the width explicit, so it centers on the
         // sub-band instead of resolving the shorthand against the outer band.
-        let pad = if max_size.is_some() { (step - width) / 2.0 } else { (1.0 - split.width_steps) / 2.0 * pad_band_w };
+        let pad = if size.is_some() || max_size.is_some() { (step - width) / 2.0 } else { (1.0 - split.width_steps) / 2.0 * pad_band_w };
         Self { step, lead: split.lead, width, pad, anchor: step / 2.0, split: true, coincident: false }.touched(split)
     }
 

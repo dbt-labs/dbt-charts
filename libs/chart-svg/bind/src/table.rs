@@ -831,7 +831,7 @@ fn column_label(label: &str) -> Result<String, Diagnostic> {
 fn refuse_unmodeled_column(config: &TableColumnConfig) -> Result<(), Diagnostic> {
     let unmodeled = [
         (config.spark.is_some(), "`spark`"),
-        (config.header_overflow.is_some(), "`header_overflow`"),
+        (config.header_max_lines.is_some(), "`header_max_lines`"),
         (config.header_link.is_some(), "`header_link`"),
         (config.scale.is_some(), "`scale`"),
         (config.glyph.is_some(), "`glyph`"),

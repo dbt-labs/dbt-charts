@@ -24,14 +24,19 @@ from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import resolve_format_parts
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.aggregate import AggregateAnchor
+from dbt_charts.core.compile.models.anchor import (
+    AnchorScalar,
+    ClockAnchor,
+    ResolvedCategoryAnchor,
+    ResolvedScalar,
+    ResolvedValueAnchor,
+)
 from dbt_charts.core.compile.models.chart.authored import MultiplesConfig
 from dbt_charts.core.compile.models.chart.authored._annotation import (
     Anchor,
     AnchorRange,
-    AnchorScalar,
     Annotation,
     BandAnnotation,
-    ClockAnchor,
     NoteAnnotation,
     RuleAnnotation,
     TrendAnnotation,
@@ -62,12 +67,9 @@ from dbt_charts.core.compile.models.chart.resolved._annotation import (
     ResolvedAnnotationStroke,
     ResolvedAnnotationStyle,
     ResolvedAnnotationText,
-    ResolvedCategoryAnchor,
     ResolvedLayerAxis,
     ResolvedRangeAnchor,
-    ResolvedScalar,
     ResolvedTrend,
-    ResolvedValueAnchor,
 )
 from dbt_charts.core.compile.models.markers import AUTO
 from dbt_charts.core.compile.models.primitives import ResolvedFormat, SizeScaleStyle
@@ -76,6 +78,9 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedAxisStyle,
     ResolvedPointMarkStyle,
     ResolvedTickLabel,
+)
+from dbt_charts.core.compile.models.style.resolved._cartesian import (
+    ResolvedDirectOverlayX,
 )
 from dbt_charts.core.compile.models.style.theme.annotations import (
     RULE_LINE,
@@ -129,7 +134,10 @@ from dbt_charts.core.constants.contrast import (
     RULE_GRAY_LAST_STEP,
 )
 from dbt_charts.core.constants.marks import TREND_SAMPLES
-from dbt_charts.core.diagnostics.codes_compile import ERR_ANNOTATION_INVALID
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_ANNOTATION_INVALID,
+    ERR_DIRECT_OVERLAY_X_INVALID,
+)
 from dbt_charts.core.font_measure import (
     css_weight_to_axis,
     get_weighted_font_measurer,
@@ -516,6 +524,53 @@ def resolve_annotations(
     )
 
 
+def resolve_direct_overlay_x(
+    overlay_x: Mapping[str, AnchorScalar],
+    chart: AnnotationChart,
+    dataset: ChartDataset,
+    rendered_at: datetime,
+) -> tuple[tuple[ResolvedDirectOverlayX, ...], tuple[str, ...]]:
+    """Each drawn series' preferred x for its name, and the keys of `overlay_x` that
+    name no drawn series. A series is a `color` value, or a column of a wide
+    `y` list; `max()` reads that series' own points."""
+    drawn = (
+        _series_domain(chart, dataset)
+        if chart.color_field is not None
+        else list(chart.y_fields)
+    )
+    categories: dict[Axis, frozenset[str]] = {
+        "x": frozenset(map(str, dataset.column_values(chart.x_field)))
+        if chart.x_kind == "nominal"
+        else frozenset(),
+        "y": frozenset(),
+    }
+    resolved: list[ResolvedDirectOverlayX] = []
+    for series in drawn:
+        if series not in overlay_x:
+            continue
+        rows = [row for panel in dataset.panels for row in panel.rows]
+        wide = chart.color_field is None
+        series_chart = replace(chart, y_fields=(series,)) if wide else chart
+        points = _points(series_chart, rows, None if wide else series)
+        resolver = _AnchorResolver(
+            series_chart,
+            _Scope(panel=None, series=series, points=points),
+            rendered_at,
+            categories,
+        )
+        try:
+            x = resolver.point("x", overlay_x[series])
+        except _Invalid as exc:
+            raise CompilationError.from_code(
+                ERR_DIRECT_OVERLAY_X_INVALID,
+                chart_id=chart.chart_id,
+                series=series,
+                reason=str(exc),
+            ) from exc
+        resolved.append(ResolvedDirectOverlayX(series=series, x=x))
+    return tuple(resolved), tuple(name for name in overlay_x if name not in drawn)
+
+
 def _resolve_one(
     index: int,
     annotation: Annotation,
@@ -545,6 +600,12 @@ def _resolve_one(
     # Stacked columns paint in baseline order, which resolve does not know yet.
     ink_unknown = shared_ink and plotted.stacked
     _check_series(annotation, chart, dataset, computed)
+    if _is_empty_result(plotted_dataset, datasets):
+        # The engine draws "No results" here, never a plot, and with no values
+        # to type the x column from, an anchor would read against a guessed axis.
+        _reject_templates(annotation)
+        empty.append("no plotted rows in the chart")
+        return
     colors = (
         chart.series_inks
         if chart.series_inks is not None
@@ -614,6 +675,26 @@ def _resolve_one(
             )
     if computed and not iterated:
         empty.append("no plotted rows in the chart")
+
+
+def _is_empty_result(dataset: ChartDataset, datasets: LayerDatasets) -> bool:
+    """No base rows and no layer rows: the chart draws "No results"."""
+    return not any(panel.rows for panel in dataset.panels) and (
+        datasets is ... or not any(datasets.values())
+    )
+
+
+def _reject_templates(annotation: Annotation) -> None:
+    anchors = (
+        (annotation.x,)
+        if isinstance(annotation, TrendAnnotation)
+        else (annotation.x, annotation.y)
+    )
+    for anchor in anchors:
+        for scalar in (
+            (anchor.from_, anchor.to) if isinstance(anchor, AnchorRange) else (anchor,)
+        ):
+            _reject_template(scalar)
 
 
 def _describe(scope: _Scope) -> str:
@@ -968,7 +1049,7 @@ def _check_series(
         )
     if chart.stacked and series != "total":
         raise _Invalid("a stacked chart takes only series: total")
-    if isinstance(series, list):
+    if isinstance(series, list) and any(panel.rows for panel in dataset.panels):
         known = set(_series_domain(chart, dataset))
         unknown = [name for name in series if name not in known]
         if unknown:

@@ -368,6 +368,7 @@ class TestGlyphWidthIsReserved:
             "table",
             title="Narrow",
             style={
+                "max_lines": "all",
                 "column_layout": {"overflow": "fit"},
                 "columns": {
                     **dict.fromkeys(columns, {}),
@@ -403,7 +404,7 @@ class TestGlyphWidthIsReserved:
             "table",
             title="Status",
             style={
-                "wrap": False,
+                "max_lines": 1,
                 "columns": {
                     "overall": {
                         "width": 70,

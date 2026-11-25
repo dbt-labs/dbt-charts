@@ -1151,7 +1151,7 @@ class Project(ABC):
 
     @cached_property
     def locked_schema_version(self) -> str | None:
-        """The released board schema version dbt_charts.yml pins, or None."""
+        """The released board schema version dbt_charts.yml locks to; None for preview."""
         from dbt_charts.core.compile.config import get_project_locked_schema_version
 
         return get_project_locked_schema_version(self)

@@ -20,7 +20,9 @@ LEGEND_MIN_RESERVE_PX: Final[float] = 20.0
 LEGEND_DIMENSION_AXIS_RESERVE_CHROME_PX: Final[float] = 43.0
 # One wrapped legend row inside its total footprint at collapse; fitted by binary search over row counts 6 to 10.
 LEGEND_ROW_HEIGHT_PX: Final[float] = 16.0
-# Fixed title and padding chrome above a wrapped legend's rows; the other half of that fit.
+# Vega's legend symbol stroke width, which the renderer's entry cell counts in (`VEGA_SYMBOL_STROKE_WIDTH` in `chart-renderer/src/families/legend.rs`).
+LEGEND_SYMBOL_STROKE_PX: Final[float] = 1.5
+# Fixed title and padding chrome above a wrapped legend's rows.
 LEGEND_CHROME_HEIGHT_PX: Final[float] = 47.0
 # Marginal cost of one wrapped compact-legend row against the plot-height floor; not LEGEND_ROW_HEIGHT_PX, whose total already carries fixed chrome.
 # Runs optimistic by +11.8px at 1 series down to +1.8px at 10.

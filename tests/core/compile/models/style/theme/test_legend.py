@@ -26,8 +26,12 @@ def _legend(position: object = None, direction: str = "vertical") -> LegendStyle
             "direction": direction,
             "columns": 0,
             "compact_columns": 2,
-            "row": {"swatch_width": 10.0, "entry_gap": 16.0},
-            "label": {"padding": 8.0},
+            "entry_gap": 10.0,
+            "symbol": {"size": 10.0},
+            "background": "#ffffff",
+            "opacity": 1.0,
+            "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0},
+            "label": {"padding": 8.0, "halo": 0},
             "title": {"padding": 0.0},
         }
     )
@@ -74,7 +78,7 @@ def test_pie_position_accepts_an_edge(edge: str) -> None:
     assert legend.position.edge == edge
 
 
-@pytest.mark.parametrize("leaf", ["columns", "symbol_limit", "title", "direction"])
+@pytest.mark.parametrize("leaf", ["columns", "limit", "title", "direction"])
 def test_a_pie_legend_takes_only_its_position(leaf: str) -> None:
     """The attached table is the pie's legend: no other leaf styles it."""
     with pytest.raises(ValidationError):

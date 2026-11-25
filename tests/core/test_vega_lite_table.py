@@ -285,7 +285,7 @@ class TestTableProportionalSizing:
         assert "…" in svg, "title should be truncated at this narrow width"
         assert f"<title>{title}</title>" in svg
 
-    def test_table_header_inherits_chart_title_overflow_wrap_two(self, make_chart):
+    def test_table_header_takes_the_themes_two_line_wrap(self, make_chart):
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
@@ -313,49 +313,7 @@ class TestTableProportionalSizing:
         assert "Start" in svg
         assert "Next Steps" in svg or "Next" in svg
 
-    def test_table_column_header_overflow_override_beats_inherited_default(
-        self, make_chart
-    ):
-        from dbt_charts.core.compile.models.chart.authored import (
-            TableColumnConfig,
-        )
-
-        from ._engine_render import render_table_svg
-
-        chart = make_chart(
-            "table",
-            x=None,
-            y=None,
-            style={
-                "columns": {
-                    "Opportunities Subscription Start Date": TableColumnConfig(
-                        header_overflow="clip",
-                        width=110,
-                    )
-                }
-            },
-        )
-        data = [{"Opportunities Subscription Start Date": "2026-01-01"}]
-        # Width narrow enough that the header cannot fit at the minimum
-        # cascade font size (8px) — forces clip mode to truncate.
-        chart = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
-        svg = render_table_svg(
-            chart,
-            data,
-            width=130,
-            board_style=resolve_style(get_theme_style()),
-        )
-
-        assert "<title>Opportunities Subscription Start Date</title>" in svg
-        # Clip mode truncates without ellipsis; exact chars fitting depend
-        # on the cascaded font size.  Verify clip occurred (start visible,
-        # end not) without asserting character count.
-        assert "Opportunities" in svg
-        assert "Start Date</text>" not in svg
-        assert "…" not in svg  # no ellipsis in clip mode
-        assert "<tspan" not in svg
-
-    def test_table_column_header_truncate_uses_ellipsis(self, make_chart):
+    def test_table_column_header_wrap_one_line_uses_ellipsis(self, make_chart):
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
@@ -372,7 +330,7 @@ class TestTableProportionalSizing:
             style={
                 "columns": {
                     "Opportunities Subscription Start Date": TableColumnConfig(
-                        header_overflow="truncate",
+                        header_max_lines=1,
                         width=110,
                     )
                 }

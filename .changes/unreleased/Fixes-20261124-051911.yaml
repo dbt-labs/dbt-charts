@@ -1,5 +1,0 @@
-kind: Fixes
-body: 'A gradient''s range is now `domain: [min, max]` (or `{min, max}`, `null` for an open end), the same as an axis''s, so `domain: [0, 100]` works; boards that set `min`/`max` migrate automatically.'
-time: 2026-11-24T05:19:11.129112412Z
-custom:
-    DbtChartsIssue: "109"

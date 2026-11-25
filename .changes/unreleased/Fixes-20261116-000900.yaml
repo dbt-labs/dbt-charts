@@ -1,3 +1,0 @@
-kind: Fixes
-body: A format hint no longer suggests a date grain name like date_month that the board has not redefined.
-time: 2026-11-16T00:09:00.910091-08:00

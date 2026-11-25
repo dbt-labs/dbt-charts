@@ -1,3 +1,0 @@
-kind: Fixes
-body: Line and area charts with endpoint labels leave the same headroom above the data as every other chart, instead of rounding the value axis up to a clean tick.
-time: 2026-11-24T09:57:43.83692-08:00

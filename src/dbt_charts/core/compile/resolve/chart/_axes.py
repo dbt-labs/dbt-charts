@@ -37,6 +37,7 @@ from dbt_charts.core.compile.models.style.resolved import ResolvedLegendStyle
 from dbt_charts.core.compile.models.style.theme import (
     AxisXStyle,
     AxisYStyle,
+    DirectPosition,
     LegendEdge,
     _CartesianChartStyle,
 )
@@ -70,6 +71,7 @@ from dbt_charts.core.constants.estimates import (
     LEGEND_DIMENSION_AXIS_RESERVE_CHROME_PX,
     LEGEND_MIN_RESERVE_PX,
     LEGEND_ROW_HEIGHT_PX,
+    LEGEND_SYMBOL_STROKE_PX,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
@@ -78,6 +80,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_TICKS_INTERVAL_MEASURE_AXIS,
 )
 from dbt_charts.core.diagnostics.codes_render import (
+    ERR_DIRECT_OVERLAY_UNSUPPORTED,
     ERR_LAYER_AXIS_POSITION_ENDPOINT_LABELS,
     ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR,
 )
@@ -108,6 +111,7 @@ __all__ = [
     "cartesian_color_domain_values",
     "cartesian_series_domain_values",
     "cartesian_series_naming",
+    "direct_placement",
     "cartesian_top_legend_entries",
     "color_legend_entries",
     "estimate_cartesian_plot_height",
@@ -276,6 +280,7 @@ def _bake_cartesian_axes(
     multiples: MultiplesConfig | None = None,
     y: str | list[str] | None = None,
     temporal_band_axes: frozenset[Literal["axis_x", "axis_y"]] = frozenset(),
+    leave_auto_format: bool = False,
 ) -> BakedCartesianAxes:
     """Walk the axis cascade for axis_x and axis_y: each merged,
     theme-typed axis with its band_position and baked format.
@@ -294,6 +299,8 @@ def _bake_cartesian_axes(
 
     ``temporal_band_axes`` names the band-typed axes whose column is a date (see
     ``_axis_layers``); only heatmap, whose axes are always nominal, passes any.
+
+    ``leave_auto_format`` keeps both axes' ``labels.format: auto`` unset.
 
     ``multiples`` / ``y`` are the small-multiples inputs. This is the home
     for the multiples↔mirror interaction (bar defers it: its default depends on
@@ -328,6 +335,7 @@ def _bake_cartesian_axes(
         chart_type=chart_type,
         labeled=bool(chart.x_label),
         temporal_band="axis_x" in temporal_band_axes,
+        leave_auto_format=leave_auto_format,
     )
     ay, ay_band_position = _merge_axis_cascade(
         chart_style_context,
@@ -343,6 +351,7 @@ def _bake_cartesian_axes(
         chart_type=chart_type,
         labeled=bool(chart.y_label),
         temporal_band="axis_y" in temporal_band_axes,
+        leave_auto_format=leave_auto_format,
     )
     # labels.values (the label-cadence filter) lives only on DimensionLabelStyle,
     # used solely by AxisXStyle.labels — axis_y structurally cannot author it,
@@ -583,6 +592,36 @@ def _rail_off_for_multiples(
     naming both fields.
     """
     return False if rail == "auto" and normalized.multiples is not None else rail
+
+
+def direct_placement(
+    chart_id: str,
+    position: DirectPosition,
+    direct: bool,
+    blocker: str | None,  # type-state: optional — None when the plot can hold the names
+    channels: Mapping[str, ResolvedStyleChannel],
+    wide_measure_series: bool,
+) -> Literal["end", "overlay", "auto"]:
+    """Where a line's or area's direct labels go: beside the plot, or inside it.
+
+    ``direct`` is whether the chart names its series on the chart at all
+    (``SeriesNaming.rail``). ``blocker`` says why this chart's plot cannot hold
+    the names, or is None; an authored ``overlay`` there is refused. ``auto``
+    returns ``auto`` where the names could go inside the plot: the family then
+    resolves an in-plot attempt beside the strip.
+    """
+    fires = _endpoint_label_rail_fires(
+        channels, True, wide_measure_series=wide_measure_series
+    )
+    if not direct or position == "end" or not fires:
+        return "end"
+    if blocker is None:
+        return position
+    if position == "overlay":
+        raise ChartDataError.from_code(
+            ERR_DIRECT_OVERLAY_UNSUPPORTED, chart_id=chart_id, reason=blocker
+        )
+    return "end"
 
 
 def _multiples_wants_top_legend(
@@ -888,41 +927,53 @@ def legend_row_fits(
     """True when one horizontal row naming every one of ``entries`` fits
     within ``width``.
 
-    This is the single source of truth for "does this legend fit" --
-    ``cartesian_series_naming`` calls it to decide top vs. right at compile
-    time from the entries it can already know (see
-    ``cartesian_top_legend_entries``); the render-time fix for a top legend
-    that silently clips or drops entries once it stops fitting (a separate,
-    already-filed defect) should call this same function with the chart's
-    real, executed entries -- the two must never drift into disagreeing about
-    what "fits" means.
-
-    The swatch box and the gap to the next entry are fixed rendering chrome
-    (``legend.row``), constant regardless of mark size or entry
-    count -- a legend swatch stays legible-sized even naming a thousand tiny
-    marks; scaling it to the marks it names is explicitly
-    rejected. Only the label TEXT is measured, against the legend's own real
-    resolved font -- never estimated, never a fixed per-entry count (measured
-    with realistic mixed-length names, capacity swings from 7 entries at
-    640px to 5 at 420px, so a hardcoded count is wrong at any single width).
+    The single source of truth for "does this legend fit", shared by the
+    compile-time top/right decision and the render-time entry omission. Only
+    label text is measured, in the legend's own font; the glyph, gap, padding
+    and border are fixed chrome. The sums follow the renderer's uniform entry
+    grid (``legend_grid`` in ``chart-renderer/src/families/legend.rs``) for
+    square and circle glyphs; a dashed, stroke or filled glyph lays out
+    differently there, so for those this is an estimate.
     """
     if not entries:
         return True
-    total = sum(_legend_entry_widths(entries, legend))
-    total += legend.row.entry_gap * (len(entries) - 1)
-    return total <= width
+    widths = _legend_entry_widths(entries, legend)
+    pitch = legend.entry_gap + _legend_glyph_overhang(legend)
+    last = widths[-1]
+    total = sum(ceil(width) + pitch for width in widths[:-1]) + last
+    return ceil(total) + _legend_box_extra(legend) <= width
+
+
+def _legend_cell(legend: ResolvedLegendStyle) -> float:
+    """The symbol cell's side: the glyph plus its 1.5 px stroke, rounded up,
+    never under the label font size."""
+    return max(
+        ceil(legend.symbol.size + LEGEND_SYMBOL_STROKE_PX), legend.label.font.size
+    )
+
+
+def _legend_glyph_overhang(legend: ResolvedLegendStyle) -> float:
+    """How far the stroked glyph reaches left of its cell, rounded up: the
+    renderer adds it to every column gap."""
+    reach = legend.symbol.size / 2 + LEGEND_SYMBOL_STROKE_PX - _legend_cell(legend) / 2
+    return float(ceil(max(reach, 0.0)))
+
+
+def _legend_box_extra(legend: ResolvedLegendStyle) -> float:
+    """Width the legend's padding and border add around the entries, once per side."""
+    return 2 * (legend.padding + legend.border.width)
 
 
 def _legend_entry_widths(
     entries: Sequence[str], legend: ResolvedLegendStyle
 ) -> list[float]:
-    """Each entry's full width: swatch and padding chrome plus its whole
-    label in the legend's own font. Never cut at ``label.max_width``: a fit
-    that counts on the cut would draw truncated names."""
+    """Each entry's full width: glyph cell and label offset chrome plus its
+    whole label in the legend's own font. Never cut at ``label.max_width``: a
+    fit that counts on the cut would draw truncated names."""
     measurer = get_weighted_font_measurer(
         legend.label.font.family, legend.label.font.weight
     )
-    chrome = legend.row.swatch_width + legend.label.padding
+    chrome = _legend_cell(legend) + legend.label.padding
     return [
         chrome + measurer.measure(entry, legend.label.font.size) for entry in entries
     ]
@@ -940,9 +991,9 @@ def legend_wrap_columns(
     """
     if legend_row_fits(entries, width, legend):
         return None
-    cell = max(_legend_entry_widths(entries, legend))
-    gap = legend.row.entry_gap
-    fitted = floor((width + gap) / (cell + gap))
+    cell = ceil(max(_legend_entry_widths(entries, legend)))
+    gap = legend.entry_gap + _legend_glyph_overhang(legend)
+    fitted = floor((width - _legend_box_extra(legend) + gap) / (cell + gap))
     return max(1, min(fitted, legend.compact_columns, len(entries)))
 
 
@@ -1007,15 +1058,15 @@ def estimate_left_axis_reserve_px(
 
 
 def legend_wrapped_row_count(
-    entry_count: int, symbol_limit: int | None, columns: int | None
+    entry_count: int, limit: int | None, columns: int | None
 ) -> int:
     """Row count a wrapped, multi-column legend needs to name ``entry_count``
     series.
 
-    Caps at ``symbol_limit`` before dividing: Vega-Lite draws at most
-    ``symbol_limit`` entries (plus its own synthetic "...N entries" row), so
+    Caps at ``limit`` before dividing: Vega-Lite draws at most
+    ``limit`` entries (plus its own synthetic "...N entries" row), so
     the row count must reflect what actually renders, not the raw column
-    cardinality -- a 30-series chart with ``symbol_limit: 20`` needs the same
+    cardinality -- a 30-series chart with ``limit: 20`` needs the same
     row count as a 20-series one. Called from this module's own
     ``legend_wrap_required_height_px`` (the legend's total footprint at
     collapse -- bar.py's ``_stack_legend_should_yield``) and
@@ -1026,7 +1077,7 @@ def legend_wrapped_row_count(
     question a caller goes on to ask of it. ``columns`` is
     ``legend_wrap_columns``'s answer: ``None`` is a legend that fits one row.
     """
-    capped = min(entry_count, symbol_limit) if symbol_limit else entry_count
+    capped = min(entry_count, limit) if limit else entry_count
     if columns is None:
         return min(capped, 1)
     return ceil(capped / columns)
@@ -1058,7 +1109,7 @@ def color_legend_entries(
 
 
 def legend_wrap_required_height_px(
-    entry_count: int, symbol_limit: int | None, columns: int | None
+    entry_count: int, limit: int | None, columns: int | None
 ) -> float:
     """Pixel height a wrapped, multi-column legend needs to name
     ``entry_count`` series: row count times a fixed per-row height, plus
@@ -1077,12 +1128,12 @@ def legend_wrap_required_height_px(
     ``LEGEND_ROW_HEIGHT_PX`` / ``LEGEND_CHROME_HEIGHT_PX`` are the
     calibrated constants (``constants/estimates.py``).
     """
-    rows = legend_wrapped_row_count(entry_count, symbol_limit, columns)
+    rows = legend_wrapped_row_count(entry_count, limit, columns)
     return rows * LEGEND_ROW_HEIGHT_PX + LEGEND_CHROME_HEIGHT_PX
 
 
 def legend_wrap_marginal_height_px(
-    entry_count: int, symbol_limit: int | None, columns: int | None
+    entry_count: int, limit: int | None, columns: int | None
 ) -> float:
     """Marginal pixel height a wrapped, multi-column legend adds against a
     plot-height floor: row count times a flat per-row cost, no fixed chrome
@@ -1102,7 +1153,7 @@ def legend_wrap_marginal_height_px(
     ``COMPACT_LEGEND_ROW_PX`` is the
     calibrated constant (``constants/estimates.py``).
     """
-    rows = legend_wrapped_row_count(entry_count, symbol_limit, columns)
+    rows = legend_wrapped_row_count(entry_count, limit, columns)
     return rows * COMPACT_LEGEND_ROW_PX
 
 
@@ -1144,7 +1195,7 @@ def legend_wrap_fits_height_budget(
     """
     marginal = legend_wrap_marginal_height_px(
         len(entries),
-        legend.symbol_limit,
+        legend.limit,
         legend_wrap_columns(entries, width, legend),
     )
     card_height = plot_height_estimate + 2 * card_padding_px

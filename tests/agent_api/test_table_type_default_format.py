@@ -64,3 +64,45 @@ def test_table_prints_year_and_hugeint_sum_plain(
     assert result.status == "ok", [e.message for e in result.validation_errors]
     assert isinstance(result.data, str)
     assert "| 1975 | 1,234,569 | 2.5 |" in result.data
+
+
+def test_table_prints_a_text_column_verbatim(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  mem:\n    type: duckdb\n    path: ':memory:'\n"
+    )
+    project = local_project(tmp_path)
+    board = """
+title: Facts
+source: mem
+queries:
+  facts:
+    sql: |
+      SELECT * FROM (VALUES
+        ('Regulatory deadline', '2028-07-02'),
+        ('Main TMK', '730320810000'),
+        ('Parcels affected', '1')
+      ) AS t(field, value)
+charts:
+  t:
+    query: facts
+    type: table
+rows:
+  - t
+"""
+    result = render_dashboard(
+        board=InMemoryBoard(board, path=project.path("charts/_t.yml")),
+        project=project,
+        env=build_exec_env(project, read_only=False),
+        result_cache=None,
+        format="text",
+    )
+    assert result.status == "ok", [e.message for e in result.validation_errors]
+    assert isinstance(result.data, str)
+    for line in (
+        "| Regulatory deadline | 2028-07-02 |",
+        "| Main TMK | 730320810000 |",
+        "| Parcels affected | 1 |",
+    ):
+        assert line in result.data, result.data

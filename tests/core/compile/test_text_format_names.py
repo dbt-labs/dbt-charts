@@ -23,3 +23,13 @@ def test_text_name_in_a_vega_slot_is_rejected() -> None:
     result = compile_board(text_format_board(rows, chart, formats="      n: integer\n"))
     assert not result.success
     assert result.errors[0].code == "ERR-FORMAT-TEXT-IN-VEGA-SLOT"
+
+
+def test_text_name_in_a_tooltip_entry_compiles() -> None:
+    chart = (
+        "    type: bar\n    x: name\n    y: n\n    tooltip:\n"
+        "      - column: site\n        format: url\n"
+    )
+    rows = "      - {name: a, n: 1, site: 'https://a.io'}\n"
+    result = compile_board(text_format_board(rows, chart, formats="      n: integer\n"))
+    assert result.success, result.errors

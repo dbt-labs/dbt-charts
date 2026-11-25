@@ -88,7 +88,9 @@ def bake_axis_color(
         if ay.color == AUTO
         else ay.color
     )
-    text = ensure_readable_ink(color, chart_style_context.ink_canvas)
+    text = ensure_readable_ink(
+        color, chart_style_context.ink_canvas, ink=chart_style_context.ink
+    )
     grid = authored.grid if authored is not None else None
     labels = authored.labels if authored is not None else None
     title = authored.title if authored is not None else None
@@ -158,4 +160,6 @@ def layer_axis_color(
                 else _grid_opacity(color, chart_style_context),
             }
         )
-    return grid, ensure_readable_ink(color, chart_style_context.ink_canvas)
+    return grid, ensure_readable_ink(
+        color, chart_style_context.ink_canvas, ink=chart_style_context.ink
+    )

@@ -60,6 +60,9 @@ pub(crate) const LABEL_GAP: f64 = 6.0;
 pub(crate) const RULE_PAD: f64 = 1.0;
 /// The gap it keeps from a line, which its own label necessarily passes close to.
 pub(crate) const LINE_PAD: f64 = 2.0;
+/// The gap a series name keeps from an annotation rule: a name closer than about a label height
+/// reads as that rule's caption.
+pub(crate) const ANNOTATION_RULE_PAD: f64 = 12.0;
 /// A preferred spot with at least this much room to spare stays put.
 const COMFORT: f64 = 2.0 * LABEL_PAD;
 /// More dropped labels than this share of a chart's labels raises the thinned warning.
@@ -72,10 +75,6 @@ const STEP_OUT: [f64; 2] = [4.0, 8.0];
 const COINCIDENT: f64 = 6.0;
 /// Scatter points nearer than this share a label's height, so their labels part sideways.
 const PAIR_REACH: f64 = 12.0;
-/// How much of its text box's top and bottom an axis-channel label gives up beside a tick.
-/// Digits stop 1px inside a text box's top and 3px inside its bottom, so giving up 2 on
-/// one box still keeps the two numbers' digits 2px apart above or below.
-const DIGIT_INSET: f64 = 2.0;
 /// Both offsets of a label set off a corner of its datum.
 const DIAGONAL: f64 = 4.0;
 /// The radius a label's default offset already clears; a larger marker pushes it out.
@@ -88,12 +87,12 @@ pub(crate) struct Obstacle {
     pub(crate) b: Bounds,
     pub(crate) pad: f64,
     /// A fill a label may sit over; a spot clear of every soft box ranks above one over it.
-    soft: bool,
+    pub(crate) soft: bool,
     /// A gridline a label may cross; a spot clear of every faint box ranks above one on it.
-    faint: bool,
+    pub(crate) faint: bool,
     /// A gridline drawn at text contrast: it strikes through digits in either direction.
     heavy: bool,
-    stroke: Option<(Vec<(f64, f64)>, f64)>,
+    pub(crate) stroke: Option<(Vec<(f64, f64)>, f64)>,
 }
 
 impl Obstacle {
@@ -107,6 +106,11 @@ impl Obstacle {
 
     pub(crate) fn rule(b: Bounds) -> Self {
         Obstacle { b, pad: RULE_PAD, soft: false, faint: false, heavy: false, stroke: None }
+    }
+
+    /// A rule or band drawn by an annotation, which a series name keeps `ANNOTATION_RULE_PAD` from.
+    pub(crate) fn annotation(b: Bounds) -> Self {
+        Obstacle { pad: ANNOTATION_RULE_PAD, ..Obstacle::rule(b) }
     }
 
     pub(crate) fn grid(b: Bounds, heavy: bool) -> Self {
@@ -129,13 +133,23 @@ impl Obstacle {
         }
     }
 
+    /// Whether a label keeps off this obstacle at all: a fill may be sat over, a gridline crossed.
+    pub(crate) fn hard(&self) -> bool {
+        !self.soft && !self.faint
+    }
+
+    /// The area `b`, padded by this obstacle's gap, shares with its box.
+    pub(crate) fn overlap(&self, b: &Bounds) -> f64 {
+        intersection(&b.expand(self.pad), &self.b)
+    }
+
     /// How far `b` clears this obstacle's pad: negative where it intrudes.
     pub(crate) fn slack(&self, b: &Bounds) -> f64 {
         self.gap(b) - self.pad
     }
 
     /// The distance from `b` to this obstacle's ink (0 when they touch).
-    fn gap(&self, b: &Bounds) -> f64 {
+    pub(crate) fn gap(&self, b: &Bounds) -> f64 {
         let Some((points, half)) = &self.stroke else { return gap(b, &self.b) };
         if gap(b, &self.b) - half > 3.0 * LABEL_PAD + 16.0 {
             return f64::INFINITY;
@@ -149,7 +163,7 @@ impl Obstacle {
 }
 
 /// The distance between segment `p`-`q` and `b`.
-fn segment_box_distance(p: (f64, f64), q: (f64, f64), b: &Bounds) -> f64 {
+pub(crate) fn segment_box_distance(p: (f64, f64), q: (f64, f64), b: &Bounds) -> f64 {
     // Liang-Barsky: a segment through the box is at distance 0.
     let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
     let d = (q.0 - p.0, q.1 - p.1);
@@ -219,10 +233,10 @@ pub(crate) fn strikes(plot: &[Node], canvas: &str) -> Result<Vec<Obstacle>, Stri
     Ok(obstacles(plot, &[], canvas)?.into_iter().filter(|o| o.heavy).collect())
 }
 
-/// The measured axis text among `frames` as `(center y, text)` in the plot's frame: the drawn tick labels.
-pub(crate) fn tick_labels(frames: &[Frame]) -> Vec<(f64, String)> {
+/// The measured axis text among `frames` as `(top, bottom, text)` in the plot's frame: the drawn tick labels.
+pub(crate) fn tick_labels(frames: &[Frame]) -> Vec<(f64, f64, String)> {
     let axis_text = frames.iter().flat_map(|&(nodes, shift)| scene::drawn(nodes, |role| *role == Role::Axis).into_iter().map(move |d| (d, shift)));
-    axis_text.filter_map(|(d, (_, dy))| Some(((d.bounds.y1 + d.bounds.y2) / 2.0 + dy, d.node.text_content()?))).collect()
+    axis_text.filter_map(|(d, (_, dy))| Some((d.bounds.y1 + dy, d.bounds.y2 + dy, d.node.text_content()?))).collect()
 }
 
 /// The height of every horizontal gridline among `nodes`, in their frame.
@@ -231,11 +245,10 @@ pub(crate) fn grid_rows(nodes: &[Node]) -> Vec<f64> {
     grid.into_iter().filter(|d| matches!(d.node.shape, Shape::Line { .. }) && d.bounds.y1 == d.bounds.y2).map(|d| d.bounds.y1).collect()
 }
 
-/// Whether a datum's value label only repeats its y axis: the datum sits on the
-/// axis edge `edge_x`, level with a drawn tick whose label reads the same text.
-/// `ticks` are the drawn ticks' `(y, label)`.
-pub(crate) fn repeats_axis(anchor: (f64, f64), text: &str, edge_x: f64, ticks: &[(f64, String)]) -> bool {
-    (anchor.0 - edge_x).abs() < 1.0 && ticks.iter().any(|(y, label)| (anchor.1 - y).abs() < 1.0 && label == text)
+/// The drawn tick a value label at height `y` only repeats: level with it and reading the same
+/// text. `ticks` are the drawn tick labels' `(top, bottom, text)`.
+pub(crate) fn repeats_axis(y: f64, text: &str, ticks: &[(f64, f64, String)]) -> Option<usize> {
+    ticks.iter().position(|(top, bottom, label)| (*top..=*bottom).contains(&y) && label == text)
 }
 
 /// `WARN-VALUE-LABELS-THINNED`: raised when more than `THINNED_SHARE` of a chart's
@@ -314,8 +327,18 @@ pub(crate) struct LabelReq {
     pub(crate) group: usize,
     /// The datum's own marker radius (0 when it draws none).
     pub(crate) own_radius: f64,
-    /// `preferred` is the axis labels' channel, where it may sit tighter against the numbers.
-    pub(crate) channel: bool,
+    /// `preferred` sits outside the plot, in room the fit reserved for it.
+    pub(crate) outside: bool,
+    /// The value axis' label gutter beside the datum, the spot of last resort.
+    pub(crate) gutter: Option<Gutter>,
+}
+
+/// A spot in the value axis' label gutter, level with the datum.
+#[derive(Clone, Copy)]
+pub(crate) struct Gutter {
+    pub(crate) spot: CaptionSpot,
+    /// The gutter's horizontal extent; a label wider than it is never set there.
+    pub(crate) x: (f64, f64),
 }
 
 /// What a chart's value labels are placed against.
@@ -335,7 +358,12 @@ fn gap(a: &Bounds, b: &Bounds) -> f64 {
     dx.max(dy)
 }
 
-fn path_distance(path: &[(f64, f64)], p: (f64, f64)) -> f64 {
+/// A label belongs to the series nearest it: whether another series is nearer than its own.
+pub(crate) fn nearer_foreign(own: f64, foreign: f64) -> bool {
+    foreign < own - EPS
+}
+
+pub(crate) fn path_distance(path: &[(f64, f64)], p: (f64, f64)) -> f64 {
     let to_segment = |a: (f64, f64), b: (f64, f64)| {
         let (vx, vy) = (b.0 - a.0, b.1 - a.1);
         let len2 = vx * vx + vy * vy;
@@ -393,7 +421,10 @@ pub(crate) fn priority_order(series: &[usize], values: &[f64]) -> Vec<usize> {
 /// fill, off the gridlines, then open enough, then the earlier tier (preferred; the
 /// four sides; the sides stepped out; diagonals), then the shortest move.
 ///
-/// A label offered the axis labels' channel takes it whenever it collides with nothing.
+/// A preferred spot outside the plot stays whenever it collides with nothing. A label
+/// with no acceptable spot in the plot takes its gutter when the gutter is clear and
+/// wide enough. (A label beside the value axis whose text the tick level with it already
+/// prints never reaches placement: the caller drops it and the tick reads in its stead.)
 ///
 /// A second pass moves each group to the side most of its labels took, where any
 /// acceptable spot there will do. It stands unless it drops more labels.
@@ -469,10 +500,13 @@ fn place_one(r: &LabelReq, size: f64, comfort: f64, field: &Field) -> Option<Cap
         .chain(diagonals.into_iter().map(|s| (3, s)))
         .collect();
     let start = ink(&preferred);
-    // A bubble's push may not carry a label past what the fit reserved; a channel's spot is reserved.
-    let reserved = if r.channel { start } else { ink(&r.preferred) };
+    // A bubble's push may not carry a label past what the fit reserved; an outside spot is reserved.
+    let reserved = if r.outside { start } else { ink(&r.preferred) };
     let room = Bounds::new(reserved.x1.min(0.0), reserved.y1.min(0.0), reserved.x2.max(field.plot.0), reserved.y2.max(field.plot.1));
     let (sx, sy) = ((start.x1 + start.x2) / 2.0, (start.y1 + start.y2) / 2.0);
+    // A box centered on the datum is its own marker; the offset clears its radius instead.
+    let own_marker = |o: &Obstacle| o.stroke.is_none() && o.pad != RULE_PAD && (o.b.x1 + o.b.x2 - 2.0 * r.anchor.0).abs() < 1.0 && (o.b.y1 + o.b.y2 - 2.0 * r.anchor.1).abs() < 1.0;
+    let slack_of = |b: &Bounds| field.obstacles.iter().filter(|o| o.hard() && !own_marker(o)).map(|o| o.slack(b)).fold(size, f64::min);
     // (spot index, tier, slack, nearer a foreign series, over a fill, on a gridline, move distance)
     let mut best: Option<(usize, u8, f64, bool, bool, bool, f64)> = None;
     for (k, (tier, s)) in spots.iter().enumerate() {
@@ -480,29 +514,24 @@ fn place_one(r: &LabelReq, size: f64, comfort: f64, field: &Field) -> Option<Cap
         if b.x1 < room.x1 - EPS || b.y1 < room.y1 - EPS || b.x2 > room.x2 + EPS || b.y2 > room.y2 + EPS {
             continue;
         }
-        // A box centered on the datum is its own marker; the offset clears its radius instead.
-        let own_marker = |o: &Obstacle| o.stroke.is_none() && o.pad != RULE_PAD && (o.b.x1 + o.b.x2 - 2.0 * r.anchor.0).abs() < 1.0 && (o.b.y1 + o.b.y2 - 2.0 * r.anchor.1).abs() < 1.0;
-        let hard = field.obstacles.iter().filter(|o| !o.soft && !o.faint && !own_marker(o));
-        let squeezed = k == 0 && r.channel;
-        let inked = if squeezed { Bounds::new(b.x1, b.y1 + DIGIT_INSET, b.x2, b.y2 - DIGIT_INSET) } else { b };
-        let slack = hard.map(|o| if squeezed { o.gap(&inked) - EPS } else { o.slack(&b) }).fold(size, f64::min);
+        let slack = slack_of(&b);
         let over_fill = field.obstacles.iter().any(|o| o.soft && gap(&b, &o.b) < EPS);
         // A vertical gridline barely touches the digits it passes through; a horizontal one runs along them.
         // A heavy gridline strikes through either way.
         let on_grid = field.obstacles.iter().any(|o| o.faint && (o.heavy || o.b.x2 - o.b.x1 > 3.0) && gap(&b, &o.b) < EPS);
         let on_heavy = field.obstacles.iter().any(|o| o.heavy && gap(&b, &o.b) < EPS);
-        if slack < -EPS || (squeezed && slack <= 0.0) {
+        if slack < -EPS {
             continue;
         }
         let center = ((b.x1 + b.x2) / 2.0, (b.y1 + b.y2) / 2.0);
         // Outside the plot a label reads only at its point's height.
-        if r.channel && k > 0 && (center.0 < -EPS || center.0 > field.plot.0 + EPS) {
+        if (r.outside || r.gutter.is_some()) && k > 0 && (center.0 < -EPS || center.0 > field.plot.0 + EPS) {
             continue;
         }
         let own = path_distance(&field.paths[r.owner], center);
         let foreign = field.paths.iter().enumerate().filter(|(o, _)| *o != r.owner).map(|(_, p)| path_distance(p, center)).fold(f64::INFINITY, f64::min);
-        let (nearer_foreign, moved) = (foreign < own - EPS, (center.0 - sx).hypot(center.1 - sy));
-        if k == 0 && (r.channel || (slack >= comfort && !nearer_foreign && !over_fill && !on_heavy)) {
+        let (nearer_foreign, moved) = (nearer_foreign(own, foreign), (center.0 - sx).hypot(center.1 - sy));
+        if k == 0 && (r.outside || (slack >= comfort && !nearer_foreign && !over_fill && !on_heavy)) {
             return Some(*s);
         }
         let better = |(_, bt, bs, bf, bo, bg, bd): (usize, u8, f64, bool, bool, bool, f64)| {
@@ -528,7 +557,12 @@ fn place_one(r: &LabelReq, size: f64, comfort: f64, field: &Field) -> Option<Cap
             best = Some((k, *tier, slack, nearer_foreign, over_fill, on_grid, moved));
         }
     }
-    best.map(|(k, ..)| spots[k].1)
+    if let Some((k, ..)) = best {
+        return Some(spots[k].1);
+    }
+    let g = r.gutter?;
+    let b = ink(&g.spot);
+    (b.x1 >= g.x.0 - EPS && b.x2 <= g.x.1 + EPS && slack_of(&b) >= -EPS).then_some(g.spot)
 }
 
 #[cfg(test)]
@@ -588,14 +622,15 @@ mod tests {
     }
 
     #[test]
-    fn a_tick_label_is_the_measured_axis_text_at_its_center_height() {
+    fn a_tick_label_is_the_measured_axis_text_and_its_height() {
         let tick = Node::text(Role::Axis, (0.0, 0.0), Attrs::new(), "20%").with_text_bounds(scene::Bounds { x1: -30.0, y1: 95.0, x2: -6.0, y2: 106.0 });
         let other = Node::text(Role::Label, (0.0, 0.0), Attrs::new(), "x").with_text_bounds(scene::Bounds { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 });
         let frame = Node::group(Role::Axis, Attrs::new(), vec![tick, other]).translate(0.0, 10.0);
         let ticks = tick_labels(&[(std::slice::from_ref(&frame), (0.0, 0.0))]);
-        assert_eq!(ticks, vec![(110.5, "20%".to_string())]);
-        assert!(repeats_axis((0.0, 110.0), "20%", 0.0, &ticks));
-        assert!(!repeats_axis((0.0, 110.0), "30%", 0.0, &ticks));
+        assert_eq!(ticks, vec![(105.0, 116.0, "20%".to_string())]);
+        assert_eq!(repeats_axis(110.0, "20%", &ticks), Some(0));
+        assert_eq!(repeats_axis(117.0, "20%", &ticks), None, "below the tick's text");
+        assert_eq!(repeats_axis(110.0, "30%", &ticks), None);
     }
 
     fn top() -> CaptionSpot {
@@ -603,7 +638,7 @@ mod tests {
     }
 
     fn req(anchor: (f64, f64), owner: usize) -> LabelReq {
-        LabelReq { anchor, width: 20.0, preferred: top(), movable: true, owner, group: owner, own_radius: 0.0, channel: false }
+        LabelReq { anchor, width: 20.0, preferred: top(), movable: true, owner, group: owner, own_radius: 0.0, outside: false, gutter: None }
     }
 
     fn field(obstacles: Vec<Obstacle>, paths: Vec<Vec<(f64, f64)>>) -> Field {
@@ -815,28 +850,74 @@ mod tests {
         assert_eq!(top_of_each_cluster(&points, &[0, 2, 1, 3]), vec![false, true, false, true]);
     }
 
-    #[test]
-    fn a_channel_label_squeezes_beside_a_near_tick_but_never_onto_it() {
-        let channel = CaptionSpot { edge: None, align: "left", baseline: "middle", dx: 30.0, dy: 0.0 };
-        let dx_with_tick_at = |tick_y: f64| {
-            let mut r = req((195.0, 100.0), 0);
-            r.preferred = channel;
-            r.channel = true;
-            let tick = Obstacle::mark(Bounds::new(225.0, tick_y - 5.5, 245.0, tick_y + 5.5));
-            place(r, &mut field(vec![tick], vec![vec![(195.0, 100.0)]])).expect("placed").dx
-        };
-        assert_eq!(dx_with_tick_at(90.0), 30.0);
-        // Centers 8 apart: the digits, 8 tall, would touch.
-        assert_ne!(dx_with_tick_at(92.0), 30.0);
-        assert_ne!(dx_with_tick_at(94.0), 30.0);
+    /// The right axis' gutter beside a datum at `(195, 100)`, `room` wide from the plot side.
+    fn gutter(room: f64) -> Gutter {
+        Gutter { spot: CaptionSpot { edge: None, align: "left", baseline: "middle", dx: 10.0, dy: 0.0 }, x: (205.0, 205.0 + room) }
+    }
+
+    fn at_edge(g: Gutter) -> LabelReq {
+        LabelReq { gutter: Some(g), ..req((195.0, 100.0), 0) }
+    }
+
+    /// Covers every spot the plot offers a label at `(195, 100)`, and nothing past `x = 201`.
+    fn walls_off_the_plot() -> Obstacle {
+        Obstacle::mark(Bounds::new(140.0, 50.0, 201.0, 150.0))
     }
 
     #[test]
-    fn a_blocked_channel_label_comes_back_into_the_plot_at_no_other_height() {
-        let channel = CaptionSpot { edge: None, align: "right", baseline: "middle", dx: -6.0, dy: 0.0 };
+    fn a_gutter_label_never_reads_onto_a_near_tick() {
+        let in_gutter_with_tick_at = |tick_y: f64| {
+            let tick = Obstacle::mark(Bounds::new(205.0, tick_y - 5.5, 245.0, tick_y + 5.5));
+            let placed = place(at_edge(gutter(60.0)), &mut field(vec![walls_off_the_plot(), tick], vec![vec![(195.0, 100.0)]]));
+            let g = gutter(60.0).spot;
+            placed.is_some_and(|s| (s.dx, s.dy, s.align) == (g.dx, g.dy, g.align))
+        };
+        assert!(in_gutter_with_tick_at(70.0));
+        // Centers 8 apart: the digits, 8 tall, would touch.
+        assert!(!in_gutter_with_tick_at(92.0));
+        assert!(!in_gutter_with_tick_at(94.0));
+    }
+
+    #[test]
+    fn the_axis_gutter_is_taken_only_after_every_spot_in_the_plot_collides() {
+        let g = gutter(40.0);
+        let path = || vec![vec![(195.0, 100.0)]];
+        let clear = place(at_edge(g), &mut field(Vec::new(), path())).expect("placed");
+        assert_eq!((clear.dx, clear.align), (0.0, "center"), "a clear label stays centered on its point");
+        let top_box = ink(&top(), &at_edge(g));
+        let blocked_top = place(at_edge(g), &mut field(vec![Obstacle::mark(top_box)], path())).expect("placed");
+        assert_ne!(blocked_top.dx, g.spot.dx, "a spot in the plot beats the gutter");
+        let walled = place(at_edge(g), &mut field(vec![walls_off_the_plot()], path())).expect("placed");
+        assert_eq!(walled.dx, g.spot.dx, "with the plot walled off the label reads in the gutter");
+    }
+
+    #[test]
+    fn a_gutter_without_room_for_the_label_is_never_taken() {
+        let narrow = gutter(12.0);
+        let path = || vec![vec![(195.0, 100.0)]];
+        let top_box = ink(&top(), &at_edge(narrow));
+        let moved = place(at_edge(narrow), &mut field(vec![Obstacle::mark(top_box)], path())).expect("placed");
+        assert_ne!(moved.dx, narrow.spot.dx, "the label stays in the plot");
+        assert!(place(at_edge(narrow), &mut field(vec![walls_off_the_plot()], path())).is_none(), "nowhere in the plot, no room beside it");
+    }
+
+    #[test]
+    fn a_gutter_label_needs_the_usual_pad_from_a_tick_beside_it() {
+        let taken_with_tick_at = |tick_y: f64| {
+            let tick = Obstacle::mark(Bounds::new(205.0, tick_y - 5.5, 225.0, tick_y + 5.5));
+            place(at_edge(gutter(40.0)), &mut field(vec![walls_off_the_plot(), tick], vec![vec![(195.0, 100.0)]])).is_some_and(|s| s.dx == 10.0)
+        };
+        assert!(taken_with_tick_at(70.0));
+        assert!(!taken_with_tick_at(90.0), "a tick a hair away is a collision");
+        assert!(!taken_with_tick_at(94.0));
+    }
+
+    #[test]
+    fn a_blocked_outside_label_comes_back_into_the_plot_at_no_other_height() {
+        let outside = CaptionSpot { edge: None, align: "right", baseline: "middle", dx: -6.0, dy: 0.0 };
         let mut r = req((0.0, 100.0), 0);
-        r.preferred = channel;
-        r.channel = true;
+        r.preferred = outside;
+        r.outside = true;
         let blocker = Obstacle::mark(Bounds::new(-30.0, 94.0, -6.0, 106.0));
         let spot = place(r, &mut field(vec![blocker], vec![vec![(0.0, 100.0)]])).expect("placed");
         let b = vega_fit::text_ink(spot.dx, 100.0 + spot.dy, 20.0, 11.0, spot.align, spot.baseline);
@@ -882,19 +963,6 @@ mod tests {
         let order: Vec<usize> = (0..points.len()).collect();
         let mut f = field(vec![Obstacle::mark(Bounds::new(116.0, 92.0, 140.0, 104.0))], vec![points.to_vec()]);
         assert!(place_value_labels(&reqs, &order, 11.0, &mut f).iter().all(Option::is_some));
-    }
-
-    #[test]
-    fn a_label_offered_a_side_channel_takes_it_unless_it_collides() {
-        let channel = CaptionSpot { edge: None, align: "left", baseline: "middle", dx: 30.0, dy: 0.0 };
-        let mut r = req((195.0, 100.0), 0);
-        r.preferred = channel;
-        r.channel = true;
-        let mut f = field(Vec::new(), vec![vec![(195.0, 100.0)]]);
-        assert_eq!(place(LabelReq { ..r }, &mut f).expect("placed").dx, 30.0);
-        let tick = Obstacle::mark(Bounds::new(225.0, 95.0, 245.0, 105.0));
-        let mut blocked = field(vec![tick], vec![vec![(195.0, 100.0)]]);
-        assert_ne!(place(r, &mut blocked).expect("placed").dx, 30.0);
     }
 
     #[test]

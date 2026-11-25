@@ -15,9 +15,11 @@ from dbt_charts.core.compile.format import (
     decimal_pad_table_for,
     declared_format,
     inferred_number_format,
+    resolve_format,
     sub_unit_spec_for_value,
 )
 from dbt_charts.core.compile.format_value import (
+    cast_table_cell,
     raise_if_format_cannot_print_number,
     text_format_link,
 )
@@ -39,6 +41,7 @@ from dbt_charts.core.compile.models.style.authored import (
     TableColumnDefaultsConfig,
     fill_table_column_defaults,
 )
+from dbt_charts.core.compile.models.style.authored.table import TYPE_FORMAT_KIND
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedColumnScaleConfig,
@@ -87,7 +90,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_SIGN_PLACEMENT_TABLE_UNSUPPORTED,
 )
 from dbt_charts.core.font_measure import compose_decimal_units
-from dbt_charts.core.text.format_d3 import d3_format, is_d3_si_spec
+from dbt_charts.core.text.format_d3 import d3_format, format_spec_kind, is_d3_si_spec
 from dbt_charts.core.text.numeral_scale import (
     UNCOMPACTED_COLUMN_SPEC,
     build_decimal_pad_table,
@@ -511,6 +514,19 @@ def _with_resolved_scale_stops(
     return bake(force_one_unit=force_one_unit, precision_floors=floors)
 
 
+def _fits_type(
+    fmt: AuthoredFormat | None, want: str | None, formats: FormatTable | None
+) -> bool:
+    """Whether ``fmt`` writes the kind a typed column prints (an unresolved name
+    counts as a number, as in the renderer); any format fits an untyped one."""
+    if fmt is None or want is None:
+        return True
+    kind = format_spec_kind(resolve_format(fmt, formats))
+    if kind is None:
+        kind = "number"  # type-state: silent_fallback — an unnamed spec goes to the d3 number painter, which refuses it by name (Rust format_fits)
+    return kind == want
+
+
 def _bake_scale_stops(
     columns: dict[str, TableColumnConfig] | None,
     text_color: str | None,
@@ -562,20 +578,38 @@ def _bake_scale_stops(
         coerced_values = _coerced_column_values(rows, name) if rows else []
         own = own_formats.get(name)
         inferred = inferred_number_format(name, (row.get(name) for row in rows))
+        # A typed column reads its format kind off `type:`, not off its values,
+        # and a default or query format of another kind is none of its business.
+        want = TYPE_FORMAT_KIND[col.type] if col.type else None
+
+        column_defaults_format = (
+            defaults_format if _fits_type(defaults_format, want, formats) else None
+        )
+        column_declared = declared if want != "text" else None
+        declared_fmt = declared_format(column_declared, name)
         _effective = column_format(
-            "number" if coerced_values else "time",
+            ("number" if want == "text" else want)
+            or ("number" if coerced_values else "time"),
             formats,
             own,
-            board=defaults_format,
-            query_formats=declared,
+            board=column_defaults_format,
+            query_formats=column_declared,
             columns=name,
             text=True,
             inferred=inferred,
         )
         text_link = _text_link_field(name, col, _effective, rows, filter_variables)
+        # `fill_table_column_defaults` keeps a default alias it cannot classify.
+        col_dump = col.model_dump(exclude_none=True)
+        if own is None and not _fits_type(col.format, want, formats):
+            col_dump.pop("format", None)
         has_format = inferred is not None or any(
             f is not None
-            for f in (own, defaults_format, declared_format(declared, name))
+            for f in (
+                own,
+                column_defaults_format,
+                declared_fmt if _fits_type(declared_fmt, want, formats) else None,
+            )
         )
         _col_parts = _effective if has_format else None
         resolved_fmt = _effective.spec if has_format else ""
@@ -635,8 +669,8 @@ def _bake_scale_stops(
                 "number",
                 formats,
                 own,
-                board=defaults_format,
-                query_formats=declared,
+                board=column_defaults_format,
+                query_formats=column_declared,
                 columns=name,
                 text=True,
                 engine_default=lambda: UNCOMPACTED_COLUMN_SPEC,
@@ -727,7 +761,7 @@ def _bake_scale_stops(
         if col.scale is None:
             result[name] = ResolvedTableColumnConfig.model_validate(
                 {
-                    **col.model_dump(exclude_none=True),
+                    **col_dump,
                     **_split_column_links(col, link_open),
                     **({"format": _col_parts} if _col_parts is not None else {}),
                     **text_link,
@@ -779,7 +813,7 @@ def _bake_scale_stops(
             }
         )
         resolved_scale = ResolvedColumnScaleConfig.model_validate(scale_base)
-        col_base = col.model_dump(exclude_none=True)
+        col_base = dict(col_dump)
         col_base.update(_split_column_links(col, link_open))
         col_base["scale"] = resolved_scale.model_dump(exclude_unset=True)
         if _col_parts is not None:
@@ -874,6 +908,23 @@ def _resolve_table(
     authored_columns = (
         primary.columns if primary is not None and primary.columns else {}
     )
+    # A typed column bakes its decimal pad and shared scale over the cells as
+    # its type reads them.
+    typed_columns = {
+        name: cfg.type for name, cfg in authored_columns.items() if cfg.type
+    }
+    if typed_columns:
+        data = [
+            {
+                **row,
+                **{
+                    name: cast_table_cell(row[name], column_type, name)
+                    for name, column_type in typed_columns.items()
+                    if name in row
+                },
+            }
+            for row in data
+        ]
     resolved_authored = _resolve_conditional(
         authored_columns, data, is_pivot=bool(normalized.columns)
     )
@@ -916,7 +967,6 @@ def _resolve_table(
                 ERR_FORMAT_SIGN_PLACEMENT_TABLE_UNSUPPORTED,
                 field_path=f"charts.{normalized.id}.style.columns.{name}.format",
             )
-    header_overflow_val = primary.header_overflow if primary is not None else None
     _tf = resolve_title_font(chart_local_style_context, width)
     return ResolvedTableChart(
         **_base_kwargs(
@@ -940,7 +990,6 @@ def _resolve_table(
         min_height=normalized.min_height,
         max_height=normalized.max_height,
         columns=resolved_columns,
-        header_overflow=header_overflow_val,
         column_defaults=column_defaults_val,
         style=ResolvedTableStyle(
             table=table,

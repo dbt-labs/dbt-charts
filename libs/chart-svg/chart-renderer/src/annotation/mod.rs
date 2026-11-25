@@ -19,6 +19,7 @@ pub use model::{Annotation, YAxis};
 use diagnostic::Diagnostic;
 use ::layout::labels_expr::colors::{contrast, Color};
 use measure::FontBook;
+use crate::placement::Obstacle;
 use crate::vega_fit::Bounds;
 pub(crate) use crowd::{force_numbers, reserve_key};
 use place::{Mark, Placed};
@@ -68,6 +69,15 @@ pub struct PlotRect {
     pub h: f64,
 }
 
+/// The torn baseline a full-height rule or band ends on, in plot-relative px: the one
+/// wave the chart draws, so an annotation never runs past it.
+#[derive(Debug, Clone)]
+pub struct Tear {
+    pub cubics: Vec<crate::torn::Cubic>,
+    /// `-1` when the tear is the bottom edge (the plot lies above it), `1` when it is the top.
+    pub inward: f64,
+}
+
 pub struct AnnotationCtx<'a> {
     pub annotations: &'a [Annotation],
     /// The chart's id, the `chart_id` param of every annotation diagnostic.
@@ -94,6 +104,8 @@ pub struct AnnotationCtx<'a> {
     /// The chart's own ink inside and around the plot, plot-relative: what
     /// text moves off. Set at paint before the `Foreground` call; empty in the fit.
     pub occupied: Vec<DataMark>,
+    /// The tear of a vertical chart's value axis; `None` when it draws none.
+    pub tear: Option<Tear>,
 }
 
 /// Chart ink annotation text may sit on, plot-relative: a bar's, point's or
@@ -205,6 +217,11 @@ impl DataMark {
             DataMark::Polygon(_) => false,
             DataMark::Tinted(mark, ..) => mark.hidden_by(b),
         }
+    }
+
+    /// Whether any ink of the mark lies under `b`: a box or fill it overlaps, a line it crosses.
+    pub(crate) fn touches(&self, b: &Bounds) -> bool {
+        self.hidden_by(b) || self.overlaps(b)
     }
 
     /// Whether a halo `auto` draws on text over `b`: a line is no mark to it.
@@ -432,6 +449,27 @@ pub fn text_x2(ctx: &AnnotationCtx) -> f64 {
     bounds(ctx).map_or(0.0, |b| b.x2)
 }
 
+/// What a series name keeps off, in the plot's frame: the ink boxes of the rules the annotations
+/// draw, and the bands they shade. Fixed by the plot size alone, so they are known before any data
+/// mark or name is placed.
+pub(crate) fn name_obstacles(ctx: &AnnotationCtx) -> Result<Vec<Obstacle>, Diagnostic> {
+    Ok(resolve(ctx)?
+        .iter()
+        .filter_map(|p| {
+            let b = mark_bounds(p.mark.as_ref()?);
+            match p.mark {
+                Some(Mark::Segment { .. }) => {
+                    let half = p.style.rule().stroke.width / 2.0;
+                    Some(Bounds::new(b.x1 - half, b.y1 - half, b.x2 + half, b.y2 + half))
+                }
+                Some(Mark::Rect { .. }) => Some(b),
+                _ => None,
+            }
+        })
+        .map(Obstacle::annotation)
+        .collect())
+}
+
 /// Where a top legend's bounds begin, as a coordinate at or above `0.0`: past annotation text that
 /// reaches above the plot, as Vega puts a legend past every mark in `yBounds`. A line of text fits in
 /// the gap the legend already keeps from the plot, so only what reaches beyond that moves the legend.
@@ -592,6 +630,7 @@ mod tests {
             canvas: "#fafafa",
             clip_id: "rev-ann0".into(),
             occupied: Vec::new(),
+            tear: None,
         }
     }
 
@@ -688,6 +727,16 @@ mod tests {
         assert_eq!(last(&[band_x("2026-10-01", "2027-02-01")]), "2027-01-01");
         assert_eq!(last(&[band_x("2026-10-01", "2027-02-15")]), "2027-02-01");
         assert_eq!(monthly_scaffold(&data, &[band_x("2026-08-15", "2026-10-01")])[0], "2026-08-01");
+    }
+
+    #[test]
+    fn a_band_is_an_obstacle_for_series_names() {
+        let fonts = fonts();
+        let anns: Vec<Annotation> = contract().into_iter().filter(|a| a.index == 3).collect();
+        let boxes = name_obstacles(&ctx(&anns, &fonts)).unwrap();
+        assert_eq!(boxes.len(), 1);
+        let b = boxes[0].b;
+        assert!(b.x2 - b.x1 > 10.0 && b.y2 - b.y1 > 50.0, "{b:?}");
     }
 
     #[test]

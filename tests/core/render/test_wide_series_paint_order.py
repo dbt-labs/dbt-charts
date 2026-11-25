@@ -37,8 +37,11 @@ charts:
 rows:
   - c
 """
-# Endpoint labels name their series; otherwise a legend swatch precedes its label.
-_ENDPOINT_INK = re.compile(r'data-dbt-series="(\w+)"[^>]*? fill="(#[0-9a-f]{6})"')
+# Direct labels name their series, beside the plot or in it; otherwise a legend
+# swatch precedes its label.
+_DIRECT_LABEL = re.compile(r'<text [^>]*data-dbt-series="\w+"[^>]*>')
+_SERIES = re.compile(r'data-dbt-series="(\w+)"')
+_FILL = re.compile(r' fill="(#[0-9a-f]{6})"')
 _LEGEND_SWATCH = re.compile(
     r'role-legend-symbol"[^>]*>.*?fill="(#[0-9a-f]{6})".*?</g>'
     r'<g class="mark-text role-legend-label"[^>]*><text[^>]*>(\w+)</text>'
@@ -56,7 +59,10 @@ def series_ink(
         executor = Run(result.board, env=build_exec_env(local_project(Path.cwd())))
         svg = render(result.board, executor.ctx, executor.ledger, format="svg").output
         assert isinstance(svg, str)
-        painted = {name.lower(): ink for name, ink in _ENDPOINT_INK.findall(svg)}
+        painted = {
+            _SERIES.findall(tag)[0].lower(): _FILL.findall(tag)[0]
+            for tag in _DIRECT_LABEL.findall(svg)
+        }
         painted.update({name.lower(): ink for ink, name in _LEGEND_SWATCH.findall(svg)})
         return painted
 

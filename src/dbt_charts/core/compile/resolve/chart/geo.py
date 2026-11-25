@@ -37,6 +37,7 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedGeoshapeStyle,
     ResolvedGradientColorStyle,
     ResolvedPointMapStyle,
+    ResolvedRingedPointMarkStyle,
 )
 from dbt_charts.core.compile.models.style.theme import GeoshapeChartStyle
 from dbt_charts.core.compile.models.vega_lite.contracts import (
@@ -365,7 +366,9 @@ def _tint_ramp(
         raise ValueError("style.tints.color names the ink the tints are drawn in.")
     if field is None:
         raise ValueError(f"style.tints spans a numeric field's values: set `{key}:`.")
-    return resolve_pattern(field, None, data, chart_style_context, tints, None, None)
+    return resolve_pattern(
+        field, None, data, chart_style_context, tints, None, None, None
+    )
 
 
 def _resolve_geoshape(
@@ -601,7 +604,9 @@ def _resolve_point_map(
             # up point_map-family and chart-local overrides, which the
             # scatter family's unmerged slot does not.
             point_mark=_resolved_point_mark(
-                point_map.marks.point, chart_style_context.formats
+                point_map.marks.point,
+                chart_style_context.formats,
+                ResolvedRingedPointMarkStyle,
             ),
             # Geo families are not slot-eligible in single_series_allocation
             # (that walk is cartesian-only), so they always take the first

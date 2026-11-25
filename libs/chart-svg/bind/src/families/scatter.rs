@@ -16,7 +16,7 @@
 //! A nominal `color:` splits the points into series painted from the board's category plan
 //! (`cartesian::color_series`), heads each hover with the series name, and names them in a side
 //! legend whose entries are buttons (`bound::Toggle`) where the theme shows a hover emphasis. A
-//! legend with `values:` or past its `symbol_limit:`, and a row that draws no point (its series
+//! legend with `values:` or past its `limit:`, and a row that draws no point (its series
 //! would still name a legend entry in production), refuse by name.
 //!
 //! `multiples:` partitions the rows into panels (`plot::facets`) on shared scales: the domains and
@@ -50,6 +50,7 @@ use board_model::chart::{ColorColumn, Columns, MultiplesConfig, MultiplesScale, 
 use board_model::ids::ChartId;
 use board_model::primitives::{SizeScaleStyle, SizeScaleType};
 use board_model::style::marks::labels_drawn;
+use board_model::style::scatter::ScatterFrame;
 use d3rs::vega_symbol::VegaSymbol;
 use color::Rgba;
 use column_types::Dataset;
@@ -63,10 +64,10 @@ use crate::rows::{color_domain_of, is_year_shaped};
 use crate::temporal::tooltip_header_date;
 use crate::time_axis::Instant;
 use crate::plot::time;
-use crate::derived::Placed;
+use crate::derived::{board_ink, Placed};
 use crate::category_colors::CategoryColorScale;
 use crate::families::cartesian::{self, axis_format, count, hex, no_data, plain_text, single_series, threshold_rules, unsupported, value, Prelude};
-use crate::legend::fold_symbol_limit;
+use crate::legend::fold_limit;
 use crate::effective_palette;
 use crate::formats::locale::active_number_locale;
 use crate::formats::ResolvedFormat;
@@ -96,6 +97,9 @@ fn refuse_unported(chart: &ScatterChart) -> Result<(), Diagnostic> {
         ("`sort:`", fields.sort.is_some()),
         ("`link:`", fields.shared.base.link.is_some()),
         ("`style.conditional`", !chart.style.conditional.is_empty()),
+        ("`style.frame`", chart.style.frame == ScatterFrame::Range),
+        ("`style.series_symbols`", chart.style.series_symbols.is_some()),
+        ("`marks.point.halo`", chart.style.marks.point.halo.is_some()),
     ];
     match unported.into_iter().find_map(|(field, set)| set.then_some(field)) {
         Some(field) => Err(unsupported(refuse!("a scatter with {field} is not supported"))),
@@ -121,7 +125,7 @@ const VL_DEFAULT_MARK_COLOR: &str = "#4c78a8";
 /// `colored` is whether the chart has a `color:` channel, whose series paint an unfilled point's ring
 /// (`unfilled_stroke`), the mark's own color otherwise.
 fn point_style(chart: &ScatterChart, colored: bool, canvas: Rgba) -> Result<PointStyle, Diagnostic> {
-    let point = &chart.style.marks.point;
+    let point = &chart.style.marks.point.point;
     let Engine::Value(size) = point.size else {
         return Err(unsupported(refuse!("a scatter point mark with an `auto` size is not supported")));
     };
@@ -151,7 +155,7 @@ fn point_style(chart: &ScatterChart, colored: bool, canvas: Rgba) -> Result<Poin
 
 /// The point mark's authored `shape` (`point_glyph`): its Vega symbol, a circle when `auto`.
 fn point_symbol(chart: &ScatterChart) -> Result<VegaSymbol, Diagnostic> {
-    match chart.style.marks.point.shape {
+    match chart.style.marks.point.point.shape {
         Engine::Rule(_) => Ok(VegaSymbol::Circle),
         Engine::Value(shape) => VegaSymbol::from_name(shape.as_str()).ok_or_else(|| diag::err_internal(format!("the point shape {:?} is no Vega symbol", shape.as_str()))),
     }
@@ -594,11 +598,11 @@ pub fn bind(
     }
     let palette = effective_palette(&placed.own.charts.scatter.cartesian.painted.color.categorical, |own| own.palette.as_ref(), p.style)?;
     let colors = color_field
-        .map(|field| cartesian::color_series(field, dataset, decoded.keys(field)?, scales, &palette, derived.frame.canvas))
+        .map(|field| cartesian::color_series(field, dataset, decoded.keys(field)?, scales, &palette, derived.frame.canvas, board_ink(placed.style)))
         .transpose()?;
-    if let (Some(colors), Some(limit)) = (&colors, derived.legend.base.symbol_limit) {
-        if fold_symbol_limit(colors.series.len(), limit as usize).is_some() {
-            return Err(unsupported(refuse!("a scatter legend with more entries than its `symbol_limit:` is not supported")));
+    if let (Some(colors), Some(limit)) = (&colors, derived.legend.base.limit) {
+        if fold_limit(colors.series.len(), limit as usize).is_some() {
+            return Err(unsupported(refuse!("a scatter legend with more entries than its `limit:` is not supported")));
         }
     }
 

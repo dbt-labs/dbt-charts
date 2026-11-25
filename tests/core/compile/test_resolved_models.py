@@ -306,7 +306,7 @@ def test_resolved_area_style_uses_resolved_mark_types():
         ResolvedStrokeStyle,
     )
     from dbt_charts.core.compile.models.style.resolved._cartesian import (
-        ResolvedEndpointLabelsConfig,
+        ResolvedLineAreaEndpointLabelsConfig,
     )
 
     area_mark = ResolvedAreaMarkStyle(opacity=0.3, backdrop=True)
@@ -329,7 +329,14 @@ def test_resolved_area_style_uses_resolved_mark_types():
         area_mark=area_mark,
         line_mark=line_mark,
         point_mark=ResolvedPointMarkStyle(),
-        endpoint_labels=ResolvedEndpointLabelsConfig(visible=False, label_offset=8.0),
+        endpoint_labels=ResolvedLineAreaEndpointLabelsConfig(
+            visible=False,
+            overlay=False,
+            overlay_x=(),
+            unseen_overlay_x=(),
+            label_offset=8.0,
+        ),
+        overlay=None,
         single_series_fill="#aaa",
         tooltip_format="",
         label_usable_ratio=0.8,
@@ -352,7 +359,7 @@ def test_resolved_line_style_uses_resolved_mark_type():
         ResolvedStrokeStyle,
     )
     from dbt_charts.core.compile.models.style.resolved._cartesian import (
-        ResolvedEndpointLabelsConfig,
+        ResolvedLineAreaEndpointLabelsConfig,
     )
 
     line_mark = ResolvedLineMarkStyle(
@@ -375,11 +382,19 @@ def test_resolved_line_style_uses_resolved_mark_type():
         ),
         line_mark=line_mark,
         point_mark=ResolvedPointMarkStyle(),
-        endpoint_labels=ResolvedEndpointLabelsConfig(visible=False, label_offset=8.0),
+        endpoint_labels=ResolvedLineAreaEndpointLabelsConfig(
+            visible=False,
+            overlay=False,
+            overlay_x=(),
+            unseen_overlay_x=(),
+            label_offset=8.0,
+        ),
+        overlay=None,
         single_series_fill="#aaa",
         tooltip_format="",
         label_usable_ratio=0.8,
         dashes=[],
+        line_styles=(),
         axis_x=ax,
         axis_y=ay,
     )

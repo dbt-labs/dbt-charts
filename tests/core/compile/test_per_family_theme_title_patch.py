@@ -58,7 +58,7 @@ def test_chart_local_title_wins_over_family_theme_title():
     the field it sets; fields neither sets keep falling back to the board
     default (three-tier merge: board -> family theme -> chart-local)."""
     patch = StylePatch.model_validate(
-        {"charts": {"bar": {"title": {"min_height": 40, "overflow": "clip"}}}}
+        {"charts": {"bar": {"title": {"min_height": 40, "max_lines": 1}}}}
     )
     board = _board(patch)
     chart = BarChart(
@@ -68,7 +68,7 @@ def test_chart_local_title_wins_over_family_theme_title():
     )
     effective = build_chart_style_context(board, chart)
     assert effective.title.min_height == 60.0  # chart-local wins
-    assert effective.title.overflow == "clip"  # family theme survives
+    assert effective.title.max_lines == 1  # family theme survives
     assert effective.title.font.family == board.title.font.family  # board default
 
 

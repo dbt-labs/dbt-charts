@@ -220,7 +220,7 @@ pub fn bind_kpi(id: &ChartId, chart: &KpiChart, placed: &Placed, board: &Board, 
     let number = cased(&number, kpi.value.font.case)?;
     let (link, link_open) = match (link(chart, placed.public_id, board, run, Some(row))?, &text_format) {
         (Some((href, open)), _) => (Some(href), open),
-        (None, Some(name)) => match text_format_link(name, cell, id) {
+        (None, Some(name)) => match text_format_link(name, cell, &format!("KPI '{id}'")) {
             Ok(Some(href)) => (Some(Href::new(&href)?), LinkOpen::Page),
             Ok(None) => (None, LinkOpen::Page),
             Err(error) => return data_error(error),
@@ -426,13 +426,14 @@ pub(crate) fn declared_formats(query: &Query) -> &IndexMap<String, FormatName> {
     }
 }
 
-/// `text_format_link`: the href an `email` / `url` headline implies, `None` for an empty or null cell.
-fn text_format_link(format: &str, cell: &Value, id: &ChartId) -> Result<Option<String>, Diagnostic> {
+/// The href an `email` / `url` cell implies, `None` for an empty or null cell.
+/// `where` names the value's place for the not-absolute error.
+pub fn text_format_link(format: &str, cell: &Value, r#where: &str) -> Result<Option<String>, Diagnostic> {
     let text = match cell {
         Value::Null => return Ok(None),
         Value::String(text) => text.trim(),
         Value::Bool(flag) => if *flag { "True" } else { "False" },
-        _ => return Err(Diagnostic::refused(refuse!("a KPI text format over a cell that is not text is not supported"))),
+        _ => return Err(Diagnostic::refused(refuse!("a text format over a cell that is not text is not supported"))),
     };
     if text.is_empty() {
         return Ok(None);
@@ -450,7 +451,7 @@ fn text_format_link(format: &str, cell: &Value, id: &ChartId) -> Result<Option<S
         matches!(scheme.as_str(), "http" | "https") && netloc.is_some_and(|netloc| !netloc.is_empty())
     });
     if !absolute {
-        return Err(diag::err_url_value_not_absolute(format!("KPI '{id}'"), text));
+        return Err(diag::err_url_value_not_absolute(r#where, text));
     }
     Ok(Some(text.to_string()))
 }

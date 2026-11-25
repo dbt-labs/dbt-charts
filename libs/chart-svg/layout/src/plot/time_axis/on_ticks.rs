@@ -369,11 +369,7 @@ impl TimeAxis<'_> {
                 tilted_anchor(angle)
             };
             let cut = |text: &str| -> Result<String, Diagnostic> {
-                Ok(self
-                    .book
-                    .truncate(text, &font, limit)
-                    .map_err(diag::err_internal)?
-                    .0)
+                self.book.truncate(text, &font, limit).map_err(diag::err_internal)
             };
             let text = if rows == 2 {
                 format!("{}\n{}", cut(&row1)?, cut(row2)?)

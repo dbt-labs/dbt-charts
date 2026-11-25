@@ -182,7 +182,7 @@ def _pin_companions(
     return tuple(
         sorted(
             {
-                (color, mark_ink(color, canvas))
+                (color, mark_ink(color, canvas, chart_style_context.ink))
                 for scale in chart_style_context.category_colors
                 for color in scale.overrides.values()
             }
@@ -218,7 +218,9 @@ def _resolved_series_label(
             font.compact_weight if compact else settled(font.weight)
         ),
         font_style=settled(font.style),
-        dark_companion_palette=tuple(mark_ink(c, canvas) for c in eff_palette),
+        dark_companion_palette=tuple(
+            mark_ink(c, canvas, chart_style_context.ink) for c in eff_palette
+        ),
         pin_companions=_pin_companions(chart_style_context, canvas),
         gap_px=font_size * ENDPOINT_LABEL_LINE_HEIGHT_MULTIPLIER,
     )

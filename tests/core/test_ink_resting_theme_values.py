@@ -1,5 +1,5 @@
-"""The ink theme's resting-state values for heatmap and maps: off in `_base`,
-and carried to the resolved style when a theme or board sets them."""
+"""The ink theme's resting-state values for scatter: off in `_base`, and carried to the
+resolved style when a theme or board sets them."""
 
 from __future__ import annotations
 
@@ -13,6 +13,13 @@ from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+
+_SCATTER_ROWS = [{"x": 1, "y": 2, "g": "a"}, {"x": 2, "y": 3, "g": "b"}]
+_INK_SCATTER = {
+    "frame": "range",
+    "series_symbols": ["hollow_circle", "plus", "open_triangle", "cross"],
+    "marks": {"point": {"halo": 1, "size": 42.25}},
+}
 
 
 @pytest.fixture(autouse=True)
@@ -244,3 +251,115 @@ def test_a_partial_dot_map_tints_write_names_the_missing_keys() -> None:
     style = {"charts": {"point_map": {"tints": {"steps": 5}}}}
     with pytest.raises(ValidationError, match=r"tints\.ground\n\s+Field required"):
         _resolved(chart, _CITY_ROWS, style)
+
+
+def test_base_leaves_the_scatter_values_off() -> None:
+    scatter = get_theme_style().charts.scatter
+    assert (scatter.frame, scatter.series_symbols, scatter.marks.point.halo) == (
+        "full",
+        None,
+        None,
+    )
+
+
+def test_frame_full_resolves_like_the_unframed_default() -> None:
+    chart = {"type": "scatter", "x": "x", "y": "y", "color": "g"}
+    unframed = _resolved(chart, _SCATTER_ROWS, {})
+    full = _resolved(chart, _SCATTER_ROWS, {"charts": {"scatter": {"frame": "full"}}})
+    assert unframed.style.frame == "full"
+    assert full == unframed
+
+
+def test_a_theme_scatter_frame_reaches_the_resolved_style() -> None:
+    resolved = _resolved(
+        {"type": "scatter", "x": "x", "y": "y", "color": "g"},
+        _SCATTER_ROWS,
+        {"charts": {"scatter": _INK_SCATTER}},
+    )
+    assert resolved.style.frame == "range"
+    assert resolved.style.series_symbols == tuple(_INK_SCATTER["series_symbols"])
+    assert resolved.style.point_mark.halo == 1
+    assert resolved.style.point_mark.size == 42.25
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"frame": "offset"},
+        {"series_symbols": ["star"]},
+        {"series_symbols": []},
+        {"series_symbols": ["plus", "cross", "plus"]},
+        {"marks": {"point": {"halo": -1}}},
+    ],
+)
+def test_scatter_values_outside_their_vocabulary_are_refused(
+    patch: dict[str, Any],
+) -> None:
+    with pytest.raises(ValidationError):
+        StylePatch.model_validate({"charts": {"scatter": patch}})
+
+
+@pytest.mark.parametrize("family", ["marks", "line.marks", "area.marks"])
+def test_the_halo_exists_only_on_the_families_that_draw_it(family: str) -> None:
+    patch: dict[str, Any] = {"point": {"halo": 1}}
+    for key in reversed(family.split(".")):
+        patch = {key: patch}
+    with pytest.raises(ValidationError, match=r"point\.halo\n\s+Extra inputs"):
+        StylePatch.model_validate({"charts": patch})
+
+
+_LAYERED_LINE = {
+    "type": "line",
+    "x": "x",
+    "y": "y",
+    "layers": [{"type": "scatter", "y": "y"}],
+}
+
+
+def test_a_scatter_layer_has_no_halo_to_set() -> None:
+    layer = {"type": "scatter", "y": "y", "style": {"marks": {"point": {"halo": 1}}}}
+    with pytest.raises(ValidationError, match=r"point\.halo\n\s+Extra inputs"):
+        TypeAdapter(Chart).validate_python(
+            {"id": "t", **_LAYERED_LINE, "layers": [layer]}
+        )
+
+
+def test_a_scatter_halo_in_the_theme_does_not_reach_a_scatter_layer() -> None:
+    with_halo = _resolved(
+        _LAYERED_LINE,
+        _SCATTER_ROWS,
+        {"charts": {"scatter": {"marks": {"point": {"halo": 1}}}}},
+    )
+    without_halo = _resolved(_LAYERED_LINE, _SCATTER_ROWS, {})
+    assert with_halo.layers[0].point_mark == without_halo.layers[0].point_mark
+
+
+def _end_label_formats(
+    rows: list[dict[str, Any]], scatter: dict[str, Any]
+) -> list[str | None]:
+    style = _resolved(
+        {"type": "scatter", "x": "x", "y": "y"},
+        rows,
+        {"charts": {"scatter": scatter}},
+    ).style
+    return [
+        fmt.spec if (fmt := axis.labels.format) is not None else None
+        for axis in (style.axis_x, style.axis_y)
+    ]
+
+
+def test_a_framed_axis_with_no_format_leaves_its_ends_to_the_range_end_rule() -> None:
+    whole = [{"x": 12, "y": 2}, {"x": 59, "y": 3}]
+    assert _end_label_formats(whole, _INK_SCATTER) == [None, None]
+    fractional = [{"x": 12.5, "y": 2.5}, {"x": 59.5, "y": 3.5}]
+    assert _end_label_formats(fractional, _INK_SCATTER) == [None, None]
+    assert _end_label_formats(whole, {}) == [".3~s", ".3~s"]
+
+
+def test_a_framed_axis_keeps_an_authored_label_format() -> None:
+    rows = [{"x": 12, "y": 2}, {"x": 59, "y": 3}]
+    axis = {"labels": {"format": ",.1f"}}
+    scatter = {**_INK_SCATTER, "axis_x": axis}
+    assert _end_label_formats(rows, scatter) == [",.1f", None]
+    named = {**_INK_SCATTER, "axis_x": {"labels": {"format": "number"}}}
+    assert _end_label_formats(rows, named) == [".3~s", None]

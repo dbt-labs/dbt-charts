@@ -13,6 +13,7 @@ use crate::apply::{
     conditional_move_fires, deletions_that_fire, map_key_deletion_fires, Applied, MigrationError,
 };
 use crate::catalog::{current, current_grammar, entries, Date};
+use crate::decl::Deletion;
 use crate::doc::{document_keys, map};
 use crate::locate::move_source_locations;
 use crate::registry::Registry;
@@ -306,8 +307,11 @@ fn migrate_mapping(
             break;
         };
         apply_map_key_deletions(&mut result, &mkds, &mut out);
+        let (early, late): (Vec<&Deletion>, Vec<&Deletion>) =
+            deletions.iter().partition(|d| d.early);
+        apply_deletions(&mut result, &early, &mut out);
         step_moves(&mut result, &moves, &mut out)?;
-        apply_deletions(&mut result, &deletions, &mut out);
+        apply_deletions(&mut result, &late, &mut out);
         for c in &conds {
             apply_conditional_move(&mut result, c, &mut out)?;
         }
@@ -511,8 +515,11 @@ pub fn plan_text(node: &Node, stop_target: Option<&str>) -> Result<TextPlan, Tex
             break;
         };
         apply_map_key_deletions(&mut staged, &mkds, &mut out);
+        let (early, late): (Vec<&Deletion>, Vec<&Deletion>) =
+            deletions.iter().partition(|d| d.early);
+        apply_deletions(&mut staged, &early, &mut out);
         step_moves(&mut staged, &moves, &mut out)?;
-        apply_deletions(&mut staged, &deletions, &mut out);
+        apply_deletions(&mut staged, &late, &mut out);
         identifier = target.to_string();
     }
     let rejection = if stop_target.is_none() {

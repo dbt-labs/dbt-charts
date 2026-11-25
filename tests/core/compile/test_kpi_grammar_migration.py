@@ -103,7 +103,7 @@ def test_old_kpi_grammar_compiles_into_the_new_shape() -> None:
     assert chart.style.value.affix.font is not None
     assert chart.style.value.affix.font.size == 12
     assert chart.style.label is not None
-    assert chart.style.label.overflow == "wrap"
+    assert chart.style.label.max_lines == "all"
 
 
 def test_variant_without_a_style_block_migrates() -> None:
@@ -151,7 +151,7 @@ def test_theme_paths_move() -> None:
     kpi = migrated["style"]["charts"]["kpi"]
     assert kpi == {
         "value": {"affix": {"font": "label"}, "glyph": {"font": {"size": 9}}},
-        "label": {"overflow": "clip"},
+        "label": {"max_lines": 1},
     }
 
 
@@ -167,7 +167,7 @@ def test_chart_local_title_leftovers_and_slot_characters_are_deleted() -> None:
             }
         )
     )
-    assert migrated["charts"]["c1"]["style"] == {"label": {"overflow": "truncate"}}
+    assert migrated["charts"]["c1"]["style"] == {"label": {"max_lines": 1}}
 
 
 @pytest.mark.parametrize(
@@ -215,7 +215,7 @@ def test_non_kpi_charts_are_untouched() -> None:
         "query": "q1",
         "x": "v",
         "y": "d",
-        "style": {"title": {"overflow": "wrap"}},
+        "style": {"title": {"max_lines": "all"}},
     }
     raw = {
         "title": "T",
@@ -297,3 +297,96 @@ rows: [c1]
     assert chart.style.value.affix is not None
     assert chart.style.value.affix.font is not None
     assert chart.style.value.affix.font.size == 12
+
+
+def test_text_migration_renames_an_overflow_mode_to_its_max_lines() -> None:
+    text = (
+        "title: T\nstyle:\n  title:\n    overflow: wrap-two\n"
+        "  charts:\n    table:\n      header:\n        overflow: wrap\n"
+        "rows:\n  - text: hi\n"
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SchemaMigrationWarning)
+        rewritten = migrate_yaml_text(text)
+    assert yaml.safe_load(rewritten)["style"] == {
+        "title": {"max_lines": 2},
+        "charts": {"table": {"header": {"max_lines": "all"}}},
+    }
+
+
+def _text_migrated(text: str) -> Any:  # noqa: ANN401 — a raw board mapping
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SchemaMigrationWarning)
+        return yaml.safe_load(migrate_yaml_text(text))
+
+
+def test_text_migration_reaches_a_nested_board_under_rows() -> None:
+    migrated = _text_migrated(
+        "title: T\nrows:\n  - title: N\n    style:\n      title:\n        overflow: wrap-two\n"
+        "    rows:\n      - text: hi\n"
+    )
+    assert migrated["rows"][0]["style"]["title"] == {"max_lines": 2}
+
+
+def test_text_migration_reaches_a_tab_item() -> None:
+    migrated = _text_migrated(
+        "title: T\ntabs:\n  items:\n    - title: a\n      style:\n        title:\n"
+        "          overflow: truncate\n      rows:\n        - text: hi\n"
+    )
+    assert migrated["tabs"]["a"]["style"]["title"] == {"max_lines": 1}
+
+
+def test_text_migration_lands_a_table_wrap_inside_a_tab_pane() -> None:
+    head = "title: T\nqueries:\n  q: {sql: select 1 as a, source: test}\ntabs:\n  items:\n    - title: a\n"
+    theme = _text_migrated(
+        head
+        + "      style:\n        charts:\n          table:\n            wrap: true\n"
+        "      rows:\n        - text: hi\n"
+    )
+    assert theme["tabs"]["a"]["style"]["charts"]["table"] == {"max_lines": "all"}
+    inline = _text_migrated(
+        head
+        + "      rows:\n        - type: table\n          query: q\n          style:\n"
+        "            wrap: false\n"
+    )
+    assert inline["tabs"]["a"]["rows"][0]["style"] == {"max_lines": 1}
+
+
+def test_text_migration_strikes_a_tab_pane_rail_limit() -> None:
+    migrated = _text_migrated(
+        "title: T\ntabs:\n  items:\n    - title: a\n      style:\n        layout:\n"
+        "          tabs:\n            rail_max_lines: 3\n            bar_height: 44\n"
+        "      rows:\n        - text: hi\n"
+    )
+    assert migrated["tabs"]["a"]["style"]["layout"]["tabs"] == {"bar_height": 44}
+
+
+def test_text_migration_reaches_a_tab_pane_outliers_reveal() -> None:
+    migrated = _text_migrated(
+        "title: T\ntabs:\n  items:\n    - title: a\n      style:\n        charts:\n"
+        "          bar:\n            outliers:\n              reveal: none\n"
+        "      rows:\n        - text: hi\n"
+    )
+    outliers = migrated["tabs"]["a"]["style"]["charts"]["bar"]["outliers"]
+    assert outliers["reveal"] == "chart"
+
+
+def test_axis_migration_reaches_a_tab_item() -> None:
+    migrated = _text_migrated(
+        "title: T\nqueries:\n  q: {sql: select 1 as a, source: test}\n"
+        "tabs:\n  items:\n    - title: a\n      rows:\n        - type: bar\n"
+        "          query: q\n          x: a\n          y: a\n          style:\n"
+        "            orientation: horizontal\n            axis_y:\n              position: right\n"
+    )
+    style = migrated["tabs"]["a"]["rows"][0]["style"]
+    assert style["axis_x"] == {"position": "right"}
+    assert "axis_y" not in style
+
+
+def test_text_migration_reaches_an_inline_kpi_under_rows() -> None:
+    migrated = _text_migrated(
+        "title: T\nqueries:\n  q: {sql: select 1 as v, source: test}\nrows:\n"
+        "  - type: kpi\n    query: q\n    value: v\n    style:\n      label:\n"
+        "        overflow: wrap\n"
+    )
+    assert migrated["rows"][0]["style"]["label"] == {"max_lines": "all"}

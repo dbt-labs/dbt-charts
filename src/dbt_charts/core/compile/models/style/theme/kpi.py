@@ -19,12 +19,12 @@ from dbt_charts.core.compile.models.markers import (
     ColumnRef,
     Conditionable,
     Format,
-    Inherit,
     InheritSlot,
 )
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     FormatConfig,
+    LineLimit,
     ScaleTargetConfig,
     SingleLineFontStyle,
     SpacingValues,
@@ -34,7 +34,6 @@ from dbt_charts.core.compile.models.schema_names import FormatAlias
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _ChartStyleBaseAllOptional,
 )
-from dbt_charts.core.compile.models.style.theme.board import OverflowMode
 
 _KPI_FONT = InheritSlot(from_path="Style.charts.kpi.font")
 _KPI_VALUE_INK_FONT = InheritSlot(
@@ -132,11 +131,9 @@ class KpiLabelStyle(BaseModel):
     font: Annotated[
         SingleLineFontStyle, _KPI_FONT, Conditionable(only=("color", "weight"))
     ] = Field(default_factory=SingleLineFontStyle, description="Label font.")
-    # Cascade-managed sentinel: apply_inherit fills it from the chart title's
-    # overflow, so it is never None after resolve.
-    overflow: Annotated[
-        OverflowMode | None, Inherit(from_path="Style.charts.title.overflow")
-    ] = Field(default=None, description="How a label too wide for the card is fit.")
+    max_lines: LineLimit = Field(
+        description="Lines a label takes before an ellipsis (1 = no wrapping, 3 = wraps twice); or 'all'."
+    )
 
 
 class KpiSupportFontStyle(SingleLineFontStyle):
@@ -284,9 +281,7 @@ class _KpiChartStyleBase(_ChartStyleBaseAllOptional):
         )
     )
     value: KpiValueStyle = Field(description="KPI headline value slot.")
-    label: KpiLabelStyle = Field(
-        default_factory=KpiLabelStyle, description="KPI card label slot."
-    )
+    label: KpiLabelStyle = Field(description="KPI card label slot.")
     support: KpiSupportStyle = Field(
         default_factory=KpiSupportStyle, description="KPI support row slot."
     )

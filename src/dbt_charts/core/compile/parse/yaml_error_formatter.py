@@ -1764,8 +1764,8 @@ _CHART_SHAPE_RECIPES = {
     # looking at it, not by reasoning about whether it ought to work.
     "lollipop": (
         "type: bar with style.marks.bar.band_width thinned to a stem, plus a "
-        "layers: scatter on the same y (style.marks.bar.size is a separate "
-        "fixed-pixel mode and does not thin the bar)"
+        "layers: scatter on the same y (style.marks.bar.size, a fixed pixel width, "
+        "thins the bar too and wins over band_width)"
     ),
     "bullet": (
         "type: bar with style.stack: zero, style.series_order: data and color: "

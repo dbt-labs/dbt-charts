@@ -10,3 +10,6 @@ pub const STROKE_FALLBACK_WIDTH: f64 = 2.5;
 pub const POINT_DIAMETER_RATIO: f64 = 1.7;
 pub const POINT_MIN_PX_PER_POINT: f64 = 22.5;
 pub const TREND_SAMPLES: usize = 64;
+pub const LINE_STYLE_SHARE_FROM: usize = 5;
+pub const LINE_STYLE_MAX_USES: usize = 2;
+pub const LINE_STYLE_SHARE_MIN_GAP_PX: f64 = 40.0;

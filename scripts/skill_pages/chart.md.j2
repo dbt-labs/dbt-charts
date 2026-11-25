@@ -108,6 +108,12 @@ A `formats:` entry takes a format name, never a spec: a built-in name below, or 
 
 Built-in names, on 1234567.891 and 0.2534: {{ formats() }}. Date names: {{ format_names('time') }}. A `date_<grain>` name is the engine's own axis label, never a format you write: a date in a table, KPI or axis takes a strftime spec such as `"%b %Y"` or `"%Y"`.
 
+`text:` and titles take these names through `format`:
+
+```yaml
+title: "{{ '{{' }} queries.totals.one.revenue | format('currency_whole') {{ '}}' }}"
+```
+
 ## Style
 
 Keys of `style`: {{ key_names('style_root') }}.

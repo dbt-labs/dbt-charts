@@ -52,10 +52,10 @@ def test_local_legend_wins_over_theme_legend(
     board_ctx: ChartStyleContext, family: str
 ) -> None:
     merged = merge_chart_style(
-        board_ctx, _chart(family, {"key": {"legend": {"symbol_limit": 7}}})
+        board_ctx, _chart(family, {"key": {"legend": {"limit": 7}}})
     )
-    assert merged["legend"].symbol_limit == 7
-    assert merged[family].key.legend.symbol_limit == 7
+    assert merged["legend"].limit == 7
+    assert merged[family].key.legend.limit == 7
 
 
 @pytest.mark.parametrize("family", _LEGENDED)

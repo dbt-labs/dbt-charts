@@ -568,9 +568,9 @@ mod tests {
                 "hybrid_heading_gap": 6.0,
                 "legend": {
                     "visible": false,
-                    "position": {"edge": "right", "align": "start", "overlay": false},
+                    "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]},
                     "direction": "vertical",
-                    "label": {"font": {"size": 11.0}},
+                    "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"size": 11.0}},
                     "title": {"font": {"case": "title"}}
                 },
                 "field_labels": {},
@@ -751,8 +751,8 @@ mod tests {
     #[test]
     fn tooltip_format_wraps_every_arc_with_a_structured_aria_label() {
         let legend = json!({
-            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-            "label": {"font": {"size": 11.0}},
+            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"size": 11.0}},
             "title": {"font": {"case": "title"}},
         });
         let mut p = make_pie_payload(Value::Null);
@@ -798,8 +798,8 @@ mod tests {
         let mut p = make_pie_payload(Value::Null);
         p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
         p["resolved"]["legend"] = json!({
-            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-            "label": {"font": {"size": 11.0}},
+            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"size": 11.0}},
             "title": {"font": {"case": "title"}},
         });
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -817,8 +817,8 @@ mod tests {
         let mut p = make_pie_payload(Value::Null);
         p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
         p["resolved"]["legend"] = json!({
-            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-            "label": {"font": {"size": 11.0}},
+            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"size": 11.0}},
             "title": {"font": {"case": "title"}},
         });
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -1579,7 +1579,8 @@ mod tests {
                 break;
             }
         }
-        let title_style = json!({"font": {"size": 18.0, "family": "Source Serif 4"}, "overflow": "clip"});
+        let title_style =
+            json!({"font": {"size": 18.0, "family": "Source Serif 4"}, "max_lines": 1});
 
         let mut attached_json = make_pie_payload_with_attached_table("right", "");
         attached_json["resolved"]["title"] = json!(text);
@@ -1711,7 +1712,7 @@ mod tests {
     #[test]
     fn fit_title_overflow_truncates_and_wraps_per_mode() {
         // The overflow wiring end to end: a truncate-mode title yields ONE
-        // ellipsized title row; a wrap-two subtitle yields TWO rows, the
+        // ellipsized title row; a two-line subtitle yields TWO rows, the
         // second advanced by sub_fs + 2 (Vega's default text lineHeight).
         let mut json = make_pie_payload(Value::Null);
         json["width"] = json!(220.0);
@@ -1725,11 +1726,11 @@ mod tests {
             // Inter (WRAP_MEASURE_FAMILY) — reverting to the paint family
             // changes where the ellipsis lands and fails the exact pin.
             "font": {"family": "'Source Serif 4', Georgia, serif", "size": 14.0, "weight": "500"},
-            "overflow": "truncate",
+            "max_lines": 1,
             "position": {"offset": 10.0},
             "subtitle": {
                 "font": {"family": TEST_FONT, "size": 11.0, "weight": "400"},
-                "overflow": "wrap-two"
+                "max_lines": 2
             }
         });
         let payload = make_payload(json);
@@ -1830,11 +1831,11 @@ mod tests {
         json["resolved"]["subtitle"] = json!("short");
         json["resolved"]["title_style"] = json!({
             "font": {"family": TEST_FONT, "size": 14.0, "weight": "500", "case": "upper"},
-            "overflow": "truncate",
+            "max_lines": 1,
             "position": {"offset": 10.0},
             "subtitle": {
                 "font": {"family": TEST_FONT, "size": 11.0, "weight": "400"},
-                "overflow": "truncate"
+                "max_lines": 1
             }
         });
         let cut = |field: &str, text: &str| {
@@ -1980,8 +1981,8 @@ mod tests {
         let mut p = make_pie_payload(Value::Null);
         p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
         p["resolved"]["legend"] = json!({
-            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-            "label": {"font": {"size": 11.0}},
+            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"size": 11.0}},
             "title": {"font": {"case": "title"}},
         });
         p["resolved"]["link"] = json!(link);
@@ -2141,8 +2142,8 @@ mod tests {
         p["resolved"]["total"] = json!({"visible": true, "label": "Total Revenue"});
         p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
         p["resolved"]["legend"] = json!({
-            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-            "label": {"font": {"size": 11.0}},
+            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"size": 11.0}},
             "title": {"font": {"case": "title"}},
         });
         p["resolved"]["link"] = json!("/c/?k={{ color }}");
@@ -2203,8 +2204,8 @@ mod tests {
             let mut p = make_pie_payload_with_labels("{{ category }}");
             p["resolved"]["total"] = json!({"visible": true, "label": "Total Revenue"});
             p["resolved"]["legend"] = json!({
-                "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-                "label": {"font": {"size": 11.0}},
+                "visible": false, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
+                "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"size": 11.0}},
                 "title": {"font": {"case": "title"}},
             });
             if !tooltip_format.is_null() {
@@ -2227,8 +2228,8 @@ mod tests {
         let mut p = make_pie_payload(Value::Null);
         p["resolved"]["style"]["tooltip_format"] = json!({"spec": ",.2~f", "prefix": "US$"});
         p["resolved"]["legend"] = json!({
-            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-            "label": {"font": {"size": 11.0}},
+            "visible": false, "position": {"edge": "right", "align": "start", "overlay": false, "corners": [{"edge": "right", "align": "start"}]}, "direction": "vertical",
+            "entry_gap": 10.0, "symbol": {"shape": null, "fill": null, "size": 10.0}, "background": "#ffffff", "opacity": 0.92, "padding": 0.0, "border": {"width": 0.0, "color": "#cccccc", "radius": 3.0}, "label": {"halo": 0.0, "font": {"size": 11.0}},
             "title": {"font": {"case": "title"}},
         });
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -2355,7 +2356,7 @@ mod tests {
         json["resolved"]["title"] = json!("a title far too long for a narrow card to hold");
         json["resolved"]["title_style"] = json!({
             "font": {"family": TEST_FONT, "size": 14.0, "weight": "500"},
-            "overflow": "truncate",
+            "max_lines": 1,
             "position": {"offset": 10.0}
         });
         let payload = make_payload(json);
@@ -2384,7 +2385,7 @@ mod tests {
         json["resolved"]["title"] = json!("a title far too long for a narrow card to hold");
         json["resolved"]["title_style"] = json!({
             "font": {"family": TEST_FONT, "size": 14.0, "weight": "500"},
-            "overflow": "truncate",
+            "max_lines": 1,
             "position": {"offset": 10.0}
         });
         let payload = make_payload(json);
@@ -2403,7 +2404,7 @@ mod tests {
         json["resolved"]["title"] = json!("a title far too long for a narrow card to hold");
         json["resolved"]["title_style"] = json!({
             "font": {"family": TEST_FONT, "size": 14.0, "weight": "500"},
-            "overflow": "truncate",
+            "max_lines": 1,
             "position": {"offset": 10.0}
         });
         json["resolved"]["style"]["tooltip_format"] = json!(",.0f");

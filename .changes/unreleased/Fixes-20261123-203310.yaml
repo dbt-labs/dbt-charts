@@ -1,5 +1,0 @@
-kind: Fixes
-body: Line end labels on a log y axis now sit level with their lines instead of stacking away from them.
-time: 2026-11-23T20:33:10.207841544Z
-custom:
-    DbtChartsIssue: "136"

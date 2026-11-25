@@ -31,6 +31,9 @@ use super::sanitize_color;
 use super::svg_font_family;
 use super::BoardFormats;
 use super::Bound;
+use board_model::primitives::LineLimit;
+use measure::fit::{fit_lines, FittedText};
+use board_model::style::table::TableMaxLines;
 use super::Cell;
 use super::ColMeta;
 use super::ColumnInputs;
@@ -57,6 +60,7 @@ use super::TableTitleStyle;
 use super::TitleBand;
 use super::TitleOnly;
 use super::WidthHint;
+use super::WrappedCell;
 use super::WrappedHeader;
 use super::ANTI_DANGLE_MAX_OVERFLOW;
 use super::ANTI_DANGLE_MAX_SQUEEZE;
@@ -2376,6 +2380,54 @@ fn sort_key(value: Option<&Value>) -> Option<String> {
     }
 }
 
+/// How far past a column's interquartile range a cell may run before it is an
+/// outlier: Tukey's upper fence, the end of a box plot's whisker.
+const TUKEY_FENCE: f64 = 1.5;
+
+/// The nearest-rank `percent`th percentile of `sorted`; an empty column is one line.
+fn nearest_rank(sorted: &[usize], percent: f64) -> usize {
+    let rank = (percent / 100.0 * sorted.len() as f64).ceil() as usize;
+    rank.checked_sub(1).map_or(1, |at| sorted[at])
+}
+
+fn square_cap(content_w: f64, line_height: f64) -> usize {
+    ((content_w / line_height).floor() as usize).max(1)
+}
+
+/// The most lines [`column_max_lines`] can return for a column, before its cells are counted.
+fn column_line_ceiling(setting: TableMaxLines, content_w: f64, line_height: f64) -> Option<usize> {
+    match setting {
+        TableMaxLines::Limit(limit) => limit.max_lines(),
+        _ => Some(square_cap(content_w, line_height)),
+    }
+}
+
+/// The lines a text column's cells may draw under `setting`; `None` is no
+/// limit. `natural` holds every body row's line count when wrapped without a
+/// limit, over the whole result so every page draws the same row heights.
+/// The square cap is the line count whose block is as tall as the column is
+/// wide, the bound WARN-TABLE-CONTENT-TALLER-THAN-WIDE checks.
+pub(super) fn column_max_lines(
+    setting: TableMaxLines,
+    natural: &[usize],
+    content_w: f64,
+    line_height: f64,
+) -> Option<usize> {
+    let square = square_cap(content_w, line_height);
+    let mut sorted = natural.to_vec();
+    sorted.sort_unstable();
+    match setting {
+        TableMaxLines::Limit(limit) => limit.max_lines(),
+        TableMaxLines::Square => Some(square),
+        TableMaxLines::Percentile(percent) => Some(nearest_rank(&sorted, f64::from(percent)).min(square)),
+        TableMaxLines::TrimOutliers => {
+            let (q1, q3) = (nearest_rank(&sorted, 25.0), nearest_rank(&sorted, 75.0));
+            let fence = (q3 as f64 + TUKEY_FENCE * (q3 - q1) as f64).floor() as usize;
+            Some(fence.min(square))
+        }
+    }
+}
+
 /// The whole text of a cell painted cut, for the host to reveal on hover
 /// (`table_cell_reveal.js`); `None` when it painted whole.
 fn cut_from<'a>(painted: &str, whole: &'a str) -> Option<&'a str> {
@@ -2521,7 +2573,7 @@ impl TableBody<'_> {
                 .iter()
                 .enumerate()
                 .filter(|(_, col)| !is_list(col))
-                .filter_map(|(ci, _)| wrapped_lines[ci][ri].as_ref().map(Vec::len))
+                .filter_map(|(ci, _)| wrapped_lines[ci][ri].as_ref().map(|cell| cell.lines.len()))
                 .max();
             match block_lines {
                 Some(n) => (shut_h(ri) - n as f64 * line_height) / 2.0 + font_size,
@@ -3302,7 +3354,7 @@ impl TableBody<'_> {
                         }
                     };
                     match &wrapped_lines[ci][ri] {
-                        Some(lines) if is_list(col) => {
+                        Some(WrappedCell { lines, .. }) if is_list(col) => {
                             // The list opens downward from the row's one-line
                             // baseline, so shutting it moves nothing else in the row.
                             // A live table hides the lists of a row it can open, for
@@ -3336,7 +3388,7 @@ impl TableBody<'_> {
                             }
                             tree.close(Open::Text);
                         }
-                        Some(lines) => {
+                        Some(WrappedCell { lines, cut, warns }) => {
                             let first_y = row_y + row_text_baseline(ri);
                             tree.open_text(
                                 Role::Label,
@@ -3353,8 +3405,12 @@ impl TableBody<'_> {
                                     .quick_some("text-decoration", font_decoration)
                                     .quick("data-col", data_col.to_string())
                                     .quick_some("data-dbt-sort", sort_key.as_deref())
-                                    .quick_some("data-dbt-day", day.as_deref()),
+                                    .quick_some("data-dbt-day", day.as_deref())
+                                    .quick_some("data-dbt-full", cut.then_some(cell.text.as_str())),
                             );
+                            if *warns && !self.chart_id.is_empty() {
+                                count_cut(self.truncations, self.cols[ci].name.as_str());
+                            }
                             for (li, line) in lines.iter().enumerate() {
                                 let ly = first_y + li as f64 * line_height;
                                 tree.open_tspan(Span::at(tx, ly), Attrs::new());
@@ -3368,13 +3424,13 @@ impl TableBody<'_> {
                         }
                         None => {
                             // The non-wrapping cell branch: a
-                            // numeric/date-like cell, or any cell of a `wrap: false`
+                            // numeric/date-like cell, or any cell of a `max_lines: 1`
                             // table, is cut to its content area less the glyph.
                             // A wrapping table's single-line cell is cut too when
                             // it still overruns its column, so no cell ever
                             // paints into its neighbor.
                             let glyph = cell_style.glyph.as_deref();
-                            let text = if !th.wrap || tabular_text || self.overruns(ci, &cell.text, glyph)? {
+                            let text = if !th.max_lines.wraps() || tabular_text || self.overruns(ci, &cell.text, glyph)? {
                                 self.cut_cell(ci, &cell.text, glyph)?
                             } else {
                                 cell.text.clone()
@@ -3452,7 +3508,7 @@ impl TableBody<'_> {
 /// the text (`splitlines() or [text]`).
 pub(super) fn wrap_title(
     text: &str,
-    mode: Option<&str>,
+    max_lines: Option<LineLimit>,
     limit: Option<f64>,
     font_size: f64,
     family: &str,
@@ -3461,8 +3517,8 @@ pub(super) fn wrap_title(
     let Some(limit) = limit.filter(|_| !text.is_empty()) else {
         return Ok((vec![text.to_string()], false));
     };
-    let (lines, truncated) =
-        crate::common::prepare_title_lines(text, mode, limit, font_size, family, fonts)?;
+    let fitted = crate::common::prepare_title_lines(text, max_lines, limit, font_size, family, fonts)?;
+    let (lines, truncated) = (fitted.lines, fitted.cut);
     Ok((
         if lines.is_empty() {
             vec![text.to_string()]
@@ -3545,7 +3601,7 @@ pub(super) fn title_band(
     let (title_lines, title_truncated) = match cased_title.as_deref().filter(|_| has_title) {
         Some(t) => wrap_title(
             t,
-            title_style.overflow.as_deref(),
+            title_style.max_lines,
             limit,
             title_font_size.trunc(),
             measure::stand_in_family(title_family),
@@ -3592,7 +3648,7 @@ pub(super) fn title_band(
     let (subtitle_lines, subtitle_truncated) = match subtitle.filter(|_| has_subtitle) {
         Some(sub) => wrap_title(
             sub,
-            subtitle_style.overflow.as_deref(),
+            subtitle_style.max_lines,
             limit,
             subtitle_font_size,
             measure::stand_in_family(&subtitle_family),
@@ -3948,7 +4004,7 @@ fn lay_out_empty(
 const SHORT_HEADER_CHARS: usize = 12;
 
 /// The narrowest content width that holds `header` on two lines, as
-/// `wrap_text_with` sums a line: its words' widths plus a space between each.
+/// `fit_lines` sums a line: its words' widths plus a space between each.
 /// Infinite for a one-word header, which has no second line.
 fn two_line_width(header: &str, family: &str, size: f64, fonts: &FontBook) -> Result<f64, String> {
     let space = fonts.measure(" ", family, size)?;
@@ -3966,7 +4022,7 @@ fn two_line_width(header: &str, family: &str, size: f64, fonts: &FontBook) -> Re
 }
 
 /// Header lines past which a header is too much for its column. Two is the
-/// `wrap-two` cap and the theme default, so a header that fits in two reads as
+/// two-line cap and the theme default, so a header that fits in two reads as
 /// designed; a third line means the column was starved, not that the author
 /// chose a long label.
 const HEADER_LINE_LIMIT: usize = 2;
@@ -3977,33 +4033,18 @@ const HEADER_LINE_LIMIT: usize = 2;
 /// many.
 const TALL_CELL_MIN_LINES: usize = 4;
 
-/// The effective header overflow mode for `col`: the column's own, else the
-/// chart's promoted one, else the table style's, else the theme's
-/// (`resolve_header_overflow`).
-pub(super) fn header_overflow_mode<'a>(
-    r: &'a Resolved,
-    th: &'a TableTheme,
-    col: &'a ColMeta,
-) -> Result<&'a str, String> {
+/// The effective header line limit for `col`: the column's own, else the
+/// table's `header.max_lines`.
+pub(super) fn header_max_lines(th: &TableTheme, col: &ColMeta) -> Result<LineLimit, String> {
     col.cfg
-        .header_overflow
-        .as_deref()
-        .or(r.header_overflow.as_deref())
-        .or(th.header_overflow.as_deref())
-        .or(th.header.overflow.as_deref())
-        .ok_or_else(|| {
-            format!(
-                "table payload: no header overflow mode for column '{}'",
-                col.name.as_str()
-            )
-        })
+        .header_max_lines
+        .or(th.header.max_lines)
+        .ok_or_else(|| format!("table payload: no header wrap for column '{}'", col.name.as_str()))
 }
 
 /// `resolve_wrapped_headers`: each header on one
 /// line when it fits the cell's content area `int(cw - 2*pad)` under real glyph
-/// metrics, else wrapped by the column's overflow mode. Only `wrap-two` (the
-/// theme default) and `wrap` are drawn; a header that needs `clip` or
-/// `truncate` refuses by name.
+/// metrics, else wrapped to the column's line limit.
 pub(super) fn wrapped_headers(
     cols: &[ColMeta],
     col_ws: &[f64],
@@ -4025,33 +4066,23 @@ pub(super) fn wrapped_headers(
             });
             continue;
         }
-        let (needed, _) = crate::common::wrap_text_measured(
+        let fitted = crate::common::prepare_title_lines(
             &col.header,
-            content_area,
-            header_font_size,
-            header_measure_family,
-            fonts,
-            None,
-            false,
-        )?;
-        let mode = header_overflow_mode(r, th, col)?;
-        let (lines, truncated) = crate::common::prepare_title_lines(
-            &col.header,
-            Some(mode),
+            Some(header_max_lines(th, col)?),
             content_area,
             header_font_size,
             header_measure_family,
             fonts,
         )?;
-        let lines = if lines.is_empty() {
+        let lines = if fitted.lines.is_empty() {
             vec![col.header.clone()]
         } else {
-            lines
+            fitted.lines
         };
         out.push(WrappedHeader {
             lines,
-            truncated,
-            needed_lines: needed.len(),
+            truncated: fitted.cut,
+            needed_lines: fitted.natural_lines,
         });
     }
     Ok(out)
@@ -4475,7 +4506,7 @@ pub(crate) fn lay_out(
     let column_names: Vec<String> = cols.iter().map(|c| c.name.to_string()).collect();
     let wrapping: BTreeSet<String> = cols
         .iter()
-        .filter(|c| th.wrap && !(c.is_numeric || c.is_date || is_swatch(c) || is_list(c)))
+        .filter(|c| th.max_lines.wraps() && !(c.is_numeric || c.is_date || is_swatch(c) || is_list(c)))
         .map(|c| c.name.to_string())
         .collect();
     // Phase 1 (explicit `width:` pins and `max_width:` caps), the demands, and
@@ -4608,7 +4639,7 @@ pub(crate) fn lay_out(
             .collect();
         if header_visible {
             for (col, column) in cols.iter().zip(natural.iter_mut()) {
-                let wraps = matches!(header_overflow_mode(&r, th, col)?, "wrap-two" | "wrap");
+                let wraps = !header_max_lines(th, col)?.is_one_line();
                 if wraps && col.header.chars().count() > SHORT_HEADER_CHARS {
                     let two_lines =
                         two_line_width(&col.header, header_measure_family, header_now.trunc(), fonts)?;
@@ -4627,7 +4658,7 @@ pub(crate) fn lay_out(
                 None => {}
             }
         }
-        if th.wrap {
+        if th.max_lines.wraps() {
             for column in natural.iter_mut().filter(|c| c.pin.is_none()) {
                 let demand = auto_column_demand(column.demand, column.word_floor, column.max_width);
                 if !is_compact_column(demand, column.spark) {
@@ -4667,7 +4698,7 @@ pub(crate) fn lay_out(
 
     // ── Fit cascade: allocation ran at the theme's cell padding; if any
     // numeric/date cell or short header overflows its content area (text
-    // cells too under `wrap: false`; wrapped text cells never overflow),
+    // cells too under `max_lines: 1`; wrapped text cells never overflow),
     // padding steps down to max(pad/2, 6), then the body font to 11px (row
     // height −4, floored at 16; header follows the body when it inherits
     // it). Overflow is measured against `measured_cell_text` — the same
@@ -4693,7 +4724,7 @@ pub(crate) fn lay_out(
                 return Ok(true);
             }
             // Wrapped text cells never overflow; unwrapped ones drive the cascade.
-            if th.wrap && !(col.is_numeric || col.is_date) {
+            if th.max_lines.wraps() && !(col.is_numeric || col.is_date) {
                 continue;
             }
             for (ri, cell) in cells.iter().enumerate().take(measure::SAMPLE_ROWS) {
@@ -4864,8 +4895,8 @@ pub(crate) fn lay_out(
     // tallest wrapped cell. `wrapped_lines[ci][ri]` is `None` for a
     // single-line cell (render path falls back to the plain one-line text).
     let mut row_heights: Vec<f64> = vec![row_h; n_rows];
-    let mut wrapped_lines: Vec<Vec<Option<Vec<String>>>> = Vec::with_capacity(cols.len());
-    if th.wrap {
+    let mut wrapped_lines: Vec<Vec<Option<WrappedCell>>> = Vec::with_capacity(cols.len());
+    if th.max_lines.wraps() {
         let line_height = font_size + th.text_baseline_offset;
         for (ci, col) in cols.iter().enumerate() {
             if col.is_numeric || col.is_date || is_swatch(col) || is_list(col) {
@@ -4883,12 +4914,14 @@ pub(crate) fn lay_out(
                 wrapped_lines.push(vec![None; n_rows]);
                 continue;
             }
-            let mut col_lines: Vec<Option<Vec<String>>> = Vec::with_capacity(n_rows);
-            let mut tall_cells = 0_usize;
-            let mut tallest = 0_usize;
+            // Every cell fit once at the most lines the column could ever allow, which
+            // also counts its natural lines; `None` for a cell that stays one line (no
+            // text, fits, or a tabular cell cut at paint time).
+            let ceiling = column_line_ceiling(th.max_lines, content_w, line_height);
+            let mut fitted_cells: Vec<Option<(FittedText, f64)>> = Vec::with_capacity(n_rows);
             for (ri, cell) in cell_data[ci].iter().enumerate() {
                 if cell.text.is_empty() || content_w <= 0.0 {
-                    col_lines.push(None);
+                    fitted_cells.push(None);
                     continue;
                 }
                 // The glyph shares the first line with the text it
@@ -4901,27 +4934,53 @@ pub(crate) fn lay_out(
                     fonts.measure(&glyph_run(glyph.as_deref()), measure_family, font_size)?;
                 let cell_content_w = content_w - glyph_w;
                 if fonts.measure(&cell.text, measure_family, font_size)? <= cell_content_w {
-                    col_lines.push(None);
+                    fitted_cells.push(None);
                     continue;
                 }
                 // A date-like or numeric cell is cut with an ellipsis at paint
                 // time instead of wrapping.
                 if wants_tabular_font(col, rows[ri].get(col.name.as_str())) {
-                    col_lines.push(None);
+                    fitted_cells.push(None);
                     continue;
                 }
-                // `wrap_text_precise`: whitespace words, a
+                // `fit_lines`: whitespace words, a
                 // word wider than the column split at its last fitting seam.
-                let (lines, _) = crate::common::wrap_text_measured(
+                let fitted = fit_lines(
                     &cell.text,
                     cell_content_w,
-                    font_size,
-                    measure_family,
-                    fonts,
-                    None,
-                    false,
+                    &|t| fonts.measure(t, measure_family, font_size),
+                    ceiling,
                 )?;
-                if lines.len() > 1 {
+                fitted_cells.push((fitted.natural_lines > 1).then_some((fitted, cell_content_w)));
+            }
+            let counts: Vec<usize> =
+                fitted_cells.iter().map(|cell| cell.as_ref().map_or(1, |(fitted, _)| fitted.natural_lines)).collect();
+            let max_lines = column_max_lines(th.max_lines, &counts, content_w, line_height);
+            let mut col_lines: Vec<Option<WrappedCell>> = Vec::with_capacity(n_rows);
+            let mut tall_cells = 0_usize;
+            let mut tallest = 0_usize;
+            for (ri, fitted) in fitted_cells.into_iter().enumerate() {
+                let Some((fitted, cell_content_w)) = fitted else {
+                    col_lines.push(None);
+                    continue;
+                };
+                // The ceiling is the cap for a fixed limit and a square column. A percentile
+                // or fence cap below it cuts its tail ellipsis from the words it keeps, which
+                // only a fit at that cap measures: the one cell it cuts is fit again.
+                let (lines, cut) = match max_lines.filter(|cap| fitted.natural_lines > *cap && max_lines != ceiling) {
+                    Some(cap) => {
+                        let refit = fit_lines(
+                            &cell_data[ci][ri].text,
+                            cell_content_w,
+                            &|t| fonts.measure(t, measure_family, font_size),
+                            Some(cap),
+                        )?;
+                        (refit.lines, refit.cut)
+                    }
+                    None => (fitted.lines, fitted.cut),
+                };
+                let warns = cut && matches!(th.max_lines, TableMaxLines::Limit(LineLimit::Lines(_)));
+                if lines.len() > 1 || cut {
                     if lines.len() >= TALL_CELL_MIN_LINES
                         && lines.len() as f64 * line_height > content_w
                     {
@@ -4932,7 +4991,7 @@ pub(crate) fn lay_out(
                         lines.len() as f64 * line_height - th.text_baseline_offset + 2.0 * pad,
                     );
                     row_heights[ri] = row_heights[ri].max(grown);
-                    col_lines.push(Some(lines));
+                    col_lines.push(Some(WrappedCell { lines, cut, warns }));
                 } else {
                     col_lines.push(None);
                 }
@@ -4997,7 +5056,7 @@ pub(crate) fn lay_out(
                 let lines: Vec<String> = items.iter().map(list_item_text).collect();
                 list_extra[ri] =
                     list_extra[ri].max(python_round((lines.len() - 1) as f64 * line_height));
-                wrapped_lines[ci][ri] = Some(lines);
+                wrapped_lines[ci][ri] = Some(WrappedCell { lines, cut: false, warns: false });
             }
         }
     }
@@ -5236,7 +5295,7 @@ pub(crate) fn lay_out(
     // `page_rows: null` is unlimited: the slot alone bounds the page.
     let page_rows = th.pagination.page_rows.unwrap_or(n_rows.max(1));
     // Open lists vary row heights even with wrapping off.
-    let have_heights = (th.wrap || (!lists_shut && list_extra.iter().any(|extra| *extra > 0.0))) && n_rows > 0;
+    let have_heights = (th.max_lines.wraps() || (!lists_shut && list_extra.iter().any(|extra| *extra > 0.0))) && n_rows > 0;
     let mut n_shown = n_rows;
     let mut true_total_pages = 1usize;
     // svg height echoes the slot instead of deriving from content

@@ -110,6 +110,67 @@ scalar_leaf!(
     )
 );
 
+/// How wide a column may be (`style.charts.bar.max_thickness.vertical`): a [`Length`] of the
+/// plot's height, or `none` for uncapped.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VerticalCap {
+    Capped(Length),
+    Uncapped,
+}
+
+impl ReadScalar for VerticalCap {
+    fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
+        if matches!(&node.kind, Kind::Scalar(Value::Str(s)) if s == "none") {
+            return Some(Self::Uncapped);
+        }
+        Length::read(node, cx).map(Self::Capped)
+    }
+}
+impl Spell for VerticalCap {
+    fn spell(&self) -> serde_json::Value {
+        match self {
+            Self::Capped(length) => length.spell(),
+            Self::Uncapped => "none".into(),
+        }
+    }
+}
+scalar_leaf!(
+    VerticalCap,
+    TypeExpr::Either(
+        &TypeExpr::Scalar(Scalar::Float),
+        &TypeExpr::Keyed(
+            &model_core::Keywords::pattern(r"^(\d+(\.\d+)?%|none)$").in_arm(),
+            &TypeExpr::Scalar(Scalar::Str)
+        )
+    )
+);
+
+/// How thick a horizontal bar may be (`style.charts.bar.max_thickness.horizontal`): a
+/// [`Length`] of the plot's width.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HorizontalCap(pub Length);
+
+impl ReadScalar for HorizontalCap {
+    fn read(node: &Node, cx: &mut Cx) -> Option<Self> {
+        Length::read(node, cx).map(Self)
+    }
+}
+impl Spell for HorizontalCap {
+    fn spell(&self) -> serde_json::Value {
+        self.0.spell()
+    }
+}
+scalar_leaf!(
+    HorizontalCap,
+    TypeExpr::Either(
+        &TypeExpr::Scalar(Scalar::Float),
+        &TypeExpr::Keyed(
+            &model_core::Keywords::pattern(r"^\d+(\.\d+)?%$").in_arm(),
+            &TypeExpr::Scalar(Scalar::Str)
+        )
+    )
+);
+
 /// A root board's own exact width in pixels, past `style.frame.max_width` if it says so.
 /// There is no parent to take a share of, so a percentage is refused.
 #[derive(Debug, Clone, Copy, PartialEq)]

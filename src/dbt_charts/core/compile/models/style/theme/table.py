@@ -16,7 +16,7 @@ if TYPE_CHECKING:
         TableRowRule,
     )
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 from dbt_charts.core.compile.models.conditional_predicate import default_rule_last
 from dbt_charts.core.compile.models.constraints import (
@@ -40,6 +40,8 @@ from dbt_charts.core.compile.models.primitives import (
     DividerStyle,
     FontStyle,
     GradientColorStyle,
+    LineCount,
+    LineLimit,
     SpacingValues,
     StrokeStyle,
 )
@@ -125,8 +127,8 @@ class TableHeaderStyle(BaseModel):
         default=None,
         description="Header background color; None means no fill (the divider alone separates header from body).",
     )
-    overflow: Literal["clip", "truncate", "wrap-two", "wrap"] = Field(
-        description="What happens to header text too wide for its column (clip, truncate, wrap-two, wrap)."
+    max_lines: LineLimit = Field(
+        description="Lines a header takes before an ellipsis (1 = no wrapping, 3 = wraps twice); or 'all'."
     )
     divider: TableDividerStyle = Field(
         description="Line between the header row and the body."
@@ -458,6 +460,15 @@ class TableScrollbarStyle(BaseModel):
     )
 
 
+# The one definition of the value set: a line limit, a column strategy, or a
+# percentile spelling (`p1` to `p100`).
+TableMaxLines = (
+    LineCount
+    | Literal["trim_outliers", "square", "all"]
+    | Annotated[str, StringConstraints(pattern=r"^p([1-9][0-9]?|100)$")]
+)
+
+
 class TableChartStyle(
     _ChartCardStyleMixinAllOptional,
     _ChartStyleBaseAllOptional,
@@ -531,8 +542,8 @@ class TableChartStyle(
     title_row: TableTitleStyle = Field(
         description="Title block rendered above the header row."
     )
-    wrap: bool = Field(
-        description="Allow cell text wrapping; false clips to single line."
+    max_lines: TableMaxLines = Field(
+        description="Lines a text cell takes before an ellipsis. A count (1 = no wrapping, 3 = wraps twice), or 'all', or a strategy: trim_outliers, square, or pN (keeps N% of cells whole).",
     )
     hide_underscore_columns: bool = Field(
         description=(
@@ -554,10 +565,6 @@ class TableChartStyle(
     columns: dict[ColumnRef, TableColumnConfig] | None = Field(
         default=None,
         description="Per-column display configuration keyed by column name (label, format, width, etc.).",
-    )
-    header_overflow: Literal["clip", "truncate", "wrap-two", "wrap"] | None = Field(
-        default=None,
-        description="Table column header text overflow mode; None inherits from theme.",
     )
     paginator: PaginatorStyle = Field(
         description="Visual style for the paginator control (chevrons + page numbers)."

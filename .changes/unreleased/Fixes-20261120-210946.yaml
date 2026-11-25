@@ -1,3 +1,0 @@
-kind: Fixes
-body: Hovering a bar past its chart's axis curls it outside the plot or draws it straight, never over the plot, and leaves its value label in place.
-time: 2026-11-20T21:09:46.148372-08:00

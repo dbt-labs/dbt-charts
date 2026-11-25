@@ -574,12 +574,20 @@ pub(crate) fn warn_rail_values_dropped(chart_id: &str, authored_field: &str, nam
     );
 }
 
-/// A rail label's number: the series' own final datum through the y axis's tick-label
-/// law (`format_y_label`: ruler, then `tick_label`, then `labels.format`, then the
-/// default), as the sole tick of its axis, so an anchored affix such as a currency
-/// symbol always shows.
+/// A rail label's number: the series' own final datum. Under a house SI axis
+/// format it reads like a value label beside a mark (the format's own digits,
+/// the narrative letter), not the axis's ladder digits. Otherwise it goes
+/// through the y axis's tick-label law (`format_y_label`: ruler, then
+/// `tick_label`, then `labels.format`, then the default) as the sole tick of
+/// its axis, so an anchored affix such as a currency symbol always shows.
 pub(crate) fn rail_value_text(value: f64, ax_y: &crate::common::AxisStyle) -> Result<String, String> {
-    crate::common::format_y_label(value, ax_y.ruler.as_ref(), ax_y.tick_label.as_ref(), ax_y.labels.format.as_ref(), 0, 1)
+    if let Some(slot) = ax_y.labels.format.as_ref().filter(|slot| slot.is_house() && slot.spec.ends_with('s')) {
+        let narrative = crate::common::FormatSlot { notation: None, ..slot.clone() };
+        return crate::common::format_mark_label(Some(&narrative), value, true);
+    }
+    let trimmed = ax_y.labels.format.as_ref().and_then(crate::common::FormatSlot::trimmed_house_percent);
+    let format = trimmed.as_ref().or(ax_y.labels.format.as_ref());
+    crate::common::format_y_label(value, ax_y.ruler.as_ref(), ax_y.tick_label.as_ref(), format, 0, 1)
 }
 
 pub(crate) const RAIL_LABEL_GAP: f64 = 4.0;

@@ -25,3 +25,11 @@ POINT_MIN_PX_PER_POINT: Final[float] = 22.5
 
 # Samples a fitted trend is drawn from; a data set with fewer distinct x values is drawn through them.
 TREND_SAMPLES: Final[int] = 64
+
+# A line palette hands out styles in plain slot order up to this many lines; from here on, lines that
+# stay apart may share one, so a crowded chart keeps its variety.
+LINE_STYLE_SHARE_FROM: Final[int] = 5
+# Most lines one style may serve; only the last slot, the overflow, may exceed it.
+LINE_STYLE_MAX_USES: Final[int] = 2
+# Two lines may share a style only while their mean vertical distance stays at or above this.
+LINE_STYLE_SHARE_MIN_GAP_PX: Final[float] = 40.0

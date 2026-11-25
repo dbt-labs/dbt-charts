@@ -1,5 +1,6 @@
 //! `style/theme/bar.py`: the bar chart family.
 
+use crate::board::{HorizontalCap, VerticalCap};
 use crate::primitives::PatternStyle;
 use crate::rule::Auto;
 use crate::string_enum;
@@ -101,6 +102,23 @@ pub struct BarGroupedStyle {
     pub padding_outer: f64,
 }
 
+/// Thickest a category bar or column may be: the plot shrinks along the category axis until a bar is the cap.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct BarMaxThicknessStyle {
+    /// Thickest a horizontal bar may be: pixels, or a percent of the plot's width such as '20%'.
+    pub horizontal: HorizontalCap,
+    /// Widest a column may be: pixels, or a percent of the plot's height such as '33.333333333333336%' (a third); 'none' leaves columns uncapped.
+    pub vertical: VerticalCap,
+}
+
+/// Moves a horizontal bar chart's category names above their bars when the names beside the bars take too much of the chart.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(range(max_share, gt = 0, le = 1)))]
+pub struct BarLabelsAboveStyle {
+    /// The largest share of the chart's width the category names may take beside the bars, as a fraction from above 0 up to 1. A single-series or stacked horizontal bar chart whose names would take more puts each name on one line above its bar instead, and a name too long for that line ends in an ellipsis.
+    pub max_share: f64,
+}
+
 string_enum!(
     /// `none`: bars are never torn automatically.
     NoOutliers { None = "none" }
@@ -177,6 +195,12 @@ pub struct BarChartStyle {
     pub grouped: BarGroupedStyle,
     /// Tear bars far longer than the rest.
     pub outliers: BarOutliersStyle,
+    /// Thickest a category bar or column may be; unset leaves them uncapped.
+    #[model(absent = "category bars are uncapped")]
+    pub max_thickness: Option<BarMaxThicknessStyle>,
+    /// Moves long horizontal bar names above their bars; unset keeps them beside the bars.
+    #[model(absent = "category names stay beside horizontal bars")]
+    pub labels_above: Option<BarLabelsAboveStyle>,
     /// How the `pattern:` channel paints fills.
     pub pattern: PatternStyle,
     /// Bar-family mark overrides.

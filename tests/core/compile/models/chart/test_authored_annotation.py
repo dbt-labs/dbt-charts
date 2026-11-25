@@ -9,11 +9,11 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from dbt_charts.core.compile.models.aggregate import AggregateAnchor
+from dbt_charts.core.compile.models.anchor import ClockAnchor
 from dbt_charts.core.compile.models.chart.authored._annotation import (
     AnchorRange,
     Annotation,
     BandAnnotation,
-    ClockAnchor,
     FitFunction,
     IntervalFunction,
     NoteAnnotation,

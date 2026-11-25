@@ -1,5 +1,0 @@
-kind: Fixes
-body: 'A KPI label with `style.label.overflow: wrap` now draws every line, and a chart''s own `style.default_height` sizes its KPI card.'
-time: 2026-11-23T20:36:34.124232625Z
-custom:
-    DbtChartsIssue: "106"

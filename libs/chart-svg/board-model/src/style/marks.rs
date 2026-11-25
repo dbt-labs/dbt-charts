@@ -693,7 +693,6 @@ pub struct AreaMarkStyle {
 
 /// Point mark style (data-point markers on scatter, point, line and area charts).
 #[derive(Debug, Clone, PartialEq, Model)]
-#[model(constraint(range(halo, ge = 0)))]
 pub struct PointMarkStyle {
     /// Point size in square pixels; 0 disables points on line charts.
     pub size: Engine<f64, Auto>,
@@ -714,11 +713,26 @@ pub struct PointMarkStyle {
     pub fill: Color,
     /// Stroke width in pixels for hollow point rings; 'auto' uses VL default.
     pub stroke_width: Engine<f64, Auto>,
-    /// Width in pixels of a ring in the canvas color drawn around each point, so overlapping points stay apart. Drawn by a point map and refused by a scatter; unset draws none.
-    #[model(absent = "no ring")]
-    pub halo: Option<f64>,
     /// Value label style for point marks.
     pub labels: PointLabelsStyle,
+}
+
+/// The part of [`RingedPointMarkStyle`] a conditional rule may set.
+#[derive(Debug, Clone, PartialEq, Model)]
+pub struct RingedPointMarkStyleConditional {
+    #[flatten]
+    pub point: PointMarkStyleConditional,
+}
+
+/// Point mark style of a family that draws a canvas ring around each point.
+#[derive(Debug, Clone, PartialEq, Model)]
+#[model(constraint(range(halo, ge = 0)))]
+pub struct RingedPointMarkStyle {
+    #[flatten]
+    pub point: PointMarkStyle,
+    /// Width of the canvas-color ring that keeps overlapping points apart.
+    #[model(absent = "no ring", local)]
+    pub halo: Option<f64>,
 }
 
 /// Pie/donut slice mark: paint and layout only.

@@ -351,3 +351,62 @@ rows:
     )
     codes = {w.code for w in warnings}
     assert _CODE not in codes
+
+
+_OWN_CAP_CODE = "WARN-CHART-HEIGHT-BELOW-CATEGORY-FLOOR"
+
+
+def _own_cap_yaml(*, root: str = "", style: str = "", board_style: str = "") -> str:
+    """A bare horizontal bar (no row height) with the given chart-root lines,
+    chart-style lines, and board-style lines."""
+    return f"""
+title: Probe
+{board_style}
+charts:
+  hbar:
+    query: q
+    type: bar
+    x: cat
+    y: val
+{root}
+    style:
+      orientation: horizontal
+{style}
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - hbar
+"""
+
+
+def test_a_cap_the_chart_wrote_itself_warns_by_field() -> None:
+    """Both of the chart's own caps lose to the 40-category floor and say so,
+    naming the field the author wrote."""
+    for yaml_source, field in (
+        (_own_cap_yaml(root="    height: 400"), "height"),
+        (_own_cap_yaml(style="      max_height: 400"), "style.max_height"),
+    ):
+        warnings = _render(yaml_source, 40)
+        [w] = [w for w in warnings if w.code == _OWN_CAP_CODE]
+        assert w.chart == "hbar"
+        assert "40 category bands" in w.message
+        assert f"its {field} caps it at 400px" in w.message
+        assert w.fix
+
+
+def test_a_board_wide_max_height_default_does_not_warn() -> None:
+    """`style.charts.max_height` is a default every long list would trip."""
+    yaml_source = _own_cap_yaml(board_style="style:\n  charts:\n    max_height: 400")
+    codes = {w.code for w in _render(yaml_source, 40)}
+    assert _OWN_CAP_CODE not in codes
+
+
+def test_a_cap_above_the_floor_or_no_cap_is_silent() -> None:
+    for yaml_source in (
+        _own_cap_yaml(root="    height: 900"),
+        _own_cap_yaml(),
+    ):
+        codes = {w.code for w in _render(yaml_source, 3)}
+        assert _OWN_CAP_CODE not in codes

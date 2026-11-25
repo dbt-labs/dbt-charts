@@ -2,9 +2,11 @@
 //! card gives.
 
 use board_model::facet::FontWeightValue;
-use board_model::style::board::{ChartTitleStyle, EmojiMode, OverflowMode};
+use board_model::primitives::LineLimit;
+use board_model::style::board::{ChartTitleStyle, EmojiMode};
 use board_model::style::style::Style;
 use diagnostic::{diag, refuse, Diagnostic};
+use measure::fit::fit_lines;
 use measure::shaped::{Font, FontBook};
 use model_core::Engine;
 use scene::{Attrs, Node, Role};
@@ -55,12 +57,12 @@ pub fn chart_title_spec(style: &Style, width: f64) -> Result<(f64, FontWeightVal
 
 /// `_one_line_title_width` (`compile/sizing.py`): the width a chart needs to draw its title uncut on
 /// one line, `chrome` included (the card padding on both sides and the family's own side padding); 0
-/// when the title's overflow does not cut it to one line. The title paints in `width`'s tier, and it
+/// when the title's `max_lines` does not limit it to one line. The title paints in `width`'s tier, and it
 /// is measured as production's pre-pass measures it, in the plain Inter face and in the painted
 /// weight, taking the wider, and rounded up to a whole pixel.
 pub fn one_line_title_width(style: &Style, title: &str, width: f64, chrome: f64, book: &FontBook) -> Result<f64, Diagnostic> {
     let slot = &style.charts.title;
-    if !matches!(slot.base.overflow, OverflowMode::Truncate | OverflowMode::Clip) {
+    if !slot.base.max_lines.is_one_line() {
         return Ok(0.0);
     }
     let (size, weight, family) = chart_title_spec(style, width)?;
@@ -164,9 +166,9 @@ impl ChartTitle {
 
 /// A chart's title at its card's outer `width`, in the `avail_w` the card's padding leaves: the one
 /// place a family gets a title. The face is `chart_title_spec`'s, the case the chart title slot's,
-/// the overflow `charts.title.overflow`, and the gap under the text `title.position.offset`; the
+/// the line limit `charts.title.max_lines`, and the gap under the text `title.position.offset`; the
 /// subtitle (when non-empty, as production tests it) paints in `charts.title.subtitle`'s face and
-/// overflow. The sizing block is production's Vega-Lite title (title_shift.rs:`vega_title_block`):
+/// line limit. The sizing block is production's Vega-Lite title (title_shift.rs:`vega_title_block`):
 /// the first baseline at `round(0.8 * size)`, the body `size` plus the subtitle's size and gap plus
 /// `offset` under the top. With no title the subtitle is the block's only row: the first baseline at
 /// `round(0.8 * subtitle size)` and the body that size plus `offset`, with no gap; each wrapped line past the first moves the body down by its size and 2 px
@@ -189,12 +191,12 @@ pub fn chart_title(chart_id: &str, text: &str, subtitle: Option<&str>, style: &S
     let cased = display_text::case::apply_case(text, slot.font.case.as_str()).map_err(diag::err_internal)?;
     let title_font = painted_font(&family, size, &weight, slot.font.style.as_str() == "italic")?;
     let offset = slot.base.position.offset.unwrap_or(DEFAULT_TITLE_OFFSET);
-    let fitted = TitleText { text: &cased, font: title_font, overflow: overflow_of(slot.base.overflow) };
+    let fitted = TitleText { text: &cased, font: title_font, max_lines: slot.base.max_lines };
     let sub_face = &slot.base.subtitle;
     let sub_family = sub_face.font.family.as_str();
     let sub_italic = sub_face.font.style.as_str() == "italic";
     let sub_fitted = subtitle
-        .map(|text| Ok::<_, Diagnostic>(TitleText { text, font: painted_font(sub_family, sub_face.font.size, &sub_face.font.weight, sub_italic)?, overflow: overflow_of(sub_face.overflow) }))
+        .map(|text| Ok::<_, Diagnostic>(TitleText { text, font: painted_font(sub_family, sub_face.font.size, &sub_face.font.weight, sub_italic)?, max_lines: sub_face.max_lines }))
         .transpose()?;
     let fitted = (!text.is_empty()).then_some(fitted);
     let Some(block) = title_block(chart_id, fitted.as_ref(), sub_fitted.as_ref(), offset, avail_w, book).map_err(diag::err_internal)? else {
@@ -244,34 +246,12 @@ fn painted_font<'a>(family: &'a str, size: f64, weight: &FontWeightValue, italic
     Ok(Font { family: measure::stand_in_family(family), size, weight: weight_axis(weight)?, italic })
 }
 
-fn overflow_of(mode: OverflowMode) -> Overflow {
-    match mode {
-        OverflowMode::Clip => Overflow::Clip,
-        OverflowMode::Truncate => Overflow::Truncate,
-        OverflowMode::WrapTwo => Overflow::WrapTwo,
-        OverflowMode::Wrap => Overflow::Wrap,
-    }
-}
-
-/// How a title's text fits its limit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Overflow {
-    /// One line, cut at the last character that fits, with no ellipsis.
-    Clip,
-    /// One line, ending in an ellipsis when cut.
-    Truncate,
-    /// Two lines, the second ending in an ellipsis when cut.
-    WrapTwo,
-    /// Every wrapped line.
-    Wrap,
-}
-
-/// A title or subtitle as resolved: its text, the face it paints in, its overflow.
+/// A title or subtitle as resolved: its text, the face it paints in, its line limit.
 #[derive(Debug, Clone, Copy)]
 pub struct TitleText<'a> {
     pub text: &'a str,
     pub font: Font<'a>,
-    pub overflow: Overflow,
+    pub max_lines: LineLimit,
 }
 
 /// The gap between a title and a subtitle under it.
@@ -313,7 +293,7 @@ pub struct TitleBlock {
 
 /// The title block in `avail_w` (the card less its padding). Title and subtitle
 /// each wrap once, in the face they paint in, to the whole-pixel limit, by their
-/// own overflow (quirk class Q2e: no measure in a stand-in face, no second clip).
+/// own line limit (quirk class Q2e: no measure in a stand-in face, no second clip).
 /// No limit left draws the text unbroken. Each line pitches by its face's ascent
 /// plus descent, the first baseline at the title's ascent (quirk class Q2d: no
 /// Vega text metrics); the subtitle sits `SUBTITLE_PADDING` under the title and
@@ -423,51 +403,9 @@ fn fit(t: &TitleText, limit: f64, book: &FontBook) -> Result<(Vec<String>, bool)
         return Ok((vec![t.text.to_string()], false));
     }
     if t.text.trim().is_empty() {
-        let single_line = matches!(t.overflow, Overflow::Clip | Overflow::Truncate);
-        return Ok((
-            if single_line {
-                vec![t.text.to_string()]
-            } else {
-                vec![]
-            },
-            false,
-        ));
+        let lines = if t.max_lines.is_one_line() { vec![t.text.to_string()] } else { vec![] };
+        return Ok((lines, false));
     }
-    if t.overflow == Overflow::Clip {
-        return clip(t, limit, book);
-    }
-    let max_lines = match t.overflow {
-        Overflow::Truncate => Some(1),
-        Overflow::WrapTwo => Some(2),
-        Overflow::Clip | Overflow::Wrap => None,
-    };
-    let wrapped = book.wrap(t.text, &t.font, limit, max_lines)?;
-    Ok((wrapped.lines, wrapped.truncated))
-}
-
-/// The longest prefix of the whitespace-collapsed text that fits `limit`, its
-/// trailing spaces dropped, with no ellipsis; the first character when none fits.
-fn clip(t: &TitleText, limit: f64, book: &FontBook) -> Result<(Vec<String>, bool), String> {
-    let text = t.text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if book.run(&text, &t.font)?.advance <= limit {
-        return Ok((vec![text], false));
-    }
-    let chars: Vec<char> = text.chars().collect();
-    let (mut lo, mut hi) = (1, chars.len() - 1);
-    let mut best = chars[0].to_string();
-    while lo <= hi {
-        let mid = (lo + hi) / 2;
-        let candidate = chars[..mid]
-            .iter()
-            .collect::<String>()
-            .trim_end()
-            .to_string();
-        if book.run(&candidate, &t.font)?.advance <= limit {
-            best = candidate;
-            lo = mid + 1;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    Ok((vec![best], true))
+    let fitted = fit_lines(t.text, limit, &|piece| book.run(piece, &t.font).map(|run| run.advance), t.max_lines.max_lines())?;
+    Ok((fitted.lines, fitted.cut))
 }
